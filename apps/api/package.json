@@ -14,6 +14,7 @@
     "@fastify/cors": "^11.0.0",
     "@fastify/multipart": "^9.0.0",
     "dotenv": "^16.4.0",
+    "@supabase/supabase-js": "^2.49.0",
     "@aula-agente/shared": "workspace:*",
     "@aula-agente/database": "workspace:*",
     "@aula-agente/queue": "workspace:*"

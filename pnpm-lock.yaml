@@ -32,6 +32,9 @@ importers:
       '@fastify/multipart':
         specifier: ^9.0.0
         version: 9.4.0
+      '@supabase/supabase-js':
+        specifier: ^2.49.0
+        version: 2.110.1
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
