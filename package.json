@@ -1,0 +1,18 @@
+{
+  "name": "aula-agente",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "dev:api": "turbo dev --filter=@aula-agente/api",
+    "dev:worker": "turbo dev --filter=@aula-agente/worker",
+    "dev:web": "turbo dev --filter=@aula-agente/web"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.4"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
