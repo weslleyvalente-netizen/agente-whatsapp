@@ -1,0 +1,26 @@
+{
+  "name": "@aula-agente/api",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/multipart": "^9.0.0",
+    "dotenv": "^16.4.0",
+    "@aula-agente/shared": "workspace:*",
+    "@aula-agente/database": "workspace:*",
+    "@aula-agente/queue": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
