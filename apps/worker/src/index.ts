@@ -1,23 +1,25 @@
 import "dotenv/config";
-import { getRedisConnection } from "@aula-agente/queue";
+import { startProcessMessageWorker } from "./workers/process-message";
+import { startSendMessageWorker } from "./workers/send-message";
+import { startProcessDocumentWorker } from "./workers/process-document";
+import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout";
 
 async function main() {
-  const redis = getRedisConnection();
+  console.log("Starting workers...");
 
-  redis.on("connect", () => {
-    console.log("Worker connected to Redis");
-  });
+  const workers = [
+    startProcessMessageWorker(),
+    startSendMessageWorker(),
+    startProcessDocumentWorker(),
+    startTakeoverTimeoutWorker(),
+  ];
 
-  redis.on("error", (err) => {
-    console.error("Redis connection error:", err);
-  });
-
-  console.log("Worker started. Waiting for jobs...");
+  console.log(`${workers.length} workers started successfully`);
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log("Shutting down worker...");
-    await redis.quit();
+    console.log("Shutting down workers...");
+    await Promise.all(workers.map((w) => w.close()));
     process.exit(0);
   };
 
@@ -26,6 +28,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Worker failed to start:", err);
+  console.error("Worker startup failed:", err);
   process.exit(1);
 });
