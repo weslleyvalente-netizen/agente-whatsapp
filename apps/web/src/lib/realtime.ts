@@ -12,7 +12,7 @@ interface UseRealtimeOptions<T> {
   enabled?: boolean;
 }
 
-export function useRealtime<T extends Record<string, unknown>>({
+export function useRealtime<T extends { [key: string]: any }>({
   table,
   filter,
   event = "*",
