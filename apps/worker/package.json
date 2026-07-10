@@ -10,16 +10,21 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "bullmq": "^5.30.0",
-    "ioredis": "^5.4.0",
-    "dotenv": "^16.4.0",
-    "@aula-agente/shared": "workspace:*",
+    "@ai-sdk/anthropic": "^4.0.10",
+    "@ai-sdk/google": "^4.0.10",
+    "@ai-sdk/openai": "^4.0.9",
     "@aula-agente/database": "workspace:*",
-    "@aula-agente/queue": "workspace:*"
+    "@aula-agente/queue": "workspace:*",
+    "@aula-agente/shared": "workspace:*",
+    "ai": "^7.0.18",
+    "bullmq": "^5.30.0",
+    "dotenv": "^16.4.0",
+    "ioredis": "^5.4.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }
