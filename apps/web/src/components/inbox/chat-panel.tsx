@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
 import { MessageBubble } from "./message-bubble";
+import { SidePanel } from "./side-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send } from "lucide-react";
@@ -88,40 +89,45 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
   };
 
   return (
-    <div className="flex h-full w-full flex-col">
-      {/* Header */}
-      <div className="border-b px-4 py-3">
-        <p className="font-medium">
-          {conversation?.contacts?.name || conversation?.contacts?.phone || "Conversa"}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {conversation?.contacts?.phone}
-        </p>
-      </div>
+    <div className="flex h-full w-full">
+      <div className="flex flex-1 flex-col">
+        {/* Header */}
+        <div className="border-b px-4 py-3">
+          <p className="font-medium">
+            {conversation?.contacts?.name || conversation?.contacts?.phone || "Conversa"}
+          </p>
+          <p className="text-xs text-muted-foreground">{conversation?.contacts?.phone}</p>
+        </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        <div ref={bottomRef} />
-      </div>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
+          ))}
+          <div ref={bottomRef} />
+        </div>
 
-      {/* Input */}
-      <div className="border-t p-4">
-        <div className="flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Digite uma mensagem..."
-            disabled={sending}
-          />
-          <Button onClick={handleSend} disabled={sending || !input.trim()} size="icon">
-            <Send className="h-4 w-4" />
-          </Button>
+        {/* Input */}
+        <div className="border-t p-4">
+          <div className="flex gap-2">
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Digite uma mensagem..."
+              disabled={sending}
+            />
+            <Button onClick={handleSend} disabled={sending || !input.trim()} size="icon">
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
+
+      {/* Side Panel */}
+      {conversation && (
+        <SidePanel conversation={conversation} onUpdate={fetchConversation} />
+      )}
     </div>
   );
 }
