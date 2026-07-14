@@ -2,8 +2,8 @@ import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
 import { getAdminClient } from "@aula-agente/database";
 import { getDocumentsByAgent, getDocumentById, deleteDocument } from "@aula-agente/database";
-import { authMiddleware } from "../../middleware/auth";
-import { uploadDocument } from "../../services/knowledge.service";
+import { authMiddleware } from "../../middleware/auth.js";
+import { uploadDocument } from "../../services/knowledge.service.js";
 import type { DocumentFileType } from "@aula-agente/shared";
 
 export default async function knowledgeDocumentRoutes(app: FastifyInstance) {

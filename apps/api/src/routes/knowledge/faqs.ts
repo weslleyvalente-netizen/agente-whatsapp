@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createFaqSchema, updateFaqSchema } from "@aula-agente/shared";
 import { getAdminClient } from "@aula-agente/database";
 import { getFaqsByAgent, createFaq, updateFaq, deleteFaq } from "@aula-agente/database";
-import { authMiddleware } from "../../middleware/auth";
+import { authMiddleware } from "../../middleware/auth.js";
 
 export default async function knowledgeFaqRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);

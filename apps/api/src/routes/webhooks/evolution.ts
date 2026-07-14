@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { evolutionWebhookPayloadSchema } from "@aula-agente/shared";
 import { getAdminClient, getInstanceByInstanceId } from "@aula-agente/database";
-import { webhookVerifyMiddleware } from "../../middleware/webhook-verify";
-import { ensureConversation } from "../../services/conversation.service";
-import { saveMessage } from "../../services/message.service";
-import { enqueueProcessMessage } from "../../lib/queue";
+import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
+import { ensureConversation } from "../../services/conversation.service.js";
+import { saveMessage } from "../../services/message.service.js";
+import { enqueueProcessMessage } from "../../lib/queue.js";
 
 function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null } {
   const message = data.message as Record<string, unknown> | undefined;

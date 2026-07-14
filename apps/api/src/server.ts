@@ -1,11 +1,11 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import evolutionWebhookRoutes from "./routes/webhooks/evolution";
-import messageSendRoutes from "./routes/messages/send";
-import instanceRoutes from "./routes/instances/index";
-import knowledgeDocumentRoutes from "./routes/knowledge/documents";
-import knowledgeFaqRoutes from "./routes/knowledge/faqs";
+import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
+import messageSendRoutes from "./routes/messages/send.js";
+import instanceRoutes from "./routes/instances/index.js";
+import knowledgeDocumentRoutes from "./routes/knowledge/documents.js";
+import knowledgeFaqRoutes from "./routes/knowledge/faqs.js";
 
 const server = Fastify({ logger: true });
 

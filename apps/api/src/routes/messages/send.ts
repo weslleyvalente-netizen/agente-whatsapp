@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { sendMessageSchema } from "@aula-agente/shared";
 import { getAdminClient, getConversationById } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
-import { authMiddleware, requireOrg } from "../../middleware/auth";
-import { saveMessage } from "../../services/message.service";
-import { enqueueSendMessage } from "../../lib/queue";
+import { authMiddleware, requireOrg } from "../../middleware/auth.js";
+import { saveMessage } from "../../services/message.service.js";
+import { enqueueSendMessage } from "../../lib/queue.js";
 
 export default async function messageSendRoutes(app: FastifyInstance) {
   app.post("/messages/send", {

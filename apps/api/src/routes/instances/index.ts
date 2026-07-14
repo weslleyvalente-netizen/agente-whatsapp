@@ -14,8 +14,8 @@ import {
   getInstanceQrCode,
   deleteInstance as deleteEvolutionInstance,
   logoutInstance,
-} from "../../services/evolution.service";
-import { authMiddleware } from "../../middleware/auth";
+} from "../../services/evolution.service.js";
+import { authMiddleware } from "../../middleware/auth.js";
 
 export default async function instanceRoutes(app: FastifyInstance) {
   // All routes require auth
