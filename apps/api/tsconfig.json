@@ -1,10 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module":"NodeNext ",
-    "moduleResolution": "NodeNextgit add apps/api/tsconfig.json
-git commit -m "fix: align module and moduleResolution to NodeNext"
-git push https://weslleyvalente-netizen:SEU_TOKEN_AQUI@github.com/weslleyvalente-netizen/agente-whatsapp.git",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
