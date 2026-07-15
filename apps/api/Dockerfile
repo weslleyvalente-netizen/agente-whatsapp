@@ -15,7 +15,7 @@ COPY packages/ packages/
 COPY apps/api/ apps/api/
 
 # Build
-RUN pnpm turbo build --filter=@aula-agente/api
+RUN echo "bust=$(date +%s)" && pnpm turbo build --filter=@aula-agente/api
 
 WORKDIR /app/apps/api
 RUN apk add --no-cache curl
