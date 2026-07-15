@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ALLOWED_DOCUMENT_TYPES, MAX_DOCUMENT_SIZE_BYTES } from "../constants";
+import { ALLOWED_DOCUMENT_TYPES, MAX_DOCUMENT_SIZE_BYTES } from "../constants.js";
 
 export const uploadDocumentSchema = z.object({
   title: z.string().min(1).max(200),

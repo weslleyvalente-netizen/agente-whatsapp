@@ -1,3 +1,3 @@
-export { createSupabaseClient } from "./client";
-export { getAdminClient } from "./admin";
-export * from "./queries/index";
+export { createSupabaseClient } from "./client.js";
+export { getAdminClient } from "./admin.js";
+export * from "./queries/index.js";

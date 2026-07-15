@@ -1,4 +1,4 @@
-import type { LLMProvider } from "./organization";
+import type { LLMProvider } from "./organization.js";
 
 export interface Agent {
   id: string;

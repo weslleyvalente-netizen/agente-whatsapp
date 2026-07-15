@@ -1,12 +1,12 @@
 import { Queue } from "bullmq";
 import { QUEUE_NAMES } from "@aula-agente/shared";
-import { getRedisConnection } from "./connection";
+import { getRedisConnection } from "./connection.js";
 import type {
   ProcessMessageJobData,
   SendMessageJobData,
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
-} from "./types";
+} from "./types.js";
 
 let processMessageQueue: Queue<ProcessMessageJobData> | null = null;
 let sendMessageQueue: Queue<SendMessageJobData> | null = null;

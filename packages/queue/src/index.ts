@@ -1,13 +1,13 @@
-export { getRedisConnection } from "./connection";
+export { getRedisConnection } from "./connection.js";
 export {
   getProcessMessageQueue,
   getSendMessageQueue,
   getProcessDocumentQueue,
   getTakeoverTimeoutQueue,
-} from "./queues";
+} from "./queues.js";
 export type {
   ProcessMessageJobData,
   SendMessageJobData,
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
-} from "./types";
+} from "./types.js";
