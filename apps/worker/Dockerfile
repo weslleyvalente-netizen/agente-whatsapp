@@ -18,6 +18,6 @@ COPY apps/worker/ apps/worker/
 RUN echo "bust=$(date +%s)" && pnpm turbo build --filter=@aula-agente/worker
 
 WORKDIR /app/apps/worker
-COPY apps/worker/healthcheck.js .
 EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=3s CMD node /app/apps/worker/healthcheck.js || exit 1
 CMD ["node", "dist/index.js"]
