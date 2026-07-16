@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { startProcessMessageWorker } from "./workers/process-message";
+import { startProcessMessageWorker } from "./workers/process-message.js";
 import { startSendMessageWorker } from "./workers/send-message";
 import { startProcessDocumentWorker } from "./workers/process-document";
 import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout";
