@@ -5,9 +5,9 @@ import { getRedisConnection, getSendMessageQueue } from "@aula-agente/queue";
 import { getAdminClient, getAgentById, getRecentMessages, getConversationById } from "@aula-agente/database";
 import { createMessage, updateConversation } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
-import { acquireConversationLock, releaseConversationLock } from "../lib/lock";
-import { resolveApiKey } from "../lib/vault";
-import { runAgent } from "../agents/agent-runner";
+import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
+import { resolveApiKey } from "../lib/vault.js";
+import { runAgent } from "../agents/agent-runner.js";
 
 export function startProcessMessageWorker() {
   const worker = new Worker<ProcessMessageJobData>(

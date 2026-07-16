@@ -1,6 +1,6 @@
 import type { ToolsConfig } from "@aula-agente/shared";
-import { createSearchKnowledgeTool } from "./search-knowledge";
-import { createSearchFaqTool } from "./search-faq";
+import { createSearchKnowledgeTool } from "./search-knowledge.js";
+import { createSearchFaqTool } from "./search-faq.js";
 
 interface RegistryParams {
   organizationId: string;

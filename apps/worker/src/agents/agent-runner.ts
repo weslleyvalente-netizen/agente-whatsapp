@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message } from "@aula-agente/shared";
-import { buildToolsForAgent } from "./tools/registry";
+import { buildToolsForAgent } from "./tools/registry.js";
 
 interface RunAgentParams {
   agent: Agent;
