@@ -15,7 +15,7 @@ COPY packages/ packages/
 COPY apps/worker/ apps/worker/
 
 # Build
-RUN pnpm turbo build --filter=@aula-agente/worker
+RUN echo "bust=$(date +%s)" && pnpm turbo build --filter=@aula-agente/worker
 
 WORKDIR /app/apps/worker
 COPY apps/worker/healthcheck.js .
