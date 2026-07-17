@@ -94,7 +94,7 @@ export function startProcessMessageWorker() {
           conversationId,
           messageId: responseMessage.id,
           instanceId: instance.id,
-          phone: conversation.contacts?.phone || "",
+          phone: conversation.wa_contacts?.phone || "",
           content: result.text,
           organizationId,
         });

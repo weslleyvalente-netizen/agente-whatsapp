@@ -49,7 +49,7 @@ export default async function messageSendRoutes(app: FastifyInstance) {
       const instance = await getInstanceById(db, conversation.evolution_instance_id);
 
       // Get contact phone from conversation
-      const contact = conversation.contacts;
+      const contact = conversation.wa_contacts;
 
       // Enqueue send
       await enqueueSendMessage({

@@ -16,7 +16,7 @@ interface SidePanelProps {
     is_human_takeover: boolean;
     assigned_to: string | null;
     tags: string[];
-    contacts: { phone: string; name: string | null };
+    wa_contacts: { phone: string; name: string | null };
   };
   onUpdate: () => void;
 }
@@ -36,8 +36,8 @@ export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
       {/* Contact Info */}
       <div>
         <h3 className="text-sm font-semibold">Contato</h3>
-        <p className="text-sm">{conversation.contacts.name || "Sem nome"}</p>
-        <p className="text-xs text-muted-foreground">{conversation.contacts.phone}</p>
+        <p className="text-sm">{conversation.wa_contacts.name || "Sem nome"}</p>
+        <p className="text-xs text-muted-foreground">{conversation.wa_contacts.phone}</p>
       </div>
 
       <Separator />

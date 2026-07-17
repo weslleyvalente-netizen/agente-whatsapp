@@ -36,7 +36,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     const supabase = createClient();
     const { data } = await supabase
       .from("conversations")
-      .select("*, contacts(phone, name)")
+      .select("*, wa_contacts(phone, name)")
       .eq("id", conversationId)
       .single();
     setConversation(data);
@@ -94,9 +94,9 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
         {/* Header */}
         <div className="border-b px-4 py-3">
           <p className="font-medium">
-            {conversation?.contacts?.name || conversation?.contacts?.phone || "Conversa"}
+            {conversation?.wa_contacts?.name || conversation?.wa_contacts?.phone || "Conversa"}
           </p>
-          <p className="text-xs text-muted-foreground">{conversation?.contacts?.phone}</p>
+          <p className="text-xs text-muted-foreground">{conversation?.wa_contacts?.phone}</p>
         </div>
 
         {/* Messages */}

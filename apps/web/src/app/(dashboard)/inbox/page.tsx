@@ -28,7 +28,7 @@ export default function InboxPage() {
 
     let query = supabase
       .from("conversations")
-      .select("*, contacts(phone, name), agents(name)")
+      .select("*, wa_contacts(phone, name), agents(name)")
       .eq("organization_id", currentOrg.id)
       .order("last_message_at", { ascending: false });
 
@@ -62,8 +62,8 @@ export default function InboxPage() {
     if (!search) return true;
     const searchLower = search.toLowerCase();
     return (
-      c.contacts?.name?.toLowerCase().includes(searchLower) ||
-      c.contacts?.phone?.includes(search)
+      c.wa_contacts?.name?.toLowerCase().includes(searchLower) ||
+      c.wa_contacts?.phone?.includes(search)
     );
   });
 

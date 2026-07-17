@@ -8,7 +8,7 @@ export async function getConversationsByOrganization(
 ) {
   let query = client
     .from("conversations")
-    .select("*, contacts(*)")
+    .select("*, wa_contacts(*)")
     .eq("organization_id", organizationId)
     .order("last_message_at", { ascending: false });
 
@@ -24,7 +24,7 @@ export async function getConversationsByOrganization(
 export async function getConversationById(client: SupabaseClient, id: string) {
   const { data, error } = await client
     .from("conversations")
-    .select("*, contacts(*), agents(name)")
+    .select("*, wa_contacts(*), agents(name)")
     .eq("id", id)
     .single();
   if (error) throw error;

@@ -9,7 +9,7 @@ export async function upsertContact(
   photoUrl: string | null
 ) {
   const { data, error } = await client
-    .from("contacts")
+    .from("wa_contacts")
     .upsert(
       {
         organization_id: organizationId,
@@ -26,7 +26,7 @@ export async function upsertContact(
 }
 
 export async function getContactById(client: SupabaseClient, id: string) {
-  const { data, error } = await client.from("contacts").select("*").eq("id", id).single();
+  const { data, error } = await client.from("wa_contacts").select("*").eq("id", id).single();
   if (error) throw error;
   return data as Contact;
 }

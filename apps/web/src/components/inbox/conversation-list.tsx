@@ -12,7 +12,7 @@ interface ConversationItem {
   last_message_at: string;
   tags: string[];
   assigned_to: string | null;
-  contacts: {
+  wa_contacts: {
     phone: string;
     name: string | null;
   };
@@ -48,13 +48,13 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
         >
           <Avatar className="h-10 w-10">
             <AvatarFallback>
-              {conv.contacts.name?.[0]?.toUpperCase() || <User className="h-4 w-4" />}
+              {conv.wa_contacts.name?.[0]?.toUpperCase() || <User className="h-4 w-4" />}
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 overflow-hidden">
             <div className="flex items-center justify-between">
               <p className="truncate text-sm font-medium">
-                {conv.contacts.name || conv.contacts.phone}
+                {conv.wa_contacts.name || conv.wa_contacts.phone}
               </p>
               <span className="text-xs text-muted-foreground">
                 {new Date(conv.last_message_at).toLocaleTimeString("pt-BR", {
