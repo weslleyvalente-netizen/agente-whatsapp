@@ -23,8 +23,6 @@
 ### Task 1: Renomear `contacts` → `wa_contacts` no schema e aplicar no Supabase remoto
 
 **Files:**
-- Modify: `.gitignore`
-- Modify (commit pendente): `supabase/migrations/00002_organizations.sql`, `00003_contacts.sql`, `00004_agents.sql`, `00005_evolution_instances.sql`, `00006_knowledge.sql`, `00007_conversations.sql` (fix já aplicado ao banco remoto numa sessão anterior de debug, ainda não commitado)
 - Rename: `supabase/migrations/00003_contacts.sql` → `supabase/migrations/00003_wa_contacts.sql`
 - Modify: `supabase/migrations/00007_conversations.sql`
 - Modify: `supabase/migrations/00008_rls_policies.sql`
@@ -32,24 +30,7 @@
 **Interfaces:**
 - Produces: tabela `wa_contacts(id, organization_id, phone, name, photo_url, metadata, created_at, updated_at)` no schema `public`, com `UNIQUE(organization_id, phone)` — mesma estrutura que `contacts` tinha antes, só o nome muda. `conversations.contact_id` passa a referenciar `wa_contacts(id)`.
 
-- [ ] **Step 1: Commitar o fix pendente de `uuid_generate_v4` (sessão anterior) e ignorar o cache local do Supabase CLI**
-
-Esse fix (qualificar `uuid_generate_v4()` como `extensions.uuid_generate_v4()`) já foi aplicado ao banco remoto numa sessão de debug anterior, mas nunca foi commitado. Commitar antes de continuar para não misturar as duas mudanças no mesmo commit.
-
-Adicione ao final de `.gitignore`:
-
-```
-supabase/.temp/
-```
-
-Rode:
-
-```bash
-git add .gitignore supabase/migrations/00002_organizations.sql supabase/migrations/00003_contacts.sql supabase/migrations/00004_agents.sql supabase/migrations/00005_evolution_instances.sql supabase/migrations/00006_knowledge.sql supabase/migrations/00007_conversations.sql
-git commit -m "fix: qualify uuid_generate_v4() with extensions schema in migrations"
-```
-
-- [ ] **Step 2: Renomear o arquivo de migration e seu conteúdo**
+- [ ] **Step 1: Renomear o arquivo de migration e seu conteúdo**
 
 ```bash
 git mv supabase/migrations/00003_contacts.sql supabase/migrations/00003_wa_contacts.sql
@@ -77,7 +58,7 @@ CREATE TRIGGER trg_wa_contacts_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 ```
 
-- [ ] **Step 3: Atualizar a FK em `00007_conversations.sql`**
+- [ ] **Step 2: Atualizar a FK em `00007_conversations.sql`**
 
 Em `supabase/migrations/00007_conversations.sql`, troque:
 
@@ -91,7 +72,7 @@ por:
   contact_id uuid NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
 ```
 
-- [ ] **Step 4: Atualizar as RLS policies em `00008_rls_policies.sql`**
+- [ ] **Step 3: Atualizar as RLS policies em `00008_rls_policies.sql`**
 
 Troque:
 
@@ -119,7 +100,7 @@ por:
     'wa_contacts', 'agents', 'evolution_instances',
 ```
 
-- [ ] **Step 5: Aplicar as migrations pendentes no Supabase remoto**
+- [ ] **Step 4: Aplicar as migrations pendentes no Supabase remoto**
 
 ```bash
 export SUPABASE_ACCESS_TOKEN=<seu access token do Supabase>
@@ -129,7 +110,7 @@ npx supabase db push --yes
 
 Expected: aplica `00003_wa_contacts.sql` até `00009_functions.sql` sem erro (a saída lista cada arquivo com "Applying migration ..." e termina sem `ERROR`).
 
-- [ ] **Step 6: Verificar no banco que `wa_contacts` existe e `contacts`/`activities`/`deals`/`profiles` do CRM continuam intactos**
+- [ ] **Step 5: Verificar no banco que `wa_contacts` existe e `contacts`/`activities`/`deals`/`profiles` do CRM continuam intactos**
 
 ```bash
 npx supabase db query --linked "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('wa_contacts','contacts','deals','activities','profiles') ORDER BY table_name;"
@@ -137,7 +118,7 @@ npx supabase db query --linked "SELECT table_name FROM information_schema.tables
 
 Expected: as 5 linhas aparecem (`activities`, `contacts`, `deals`, `profiles`, `wa_contacts`).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add supabase/migrations/00003_wa_contacts.sql supabase/migrations/00007_conversations.sql supabase/migrations/00008_rls_policies.sql
