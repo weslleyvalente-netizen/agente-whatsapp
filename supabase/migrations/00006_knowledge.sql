@@ -1,5 +1,5 @@
 CREATE TABLE knowledge_documents (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   title text NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE knowledge_documents (
 );
 
 CREATE TABLE knowledge_chunks (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   document_id uuid NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   content text NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE knowledge_chunks (
 );
 
 CREATE TABLE knowledge_faqs (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   question text NOT NULL,

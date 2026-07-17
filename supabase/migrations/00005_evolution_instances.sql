@@ -1,5 +1,5 @@
 CREATE TABLE evolution_instances (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   instance_name text NOT NULL,
   instance_id text NOT NULL UNIQUE,

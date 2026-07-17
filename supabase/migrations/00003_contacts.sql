@@ -1,5 +1,5 @@
 CREATE TABLE contacts (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   phone text NOT NULL,
   name text,

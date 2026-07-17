@@ -1,5 +1,5 @@
 CREATE TABLE organizations (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   name text NOT NULL,
   slug text NOT NULL UNIQUE,
   plan text NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'enterprise')),
@@ -9,7 +9,7 @@ CREATE TABLE organizations (
 );
 
 CREATE TABLE organization_members (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   role text NOT NULL CHECK (role IN ('owner', 'admin', 'agent')),
@@ -19,7 +19,7 @@ CREATE TABLE organization_members (
 );
 
 CREATE TABLE organization_invitations (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   email text NOT NULL,
   role text NOT NULL CHECK (role IN ('admin', 'agent')),
@@ -30,7 +30,7 @@ CREATE TABLE organization_invitations (
 );
 
 CREATE TABLE organization_secrets (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   provider text NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google')),
   encrypted_key text NOT NULL,

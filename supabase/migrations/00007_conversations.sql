@@ -1,5 +1,5 @@
 CREATE TABLE conversations (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   evolution_instance_id uuid NOT NULL REFERENCES evolution_instances(id) ON DELETE CASCADE,
@@ -15,7 +15,7 @@ CREATE TABLE conversations (
 );
 
 CREATE TABLE messages (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   evolution_message_id text,
@@ -28,7 +28,7 @@ CREATE TABLE messages (
 );
 
 CREATE TABLE conversation_notes (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES auth.users(id),
@@ -38,7 +38,7 @@ CREATE TABLE conversation_notes (
 );
 
 CREATE TABLE conversation_metrics (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
   conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   first_response_time_ms integer,
