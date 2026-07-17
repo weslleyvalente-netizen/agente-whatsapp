@@ -3,7 +3,7 @@ CREATE TABLE conversations (
   organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   evolution_instance_id uuid NOT NULL REFERENCES evolution_instances(id) ON DELETE CASCADE,
-  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
   status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'waiting', 'resolved', 'closed')),
   is_human_takeover boolean NOT NULL DEFAULT false,
   human_takeover_at timestamptz,

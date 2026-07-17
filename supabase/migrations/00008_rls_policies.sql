@@ -3,7 +3,7 @@ ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organization_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organization_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE organization_secrets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wa_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evolution_instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_documents ENABLE ROW LEVEL SECURITY;
@@ -82,7 +82,7 @@ DECLARE
   tbl text;
 BEGIN
   FOREACH tbl IN ARRAY ARRAY[
-    'contacts', 'agents', 'evolution_instances',
+    'wa_contacts', 'agents', 'evolution_instances',
     'knowledge_documents', 'knowledge_chunks', 'knowledge_faqs',
     'conversations', 'messages', 'conversation_notes', 'conversation_metrics'
   ] LOOP
