@@ -5,6 +5,7 @@ import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
+import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
 function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null } {
   const message = data.message as Record<string, unknown> | undefined;
@@ -88,7 +89,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       const agentId = instance.active_agent_id;
 
       // Ensure conversation exists
-      const { conversation } = await ensureConversation({
+      const { conversation, contact, isNew } = await ensureConversation({
         organizationId,
         agentId,
         instanceId: instance.id,
@@ -96,6 +97,12 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         contactName,
         contactPhotoUrl: null,
       });
+
+      // Best-effort: mirror brand-new contacts into the CRM. Never blocks
+      // or fails the webhook — errors are swallowed inside syncContactToCrm.
+      if (isNew) {
+        await syncContactToCrm(contact);
+      }
 
       // Extract message content
       const { content, mediaType } = extractMessageContent(payload.data as Record<string, unknown>);
