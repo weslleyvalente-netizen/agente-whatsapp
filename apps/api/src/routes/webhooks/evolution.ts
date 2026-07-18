@@ -98,12 +98,6 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         contactPhotoUrl: null,
       });
 
-      // Best-effort: mirror brand-new contacts into the CRM. Never blocks
-      // or fails the webhook — errors are swallowed inside syncContactToCrm.
-      if (isNew) {
-        await syncContactToCrm(contact);
-      }
-
       // Extract message content
       const { content, mediaType } = extractMessageContent(payload.data as Record<string, unknown>);
 
@@ -134,6 +128,12 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         agentId,
         organizationId,
       });
+
+      // Best-effort: mirror brand-new contacts into the CRM. Never blocks
+      // or fails the webhook — errors are swallowed inside syncContactToCrm.
+      if (isNew) {
+        await syncContactToCrm(contact);
+      }
 
       return reply.status(200).send({ ok: true, messageId: message.id });
     },
