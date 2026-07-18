@@ -53,7 +53,8 @@ export default async function instanceRoutes(app: FastifyInstance) {
       }
 
       const { instance_name } = parseResult.data;
-      const webhookUrl = `${process.env.EVOLUTION_API_URL ? request.protocol + '://' + request.hostname : 'http://localhost'}:${process.env.API_PORT || 3001}/webhooks/evolution`;
+      const apiInternalUrl = process.env.API_INTERNAL_URL || `http://localhost:${process.env.API_PORT || 3001}`;
+      const webhookUrl = `${apiInternalUrl}/webhooks/evolution`;
 
       // Create in Evolution API
       const evolutionResult = await createEvolutionInstance(instance_name, webhookUrl);
