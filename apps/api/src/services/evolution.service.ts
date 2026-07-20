@@ -25,6 +25,7 @@ async function evolutionFetch(path: string, options: RequestInit = {}) {
 }
 
 export async function createInstance(instanceName: string, webhookUrl: string) {
+  const webhookSecret = process.env.WEBHOOK_SECRET;
   return evolutionFetch("/instance/create", {
     method: "POST",
     body: JSON.stringify({
@@ -35,6 +36,7 @@ export async function createInstance(instanceName: string, webhookUrl: string) {
         webhookByEvents: false,
         webhookBase64: false,
         events: ["MESSAGES_UPSERT"],
+        ...(webhookSecret ? { headers: { apikey: webhookSecret } } : {}),
       },
     }),
   });
