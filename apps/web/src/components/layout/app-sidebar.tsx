@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Inbox, Bot, Radio, Users, Settings } from "lucide-react";
+import { Inbox, Bot, Radio, Users, Settings, DollarSign } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ const navigation = [
   { name: "Inbox", href: "/inbox", icon: Inbox },
   { name: "Agentes", href: "/agents", icon: Bot },
   { name: "Instancias", href: "/instances", icon: Radio },
+  { name: "Custos", href: "/costs", icon: DollarSign },
   { name: "Equipe", href: "/team", icon: Users },
   { name: "Configuracoes", href: "/settings", icon: Settings },
 ];

@@ -6,6 +6,7 @@ import messageSendRoutes from "./routes/messages/send.js";
 import instanceRoutes from "./routes/instances/index.js";
 import knowledgeDocumentRoutes from "./routes/knowledge/documents.js";
 import knowledgeFaqRoutes from "./routes/knowledge/faqs.js";
+import costRoutes from "./routes/costs/index.js";
 
 const server = Fastify({ logger: true });
 
@@ -23,6 +24,7 @@ server.register(messageSendRoutes);
 server.register(instanceRoutes);
 server.register(knowledgeDocumentRoutes);
 server.register(knowledgeFaqRoutes);
+server.register(costRoutes);
 
 // Start
 const start = async () => {

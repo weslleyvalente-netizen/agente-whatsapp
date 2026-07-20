@@ -56,3 +56,14 @@ export async function messageExistsByEvolutionId(
   if (error) throw error;
   return data !== null;
 }
+
+export async function getAgentMessagesForCost(client: SupabaseClient, organizationId: string) {
+  const { data, error } = await client
+    .from("messages")
+    .select("created_at, metadata")
+    .eq("organization_id", organizationId)
+    .eq("role", "agent")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data as Pick<Message, "created_at" | "metadata">[];
+}
