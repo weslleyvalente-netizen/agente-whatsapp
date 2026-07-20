@@ -50,6 +50,13 @@ export function startProcessMessageWorker() {
           throw new Error(`Message ${messageId} not found`);
         }
 
+        // Unsupported WhatsApp message types (reactions, protocol messages, etc.)
+        // are saved with empty content — the LLM can't process those, skip them.
+        if (!currentMessage.content.trim()) {
+          console.log(`Message ${messageId} has empty content, skipping`);
+          return;
+        }
+
         // Remove current message from history
         const history = recentMessages.filter((m) => m.id !== messageId);
 

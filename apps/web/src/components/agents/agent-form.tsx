@@ -24,7 +24,7 @@ interface AgentFormProps {
 
 const MODELS: Record<string, string[]> = {
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-  anthropic: ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"],
+  anthropic: ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
   google: ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
 };
 
