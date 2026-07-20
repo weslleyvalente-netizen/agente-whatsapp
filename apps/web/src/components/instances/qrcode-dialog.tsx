@@ -51,13 +51,7 @@ export function QrCodeDialog({ instanceId }: QrCodeDialogProps) {
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           ) : qrData?.base64 ? (
             <img
-              src={`data:image/png;base64,${qrData.base64}`}
-              alt="QR Code"
-              className="h-64 w-64"
-            />
-          ) : qrData?.code ? (
-            <img
-              src={`data:image/png;base64,${qrData.code}`}
+              src={qrData.base64}
               alt="QR Code"
               className="h-64 w-64"
             />
