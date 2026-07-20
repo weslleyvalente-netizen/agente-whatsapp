@@ -65,6 +65,11 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         return reply.status(200).send({ ok: true, skipped: "fromMe" });
       }
 
+      // Ignore group messages — this agent only handles direct conversations
+      if (payload.data.key.remoteJid.endsWith("@g.us")) {
+        return reply.status(200).send({ ok: true, skipped: "group_message" });
+      }
+
       const instanceId = payload.instance;
       const evolutionMessageId = payload.data.key.id;
       const phone = payload.data.key.remoteJid.replace("@s.whatsapp.net", "");
