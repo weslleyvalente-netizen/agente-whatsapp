@@ -17,7 +17,8 @@ export interface Message {
 
 export interface MessageMetadata {
   model?: string;
-  tokens_used?: number;
+  input_tokens?: number;
+  output_tokens?: number;
   latency_ms?: number;
   tool_calls?: string[];
 }

@@ -16,7 +16,8 @@ interface RunAgentParams {
 interface RunAgentResult {
   text: string;
   model: string;
-  tokensUsed: number;
+  inputTokens: number;
+  outputTokens: number;
   latencyMs: number;
   toolCalls: string[];
 }
@@ -85,7 +86,8 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   return {
     text: result.text,
     model: agent.model,
-    tokensUsed: result.usage?.totalTokens || 0,
+    inputTokens: result.usage?.inputTokens || 0,
+    outputTokens: result.usage?.outputTokens || 0,
     latencyMs,
     toolCalls,
   };

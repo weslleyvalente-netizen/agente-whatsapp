@@ -80,7 +80,8 @@ export function startProcessMessageWorker() {
           media_type: null,
           metadata: {
             model: result.model,
-            tokens_used: result.tokensUsed,
+            input_tokens: result.inputTokens,
+            output_tokens: result.outputTokens,
             latency_ms: result.latencyMs,
             tool_calls: result.toolCalls,
           },
