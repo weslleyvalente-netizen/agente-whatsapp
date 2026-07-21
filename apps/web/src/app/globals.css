@@ -53,85 +53,86 @@
 }
 
 /*
-  Signature palette — "operations console".
-  Void/Panel give the dark layered surface, Signal is body text,
-  Amber is the one brand accent, Green/Rust are real-state lamp colors
-  (connected/active vs. disconnected/error) used across the app, not decoration.
+  Signature palette — "blueprint console".
+  Paper/Panel give the light layered surface, Ink is body text,
+  Blueprint Blue is the one brand accent (the "drafting ink"), Teal/Rust
+  are real-state lamp colors (connected/active vs. disconnected/error)
+  used across the app, not decoration.
 */
 :root {
-  --void: #0b0d10;
-  --panel: #161a20;
-  --panel-2: #1d232b;
-  --signal: #ece8df;
-  --amber: #f2a63d;
-  --lamp-green: #3ecf8e;
-  --lamp-amber: #f2a63d;
-  --lamp-rust: #e8604c;
+  --paper: #f6f8fb;
+  --panel: #ffffff;
+  --panel-2: #eef2f8;
+  --ink: #16233a;
+  --blue: #1656d9;
+  --lamp-green: #0fa36b;
+  --lamp-amber: #c9862b;
+  --lamp-rust: #d64545;
   --steel: #4d7a9e;
 
-  --background: var(--void);
-  --foreground: var(--signal);
+  --background: var(--paper);
+  --foreground: var(--ink);
   --card: var(--panel);
-  --card-foreground: var(--signal);
+  --card-foreground: var(--ink);
   --popover: var(--panel);
-  --popover-foreground: var(--signal);
-  --primary: var(--amber);
-  --primary-foreground: #1a1408;
+  --popover-foreground: var(--ink);
+  --primary: var(--blue);
+  --primary-foreground: #ffffff;
   --secondary: var(--panel-2);
-  --secondary-foreground: var(--signal);
+  --secondary-foreground: var(--ink);
   --muted: var(--panel-2);
-  --muted-foreground: #948f84;
+  --muted-foreground: #5b6b85;
   --accent: var(--panel-2);
-  --accent-foreground: var(--signal);
+  --accent-foreground: var(--ink);
   --destructive: var(--lamp-rust);
-  --border: #262b33;
-  --input: #262b33;
-  --ring: var(--amber);
-  --chart-1: var(--amber);
+  --border: #dce3ee;
+  --input: #dce3ee;
+  --ring: var(--blue);
+  --chart-1: var(--blue);
   --chart-2: var(--lamp-green);
   --chart-3: var(--lamp-rust);
   --chart-4: #6c93b5;
-  --chart-5: #948f84;
+  --chart-5: #5b6b85;
   --radius: 0.375rem;
-  --sidebar: var(--void);
-  --sidebar-foreground: var(--signal);
-  --sidebar-primary: var(--amber);
-  --sidebar-primary-foreground: #1a1408;
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--blue);
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: var(--panel-2);
-  --sidebar-accent-foreground: var(--signal);
-  --sidebar-border: #1e232a;
-  --sidebar-ring: var(--amber);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: #dce3ee;
+  --sidebar-ring: var(--blue);
 }
 
-/* Dark is the only mode this product ships — .dark mirrors :root so any
-   component that still gates on the class does not fall back to light. */
+/* Light is the only mode this product ships — .dark mirrors :root so any
+   component that still gates on the class does not fall back to a stale theme. */
 .dark {
-  --background: var(--void);
-  --foreground: var(--signal);
+  --background: var(--paper);
+  --foreground: var(--ink);
   --card: var(--panel);
-  --card-foreground: var(--signal);
+  --card-foreground: var(--ink);
   --popover: var(--panel);
-  --popover-foreground: var(--signal);
-  --primary: var(--amber);
-  --primary-foreground: #1a1408;
+  --popover-foreground: var(--ink);
+  --primary: var(--blue);
+  --primary-foreground: #ffffff;
   --secondary: var(--panel-2);
-  --secondary-foreground: var(--signal);
+  --secondary-foreground: var(--ink);
   --muted: var(--panel-2);
-  --muted-foreground: #948f84;
+  --muted-foreground: #5b6b85;
   --accent: var(--panel-2);
-  --accent-foreground: var(--signal);
+  --accent-foreground: var(--ink);
   --destructive: var(--lamp-rust);
-  --border: #262b33;
-  --input: #262b33;
-  --ring: var(--amber);
-  --sidebar: var(--void);
-  --sidebar-foreground: var(--signal);
-  --sidebar-primary: var(--amber);
-  --sidebar-primary-foreground: #1a1408;
+  --border: #dce3ee;
+  --input: #dce3ee;
+  --ring: var(--blue);
+  --sidebar: var(--panel);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--blue);
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: var(--panel-2);
-  --sidebar-accent-foreground: var(--signal);
-  --sidebar-border: #1e232a;
-  --sidebar-ring: var(--amber);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: #dce3ee;
+  --sidebar-ring: var(--blue);
 }
 
 @layer base {
@@ -141,8 +142,8 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      linear-gradient(rgba(236, 232, 223, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(236, 232, 223, 0.035) 1px, transparent 1px);
+      linear-gradient(rgba(22, 86, 217, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(22, 86, 217, 0.055) 1px, transparent 1px);
     background-size: 32px 32px;
     background-attachment: fixed;
   }
@@ -153,8 +154,8 @@
     @apply font-heading tracking-tight;
   }
   ::selection {
-    background: color-mix(in oklch, var(--amber), transparent 65%);
-    color: var(--signal);
+    background: color-mix(in oklch, var(--blue), transparent 80%);
+    color: var(--ink);
   }
 }
 
