@@ -66,7 +66,7 @@ export function NotesPanel({ conversationId, organizationId }: NotesPanelProps) 
       </div>
       <div className="space-y-2">
         {notes.map((note) => (
-          <div key={note.id} className="rounded-md bg-yellow-50 p-2 text-xs dark:bg-yellow-900/20">
+          <div key={note.id} className="rounded-md border border-primary/20 bg-primary/10 p-2 text-xs">
             <p>{note.content}</p>
             <p className="mt-1 text-muted-foreground">
               {new Date(note.created_at).toLocaleString("pt-BR")}

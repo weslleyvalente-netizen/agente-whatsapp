@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Inbox, Bot, Radio, Users, Settings, DollarSign } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
+import { StatusLamp } from "@/components/ui/status-lamp";
 import { cn } from "@/lib/utils";
 
 const navigation = [
@@ -19,12 +20,17 @@ export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-screen w-64 flex-col border-r bg-background">
-      <div className="border-b p-4">
+    <aside className="flex h-screen w-64 flex-col border-r border-sidebar-border bg-sidebar">
+      <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
+        <StatusLamp tone="green" />
+        <span className="label-eyebrow text-muted-foreground">Console online</span>
+      </div>
+
+      <div className="border-b border-sidebar-border p-3">
         <OrgSwitcher />
       </div>
 
-      <nav className="flex-1 space-y-1 p-2">
+      <nav className="flex-1 space-y-0.5 p-2 pl-3">
         {navigation.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
@@ -32,18 +38,23 @@ export function AppSidebar() {
               key={item.name}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "relative flex items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
               )}
             >
+              {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" />}
               <item.icon className="h-4 w-4" />
               {item.name}
             </Link>
           );
         })}
       </nav>
+
+      <div className="border-t border-sidebar-border px-4 py-3">
+        <p className="label-eyebrow">aula-agente</p>
+      </div>
     </aside>
   );
 }

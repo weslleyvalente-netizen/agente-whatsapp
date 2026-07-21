@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Agent } from "@aula-agente/shared";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusLamp } from "@/components/ui/status-lamp";
 import { Bot } from "lucide-react";
 
 interface AgentCardProps {
@@ -22,15 +22,13 @@ export function AgentCard({ agent }: AgentCardProps) {
             <CardTitle className="text-base">{agent.name}</CardTitle>
             <p className="text-sm text-muted-foreground">{agent.description || "Sem descricao"}</p>
           </div>
-          <Badge variant={agent.is_active ? "default" : "secondary"}>
-            {agent.is_active ? "Ativo" : "Inativo"}
-          </Badge>
+          <StatusLamp tone={agent.is_active ? "green" : "off"} label={agent.is_active ? "ativo" : "inativo"} />
         </CardHeader>
         <CardContent>
-          <div className="flex gap-4 text-xs text-muted-foreground">
-            <span>Modelo: {agent.model}</span>
-            <span>Provider: {agent.provider}</span>
-            <span>Temp: {agent.temperature}</span>
+          <div className="tabular-data flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>{agent.model}</span>
+            <span>{agent.provider}</span>
+            <span>temp {agent.temperature}</span>
           </div>
         </CardContent>
       </Card>

@@ -66,27 +66,27 @@ export default function CostsPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardTitle>Custo total</CardTitle>
+            <p className="label-eyebrow">Custo total</p>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{formatUsd(summary.totalCostUsd)}</CardContent>
+          <CardContent className="tabular-data text-2xl font-medium text-primary">{formatUsd(summary.totalCostUsd)}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Hoje</CardTitle>
+            <p className="label-eyebrow">Hoje</p>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{formatUsd(summary.todayCostUsd)}</CardContent>
+          <CardContent className="tabular-data text-2xl font-medium">{formatUsd(summary.todayCostUsd)}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Ultimos 30 dias</CardTitle>
+            <p className="label-eyebrow">Ultimos 30 dias</p>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{formatUsd(summary.last30dCostUsd)}</CardContent>
+          <CardContent className="tabular-data text-2xl font-medium">{formatUsd(summary.last30dCostUsd)}</CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Tokens (input / output)</CardTitle>
+            <p className="label-eyebrow">Tokens (in / out)</p>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">
+          <CardContent className="tabular-data text-2xl font-medium">
             {summary.totalInputTokens.toLocaleString("pt-BR")} / {summary.totalOutputTokens.toLocaleString("pt-BR")}
           </CardContent>
         </Card>
@@ -112,22 +112,22 @@ export default function CostsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-4">Data</th>
-                    <th className="py-2 pr-4">Mensagens</th>
-                    <th className="py-2 pr-4">Tokens (in/out)</th>
-                    <th className="py-2 pr-4">Custo</th>
+                  <tr className="border-b border-border text-left">
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Data</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Mensagens</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Tokens (in/out)</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Custo</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[...summary.dailyCosts].reverse().map((day) => (
-                    <tr key={day.date} className="border-b last:border-0">
-                      <td className="py-2 pr-4">{formatDate(day.date)}</td>
-                      <td className="py-2 pr-4">{day.messageCount}</td>
-                      <td className="py-2 pr-4">
+                    <tr key={day.date} className="border-b border-border last:border-0">
+                      <td className="tabular-data py-2 pr-4">{formatDate(day.date)}</td>
+                      <td className="tabular-data py-2 pr-4">{day.messageCount}</td>
+                      <td className="tabular-data py-2 pr-4">
                         {day.inputTokens.toLocaleString("pt-BR")} / {day.outputTokens.toLocaleString("pt-BR")}
                       </td>
-                      <td className="py-2 pr-4">{formatUsd(day.costUsd)}</td>
+                      <td className="tabular-data py-2 pr-4 text-primary">{formatUsd(day.costUsd)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -146,22 +146,22 @@ export default function CostsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-4">Modelo</th>
-                    <th className="py-2 pr-4">Mensagens</th>
-                    <th className="py-2 pr-4">Tokens (in/out)</th>
-                    <th className="py-2 pr-4">Custo</th>
+                  <tr className="border-b border-border text-left">
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Modelo</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Mensagens</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Tokens (in/out)</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Custo</th>
                   </tr>
                 </thead>
                 <tbody>
                   {summary.byModel.map((m) => (
-                    <tr key={m.model} className="border-b last:border-0">
-                      <td className="py-2 pr-4">{m.model}</td>
-                      <td className="py-2 pr-4">{m.messageCount}</td>
-                      <td className="py-2 pr-4">
+                    <tr key={m.model} className="border-b border-border last:border-0">
+                      <td className="tabular-data py-2 pr-4">{m.model}</td>
+                      <td className="tabular-data py-2 pr-4">{m.messageCount}</td>
+                      <td className="tabular-data py-2 pr-4">
                         {m.inputTokens.toLocaleString("pt-BR")} / {m.outputTokens.toLocaleString("pt-BR")}
                       </td>
-                      <td className="py-2 pr-4">{m.priced ? formatUsd(m.costUsd) : "sem preco"}</td>
+                      <td className="tabular-data py-2 pr-4 text-primary">{m.priced ? formatUsd(m.costUsd) : "sem preco"}</td>
                     </tr>
                   ))}
                 </tbody>

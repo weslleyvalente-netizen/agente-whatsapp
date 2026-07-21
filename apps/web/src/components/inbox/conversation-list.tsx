@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { StatusLamp, type LampTone } from "@/components/ui/status-lamp";
 import { User } from "lucide-react";
 
 interface ConversationItem {
@@ -28,11 +29,11 @@ interface ConversationListProps {
 }
 
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
-  const statusColors: Record<string, string> = {
-    open: "bg-green-500",
-    waiting: "bg-yellow-500",
-    resolved: "bg-blue-500",
-    closed: "bg-gray-500",
+  const statusLamp: Record<string, LampTone> = {
+    open: "green",
+    waiting: "amber",
+    resolved: "off",
+    closed: "off",
   };
 
   return (
@@ -56,7 +57,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               <p className="truncate text-sm font-medium">
                 {conv.wa_contacts.name || conv.wa_contacts.phone}
               </p>
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs text-muted-foreground tabular-data">
                 {new Date(conv.last_message_at).toLocaleTimeString("pt-BR", {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -64,7 +65,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <div className={cn("h-2 w-2 rounded-full", statusColors[conv.status])} />
+              <StatusLamp tone={statusLamp[conv.status] || "off"} pulse={conv.status === "waiting"} />
               <span className="text-xs text-muted-foreground">{conv.agents.name}</span>
               {conv.is_human_takeover && (
                 <Badge variant="outline" className="h-4 px-1 text-[10px]">Humano</Badge>
