@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Inbox, Bot, Radio, Users, Settings, DollarSign } from "lucide-react";
+import { Home, Inbox, Bot, Radio, Users, Settings, DollarSign } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
 import { StatusLamp } from "@/components/ui/status-lamp";
 import { cn } from "@/lib/utils";
 
 const navigation = [
+  { name: "Início", href: "/", icon: Home },
   { name: "Inbox", href: "/inbox", icon: Inbox },
   { name: "Agentes", href: "/agents", icon: Bot },
   { name: "Instancias", href: "/instances", icon: Radio },
@@ -32,7 +33,7 @@ export function AppSidebar() {
 
       <nav className="flex-1 space-y-0.5 p-2 pl-3">
         {navigation.map((item) => {
-          const isActive = pathname.startsWith(item.href);
+          const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
               key={item.name}
