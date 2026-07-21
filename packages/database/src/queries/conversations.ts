@@ -88,6 +88,21 @@ export async function getExpiredTakeovers(client: SupabaseClient, timeoutMs: num
   return data as Conversation[];
 }
 
+export async function getHumanTakeoverConversations(client: SupabaseClient, organizationId: string) {
+  const { data, error } = await client
+    .from("conversations")
+    .select("id, human_takeover_at, wa_contacts(name, phone)")
+    .eq("organization_id", organizationId)
+    .eq("is_human_takeover", true)
+    .order("human_takeover_at", { ascending: true });
+  if (error) throw error;
+  return data as unknown as Array<{
+    id: string;
+    human_takeover_at: string | null;
+    wa_contacts: { name: string | null; phone: string } | null;
+  }>;
+}
+
 export async function addConversationNote(
   client: SupabaseClient,
   note: Omit<ConversationNote, "id" | "created_at" | "updated_at">

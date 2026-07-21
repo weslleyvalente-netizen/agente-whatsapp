@@ -67,3 +67,19 @@ export async function getAgentMessagesForCost(client: SupabaseClient, organizati
   if (error) throw error;
   return data as Pick<Message, "created_at" | "metadata">[];
 }
+
+export async function getMessagesForDashboard(
+  client: SupabaseClient,
+  organizationId: string,
+  sinceISO: string
+) {
+  const { data, error } = await client
+    .from("messages")
+    .select("conversation_id, role, created_at")
+    .eq("organization_id", organizationId)
+    .gte("created_at", sinceISO)
+    .order("conversation_id", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data as Array<{ conversation_id: string; role: string; created_at: string }>;
+}
