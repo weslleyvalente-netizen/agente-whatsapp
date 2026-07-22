@@ -8,13 +8,22 @@ export async function upsertContact(
   name: string | null,
   photoUrl: string | null
 ) {
+  // A webhook delivery without a pushName must not blank out a name we
+  // already have on file for this contact.
+  const { data: existing } = await client
+    .from("wa_contacts")
+    .select("name")
+    .eq("organization_id", organizationId)
+    .eq("phone", phone)
+    .maybeSingle();
+
   const { data, error } = await client
     .from("wa_contacts")
     .upsert(
       {
         organization_id: organizationId,
         phone,
-        name,
+        name: name ?? existing?.name ?? null,
         photo_url: photoUrl,
       },
       { onConflict: "organization_id,phone" }
