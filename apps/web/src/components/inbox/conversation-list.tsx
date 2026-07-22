@@ -68,7 +68,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               <StatusLamp tone={statusLamp[conv.status] || "off"} pulse={conv.status === "waiting"} />
               <span className="text-xs text-muted-foreground">{conv.agents.name}</span>
               {conv.is_human_takeover && (
-                <Badge variant="outline" className="h-4 px-1 text-[10px]">Humano</Badge>
+                <Badge variant="destructive" className="h-4 px-1 text-[10px]">Atenção Humana</Badge>
               )}
             </div>
           </div>

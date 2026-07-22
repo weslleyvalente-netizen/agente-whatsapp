@@ -7,9 +7,19 @@ import { createClient } from "@/lib/supabase/client";
 import { useRealtime } from "@/lib/realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { ChatPanel } from "@/components/inbox/chat-panel";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type FilterTab = "all" | "mine" | "agent" | "others" | "attention";
+
+const FILTER_TABS: Array<{ id: FilterTab; label: string }> = [
+  { id: "all", label: "Todas" },
+  { id: "mine", label: "Minhas" },
+  { id: "agent", label: "Agente" },
+  { id: "others", label: "Outros" },
+  { id: "attention", label: "Atenção" },
+];
 
 export default function InboxPage() {
   const { currentOrg } = useOrganization();
@@ -17,29 +27,30 @@ export default function InboxPage() {
   const searchParams = useSearchParams();
   const [conversations, setConversations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
 
   const selectedId = searchParams.get("id");
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+  }, []);
 
   const fetchConversations = useCallback(async () => {
     if (!currentOrg) return;
     const supabase = createClient();
 
-    let query = supabase
+    const { data } = await supabase
       .from("conversations")
       .select("*, wa_contacts(phone, name), agents(name)")
       .eq("organization_id", currentOrg.id)
       .order("last_message_at", { ascending: false });
 
-    if (statusFilter !== "all") {
-      query = query.eq("status", statusFilter);
-    }
-
-    const { data } = await query;
     setConversations(data || []);
     setLoading(false);
-  }, [currentOrg, statusFilter]);
+  }, [currentOrg]);
 
   useEffect(() => {
     fetchConversations();
@@ -58,7 +69,23 @@ export default function InboxPage() {
     router.push(`/inbox?id=${id}`);
   };
 
+  const matchesTab = (c: any) => {
+    switch (filterTab) {
+      case "mine":
+        return c.assigned_to === userId;
+      case "agent":
+        return !c.is_human_takeover;
+      case "others":
+        return c.assigned_to !== null && c.assigned_to !== userId;
+      case "attention":
+        return c.is_human_takeover === true;
+      default:
+        return true;
+    }
+  };
+
   const filtered = conversations.filter((c) => {
+    if (!matchesTab(c)) return false;
     if (!search) return true;
     const searchLower = search.toLowerCase();
     return (
@@ -83,18 +110,22 @@ export default function InboxPage() {
               className="pl-8"
             />
           </div>
-          <Select value={statusFilter} onValueChange={(v) => v && setStatusFilter(v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Filtrar status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="open">Abertos</SelectItem>
-              <SelectItem value="waiting">Aguardando</SelectItem>
-              <SelectItem value="resolved">Resolvidos</SelectItem>
-              <SelectItem value="closed">Fechados</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap gap-1">
+            {FILTER_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setFilterTab(tab.id)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  filterTab === tab.id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-accent"
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           <ConversationList
