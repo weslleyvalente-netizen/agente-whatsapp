@@ -30,7 +30,7 @@ export const evolutionWebhookPayloadSchema = z.object({
       }).optional(),
     }).passthrough().optional(),
     messageType: z.string(),
-    pushName: z.string().optional(),
+    pushName: z.string().nullable().optional(),
     messageTimestamp: z.number().optional(),
   }),
 });
