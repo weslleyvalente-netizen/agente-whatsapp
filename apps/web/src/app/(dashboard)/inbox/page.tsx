@@ -137,7 +137,7 @@ export default function InboxPage() {
       </div>
 
       {/* Main: Chat Panel */}
-      <div className="flex flex-1 items-center justify-center text-muted-foreground">
+      <div className="flex min-w-0 flex-1 items-center justify-center text-muted-foreground">
         {selectedId ? (
           <ChatPanel conversationId={selectedId} />
         ) : (

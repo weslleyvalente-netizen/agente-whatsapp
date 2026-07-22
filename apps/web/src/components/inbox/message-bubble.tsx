@@ -25,7 +25,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className={cn("flex", isContact ? "justify-start" : "justify-end")}>
       <div
         className={cn(
-          "max-w-[70%] rounded-lg px-3 py-2",
+          "min-w-0 max-w-[70%] rounded-lg px-3 py-2",
           isContact && "bg-muted",
           isAgent && "bg-primary text-primary-foreground",
           isHuman && "bg-steel text-white"
@@ -36,7 +36,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             {isAgent ? "Agente" : "Atendente"}
           </p>
         )}
-        <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+        <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
         <p className={cn(
           "tabular-data mt-1 text-right text-[10px]",
           isContact ? "text-muted-foreground" : "opacity-70"

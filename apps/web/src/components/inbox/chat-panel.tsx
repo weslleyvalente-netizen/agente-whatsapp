@@ -121,7 +121,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
 
   return (
     <div className="flex h-full w-full">
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         {conversation && (
           <ChatHeader
             conversation={conversation}
@@ -131,7 +131,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
