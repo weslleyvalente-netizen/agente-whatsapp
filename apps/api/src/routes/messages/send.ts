@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { sendMessageSchema } from "@aula-agente/shared";
-import { getAdminClient, getConversationById } from "@aula-agente/database";
+import { getAdminClient, getConversationById, updateConversation } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { authMiddleware, requireOrg } from "../../middleware/auth.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -43,6 +43,19 @@ export default async function messageSendRoutes(app: FastifyInstance) {
 
       if (!message) {
         return reply.status(500).send({ error: "Failed to save message" });
+      }
+
+      // A human replying manually takes the conversation over — the AI
+      // agent stops responding until someone explicitly hands it back
+      // (the existing "Devolver ao Agente" toggle). Don't touch takeover
+      // state if a human already owns this conversation — the first
+      // responder keeps ownership.
+      if (!conversation.is_human_takeover) {
+        await updateConversation(db, conversation_id, {
+          is_human_takeover: true,
+          human_takeover_at: new Date().toISOString(),
+          assigned_to: request.user.id,
+        });
       }
 
       // Get instance for sending
