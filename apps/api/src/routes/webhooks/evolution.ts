@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { evolutionWebhookPayloadSchema } from "@aula-agente/shared";
-import { getAdminClient, getInstanceByInstanceId } from "@aula-agente/database";
+import { getAdminClient, getInstanceByInstanceId, updateConversation } from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -60,11 +60,6 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       const payload = parseResult.data;
 
-      // Ignore messages from us
-      if (payload.data.key.fromMe) {
-        return reply.status(200).send({ ok: true, skipped: "fromMe" });
-      }
-
       // Ignore group messages — this agent only handles direct conversations
       if (payload.data.key.remoteJid.endsWith("@g.us")) {
         return reply.status(200).send({ ok: true, skipped: "group_message" });
@@ -105,6 +100,40 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       // Extract message content
       const { content, mediaType } = extractMessageContent(payload.data as Record<string, unknown>);
+
+      if (payload.data.key.fromMe) {
+        // A human replied directly from the connected phone or WhatsApp Web
+        // (not through our inbox) — record it and take the conversation
+        // over exactly like a manual inbox reply does, so the agent stops
+        // auto-replying to the same customer. We don't know which dashboard
+        // user sent it (there's no dashboard session here), so assigned_to
+        // stays unset — it can still be assigned manually afterward.
+        const humanMessage = await saveMessage({
+          conversationId: conversation.id,
+          organizationId,
+          evolutionMessageId,
+          role: "human_agent",
+          content,
+          mediaType: mediaType as any,
+        });
+
+        if (!humanMessage) {
+          return reply.status(200).send({ ok: true, skipped: "duplicate" });
+        }
+
+        if (!conversation.is_human_takeover) {
+          await updateConversation(getAdminClient(), conversation.id, {
+            is_human_takeover: true,
+            human_takeover_at: new Date().toISOString(),
+          });
+        }
+
+        if (isNew) {
+          await syncContactToCrm(contact);
+        }
+
+        return reply.status(200).send({ ok: true, messageId: humanMessage.id, source: "fromMe" });
+      }
 
       // Save message (with idempotency)
       const message = await saveMessage({
