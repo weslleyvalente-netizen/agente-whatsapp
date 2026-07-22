@@ -64,7 +64,7 @@
   --panel: #ffffff;
   --panel-2: #eef2f8;
   --ink: #16233a;
-  --blue: #1656d9;
+  --blue: #0000ff;
   --lamp-green: #0fa36b;
   --lamp-amber: #c9862b;
   --lamp-rust: #d64545;
@@ -141,11 +141,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image:
-      linear-gradient(rgba(22, 86, 217, 0.055) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(22, 86, 217, 0.055) 1px, transparent 1px);
-    background-size: 32px 32px;
-    background-attachment: fixed;
   }
   html {
     @apply font-sans;
