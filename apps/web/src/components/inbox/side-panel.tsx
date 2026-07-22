@@ -1,11 +1,9 @@
 "use client";
 
-import { TakeoverBar } from "./takeover-bar";
+import { AssignSelect } from "./assign-select";
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { createClient } from "@/lib/supabase/client";
 import type { ConversationStatus } from "@aula-agente/shared";
 
 interface SidePanelProps {
@@ -22,15 +20,6 @@ interface SidePanelProps {
 }
 
 export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
-  const handleStatusChange = async (status: string) => {
-    const supabase = createClient();
-    await supabase
-      .from("conversations")
-      .update({ status })
-      .eq("id", conversation.id);
-    onUpdate();
-  };
-
   return (
     <div className="w-72 space-y-4 overflow-y-auto border-l p-4">
       {/* Contact Info */}
@@ -42,28 +31,11 @@ export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
 
       <Separator />
 
-      {/* Status */}
+      {/* Assignment */}
       <div>
-        <h3 className="mb-2 text-sm font-semibold">Status</h3>
-        <Select value={conversation.status} onValueChange={(v) => v && handleStatusChange(v)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">Aberto</SelectItem>
-            <SelectItem value="waiting">Aguardando</SelectItem>
-            <SelectItem value="resolved">Resolvido</SelectItem>
-            <SelectItem value="closed">Fechado</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Separator />
-
-      {/* Takeover */}
-      <div>
-        <h3 className="mb-2 text-sm font-semibold">Atendimento</h3>
-        <TakeoverBar
+        <h3 className="mb-2 text-sm font-semibold">Atribuido a</h3>
+        <AssignSelect
           conversationId={conversation.id}
-          isHumanTakeover={conversation.is_human_takeover}
           assignedTo={conversation.assigned_to}
           organizationId={conversation.organization_id}
           onUpdate={onUpdate}

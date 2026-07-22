@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
 import { MessageBubble } from "./message-bubble";
+import { ChatHeader } from "./chat-header";
 import { SidePanel } from "./side-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +37,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     const supabase = createClient();
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(phone, name)")
+      .select("*, wa_contacts(phone, name), agents(name)")
       .eq("id", conversationId)
       .single();
     setConversation(data);
@@ -61,6 +62,32 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     },
   });
 
+  const handleStatusChange = async (status: string) => {
+    const supabase = createClient();
+    await supabase
+      .from("conversations")
+      .update({ status })
+      .eq("id", conversationId);
+    fetchConversation();
+  };
+
+  const handleTakeoverToggle = async () => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const nextTakeover = !conversation?.is_human_takeover;
+
+    await supabase
+      .from("conversations")
+      .update({
+        is_human_takeover: nextTakeover,
+        human_takeover_at: nextTakeover ? new Date().toISOString() : null,
+        assigned_to: nextTakeover ? user?.id : null,
+      })
+      .eq("id", conversationId);
+
+    fetchConversation();
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
     setSending(true);
@@ -74,6 +101,10 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
         }),
       });
       setInput("");
+      // Task 1's backend change may have just flipped is_human_takeover —
+      // refetch so the header button and the notice bar below reflect it
+      // immediately instead of waiting for the next realtime event.
+      fetchConversation();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao enviar");
     } finally {
@@ -91,13 +122,13 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
   return (
     <div className="flex h-full w-full">
       <div className="flex flex-1 flex-col">
-        {/* Header */}
-        <div className="border-b px-4 py-3">
-          <p className="font-medium">
-            {conversation?.wa_contacts?.name || conversation?.wa_contacts?.phone || "Conversa"}
-          </p>
-          <p className="text-xs text-muted-foreground">{conversation?.wa_contacts?.phone}</p>
-        </div>
+        {conversation && (
+          <ChatHeader
+            conversation={conversation}
+            onStatusChange={handleStatusChange}
+            onTakeoverToggle={handleTakeoverToggle}
+          />
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -107,9 +138,14 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
-        <div className="border-t p-4">
-          <div className="flex gap-2">
+        {/* Notice + Input */}
+        <div className="border-t">
+          {conversation && !conversation.is_human_takeover && (
+            <div className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
+              O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.
+            </div>
+          )}
+          <div className="flex gap-2 p-4">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
