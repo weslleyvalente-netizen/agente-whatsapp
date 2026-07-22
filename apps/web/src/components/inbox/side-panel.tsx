@@ -4,14 +4,11 @@ import { AssignSelect } from "./assign-select";
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
 import { Separator } from "@/components/ui/separator";
-import type { ConversationStatus } from "@aula-agente/shared";
 
 interface SidePanelProps {
   conversation: {
     id: string;
     organization_id: string;
-    status: ConversationStatus;
-    is_human_takeover: boolean;
     assigned_to: string | null;
     tags: string[];
     wa_contacts: { phone: string; name: string | null };

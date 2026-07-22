@@ -72,11 +72,11 @@ export default function InboxPage() {
   const matchesTab = (c: any) => {
     switch (filterTab) {
       case "mine":
-        return c.assigned_to === userId;
+        return userId !== null && c.assigned_to === userId;
       case "agent":
         return !c.is_human_takeover;
       case "others":
-        return c.assigned_to !== null && c.assigned_to !== userId;
+        return userId !== null && c.assigned_to !== null && c.assigned_to !== userId;
       case "attention":
         return c.is_human_takeover === true;
       default:

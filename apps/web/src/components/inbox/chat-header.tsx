@@ -9,7 +9,7 @@ interface ChatHeaderProps {
   conversation: {
     status: ConversationStatus;
     is_human_takeover: boolean;
-    wa_contacts: { phone: string; name: string | null };
+    wa_contacts: { phone: string; name: string | null } | null;
     agents?: { name: string } | null;
   };
   onStatusChange: (status: string) => void;
@@ -21,9 +21,9 @@ export function ChatHeader({ conversation, onStatusChange, onTakeoverToggle }: C
     <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
       <div>
         <p className="font-medium">
-          {conversation.wa_contacts.name || conversation.wa_contacts.phone}
+          {conversation.wa_contacts?.name || conversation.wa_contacts?.phone || "Conversa"}
         </p>
-        <p className="text-xs text-muted-foreground">{conversation.wa_contacts.phone}</p>
+        <p className="text-xs text-muted-foreground">{conversation.wa_contacts?.phone}</p>
         {conversation.agents?.name && (
           <p className="text-xs text-muted-foreground">Agente: {conversation.agents.name}</p>
         )}
