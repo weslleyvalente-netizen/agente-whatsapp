@@ -21,6 +21,15 @@ export async function getConversationsByOrganization(
   return data;
 }
 
+export async function getConversationStatusesByOrganization(client: SupabaseClient, organizationId: string) {
+  const { data, error } = await client
+    .from("conversations")
+    .select("status")
+    .eq("organization_id", organizationId);
+  if (error) throw error;
+  return data as Array<{ status: string }>;
+}
+
 export async function getConversationById(client: SupabaseClient, id: string) {
   const { data, error } = await client
     .from("conversations")

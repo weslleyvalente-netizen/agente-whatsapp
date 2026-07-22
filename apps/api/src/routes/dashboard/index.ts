@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import {
   getAdminClient,
-  getConversationsByOrganization,
+  getConversationStatusesByOrganization,
   getMessagesForDashboard,
   getHumanTakeoverConversations,
   getRecentMessages,
@@ -12,7 +12,6 @@ const WINDOW_DAYS = 7;
 const MAX_URGENT = 20;
 
 interface DashboardConversationRow {
-  id: string;
   status: string;
 }
 
@@ -62,6 +61,8 @@ export function buildDashboardSummary(
       } else if (msg.role === "agent" && pendingContactAt !== null) {
         responseDeltasMs.push(new Date(msg.created_at).getTime() - pendingContactAt);
         pendingContactAt = null;
+      } else if (msg.role === "human_agent" && pendingContactAt !== null) {
+        pendingContactAt = null;
       }
     }
   }
@@ -110,7 +111,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const sinceISO = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
       const [conversations, windowMessages, takeoverConversations] = await Promise.all([
-        getConversationsByOrganization(db, organizationId),
+        getConversationStatusesByOrganization(db, organizationId),
         getMessagesForDashboard(db, organizationId, sinceISO),
         getHumanTakeoverConversations(db, organizationId),
       ]);

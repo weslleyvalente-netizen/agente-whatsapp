@@ -42,8 +42,11 @@ function formatFullDate() {
 
 function formatResponseTime(seconds: number | null) {
   if (seconds === null) return "—";
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  return `${Math.round(seconds / 60)}m`;
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  if (minutes === 0) return `${secs}s`;
+  return `${minutes}m ${secs}s`;
 }
 
 function formatRelativeTime(iso: string) {
@@ -60,16 +63,18 @@ export default function HomePage() {
   const { currentOrg } = useOrganization();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentOrg) return;
     apiFetch(`/organizations/${currentOrg.id}/dashboard/summary`)
       .then(setSummary)
+      .catch(() => setError("Não foi possível carregar o resumo."))
       .finally(() => setLoading(false));
   }, [currentOrg]);
 
   if (loading) return <div>Carregando...</div>;
-  if (!summary) return <div>Nao foi possivel carregar o resumo.</div>;
+  if (error || !summary) return <div>Nao foi possivel carregar o resumo.</div>;
 
   const { text, icon } = greeting();
 
@@ -135,11 +140,11 @@ export default function HomePage() {
                 >
                   <Avatar>
                     <AvatarFallback>
-                      {(c.contactName || c.contactPhone)[0]?.toUpperCase()}
+                      {(c.contactName || c.contactPhone || "?")[0].toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{c.contactName || c.contactPhone}</p>
+                    <p className="truncate text-sm font-medium">{c.contactName || c.contactPhone || "?"}</p>
                     <p className="truncate text-sm text-muted-foreground">{c.lastMessagePreview}</p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">

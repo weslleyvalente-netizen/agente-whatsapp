@@ -61,6 +61,21 @@ describe("buildDashboardSummary", () => {
     expect(result.avgResponseSeconds).toBeNull();
   });
 
+  it("clears the pending contact timestamp on a human_agent reply without counting it as an answer", () => {
+    const humanTakeoverMessages = [
+      // Answered by a human — should be excluded from the average entirely,
+      // and must not stay "pending" to be incorrectly paired with a later bot reply.
+      { conversation_id: "c5", role: "contact", created_at: "2026-07-20T13:00:00.000Z" },
+      { conversation_id: "c5", role: "human_agent", created_at: "2026-07-20T13:00:20.000Z" },
+      // A separate, unrelated contact message later answered by the bot — this is the
+      // only pair that should contribute to the average (40s).
+      { conversation_id: "c5", role: "contact", created_at: "2026-07-20T13:05:00.000Z" },
+      { conversation_id: "c5", role: "agent", created_at: "2026-07-20T13:05:40.000Z" },
+    ];
+    const result = buildDashboardSummary(conversations, humanTakeoverMessages, [], {});
+    expect(result.avgResponseSeconds).toBe(40);
+  });
+
   it("only surfaces takeover conversations whose last message is still from the contact", () => {
     const result = buildDashboardSummary(conversations, [], takeoverConversations, lastMessageByConversationId);
 
