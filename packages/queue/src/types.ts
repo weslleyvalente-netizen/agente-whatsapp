@@ -12,6 +12,9 @@ export interface SendMessageJobData {
   phone: string;
   content: string;
   organizationId: string;
+  mediaUrl?: string;
+  mediaType?: "image";
+  caption?: string;
 }
 
 export interface ProcessDocumentJobData {

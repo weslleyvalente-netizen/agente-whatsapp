@@ -25,16 +25,41 @@ async function sendEvolutionText(instanceName: string, phone: string, text: stri
   return response.json();
 }
 
+async function sendEvolutionMedia(instanceName: string, phone: string, mediaUrl: string, caption: string) {
+  const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
+  const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
+
+  const response = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${instanceName}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: EVOLUTION_API_KEY,
+    },
+    body: JSON.stringify({ number: phone, mediatype: "image", media: mediaUrl, caption }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Evolution API media send error ${response.status}: ${body}`);
+  }
+
+  return response.json();
+}
+
 export function startSendMessageWorker() {
   const worker = new Worker<SendMessageJobData>(
     QUEUE_NAMES.SEND_MESSAGE,
     async (job) => {
-      const { instanceId, phone, content } = job.data;
+      const { instanceId, phone, content, mediaUrl, caption } = job.data;
 
       const db = getAdminClient();
       const instance = await getInstanceById(db, instanceId);
 
-      await sendEvolutionText(instance.instance_name, phone, content);
+      if (mediaUrl) {
+        await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
+      } else {
+        await sendEvolutionText(instance.instance_name, phone, content);
+      }
 
       console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
     },
