@@ -31,7 +31,11 @@ docs) before writing this spec:
 
 Two new agent tools, following the exact pattern of the existing `searchFaq`/`searchKnowledge` tools (Vercel AI SDK `tool()` with a zod `inputSchema` and an `execute` function), registered in `apps/worker/src/agents/tools/registry.ts` and gated by a new `tools_config.send_catalog_photo` boolean (same shape as the two existing toggles).
 
-**`searchCatalog`** — pure read, no side effects. Input: `{ query: string }`. Calls the tRPC endpoint with that query, and returns up to 5 matches to the model as a formatted list: model name, brand, year, price (formatted as `R$ 28.900`), and the **fully-qualified** image URL (`https://catalogomotoetrilha.manus.space` + the relative `imageUrl` — resolved here, not left for the model to construct, since models are unreliable at precise string concatenation). If zero matches, says so plainly so the agent can tell the customer honestly.
+**`searchCatalog`** — pure read, no side effects. Input: `{ query: string }`. Calls the tRPC endpoint with that query, and returns up to 5 matches to the model as a formatted list: model name, brand, year, price (formatted as `R$ 28.900`), and the **fully-qualified** image URL (`https://catalogomotoetrilha.manus.space` + the relative `imageUrl` — resolved here, not left for the model to construct, since models are unreliable at precise string concatenation).
+
+If the query has **zero matches**, the tool doesn't just say "not found" — it re-queries the catalog with an empty search (the full 27-vehicle list already fetched for this same call, no extra HTTP round trip) and returns up to 5 of those alongside an explicit instruction string: `"Nenhum veículo encontrado para '{query}'. Aqui estão outras opções disponíveis no catálogo — se alguma for parecida com o que o cliente quer, sugira antes de dizer que não há disponibilidade:"` followed by that fallback list (same model/brand/year/price/imageUrl shape). This is a working list handed back for the model's own judgment, not a similarity algorithm we compute — the agent (which already knows the conversation's context: budget mentioned, type of vehicle, etc.) decides what's worth suggesting. This relies on the agent's existing multi-step tool-calling budget (`stepCountIs(5)` in `agent-runner.ts`) — no change needed there, a single `searchCatalog` call already returns everything the model needs to both fail gracefully and pivot to a suggestion in the same turn.
+
+This is a tool-design decision, not a prompt-engineering one — the fallback list is worth recommending to whoever tunes the agent's system prompt that it should actively look for and offer close alternatives before saying no, but that's the user's own prompt content, not something this plan touches.
 
 **`sendVehiclePhoto`** — has the real-world side effect. Input: `{ modelo: string, preco: number, imageUrl: string }` — the model fills these in directly from a prior `searchCatalog` result, so there's no second lookup and no id-matching to get wrong. It:
 1. Builds a caption: `"{modelo} — R$ {preco formatted}"`.
@@ -55,6 +59,7 @@ Two new agent tools, following the exact pattern of the existing `searchFaq`/`se
 4. Customer receives the actual photo on WhatsApp with the caption "BROS 160 ESDD ABS — R$ 28.900".
 5. Agent's text reply follows normally, e.g. "Essa é a Bros 160 ESDD ABS por R$ 28.900! Quer saber mais sobre financiamento?"
 6. If the customer had asked something vaguer ("tem moto barata?"), `searchCatalog` would return several matches, and per the earlier decision, the agent asks which one before calling `sendVehiclePhoto` at all.
+7. If the customer asks for something not in the catalog at all ("tem CB500?"), `searchCatalog({ query: "CB500" })` returns zero matches for that query plus the "here's what's available instead" fallback list. The agent can then say something like "Não temos a CB500 no momento, mas temos a YZF R15 e a Bros 160 disponíveis — quer que eu mande a foto de alguma?" — a real suggestion grounded in the actual catalog, not the model inventing a vehicle that doesn't exist.
 
 ## Testing
 
