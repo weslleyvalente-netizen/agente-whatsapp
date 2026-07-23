@@ -54,6 +54,16 @@ describe("formatVehicleList", () => {
     const result = formatVehicleList(many);
     expect(result.split("\n")).toHaveLength(5);
   });
+
+  it("does not prefix an already-absolute imageUrl with the catalog host", () => {
+    const absoluteUrlVehicle = {
+      ...vehicles[3],
+      imageUrl: "https://motos-img.autoflows.com.br/some-org/photo.png",
+    };
+    const result = formatVehicleList([absoluteUrlVehicle]);
+    expect(result).toContain("foto: https://motos-img.autoflows.com.br/some-org/photo.png");
+    expect(result).not.toContain("manus.spacehttps");
+  });
 });
 
 describe("buildCatalogSearchResult", () => {

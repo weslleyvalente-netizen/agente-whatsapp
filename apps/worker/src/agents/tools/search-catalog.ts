@@ -58,12 +58,21 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
   });
 }
 
+// Most catalog entries store a relative path ("/manus-storage/..."), but some
+// (verified live: ~8 of 27, including both electric bikes) already carry a
+// fully-qualified URL from a different host (motos-img.autoflows.com.br,
+// supabase storage). Prefixing those with CATALOG_BASE_URL produced a
+// corrupted, unfetchable URL — only prefix when the value isn't already absolute.
+function resolveImageUrl(imageUrl: string): string {
+  return /^https?:\/\//.test(imageUrl) ? imageUrl : `${CATALOG_BASE_URL}${imageUrl}`;
+}
+
 export function formatVehicleList(vehicles: CatalogVehicle[]): string {
   return vehicles
     .slice(0, 5)
     .map((v) => {
       const price = `R$ ${v.preco.toLocaleString("pt-BR")}`;
-      const imageUrl = `${CATALOG_BASE_URL}${v.imageUrl}`;
+      const imageUrl = resolveImageUrl(v.imageUrl);
       return `- ${v.modelo} (${v.marca}, ${v.ano}) — ${price} — foto: ${imageUrl}`;
     })
     .join("\n");
