@@ -44,8 +44,10 @@ export default function InboxPage() {
 
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(phone, name), agents(name)")
+      .select("*, wa_contacts(phone, name), agents(name), messages(content, created_at)")
       .eq("organization_id", currentOrg.id)
+      .order("created_at", { ascending: false, referencedTable: "messages" })
+      .limit(1, { referencedTable: "messages" })
       .order("last_message_at", { ascending: false });
 
     setConversations(data || []);
@@ -100,31 +102,52 @@ export default function InboxPage() {
     <div className="flex h-[calc(100vh-8rem)] gap-0 -m-6">
       {/* Sidebar: Conversation List */}
       <div className="flex w-80 flex-col border-r">
-        <div className="space-y-2 border-b p-3">
+        <div className="space-y-3 border-b p-3">
+          <h1 className="px-1 text-lg font-heading font-semibold">Conversas</h1>
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Buscar..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
+              className="rounded-full pl-8"
             />
           </div>
-          <div className="flex flex-wrap gap-1">
-            {FILTER_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setFilterTab(tab.id)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                  filterTab === tab.id
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:bg-accent"
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-1.5">
+            {FILTER_TABS.map((tab) => {
+              const isActive = filterTab === tab.id;
+              if (tab.id === "attention") {
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setFilterTab(tab.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      isActive
+                        ? "border-transparent bg-lamp-rust text-white"
+                        : "border-lamp-rust/40 text-lamp-rust hover:bg-lamp-rust/10"
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", isActive ? "bg-white" : "bg-lamp-rust")} />
+                    {tab.label}
+                  </button>
+                );
+              }
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setFilterTab(tab.id)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    isActive
+                      ? "border-transparent bg-primary text-primary-foreground"
+                      : "border-border bg-background text-foreground hover:bg-accent"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">

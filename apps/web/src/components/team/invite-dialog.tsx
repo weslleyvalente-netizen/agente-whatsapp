@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { UserPlus } from "lucide-react";
 
+const ROLE_LABELS: Record<string, string> = { admin: "Admin", agent: "Agente" };
+
 interface InviteDialogProps {
   onInvited: () => void;
 }
@@ -80,7 +82,9 @@ export function InviteDialog({ onInvited }: InviteDialogProps) {
           <div className="space-y-2">
             <Label>Funcao</Label>
             <Select value={role} onValueChange={(v) => v && setRole(v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue>{(value: string) => ROLE_LABELS[value] ?? value}</SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="agent">Agente</SelectItem>

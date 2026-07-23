@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Trash2 } from "lucide-react";
 
+const ROLE_LABELS: Record<string, string> = { admin: "Admin", agent: "Agente" };
+
 interface Member {
   id: string;
   user_id: string;
@@ -68,7 +70,7 @@ export function MembersList({ members, currentUserId, currentUserRole, onRefresh
                 <>
                   <Select value={member.role} onValueChange={(v) => v && handleRoleChange(member.id, v)}>
                     <SelectTrigger className="w-28 h-8">
-                      <SelectValue />
+                      <SelectValue>{(value: string) => ROLE_LABELS[value] ?? value}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>

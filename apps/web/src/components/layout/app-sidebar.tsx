@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const navigation = [
   { name: "Início", href: "/", icon: Home },
-  { name: "Inbox", href: "/inbox", icon: Inbox },
+  { name: "Conversas", href: "/inbox", icon: Inbox },
   { name: "Agentes", href: "/agents", icon: Bot },
   { name: "Instancias", href: "/instances", icon: Radio },
   { name: "Custos", href: "/costs", icon: DollarSign },

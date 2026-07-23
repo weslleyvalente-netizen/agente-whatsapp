@@ -4,11 +4,13 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
+import { useRouter } from "next/navigation";
 import { MessageBubble } from "./message-bubble";
 import { ChatHeader } from "./chat-header";
 import { SidePanel } from "./side-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Send } from "lucide-react";
 import type { Message } from "@aula-agente/shared";
 
@@ -17,10 +19,12 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ conversationId }: ChatPanelProps) {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [conversation, setConversation] = useState<any>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = useCallback(async () => {
@@ -127,6 +131,9 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
             conversation={conversation}
             onStatusChange={handleStatusChange}
             onTakeoverToggle={handleTakeoverToggle}
+            onUpdate={fetchConversation}
+            onOpenDetails={() => setDetailsOpen(true)}
+            onClose={() => router.push("/inbox")}
           />
         )}
 
@@ -152,18 +159,28 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
               onKeyDown={handleKeyDown}
               placeholder="Digite uma mensagem..."
               disabled={sending}
+              className="rounded-full"
             />
-            <Button onClick={handleSend} disabled={sending || !input.trim()} size="icon">
+            <Button
+              onClick={handleSend}
+              disabled={sending || !input.trim()}
+              size="icon"
+              className="rounded-full"
+            >
               <Send className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Side Panel */}
-      {conversation && (
-        <SidePanel conversation={conversation} onUpdate={fetchConversation} />
-      )}
+      <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Detalhes da conversa</SheetTitle>
+          </SheetHeader>
+          {conversation && <SidePanel conversation={conversation} onUpdate={fetchConversation} />}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

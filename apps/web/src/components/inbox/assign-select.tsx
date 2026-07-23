@@ -9,14 +9,22 @@ interface AssignSelectProps {
   assignedTo: string | null;
   organizationId: string;
   onUpdate: () => void;
+  triggerClassName?: string;
 }
 
-export function AssignSelect({ conversationId, assignedTo, organizationId, onUpdate }: AssignSelectProps) {
+export function AssignSelect({
+  conversationId,
+  assignedTo,
+  organizationId,
+  onUpdate,
+  triggerClassName = "w-full",
+}: AssignSelectProps) {
   const [members, setMembers] = useState<Array<{ user_id: string; role: string }>>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
+    const supabase = createClient();
     const fetchMembers = async () => {
-      const supabase = createClient();
       const { data } = await supabase
         .from("organization_members")
         .select("user_id, role")
@@ -24,6 +32,7 @@ export function AssignSelect({ conversationId, assignedTo, organizationId, onUpd
       setMembers(data || []);
     };
     fetchMembers();
+    supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
   }, [organizationId]);
 
   const handleAssign = async (userId: string) => {
@@ -35,16 +44,24 @@ export function AssignSelect({ conversationId, assignedTo, organizationId, onUpd
     onUpdate();
   };
 
+  const memberLabel = (userId: string) => {
+    if (userId === currentUserId) return "Com você";
+    const member = members.find((m) => m.user_id === userId);
+    return member ? `${member.user_id.slice(0, 8)}... (${member.role})` : userId;
+  };
+
   return (
     <Select value={assignedTo || "none"} onValueChange={(v) => v && handleAssign(v)}>
-      <SelectTrigger className="w-full">
-        <SelectValue placeholder="Atribuir a..." />
+      <SelectTrigger className={triggerClassName}>
+        <SelectValue placeholder="Atribuir a...">
+          {(value: string) => (value === "none" ? "Ninguem" : memberLabel(value))}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="none">Ninguem</SelectItem>
         {members.map((m) => (
           <SelectItem key={m.user_id} value={m.user_id}>
-            {m.user_id.slice(0, 8)}... ({m.role})
+            {m.user_id === currentUserId ? "Você" : `${m.user_id.slice(0, 8)}... (${m.role})`}
           </SelectItem>
         ))}
       </SelectContent>

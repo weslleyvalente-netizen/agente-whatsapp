@@ -22,6 +22,8 @@ interface AgentFormProps {
   submitLabel: string;
 }
 
+const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
+
 const MODELS: Record<string, string[]> = {
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
   anthropic: ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
@@ -106,7 +108,9 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
                   form.setValue("model", MODELS[v][0]);
                 }}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>{(value: string) => PROVIDER_LABELS[value] ?? value}</SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="openai">OpenAI</SelectItem>
                   <SelectItem value="anthropic">Anthropic</SelectItem>

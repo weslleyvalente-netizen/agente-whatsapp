@@ -1,15 +1,14 @@
 "use client";
 
-import { AssignSelect } from "./assign-select";
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
 import { Separator } from "@/components/ui/separator";
+import { formatPhone } from "@/lib/utils";
 
 interface SidePanelProps {
   conversation: {
     id: string;
     organization_id: string;
-    assigned_to: string | null;
     tags: string[];
     wa_contacts: { phone: string; name: string | null };
   };
@@ -18,25 +17,12 @@ interface SidePanelProps {
 
 export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
   return (
-    <div className="w-72 space-y-4 overflow-y-auto border-l p-4">
+    <div className="space-y-4 overflow-y-auto p-4">
       {/* Contact Info */}
       <div>
         <h3 className="text-sm font-semibold">Contato</h3>
         <p className="text-sm">{conversation.wa_contacts.name || "Sem nome"}</p>
-        <p className="text-xs text-muted-foreground">{conversation.wa_contacts.phone}</p>
-      </div>
-
-      <Separator />
-
-      {/* Assignment */}
-      <div>
-        <h3 className="mb-2 text-sm font-semibold">Atribuido a</h3>
-        <AssignSelect
-          conversationId={conversation.id}
-          assignedTo={conversation.assigned_to}
-          organizationId={conversation.organization_id}
-          onUpdate={onUpdate}
-        />
+        <p className="text-xs text-muted-foreground">{formatPhone(conversation.wa_contacts.phone)}</p>
       </div>
 
       <Separator />
