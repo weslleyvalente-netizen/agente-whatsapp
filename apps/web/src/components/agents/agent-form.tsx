@@ -39,7 +39,7 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
       provider: "openai",
       temperature: 0.7,
       max_tokens: 1024,
-      tools_config: { search_knowledge: true, search_faq: true },
+      tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: false },
       is_active: true,
       ...defaultValues,
     },
@@ -172,6 +172,17 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
             <Switch
               checked={form.watch("tools_config.search_faq")}
               onCheckedChange={(v) => form.setValue("tools_config.search_faq", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Catálogo de Veículos</p>
+              <p className="text-sm text-muted-foreground">Permite ao agente buscar veículos e enviar fotos pelo WhatsApp</p>
+            </div>
+            <Switch
+              checked={form.watch("tools_config.send_catalog_photo")}
+              onCheckedChange={(v) => form.setValue("tools_config.send_catalog_photo", v)}
             />
           </div>
         </CardContent>

@@ -36,6 +36,13 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             {isAgent ? "Agente" : "Atendente"}
           </p>
         )}
+        {message.media_type === "image" && message.media_url && (
+          <img
+            src={message.media_url}
+            alt="Foto enviada"
+            className="mb-1 max-w-full rounded-md"
+          />
+        )}
         <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
         <p className={cn(
           "tabular-data mt-1 text-right text-[10px]",
