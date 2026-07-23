@@ -1,11 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { filterVehicles, formatVehicleList, buildCatalogSearchResult } from "./search-catalog.js";
+import { filterVehicles, formatVehicleList, buildCatalogSearchResult, findVehicleByModel } from "./search-catalog.js";
 
 const vehicles = [
   { id: 1, modelo: "BROS 160 ESDD ABS", marca: "HONDA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/bros.png", tipo: "moto" as const },
   { id: 2, modelo: "YZF R15 - 155 ABS Gas", marca: "YAMAHA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/r15.png", tipo: "moto" as const },
   { id: 3, modelo: "AVELLOZ AZ1 50CC", marca: "AVELLOZ", ano: 2026, preco: 13900, imageUrl: "/manus-storage/vehicles/az1.png", tipo: "moto" as const },
   { id: 4, modelo: "Bicicleta Eletrica 350w", marca: "ELÉTRICA", ano: 2026, preco: 4900, imageUrl: "/manus-storage/vehicles/bike.png", tipo: "eletrico" as const },
+  {
+    id: 5,
+    modelo: "CELTA LT",
+    marca: "CHEVROLET",
+    ano: 2013,
+    preco: 32900,
+    imageUrl: "/manus-storage/vehicles/celta.png",
+    tipo: "carro" as const,
+    cor: "BRANCO",
+    quilometragem: 180000,
+    descricao: "Completo, com ar condicionado, direção hidráulica",
+  },
 ];
 
 describe("filterVehicles", () => {
@@ -39,6 +51,25 @@ describe("filterVehicles", () => {
   it("does not assume a bare 'scooter' query means electric", () => {
     expect(filterVehicles(vehicles, "scooter")).toEqual([]);
   });
+
+  it("matches by color or description text", () => {
+    expect(filterVehicles(vehicles, "branco")).toEqual([vehicles[4]]);
+    expect(filterVehicles(vehicles, "hidraulica")).toEqual([vehicles[4]]);
+  });
+});
+
+describe("findVehicleByModel", () => {
+  it("matches the exact model name, accent- and case-insensitive", () => {
+    expect(findVehicleByModel(vehicles, "bros 160 esdd abs")).toBe(vehicles[0]);
+  });
+
+  it("matches a shortened or reworded model name", () => {
+    expect(findVehicleByModel(vehicles, "Bicicleta Eletrica 350w — R$ 4.900")).toBe(vehicles[3]);
+  });
+
+  it("returns undefined when nothing matches", () => {
+    expect(findVehicleByModel(vehicles, "CB500")).toBeUndefined();
+  });
 });
 
 describe("formatVehicleList", () => {
@@ -63,6 +94,13 @@ describe("formatVehicleList", () => {
     const result = formatVehicleList([absoluteUrlVehicle]);
     expect(result).toContain("foto: https://motos-img.autoflows.com.br/some-org/photo.png");
     expect(result).not.toContain("manus.spacehttps");
+  });
+
+  it("includes color, mileage and description when the catalog provides them", () => {
+    const result = formatVehicleList([vehicles[4]]);
+    expect(result).toBe(
+      "- CELTA LT (CHEVROLET, BRANCO, 2013, 180.000 km) — R$ 32.900 — Completo, com ar condicionado, direção hidráulica — foto: https://catalogomotoetrilha.manus.space/manus-storage/vehicles/celta.png"
+    );
   });
 });
 
