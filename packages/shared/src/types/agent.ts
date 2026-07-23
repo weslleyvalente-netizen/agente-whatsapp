@@ -19,4 +19,5 @@ export interface Agent {
 export interface ToolsConfig {
   search_knowledge: boolean;
   search_faq: boolean;
+  send_catalog_photo: boolean;
 }

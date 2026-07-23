@@ -38,6 +38,10 @@ export function startProcessMessageWorker() {
           return;
         }
 
+        // Load instance now — needed both by agent tools (to send a photo
+        // mid-turn) and further down to send the text reply.
+        const instance = await getInstanceById(db, conversation.evolution_instance_id);
+
         // Resolve API key for this tenant
         const apiKey = await resolveApiKey(organizationId, agent.provider);
 
@@ -67,47 +71,54 @@ export function startProcessMessageWorker() {
           currentMessage,
           apiKey,
           organizationId,
+          conversationId,
+          instanceId: instance.id,
+          phone: conversation.wa_contacts?.phone || "",
         });
 
-        // Save agent response
-        const responseMessage = await createMessage(db, {
-          conversation_id: conversationId,
-          organization_id: organizationId,
-          evolution_message_id: null,
-          role: "agent",
-          content: result.text,
-          media_url: null,
-          media_type: null,
-          metadata: {
-            model: result.model,
-            input_tokens: result.inputTokens,
-            output_tokens: result.outputTokens,
-            latency_ms: result.latencyMs,
-            tool_calls: result.toolCalls,
-          },
-        });
+        // Save and send the agent's text reply — skipped if the agent's
+        // final text is empty, which now legitimately happens when it only
+        // called sendVehiclePhoto and considered the photo itself the
+        // complete reply (that tool already saved and enqueued its own
+        // message independently of this one).
+        if (result.text.trim()) {
+          const responseMessage = await createMessage(db, {
+            conversation_id: conversationId,
+            organization_id: organizationId,
+            evolution_message_id: null,
+            role: "agent",
+            content: result.text,
+            media_url: null,
+            media_type: null,
+            metadata: {
+              model: result.model,
+              input_tokens: result.inputTokens,
+              output_tokens: result.outputTokens,
+              latency_ms: result.latencyMs,
+              tool_calls: result.toolCalls,
+            },
+          });
+
+          const sendQueue = getSendMessageQueue();
+          await sendQueue.add("send-message", {
+            conversationId,
+            messageId: responseMessage.id,
+            instanceId: instance.id,
+            phone: conversation.wa_contacts?.phone || "",
+            content: result.text,
+            organizationId,
+          });
+
+          console.log(`Processed message ${messageId} -> response ${responseMessage.id}`);
+        } else {
+          console.log(`Processed message ${messageId} -> no text reply (tool-only response)`);
+        }
 
         // Update conversation
         await updateConversation(db, conversationId, {
           last_message_at: new Date().toISOString(),
           status: "waiting",
         });
-
-        // Get instance to send reply
-        const instance = await getInstanceById(db, conversation.evolution_instance_id);
-
-        // Enqueue send message
-        const sendQueue = getSendMessageQueue();
-        await sendQueue.add("send-message", {
-          conversationId,
-          messageId: responseMessage.id,
-          instanceId: instance.id,
-          phone: conversation.wa_contacts?.phone || "",
-          content: result.text,
-          organizationId,
-        });
-
-        console.log(`Processed message ${messageId} -> response ${responseMessage.id}`);
       } finally {
         await releaseConversationLock(conversationId, lockValue);
       }

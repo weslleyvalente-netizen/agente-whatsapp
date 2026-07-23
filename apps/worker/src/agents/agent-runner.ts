@@ -11,6 +11,9 @@ interface RunAgentParams {
   currentMessage: Message;
   apiKey: string;
   organizationId: string;
+  conversationId: string;
+  instanceId: string;
+  phone: string;
 }
 
 interface RunAgentResult {
@@ -49,7 +52,7 @@ function formatHistoryForLLM(messages: Message[]) {
 }
 
 export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> {
-  const { agent, messages, currentMessage, apiKey, organizationId } = params;
+  const { agent, messages, currentMessage, apiKey, organizationId, conversationId, instanceId, phone } = params;
 
   const startTime = Date.now();
 
@@ -60,6 +63,9 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     agentId: agent.id,
     toolsConfig: agent.tools_config,
     apiKey,
+    conversationId,
+    instanceId,
+    phone,
   });
 
   const history = formatHistoryForLLM(messages);
