@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { filterVehicles, formatVehicleList, buildCatalogSearchResult } from "./search-catalog.js";
 
 const vehicles = [
-  { id: 1, modelo: "BROS 160 ESDD ABS", marca: "HONDA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/bros.png" },
-  { id: 2, modelo: "YZF R15 - 155 ABS Gas", marca: "YAMAHA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/r15.png" },
-  { id: 3, modelo: "AVELLOZ AZ1 50CC", marca: "AVELLOZ", ano: 2026, preco: 13900, imageUrl: "/manus-storage/vehicles/az1.png" },
+  { id: 1, modelo: "BROS 160 ESDD ABS", marca: "HONDA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/bros.png", tipo: "moto" as const },
+  { id: 2, modelo: "YZF R15 - 155 ABS Gas", marca: "YAMAHA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/r15.png", tipo: "moto" as const },
+  { id: 3, modelo: "AVELLOZ AZ1 50CC", marca: "AVELLOZ", ano: 2026, preco: 13900, imageUrl: "/manus-storage/vehicles/az1.png", tipo: "moto" as const },
+  { id: 4, modelo: "Bicicleta Eletrica 350w", marca: "ELÉTRICA", ano: 2026, preco: 4900, imageUrl: "/manus-storage/vehicles/bike.png", tipo: "eletrico" as const },
 ];
 
 describe("filterVehicles", () => {
@@ -22,6 +23,21 @@ describe("filterVehicles", () => {
 
   it("returns nothing for a query with no match", () => {
     expect(filterVehicles(vehicles, "CB500")).toEqual([]);
+  });
+
+  it("matches regardless of accents, in either direction", () => {
+    expect(filterVehicles(vehicles, "bicicleta elétrica")).toEqual([vehicles[3]]);
+    expect(filterVehicles(vehicles, "bicicleta eletrica")).toEqual([vehicles[3]]);
+  });
+
+  it("matches a colloquial category word to the vehicle's tipo", () => {
+    expect(filterVehicles(vehicles, "bike elétrica")).toEqual([vehicles[3]]);
+    expect(filterVehicles(vehicles, "scooter elétrica")).toEqual([vehicles[3]]);
+    expect(filterVehicles(vehicles, "moto")).toEqual([vehicles[0], vehicles[1], vehicles[2]]);
+  });
+
+  it("does not assume a bare 'scooter' query means electric", () => {
+    expect(filterVehicles(vehicles, "scooter")).toEqual([]);
   });
 });
 

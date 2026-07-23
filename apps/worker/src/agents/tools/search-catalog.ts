@@ -10,14 +10,52 @@ interface CatalogVehicle {
   ano: number;
   preco: number;
   imageUrl: string;
+  tipo?: "moto" | "carro" | "eletrico";
 }
 
+// Customers type accents ("elétrica") the catalog's own data doesn't consistently
+// use ("Eletrica", "ELetrica") — strip diacritics on both sides before comparing.
+function normalize(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+// Words customers use that don't literally appear in any modelo/marca string —
+// "bike"/"scooter" name a category, not a model. "scooter" is deliberately not
+// mapped here: this catalog's gas scooters (Nmax, Aerox) are tipo "moto", so a
+// bare "scooter" query should fall through to normal matching, not assume electric.
+const TYPE_BY_WORD: Record<string, CatalogVehicle["tipo"]> = {
+  moto: "moto",
+  motos: "moto",
+  motocicleta: "moto",
+  motocicletas: "moto",
+  carro: "carro",
+  carros: "carro",
+  automovel: "carro",
+  automoveis: "carro",
+  bicicleta: "eletrico",
+  bicicletas: "eletrico",
+  bike: "eletrico",
+  bikes: "eletrico",
+};
+
 export function filterVehicles(vehicles: CatalogVehicle[], query: string): CatalogVehicle[] {
-  const q = query.trim().toLowerCase();
+  const q = normalize(query.trim());
   if (!q) return vehicles;
-  return vehicles.filter(
-    (v) => v.modelo.toLowerCase().includes(q) || v.marca.toLowerCase().includes(q)
-  );
+
+  const impliedTypes = new Set<CatalogVehicle["tipo"]>();
+  for (const word of q.split(/\s+/)) {
+    if (word.startsWith("eletric")) impliedTypes.add("eletrico");
+    const mapped = TYPE_BY_WORD[word];
+    if (mapped) impliedTypes.add(mapped);
+  }
+
+  return vehicles.filter((v) => {
+    if (normalize(v.modelo).includes(q) || normalize(v.marca).includes(q)) return true;
+    return v.tipo !== undefined && impliedTypes.has(v.tipo);
+  });
 }
 
 export function formatVehicleList(vehicles: CatalogVehicle[]): string {
