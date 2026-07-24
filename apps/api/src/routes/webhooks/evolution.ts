@@ -7,15 +7,23 @@ import { saveMessage } from "../../services/message.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
-function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null } {
+// Every path through this function must return non-empty content: it's
+// stored as message text and later replayed verbatim into the Anthropic
+// Messages API, which rejects the entire request if any message in the
+// conversation has empty content — one empty-content row anywhere in the
+// last 20 messages permanently blocks every future agent reply in that
+// conversation (verified live against a real stuck conversation).
+const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
+
+export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null } {
   const message = data.message as Record<string, unknown> | undefined;
   const messageType = data.messageType as string;
 
-  if (!message) return { content: "", mediaType: null };
+  if (!message) return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
 
   switch (messageType) {
     case "conversation":
-      return { content: (message.conversation as string) || "", mediaType: null };
+      return { content: (message.conversation as string) || UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
     case "imageMessage":
       return {
         content: (message.imageMessage as Record<string, string>)?.caption || "[imagem]",
@@ -43,7 +51,7 @@ function extractMessageContent(data: Record<string, unknown>): { content: string
       };
     }
     default:
-      return { content: "", mediaType: null };
+      return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
   }
 }
 
