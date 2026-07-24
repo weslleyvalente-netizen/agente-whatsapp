@@ -1,7 +1,7 @@
 import { getRedisConnection } from "@aula-agente/queue";
 
 const LOCK_PREFIX = "lock:conversation:";
-const LOCK_TTL_MS = 60_000; // 60 seconds max lock
+const LOCK_TTL_MS = 120_000; // 120 seconds max lock — audio transcription (Evolution fetch + Whisper, each individually timeout-bounded at 20s/30s) plus agent processing can legitimately take longer than the original 60s budget for a near-the-cap voice note.
 const RETRY_DELAY_MS = 500;
 const MAX_RETRIES = 20; // 10 seconds max wait
 

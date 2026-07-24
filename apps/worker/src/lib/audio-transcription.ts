@@ -20,6 +20,7 @@ async function fetchAudioAsMp4(instanceName: string, evolutionMessageId: string)
       message: { key: { id: evolutionMessageId } },
       convertToMp4: true,
     }),
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {
@@ -55,6 +56,7 @@ async function transcribeWithWhisper(base64Audio: string, mimetype: string, apiK
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
