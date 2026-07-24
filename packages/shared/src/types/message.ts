@@ -21,4 +21,5 @@ export interface MessageMetadata {
   output_tokens?: number;
   latency_ms?: number;
   tool_calls?: string[];
+  duration_seconds?: number;
 }

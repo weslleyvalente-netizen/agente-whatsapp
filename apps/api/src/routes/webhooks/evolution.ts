@@ -15,7 +15,7 @@ import { syncContactToCrm } from "../../integrations/crm-sync.js";
 // conversation (verified live against a real stuck conversation).
 const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
 
-export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null } {
+export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null; durationSeconds?: number } {
   const message = data.message as Record<string, unknown> | undefined;
   const messageType = data.messageType as string;
 
@@ -29,8 +29,11 @@ export function extractMessageContent(data: Record<string, unknown>): { content:
         content: (message.imageMessage as Record<string, string>)?.caption || "[imagem]",
         mediaType: "image",
       };
-    case "audioMessage":
-      return { content: "[audio]", mediaType: "audio" };
+    case "audioMessage": {
+      const audio = message.audioMessage as Record<string, unknown> | undefined;
+      const seconds = typeof audio?.seconds === "number" ? audio.seconds : undefined;
+      return { content: "[audio]", mediaType: "audio", durationSeconds: seconds };
+    }
     case "videoMessage":
       return {
         content: (message.videoMessage as Record<string, string>)?.caption || "[video]",
@@ -107,7 +110,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       });
 
       // Extract message content
-      const { content, mediaType } = extractMessageContent(payload.data as Record<string, unknown>);
+      const { content, mediaType, durationSeconds } = extractMessageContent(payload.data as Record<string, unknown>);
 
       if (payload.data.key.fromMe) {
         // A human replied directly from the connected phone or WhatsApp Web
@@ -151,6 +154,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         role: "contact",
         content,
         mediaType: mediaType as any,
+        metadata: durationSeconds !== undefined ? { duration_seconds: durationSeconds } : undefined,
       });
 
       // If message was already processed (duplicate webhook), skip

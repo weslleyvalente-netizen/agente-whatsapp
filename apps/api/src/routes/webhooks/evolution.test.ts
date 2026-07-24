@@ -33,6 +33,22 @@ describe("extractMessageContent", () => {
     expect(result.content).toBe("[mensagem não suportada]");
   });
 
+  it("passes through the voice note duration for audio messages", () => {
+    const result = extractMessageContent({
+      messageType: "audioMessage",
+      message: { audioMessage: { seconds: 12 } },
+    });
+    expect(result).toEqual({ content: "[audio]", mediaType: "audio", durationSeconds: 12 });
+  });
+
+  it("omits durationSeconds when the audio message has no seconds field", () => {
+    const result = extractMessageContent({
+      messageType: "audioMessage",
+      message: { audioMessage: {} },
+    });
+    expect(result.durationSeconds).toBeUndefined();
+  });
+
   it("never returns empty content, across every message type", () => {
     const types = [
       "conversation",
