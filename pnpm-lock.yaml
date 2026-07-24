@@ -160,6 +160,9 @@ importers:
       '@aula-agente/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@supabase/supabase-js':
+        specifier: ^2.49.0
+        version: 2.110.1
       ai:
         specifier: ^7.0.18
         version: 7.0.18(zod@3.25.76)

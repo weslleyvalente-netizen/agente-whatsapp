@@ -44,6 +44,11 @@ export async function createMessage(
   return data as Message;
 }
 
+export async function updateMessageContent(client: SupabaseClient, id: string, content: string) {
+  const { error } = await client.from("messages").update({ content }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function messageExistsByEvolutionId(
   client: SupabaseClient,
   evolutionMessageId: string

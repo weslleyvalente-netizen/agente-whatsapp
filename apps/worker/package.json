@@ -17,6 +17,7 @@
     "@aula-agente/database": "workspace:*",
     "@aula-agente/queue": "workspace:*",
     "@aula-agente/shared": "workspace:*",
+    "@supabase/supabase-js": "^2.49.0",
     "ai": "^7.0.18",
     "bullmq": "^5.30.0",
     "dotenv": "^16.4.0",

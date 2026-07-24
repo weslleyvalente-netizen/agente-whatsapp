@@ -1,13 +1,46 @@
 import { Worker } from "bullmq";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { ProcessMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection, getSendMessageQueue } from "@aula-agente/queue";
 import { getAdminClient, getAgentById, getRecentMessages, getConversationById } from "@aula-agente/database";
-import { createMessage, updateConversation } from "@aula-agente/database";
+import { createMessage, updateConversation, updateMessageContent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 import { resolveApiKey } from "../lib/vault.js";
 import { runAgent } from "../agents/agent-runner.js";
+import { transcribeAudioMessage } from "../lib/audio-transcription.js";
+
+const AUDIO_DURATION_CAP_SECONDS = 300;
+const AUDIO_FALLBACK_TEXT =
+  "Desculpa, não consegui entender esse áudio 🙏 Pode escrever a mensagem, por favor?";
+
+async function sendFallbackText(
+  db: SupabaseClient,
+  text: string,
+  params: { conversationId: string; organizationId: string; instanceId: string; phone: string }
+) {
+  const responseMessage = await createMessage(db, {
+    conversation_id: params.conversationId,
+    organization_id: params.organizationId,
+    evolution_message_id: null,
+    role: "agent",
+    content: text,
+    media_url: null,
+    media_type: null,
+    metadata: null,
+  });
+
+  const sendQueue = getSendMessageQueue();
+  await sendQueue.add("send-message", {
+    conversationId: params.conversationId,
+    messageId: responseMessage.id,
+    instanceId: params.instanceId,
+    phone: params.phone,
+    content: text,
+    organizationId: params.organizationId,
+  });
+}
 
 export function startProcessMessageWorker() {
   const worker = new Worker<ProcessMessageJobData>(
@@ -41,6 +74,7 @@ export function startProcessMessageWorker() {
         // Load instance now — needed both by agent tools (to send a photo
         // mid-turn) and further down to send the text reply.
         const instance = await getInstanceById(db, conversation.evolution_instance_id);
+        const phone = conversation.wa_contacts?.phone || "";
 
         // Resolve API key for this tenant
         const apiKey = await resolveApiKey(organizationId, agent.provider);
@@ -61,6 +95,50 @@ export function startProcessMessageWorker() {
           return;
         }
 
+        // Voice notes arrive with a "[audio]" placeholder — transcribe it to
+        // real text before the agent ever sees it. This runs here (not in
+        // the webhook) so the webhook keeps acking Evolution fast regardless
+        // of transcription latency. Any failure (missing key, fetch error,
+        // transcription error, empty transcript, or too-long audio) sends a
+        // fixed "please type instead" reply and skips the LLM entirely.
+        let effectiveMessage = currentMessage;
+
+        if (currentMessage.media_type === "audio") {
+          const durationSeconds = currentMessage.metadata?.duration_seconds;
+
+          if (typeof durationSeconds === "number" && durationSeconds > AUDIO_DURATION_CAP_SECONDS) {
+            console.log(`Message ${messageId} audio exceeds ${AUDIO_DURATION_CAP_SECONDS}s cap, skipping transcription`);
+            await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
+              conversationId,
+              organizationId,
+              instanceId: instance.id,
+              phone,
+            });
+            return;
+          }
+
+          const transcription = await transcribeAudioMessage({
+            instanceName: instance.instance_name,
+            evolutionMessageId: currentMessage.evolution_message_id!,
+            organizationId,
+          });
+
+          if (!transcription.ok) {
+            console.log(`Message ${messageId} transcription failed: ${transcription.reason}`);
+            await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
+              conversationId,
+              organizationId,
+              instanceId: instance.id,
+              phone,
+            });
+            return;
+          }
+
+          const transcribedContent = `🎤 ${transcription.text}`;
+          await updateMessageContent(db, currentMessage.id, transcribedContent);
+          effectiveMessage = { ...currentMessage, content: transcribedContent };
+        }
+
         // Remove current message from history
         const history = recentMessages.filter((m) => m.id !== messageId);
 
@@ -68,12 +146,12 @@ export function startProcessMessageWorker() {
         const result = await runAgent({
           agent,
           messages: history,
-          currentMessage,
+          currentMessage: effectiveMessage,
           apiKey,
           organizationId,
           conversationId,
           instanceId: instance.id,
-          phone: conversation.wa_contacts?.phone || "",
+          phone,
         });
 
         // Save and send the agent's text reply — skipped if the agent's
@@ -104,7 +182,7 @@ export function startProcessMessageWorker() {
             conversationId,
             messageId: responseMessage.id,
             instanceId: instance.id,
-            phone: conversation.wa_contacts?.phone || "",
+            phone,
             content: result.text,
             organizationId,
           });

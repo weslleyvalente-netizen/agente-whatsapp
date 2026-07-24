@@ -64,6 +64,9 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     onInsert: (newMsg) => {
       setMessages((prev) => [...prev, newMsg]);
     },
+    onUpdate: (updatedMsg) => {
+      setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)));
+    },
   });
 
   const handleStatusChange = async (status: string) => {
