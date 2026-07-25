@@ -48,6 +48,8 @@ function RescheduleDialog({ task, onRescheduled }: { task: Task; onRescheduled: 
       });
       setOpen(false);
       onRescheduled();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao reagendar tarefa");
     } finally {
       setSaving(false);
     }
@@ -84,14 +86,22 @@ export function TaskCard({ task, organizationId, memberEmailsById, onRefresh }: 
   const isOpen = task.status !== "completed" && task.status !== "cancelled";
 
   const handleComplete = async () => {
-    await apiFetch(`/tasks/${task.id}/complete`, { method: "POST" });
-    onRefresh();
+    try {
+      await apiFetch(`/tasks/${task.id}/complete`, { method: "POST" });
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao concluir tarefa");
+    }
   };
 
   const handleCancel = async () => {
     if (!confirm("Cancelar esta tarefa?")) return;
-    await apiFetch(`/tasks/${task.id}/cancel`, { method: "POST", body: JSON.stringify({}) });
-    onRefresh();
+    try {
+      await apiFetch(`/tasks/${task.id}/cancel`, { method: "POST", body: JSON.stringify({}) });
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao cancelar tarefa");
+    }
   };
 
   return (

@@ -97,6 +97,7 @@ export function ChatHeader({
 
         {conversation.wa_contacts && (
           <TaskDialog
+            key={conversation.id}
             organizationId={conversation.organization_id}
             presetContact={conversation.wa_contacts}
             presetConversationId={conversation.id}

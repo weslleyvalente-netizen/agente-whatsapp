@@ -18,28 +18,37 @@ export function createCreateTaskTool(context: CreateTaskToolContext) {
       description: z.string().describe("Descrição curta e específica do que aconteceu e o que fazer"),
       due_date: z
         .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato YYYY-MM-DD")
         .describe("Data em que a tarefa deve ser feita, formato YYYY-MM-DD, calculada a partir da data atual informada no seu prompt"),
       priority: z.enum(TASK_PRIORITIES).default("normal"),
       reason: z.string().describe("Por que essa tarefa está sendo criada, com base na conversa"),
     }),
     execute: async ({ type, description, due_date, priority, reason }) => {
-      const db = getAdminClient();
-      const { task, wasUpdated } = await createTaskWithDedup(db, {
-        organization_id: context.organizationId,
-        contact_id: context.contactId,
-        conversation_id: context.conversationId,
-        type,
-        description,
-        reason,
-        priority,
-        due_date,
-        created_by_type: "ai",
-        created_by_id: null,
-      });
+      // A throw here would reject the whole generateText call and leave the
+      // customer with no reply at all, so surface failures to the model as a
+      // string it can react to instead.
+      try {
+        const db = getAdminClient();
+        const { task, wasUpdated } = await createTaskWithDedup(db, {
+          organization_id: context.organizationId,
+          contact_id: context.contactId,
+          conversation_id: context.conversationId,
+          type,
+          description,
+          reason,
+          priority,
+          due_date,
+          created_by_type: "ai",
+          created_by_id: null,
+        });
 
-      return wasUpdated
-        ? `Já existia uma tarefa aberta parecida ("${task.title}") — atualizada para ${due_date}.`
-        : `Tarefa criada: "${task.title}" para ${due_date}.`;
+        return wasUpdated
+          ? `Já existia uma tarefa aberta parecida ("${task.title}") — atualizada para ${due_date}.`
+          : `Tarefa criada: "${task.title}" para ${due_date}.`;
+      } catch (err) {
+        console.error("createTask tool failed:", err);
+        return "Não foi possível registrar a tarefa agora — tente novamente em instantes.";
+      }
     },
   });
 }

@@ -4,7 +4,7 @@ CREATE TABLE tasks (
   contact_id         uuid NOT NULL REFERENCES wa_contacts(id) ON DELETE CASCADE,
   conversation_id    uuid REFERENCES conversations(id) ON DELETE SET NULL,
   assignee_type      text CHECK (assignee_type IN ('human', 'ai')),
-  assignee_id        uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  assignee_id        uuid REFERENCES auth.users(id),
   type               text NOT NULL,
   title              text NOT NULL,
   description        text NOT NULL DEFAULT '',
