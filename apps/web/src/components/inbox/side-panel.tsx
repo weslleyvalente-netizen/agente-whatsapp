@@ -2,6 +2,7 @@
 
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
+import { TaskHistoryPanel } from "@/components/tasks/task-history-panel";
 import { Separator } from "@/components/ui/separator";
 import { formatPhone } from "@/lib/utils";
 
@@ -10,7 +11,7 @@ interface SidePanelProps {
     id: string;
     organization_id: string;
     tags: string[];
-    wa_contacts: { phone: string; name: string | null };
+    wa_contacts: { id: string; phone: string; name: string | null };
   };
   onUpdate: () => void;
 }
@@ -46,6 +47,14 @@ export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
           conversationId={conversation.id}
           organizationId={conversation.organization_id}
         />
+      </div>
+
+      <Separator />
+
+      {/* Task history */}
+      <div>
+        <h3 className="mb-2 text-sm font-semibold">Tarefas</h3>
+        <TaskHistoryPanel contactId={conversation.wa_contacts.id} />
       </div>
     </div>
   );

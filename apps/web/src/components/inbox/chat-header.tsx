@@ -3,7 +3,8 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { AssignSelect } from "./assign-select";
-import { UserCheck, Bot, Info, X } from "lucide-react";
+import { TaskDialog } from "@/components/tasks/task-dialog";
+import { UserCheck, Bot, Info, X, ListChecks } from "lucide-react";
 import type { ConversationStatus } from "@aula-agente/shared";
 import { formatPhone } from "@/lib/utils";
 
@@ -24,7 +25,7 @@ interface ChatHeaderProps {
     assigned_to: string | null;
     status: ConversationStatus;
     is_human_takeover: boolean;
-    wa_contacts: { phone: string; name: string | null } | null;
+    wa_contacts: { id: string; phone: string; name: string | null } | null;
     agents?: { name: string } | null;
   };
   onStatusChange: (status: string) => void;
@@ -93,6 +94,22 @@ export function ChatHeader({
             </>
           )}
         </Button>
+
+        {conversation.wa_contacts && (
+          <TaskDialog
+            organizationId={conversation.organization_id}
+            presetContact={conversation.wa_contacts}
+            presetConversationId={conversation.id}
+            triggerButton={<Button variant="outline" size="sm" className="rounded-full" />}
+            triggerLabel={
+              <>
+                <ListChecks className="mr-1.5 h-3.5 w-3.5" />
+                Criar tarefa
+              </>
+            }
+            onSaved={() => {}}
+          />
+        )}
 
         <Button variant="ghost" size="icon" onClick={onOpenDetails} aria-label="Detalhes da conversa">
           <Info className="h-4 w-4" />

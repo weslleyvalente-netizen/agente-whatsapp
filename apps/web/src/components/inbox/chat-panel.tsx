@@ -41,7 +41,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     const supabase = createClient();
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(phone, name), agents(name)")
+      .select("*, wa_contacts(id, phone, name), agents(name)")
       .eq("id", conversationId)
       .single();
     setConversation(data);
