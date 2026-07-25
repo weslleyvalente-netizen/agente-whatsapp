@@ -4,10 +4,12 @@ export {
   getSendMessageQueue,
   getProcessDocumentQueue,
   getTakeoverTimeoutQueue,
+  getStaleConversationFollowupQueue,
 } from "./queues.js";
 export type {
   ProcessMessageJobData,
   SendMessageJobData,
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
+  StaleConversationFollowupJobData,
 } from "./types.js";

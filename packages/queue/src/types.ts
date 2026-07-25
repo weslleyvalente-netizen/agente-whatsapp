@@ -26,3 +26,7 @@ export interface ProcessDocumentJobData {
 export interface TakeoverTimeoutJobData {
   // no data needed — scans all expired takeovers
 }
+
+export interface StaleConversationFollowupJobData {
+  // no data needed — scans all organizations
+}

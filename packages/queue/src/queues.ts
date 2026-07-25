@@ -6,12 +6,14 @@ import type {
   SendMessageJobData,
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
+  StaleConversationFollowupJobData,
 } from "./types.js";
 
 let processMessageQueue: Queue<ProcessMessageJobData> | null = null;
 let sendMessageQueue: Queue<SendMessageJobData> | null = null;
 let processDocumentQueue: Queue<ProcessDocumentJobData> | null = null;
 let takeoverTimeoutQueue: Queue<TakeoverTimeoutJobData> | null = null;
+let staleConversationFollowupQueue: Queue<StaleConversationFollowupJobData> | null = null;
 
 export function getProcessMessageQueue() {
   if (!processMessageQueue) {
@@ -65,4 +67,14 @@ export function getTakeoverTimeoutQueue() {
     });
   }
   return takeoverTimeoutQueue;
+}
+
+export function getStaleConversationFollowupQueue() {
+  if (!staleConversationFollowupQueue) {
+    staleConversationFollowupQueue = new Queue<StaleConversationFollowupJobData>(
+      QUEUE_NAMES.STALE_CONVERSATION_FOLLOWUP,
+      { connection: getRedisConnection() }
+    );
+  }
+  return staleConversationFollowupQueue;
 }

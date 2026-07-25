@@ -3,6 +3,7 @@ import { startProcessMessageWorker } from "./workers/process-message.js";
 import { startSendMessageWorker } from "./workers/send-message.js";
 import { startProcessDocumentWorker } from "./workers/process-document.js";
 import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout.js";
+import { startStaleConversationFollowupWorker } from "./workers/stale-conversation-followup.js";
 
 async function main() {
   console.log("Starting workers...");
@@ -12,6 +13,7 @@ async function main() {
     startSendMessageWorker(),
     startProcessDocumentWorker(),
     startTakeoverTimeoutWorker(),
+    startStaleConversationFollowupWorker(),
   ];
 
   console.log(`${workers.length} workers started successfully`);
