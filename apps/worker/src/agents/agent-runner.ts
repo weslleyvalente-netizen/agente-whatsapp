@@ -3,6 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message } from "@aula-agente/shared";
+import { formatDateTimeForPrompt } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
 
 interface RunAgentParams {
@@ -44,6 +45,10 @@ function createModel(provider: LLMProvider, modelName: string, apiKey: string) {
   }
 }
 
+export function buildSystemPrompt(basePrompt: string, now: Date): string {
+  return `${basePrompt}\n\nData e hora atual: ${formatDateTimeForPrompt(now)}`;
+}
+
 export function formatHistoryForLLM(messages: Message[]) {
   // Unsupported WhatsApp events (reactions, protocol messages, etc.) are
   // saved with empty content. The Anthropic API rejects the entire request
@@ -79,7 +84,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const result = await generateText({
     model,
-    system: agent.system_prompt,
+    system: buildSystemPrompt(agent.system_prompt, new Date()),
     messages: [
       ...history,
       { role: "user", content: currentMessage.content },

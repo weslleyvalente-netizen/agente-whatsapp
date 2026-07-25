@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatHistoryForLLM } from "./agent-runner.js";
+import { formatHistoryForLLM, buildSystemPrompt } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
 
 function makeMessage(overrides: Partial<Message>): Message {
@@ -48,5 +48,13 @@ describe("formatHistoryForLLM", () => {
       { role: "user", content: "Oi" },
       { role: "assistant", content: "Tudo bem?" },
     ]);
+  });
+});
+
+describe("buildSystemPrompt", () => {
+  it("appends the current date and time, in pt-BR, São Paulo time, after the base prompt", () => {
+    const now = new Date("2026-07-24T17:32:00.000Z"); // 14:32 in São Paulo (UTC-3)
+    const result = buildSystemPrompt("Você é a Helena.", now);
+    expect(result).toBe("Você é a Helena.\n\nData e hora atual: sexta-feira, 24 de julho de 2026 às 14:32");
   });
 });
