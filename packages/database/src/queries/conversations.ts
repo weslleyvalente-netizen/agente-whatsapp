@@ -104,13 +104,13 @@ export async function getStaleWaitingConversations(
 ) {
   const { data, error } = await client
     .from("conversations")
-    .select("id, contact_id")
+    .select("id, contact_id, last_message_at")
     .eq("organization_id", organizationId)
     .eq("status", "waiting")
     .eq("is_human_takeover", false)
     .lt("last_message_at", cutoffISO);
   if (error) throw error;
-  return data as Array<{ id: string; contact_id: string }>;
+  return data as Array<{ id: string; contact_id: string; last_message_at: string }>;
 }
 
 export async function getHumanTakeoverConversations(client: SupabaseClient, organizationId: string) {

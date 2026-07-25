@@ -63,6 +63,25 @@ export async function getOpenTaskByConversation(
   return data as Task | null;
 }
 
+export async function getLatestTaskByConversationAndType(
+  client: SupabaseClient,
+  organizationId: string,
+  conversationId: string,
+  type: TaskType
+) {
+  const { data, error } = await client
+    .from("tasks")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("conversation_id", conversationId)
+    .eq("type", type)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data as Task | null;
+}
+
 export async function hasOpportunitySignalTask(
   client: SupabaseClient,
   organizationId: string,

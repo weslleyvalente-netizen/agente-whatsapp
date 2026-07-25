@@ -4,7 +4,12 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api";
-import { resolveTaskBucket, computeTaskSummary, type TaskBucket } from "@aula-agente/shared";
+import {
+  resolveTaskBucket,
+  computeTaskSummary,
+  toISODateInTimeZone,
+  type TaskBucket,
+} from "@aula-agente/shared";
 import { TaskList } from "@/components/tasks/task-list";
 import { TaskDialog } from "@/components/tasks/task-dialog";
 import { Button } from "@/components/ui/button";
@@ -18,10 +23,6 @@ const TABS: Array<{ id: TaskBucket; label: string }> = [
   { id: "upcoming", label: "Próximas" },
   { id: "done", label: "Concluídas" },
 ];
-
-function todayISODate() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export default function TasksPage() {
   const { currentOrg } = useOrganization();
@@ -59,7 +60,7 @@ export default function TasksPage() {
     fetchMembers();
   }, [fetchTasks, fetchMembers]);
 
-  const today = todayISODate();
+  const today = toISODateInTimeZone(new Date());
 
   const bucketed = useMemo(() => {
     const groups: Record<TaskBucket, TaskWithRelations[]> = { today: [], overdue: [], upcoming: [], done: [] };

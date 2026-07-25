@@ -9,7 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TASK_TYPES, TASK_TYPE_LABELS, TASK_PRIORITIES, TASK_PRIORITY_LABELS } from "@aula-agente/shared";
+import {
+  TASK_TYPES,
+  TASK_TYPE_LABELS,
+  TASK_PRIORITIES,
+  TASK_PRIORITY_LABELS,
+  toISODateInTimeZone,
+} from "@aula-agente/shared";
 import type { Task, TaskType, TaskPriority } from "@aula-agente/shared";
 
 interface ContactOption {
@@ -32,10 +38,6 @@ interface TaskDialogProps {
   triggerButton: ReactElement;
   triggerLabel: ReactNode;
   onSaved: () => void;
-}
-
-function todayISODate() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export function TaskDialog({
@@ -61,7 +63,7 @@ export function TaskDialog({
   const [type, setType] = useState<TaskType>(task?.type ?? "return_customer");
   const [description, setDescription] = useState(task?.description ?? "");
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "normal");
-  const [dueDate, setDueDate] = useState(task?.due_date ?? todayISODate());
+  const [dueDate, setDueDate] = useState(task?.due_date ?? toISODateInTimeZone(new Date()));
   const [dueTime, setDueTime] = useState(task?.due_time ?? "");
   const [assigneeValue, setAssigneeValue] = useState(
     task?.assignee_type === "human"
@@ -150,7 +152,7 @@ export function TaskDialog({
         setType("return_customer");
         setDescription("");
         setPriority("normal");
-        setDueDate(todayISODate());
+        setDueDate(toISODateInTimeZone(new Date()));
         setDueTime("");
         setAssigneeValue("none");
       }

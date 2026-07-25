@@ -7,6 +7,7 @@ import {
   getAllOrganizations,
   getStaleWaitingConversations,
   getOpenTaskByConversation,
+  getLatestTaskByConversationAndType,
   hasOpportunitySignalTask,
   createTaskWithDedup,
 } from "@aula-agente/database";
@@ -32,6 +33,16 @@ export function startStaleConversationFollowupWorker() {
         for (const conversation of staleConversations) {
           const openTask = await getOpenTaskByConversation(db, org.id, conversation.id);
           if (openTask) continue;
+
+          // Don't re-fire for the same stretch of silence: only create another
+          // customer_unresponsive task if the customer has spoken since the last one.
+          const priorAutoTask = await getLatestTaskByConversationAndType(
+            db,
+            org.id,
+            conversation.id,
+            "customer_unresponsive"
+          );
+          if (priorAutoTask && conversation.last_message_at <= priorAutoTask.created_at) continue;
 
           const hasSignal = await hasOpportunitySignalTask(db, org.id, conversation.contact_id);
           if (!hasSignal) continue;
