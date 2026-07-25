@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTaskSchema, rescheduleTaskSchema } from "./task.js";
+import { createTaskSchema, updateTaskSchema, rescheduleTaskSchema } from "./task.js";
 
 describe("createTaskSchema", () => {
   const validInput = {
@@ -43,6 +43,38 @@ describe("createTaskSchema", () => {
 
   it("rejects an unknown task type", () => {
     expect(() => createTaskSchema.parse({ ...validInput, type: "made_up_type" })).toThrow();
+  });
+
+  it("rejects an assignee_id with no assignee_type set", () => {
+    expect(() =>
+      createTaskSchema.parse({
+        ...validInput,
+        assignee_id: "22222222-2222-2222-2222-222222222222",
+      })
+    ).toThrow();
+  });
+});
+
+describe("updateTaskSchema", () => {
+  it("accepts a partial update with unrelated fields only", () => {
+    const result = updateTaskSchema.parse({ due_date: "2026-08-01" });
+    expect(result).toEqual({ due_date: "2026-08-01" });
+  });
+
+  it("rejects an assignee_id with no assignee_type set", () => {
+    expect(() =>
+      updateTaskSchema.parse({
+        assignee_id: "22222222-2222-2222-2222-222222222222",
+      })
+    ).toThrow();
+  });
+
+  it("accepts assignee_type human with a matching assignee_id", () => {
+    const result = updateTaskSchema.parse({
+      assignee_type: "human",
+      assignee_id: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(result.assignee_id).toBe("22222222-2222-2222-2222-222222222222");
   });
 });
 
