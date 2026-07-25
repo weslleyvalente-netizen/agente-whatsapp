@@ -5,3 +5,4 @@ export * from "./message.js";
 export * from "./contact.js";
 export * from "./evolution.js";
 export * from "./knowledge.js";
+export * from "./task.js";

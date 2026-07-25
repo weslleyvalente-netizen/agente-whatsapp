@@ -5,3 +5,4 @@ export * from "./conversation.js";
 export * from "./message.js";
 export * from "./evolution.js";
 export * from "./knowledge.js";
+export * from "./task.js";
