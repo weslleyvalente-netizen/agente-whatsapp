@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { createTaskSchema, updateTaskSchema, rescheduleTaskSchema, cancelTaskSchema } from "@aula-agente/shared";
-import { getAdminClient, createTaskWithDedup } from "@aula-agente/database";
+import { getAdminClient, createTaskWithDedup, getTaskById } from "@aula-agente/database";
 import {
   completeTask,
   cancelTask,
@@ -39,6 +39,29 @@ export default async function taskRoutes(app: FastifyInstance) {
       }
 
       const db = getAdminClient();
+
+      const { data: contact } = await db
+        .from("wa_contacts")
+        .select("id")
+        .eq("id", parseResult.data.contact_id)
+        .eq("organization_id", organizationId)
+        .maybeSingle();
+      if (!contact) {
+        return reply.status(403).send({ error: "Contact does not belong to this organization" });
+      }
+
+      if (parseResult.data.conversation_id) {
+        const { data: conv } = await db
+          .from("conversations")
+          .select("id")
+          .eq("id", parseResult.data.conversation_id)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        if (!conv) {
+          return reply.status(403).send({ error: "Conversation does not belong to this organization" });
+        }
+      }
+
       const { task, wasUpdated } = await createTaskWithDedup(db, {
         organization_id: organizationId,
         contact_id: parseResult.data.contact_id,
@@ -66,12 +89,24 @@ export default async function taskRoutes(app: FastifyInstance) {
     }
 
     const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
     const task = await updateTaskFields(db, request.params.taskId, parseResult.data, request.user.id);
     return task;
   });
 
-  app.post<{ Params: { taskId: string } }>("/tasks/:taskId/complete", async (request) => {
+  app.post<{ Params: { taskId: string } }>("/tasks/:taskId/complete", async (request, reply) => {
     const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
     return completeTask(db, request.params.taskId, { type: "human", id: request.user.id });
   });
 
@@ -82,6 +117,12 @@ export default async function taskRoutes(app: FastifyInstance) {
     }
 
     const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
     const task = await cancelTask(
       db,
       request.params.taskId,
@@ -98,6 +139,12 @@ export default async function taskRoutes(app: FastifyInstance) {
     }
 
     const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
     const task = await rescheduleTask(
       db,
       request.params.taskId,

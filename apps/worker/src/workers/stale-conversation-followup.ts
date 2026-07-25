@@ -30,10 +30,10 @@ export function startStaleConversationFollowupWorker() {
         const staleConversations = await getStaleWaitingConversations(db, org.id, cutoffISO);
 
         for (const conversation of staleConversations) {
-          const openTask = await getOpenTaskByConversation(db, conversation.id);
+          const openTask = await getOpenTaskByConversation(db, org.id, conversation.id);
           if (openTask) continue;
 
-          const hasSignal = await hasOpportunitySignalTask(db, conversation.contact_id);
+          const hasSignal = await hasOpportunitySignalTask(db, org.id, conversation.contact_id);
           if (!hasSignal) continue;
 
           await createTaskWithDedup(db, {
