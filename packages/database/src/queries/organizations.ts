@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Organization, OrganizationMember, OrganizationInvitation } from "@aula-agente/shared";
 
+export async function getAllOrganizations(client: SupabaseClient) {
+  const { data, error } = await client.from("organizations").select("*");
+  if (error) throw error;
+  return data as Organization[];
+}
+
 export async function getOrganizationById(client: SupabaseClient, id: string) {
   const { data, error } = await client
     .from("organizations")

@@ -97,6 +97,22 @@ export async function getExpiredTakeovers(client: SupabaseClient, timeoutMs: num
   return data as Conversation[];
 }
 
+export async function getStaleWaitingConversations(
+  client: SupabaseClient,
+  organizationId: string,
+  cutoffISO: string
+) {
+  const { data, error } = await client
+    .from("conversations")
+    .select("id, contact_id")
+    .eq("organization_id", organizationId)
+    .eq("status", "waiting")
+    .eq("is_human_takeover", false)
+    .lt("last_message_at", cutoffISO);
+  if (error) throw error;
+  return data as Array<{ id: string; contact_id: string }>;
+}
+
 export async function getHumanTakeoverConversations(client: SupabaseClient, organizationId: string) {
   const { data, error } = await client
     .from("conversations")
