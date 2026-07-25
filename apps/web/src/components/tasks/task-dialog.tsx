@@ -79,10 +79,11 @@ export function TaskDialog({
   }, [open, organizationId]);
 
   useEffect(() => {
-    if (presetContact || !contactQuery.trim() || contactQuery.trim().length < 2) {
+    if (isEditing || presetContact || !contactQuery.trim() || contactQuery.trim().length < 2) {
       setContactResults([]);
       return;
     }
+    let cancelled = false;
     const supabase = createClient();
     const timeout = setTimeout(async () => {
       const { data } = await supabase
@@ -91,10 +92,15 @@ export function TaskDialog({
         .eq("organization_id", organizationId)
         .or(`name.ilike.%${contactQuery}%,phone.ilike.%${contactQuery}%`)
         .limit(8);
-      setContactResults(data || []);
+      if (!cancelled) {
+        setContactResults(data || []);
+      }
     }, 300);
-    return () => clearTimeout(timeout);
-  }, [contactQuery, organizationId, presetContact]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [contactQuery, organizationId, presetContact, isEditing]);
 
   const handleSubmit = async () => {
     if (!selectedContact && !isEditing) {
@@ -137,6 +143,17 @@ export function TaskDialog({
           }),
         });
       }
+      if (!isEditing) {
+        setSelectedContact(presetContact);
+        setContactQuery("");
+        setContactResults([]);
+        setType("return_customer");
+        setDescription("");
+        setPriority("normal");
+        setDueDate(todayISODate());
+        setDueTime("");
+        setAssigneeValue("none");
+      }
       setOpen(false);
       onSaved();
     } catch (err) {
@@ -156,12 +173,22 @@ export function TaskDialog({
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Cliente</Label>
-            {selectedContact ? (
+            {isEditing ? (
+              <div className="text-sm text-muted-foreground">
+                {selectedContact ? (
+                  <span>
+                    {selectedContact.name || "Sem nome"} — {selectedContact.phone}
+                  </span>
+                ) : (
+                  <span>Cliente da tarefa</span>
+                )}
+              </div>
+            ) : selectedContact ? (
               <div className="flex items-center justify-between text-sm">
                 <span>
                   {selectedContact.name || "Sem nome"} — {selectedContact.phone}
                 </span>
-                {!presetContact && !isEditing && (
+                {!presetContact && (
                   <Button variant="link" size="sm" onClick={() => setSelectedContact(null)}>
                     trocar
                   </Button>
