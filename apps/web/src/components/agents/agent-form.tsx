@@ -41,7 +41,7 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
       provider: "openai",
       temperature: 0.7,
       max_tokens: 1024,
-      tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: false },
+      tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: false, create_task: false },
       is_active: true,
       ...defaultValues,
     },
@@ -187,6 +187,17 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
             <Switch
               checked={form.watch("tools_config.send_catalog_photo")}
               onCheckedChange={(v) => form.setValue("tools_config.send_catalog_photo", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Criar tarefas de follow-up</p>
+              <p className="text-sm text-muted-foreground">Permite ao agente criar tarefas de acompanhamento comercial em Tarefas</p>
+            </div>
+            <Switch
+              checked={form.watch("tools_config.create_task")}
+              onCheckedChange={(v) => form.setValue("tools_config.create_task", v)}
             />
           </div>
         </CardContent>
