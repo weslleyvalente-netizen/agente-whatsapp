@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig } = vi.hoisted(() => ({
+const { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig, restoreAgentConfigFromVersion } = vi.hoisted(() => ({
   getAgentById: vi.fn(),
   getOrCreateAgentConfig: vi.fn(),
   publishAgentConfig: vi.fn(),
   getLatestAgentVersion: vi.fn(),
   patchAgentConfig: vi.fn(),
+  restoreAgentConfigFromVersion: vi.fn(),
 }));
 
-vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig }));
+vi.mock("@aula-agente/database", () => ({
+  getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig, restoreAgentConfigFromVersion,
+}));
 
-import { publishDraft, getAgentConfigWithStatus } from "./agent-config.service.js";
+import { publishDraft, getAgentConfigWithStatus, discardDraft } from "./agent-config.service.js";
 
 const baseAgent = {
   id: "agent-1",
@@ -135,5 +138,28 @@ describe("getAgentConfigWithStatus", () => {
     const result = await getAgentConfigWithStatus({} as any, "agent-1");
 
     expect(result.changedSections).toEqual(["identity"]);
+  });
+});
+
+describe("discardDraft", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("restores the draft from the latest published version when one exists", async () => {
+    const version = { id: "version-1", version: 2 };
+    getLatestAgentVersion.mockResolvedValue(version);
+    restoreAgentConfigFromVersion.mockResolvedValue(baseDraft);
+
+    const result = await discardDraft({} as any, "agent-1");
+
+    expect(restoreAgentConfigFromVersion).toHaveBeenCalledWith({}, "agent-1", version);
+    expect(result).toEqual(baseDraft);
+  });
+
+  it("throws when the agent has never been published — nothing to discard to", async () => {
+    getLatestAgentVersion.mockResolvedValue(null);
+    await expect(discardDraft({} as any, "agent-1")).rejects.toThrow(/never been published/i);
+    expect(restoreAgentConfigFromVersion).not.toHaveBeenCalled();
   });
 });

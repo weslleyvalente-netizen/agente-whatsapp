@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion } from "@aula-agente/database";
+import { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, restoreAgentConfigFromVersion } from "@aula-agente/database";
 import { compileSystemPrompt, computeChangedSections } from "@aula-agente/shared";
 import type { AgentConfigDraft, AgentVersion } from "@aula-agente/shared";
 
@@ -50,4 +50,12 @@ export async function getAgentConfigWithStatus(db: SupabaseClient, agentId: stri
   );
 
   return { draft, latestVersion, changedSections, hasPendingChanges: changedSections.length > 0 };
+}
+
+export async function discardDraft(db: SupabaseClient, agentId: string): Promise<AgentConfigDraft> {
+  const latestVersion = await getLatestAgentVersion(db, agentId);
+  if (!latestVersion) {
+    throw new Error("This agent has never been published — there is nothing to discard to.");
+  }
+  return restoreAgentConfigFromVersion(db, agentId, latestVersion);
 }

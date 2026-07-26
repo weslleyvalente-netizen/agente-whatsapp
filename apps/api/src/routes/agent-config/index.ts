@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { updateAgentConfigSchema, publishAgentConfigSchema } from "@aula-agente/shared";
 import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages, getPlaygroundSessionById } from "@aula-agente/database";
-import { publishDraft, getAgentConfigWithStatus } from "../../services/agent-config.service.js";
+import { publishDraft, getAgentConfigWithStatus, discardDraft } from "../../services/agent-config.service.js";
 import { sendPlaygroundMessage } from "../../services/playground.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
@@ -104,5 +104,19 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
 
     const version = await publishDraft(db, request.params.agentId, parseResult.data.changelog, request.user.id);
     return reply.status(201).send(version);
+  });
+
+  app.post<{ Params: { agentId: string } }>("/agents/:agentId/config/discard", async (request, reply) => {
+    const db = getAdminClient();
+    const agent = await getAgentById(db, request.params.agentId);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    try {
+      const draft = await discardDraft(db, request.params.agentId);
+      return draft;
+    } catch (err) {
+      return reply.status(409).send({ error: (err as Error).message });
+    }
   });
 }
