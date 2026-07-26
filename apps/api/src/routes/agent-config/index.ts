@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { updateAgentConfigSchema, publishAgentConfigSchema } from "@aula-agente/shared";
-import { getAdminClient, getAgentById, patchAgentConfig } from "@aula-agente/database";
+import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages } from "@aula-agente/database";
 import { publishDraft, getAgentConfigWithStatus } from "../../services/agent-config.service.js";
+import { sendPlaygroundMessage } from "../../services/playground.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 export default async function agentConfigRoutes(app: FastifyInstance) {
@@ -30,6 +31,55 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     const draft = await patchAgentConfig(db, request.params.agentId, parseResult.data, request.user.id);
     return draft;
   });
+
+  app.post<{ Params: { agentId: string } }>("/agents/:agentId/playground/sessions", async (request, reply) => {
+    const db = getAdminClient();
+    const agent = await getAgentById(db, request.params.agentId);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    const session = await createPlaygroundSession(db, {
+      agentId: request.params.agentId,
+      organizationId: agent.organization_id,
+      createdBy: request.user.id,
+    });
+    return reply.status(201).send(session);
+  });
+
+  app.post<{ Params: { agentId: string; sessionId: string }; Body: { content: string } }>(
+    "/agents/:agentId/playground/sessions/:sessionId/messages",
+    async (request, reply) => {
+      const { content } = request.body ?? {};
+      if (!content || typeof content !== "string") {
+        return reply.status(400).send({ error: "content is required" });
+      }
+
+      const db = getAdminClient();
+      const agent = await getAgentById(db, request.params.agentId);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const message = await sendPlaygroundMessage(db, {
+        agentId: request.params.agentId,
+        organizationId: agent.organization_id,
+        sessionId: request.params.sessionId,
+        content,
+      });
+      return reply.status(201).send(message);
+    }
+  );
+
+  app.get<{ Params: { agentId: string; sessionId: string } }>(
+    "/agents/:agentId/playground/sessions/:sessionId/messages",
+    async (request, reply) => {
+      const db = getAdminClient();
+      const agent = await getAgentById(db, request.params.agentId);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      return getPlaygroundMessages(db, request.params.sessionId);
+    }
+  );
 
   app.post<{ Params: { agentId: string } }>("/agents/:agentId/config/publish", async (request, reply) => {
     const parseResult = publishAgentConfigSchema.safeParse(request.body);
