@@ -3,7 +3,7 @@ import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { ProcessDocumentJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
 import { getAdminClient, getDocumentById, updateDocument, insertChunks } from "@aula-agente/database";
-import { resolveApiKey } from "../lib/vault.js";
+import { resolveApiKey } from "@aula-agente/agent-runtime";
 import { chunkText } from "../embeddings/chunker.js";
 import { generateEmbeddings } from "../embeddings/embedder.js";
 

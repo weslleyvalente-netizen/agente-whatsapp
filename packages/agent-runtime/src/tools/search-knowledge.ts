@@ -1,9 +1,9 @@
-import { tool, embed } from "ai";
+import { tool, embed, type Tool } from "ai";
 import { z } from "zod";
 import { getAdminClient, searchKnowledgeChunks } from "@aula-agente/database";
 import { createOpenAI } from "@ai-sdk/openai";
 
-export function createSearchKnowledgeTool(organizationId: string, agentId: string, apiKey: string) {
+export function createSearchKnowledgeTool(organizationId: string, agentId: string, apiKey: string): Tool {
   return tool({
     description: "Search the knowledge base for relevant information about a topic. Use this to find answers from uploaded documents.",
     inputSchema: z.object({

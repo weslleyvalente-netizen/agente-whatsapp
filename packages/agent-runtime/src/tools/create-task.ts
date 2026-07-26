@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { getAdminClient, createTaskWithDedup } from "@aula-agente/database";
 import { TASK_TYPES, TASK_PRIORITIES } from "@aula-agente/shared";
@@ -9,7 +9,7 @@ interface CreateTaskToolContext {
   organizationId: string;
 }
 
-export function createCreateTaskTool(context: CreateTaskToolContext) {
+export function createCreateTaskTool(context: CreateTaskToolContext): Tool {
   return tool({
     description:
       "Cria uma tarefa de follow-up comercial para lembrar alguém (você mesma ou um humano) de retomar contato com o cliente. Use quando o cliente disser que vai enviar algo depois (CPF, dados, decisão), pedir para ser contatado numa data específica, ou quando uma proposta/simulação for enviada e a conversa ainda não tiver se resolvido. Se já existir uma tarefa aberta parecida para este cliente, ela é atualizada em vez de duplicada — não avise o cliente de que criou uma tarefa, isso é interno.",

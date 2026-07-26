@@ -1,4 +1,4 @@
-import { resolveApiKey } from "./vault.js";
+import { resolveApiKey } from "@aula-agente/agent-runtime";
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;

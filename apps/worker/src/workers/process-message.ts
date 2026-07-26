@@ -7,8 +7,8 @@ import { getAdminClient, getAgentById, getRecentMessages, getConversationById } 
 import { createMessage, updateConversation, updateMessageContent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
-import { resolveApiKey } from "../lib/vault.js";
-import { runAgent } from "../agents/agent-runner.js";
+import { resolveApiKey } from "@aula-agente/agent-runtime";
+import { runAgent } from "@aula-agente/agent-runtime";
 import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;

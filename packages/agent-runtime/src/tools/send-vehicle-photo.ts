@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { createMessage, getAdminClient } from "@aula-agente/database";
 import { getSendMessageQueue } from "@aula-agente/queue";
@@ -15,7 +15,7 @@ export function formatVehicleCaption(modelo: string, preco: number): string {
   return `${modelo} — R$ ${preco.toLocaleString("pt-BR")}`;
 }
 
-export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext) {
+export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): Tool {
   return tool({
     description:
       "Send the customer a real WhatsApp photo of a specific vehicle. Only call this after searchCatalog, using the exact modelo it returned for the vehicle the customer wants to see. This tool looks the vehicle up fresh in the catalog itself — it does not trust a remembered price or photo URL from earlier in the conversation.",

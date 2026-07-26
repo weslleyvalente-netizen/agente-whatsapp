@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
 
 const CATALOG_BASE_URL = "https://catalogomotoetrilha.manus.space";
@@ -132,7 +132,7 @@ export async function fetchCatalog(): Promise<CatalogVehicle[]> {
   return vehicles.filter((v) => v.status === undefined || v.status === "available");
 }
 
-export function createSearchCatalogTool() {
+export function createSearchCatalogTool(): Tool {
   return tool({
     description:
       "Search the full vehicle catalog by brand, model, color, or description. Returns matching vehicles with price, color, mileage, description and photo URL, or suggestions from the catalog if nothing matches exactly.",

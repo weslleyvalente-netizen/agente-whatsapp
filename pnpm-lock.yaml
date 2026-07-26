@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@aula-agente/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@aula-agente/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -151,6 +154,9 @@ importers:
       '@ai-sdk/openai':
         specifier: ^4.0.9
         version: 4.0.9(zod@3.25.76)
+      '@aula-agente/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
       '@aula-agente/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -185,6 +191,46 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.23.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)
+
+  packages/agent-runtime:
+    dependencies:
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.10
+        version: 4.0.10(zod@3.25.76)
+      '@ai-sdk/google':
+        specifier: ^4.0.10
+        version: 4.0.10(zod@3.25.76)
+      '@ai-sdk/openai':
+        specifier: ^4.0.9
+        version: 4.0.9(zod@3.25.76)
+      '@aula-agente/database':
+        specifier: workspace:*
+        version: link:../database
+      '@aula-agente/queue':
+        specifier: workspace:*
+        version: link:../queue
+      '@aula-agente/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@supabase/supabase-js':
+        specifier: ^2.49.0
+        version: 2.110.1
+      ai:
+        specifier: ^7.0.18
+        version: 7.0.18(zod@3.25.76)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

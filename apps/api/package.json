@@ -18,7 +18,8 @@
     "@supabase/supabase-js": "^2.49.0",
     "@aula-agente/shared": "workspace:*",
     "@aula-agente/database": "workspace:*",
-    "@aula-agente/queue": "workspace:*"
+    "@aula-agente/queue": "workspace:*",
+    "@aula-agente/agent-runtime": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

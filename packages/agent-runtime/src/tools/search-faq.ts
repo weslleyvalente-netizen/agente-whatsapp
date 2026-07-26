@@ -1,8 +1,8 @@
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { getAdminClient, getFaqsByAgent } from "@aula-agente/database";
 
-export function createSearchFaqTool(agentId: string) {
+export function createSearchFaqTool(agentId: string): Tool {
   return tool({
     description: "Search the FAQ database for common questions and answers. Use this when the user asks a question that might have a standard answer.",
     inputSchema: z.object({

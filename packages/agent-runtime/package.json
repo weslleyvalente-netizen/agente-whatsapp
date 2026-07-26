@@ -1,11 +1,12 @@
 {
-  "name": "@aula-agente/worker",
+  "name": "@aula-agente/agent-runtime",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "echo 'no lint configured'"
@@ -14,22 +15,16 @@
     "@ai-sdk/anthropic": "^4.0.10",
     "@ai-sdk/google": "^4.0.10",
     "@ai-sdk/openai": "^4.0.9",
-    "@aula-agente/agent-runtime": "workspace:*",
     "@aula-agente/database": "workspace:*",
     "@aula-agente/queue": "workspace:*",
     "@aula-agente/shared": "workspace:*",
     "@supabase/supabase-js": "^2.49.0",
     "ai": "^7.0.18",
-    "bullmq": "^5.30.0",
-    "dotenv": "^16.4.0",
-    "ioredis": "^5.4.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
-  },
-  "type": "module"
+  }
 }
