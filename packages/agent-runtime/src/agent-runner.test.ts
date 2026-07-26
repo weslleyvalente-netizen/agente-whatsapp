@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { formatHistoryForLLM, buildSystemPrompt } from "./agent-runner.js";
+import { extractToolCallTrace } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
 
 function makeMessage(overrides: Partial<Message>): Message {
@@ -56,5 +57,42 @@ describe("buildSystemPrompt", () => {
     const now = new Date("2026-07-24T17:32:00.000Z"); // 14:32 in São Paulo (UTC-3)
     const result = buildSystemPrompt("Você é a Helena.", now);
     expect(result).toBe("Você é a Helena.\n\nData e hora atual: sexta-feira, 24 de julho de 2026 às 14:32");
+  });
+});
+
+describe("extractToolCallTrace", () => {
+  it("marks every tool call as real when sandbox is false", () => {
+    const steps = [
+      {
+        toolCalls: [{ toolCallId: "1", toolName: "searchKnowledge", input: { query: "preço" } }],
+        toolResults: [{ toolCallId: "1", output: "resultado" }],
+      },
+    ];
+    const trace = extractToolCallTrace(steps, false);
+    expect(trace).toEqual([
+      expect.objectContaining({ tool_name: "searchKnowledge", input: { query: "preço" }, output: "resultado", mode: "real" }),
+    ]);
+  });
+
+  it("marks createTask and sendVehiclePhoto as simulated when sandbox is true, but leaves search tools real", () => {
+    const steps = [
+      {
+        toolCalls: [
+          { toolCallId: "1", toolName: "searchKnowledge", input: {} },
+          { toolCallId: "2", toolName: "createTask", input: {} },
+        ],
+        toolResults: [
+          { toolCallId: "1", output: "ok" },
+          { toolCallId: "2", output: "[SIMULADO] ..." },
+        ],
+      },
+    ];
+    const trace = extractToolCallTrace(steps, true);
+    expect(trace.find((t) => t.tool_name === "searchKnowledge")?.mode).toBe("real");
+    expect(trace.find((t) => t.tool_name === "createTask")?.mode).toBe("simulated");
+  });
+
+  it("returns an empty array when no step made any tool call", () => {
+    expect(extractToolCallTrace([{ toolCalls: [], toolResults: [] }], false)).toEqual([]);
   });
 });

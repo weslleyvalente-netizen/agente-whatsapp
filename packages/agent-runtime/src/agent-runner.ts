@@ -2,7 +2,7 @@ import { generateText, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import type { Agent, LLMProvider, Message } from "@aula-agente/shared";
+import type { Agent, LLMProvider, Message, PlaygroundToolCall } from "@aula-agente/shared";
 import { formatDateTimeForPrompt } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
 
@@ -16,6 +16,7 @@ interface RunAgentParams {
   instanceId: string;
   phone: string;
   contactId: string;
+  sandbox?: boolean;
 }
 
 interface RunAgentResult {
@@ -25,6 +26,33 @@ interface RunAgentResult {
   outputTokens: number;
   latencyMs: number;
   toolCalls: string[];
+  toolCallTrace: PlaygroundToolCall[];
+}
+
+const SANDBOXED_TOOL_NAMES = new Set(["createTask", "sendVehiclePhoto"]);
+
+export function extractToolCallTrace(
+  steps: Array<{
+    toolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>;
+    toolResults?: Array<{ toolCallId: string; output: unknown }>;
+  }>,
+  sandbox: boolean
+): PlaygroundToolCall[] {
+  const trace: PlaygroundToolCall[] = [];
+  const executedAt = new Date().toISOString();
+  for (const step of steps) {
+    const outputsByCallId = new Map((step.toolResults || []).map((r) => [r.toolCallId, r.output]));
+    for (const call of step.toolCalls || []) {
+      trace.push({
+        tool_name: call.toolName,
+        input: call.input,
+        output: outputsByCallId.get(call.toolCallId) ?? null,
+        mode: sandbox && SANDBOXED_TOOL_NAMES.has(call.toolName) ? "simulated" : "real",
+        executed_at: executedAt,
+      });
+    }
+  }
+  return trace;
 }
 
 function createModel(provider: LLMProvider, modelName: string, apiKey: string) {
@@ -81,6 +109,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     instanceId,
     phone,
     contactId,
+    sandbox: params.sandbox,
   });
 
   const history = formatHistoryForLLM(messages);
@@ -111,5 +140,6 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     outputTokens: result.usage?.outputTokens || 0,
     latencyMs,
     toolCalls,
+    toolCallTrace: extractToolCallTrace(result.steps, params.sandbox ?? false),
   };
 }
