@@ -6,3 +6,6 @@ export * from "./messages.js";
 export * from "./evolution-instances.js";
 export * from "./knowledge.js";
 export * from "./tasks.js";
+export * from "./agent-configs.js";
+export * from "./agent-versions.js";
+export * from "./agent-playground.js";
