@@ -100,13 +100,13 @@ export const agentModelSettingsSchema = z.object({
 });
 
 export const updateAgentConfigSchema = z.object({
-  identity: agentIdentitySchema.partial().optional(),
-  personality: agentPersonalitySchema.partial().optional(),
-  rules: agentRulesSchema.partial().optional(),
-  knowledge: agentKnowledgeConfigSchema.partial().optional(),
-  playbook: agentPlaybookSchema.partial().optional(),
-  tools_config: toolsConfigSchema.partial().optional(),
-  model_settings: agentModelSettingsSchema.partial().optional(),
+  identity: agentIdentitySchema.optional(),
+  personality: agentPersonalitySchema.optional(),
+  rules: agentRulesSchema.optional(),
+  knowledge: agentKnowledgeConfigSchema.optional(),
+  playbook: agentPlaybookSchema.optional(),
+  tools_config: toolsConfigSchema.optional(),
+  model_settings: agentModelSettingsSchema.optional(),
 });
 
 export const publishAgentConfigSchema = z.object({

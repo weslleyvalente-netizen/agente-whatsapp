@@ -27,7 +27,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-    const draft = await patchAgentConfig(db, request.params.agentId, parseResult.data as any, request.user.id);
+    const draft = await patchAgentConfig(db, request.params.agentId, parseResult.data, request.user.id);
     return draft;
   });
 
