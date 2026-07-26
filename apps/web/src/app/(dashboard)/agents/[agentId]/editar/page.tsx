@@ -7,11 +7,17 @@ import { useAgentConfig } from "@/components/agents/config/use-agent-config";
 import { GeralSection } from "@/components/agents/config/geral-section";
 import { PersonalidadeSection } from "@/components/agents/config/personalidade-section";
 import { RegrasSection } from "@/components/agents/config/regras-section";
+import { ConhecimentoSection } from "@/components/agents/config/conhecimento-section";
+import { PlaybooksSection } from "@/components/agents/config/playbooks-section";
+import { FerramentasSection } from "@/components/agents/config/ferramentas-section";
 
 const SECTIONS = [
   { key: "geral", label: "Geral" },
   { key: "personalidade", label: "Personalidade" },
   { key: "regras", label: "Regras" },
+  { key: "conhecimento", label: "Conhecimento" },
+  { key: "playbooks", label: "Playbooks" },
+  { key: "ferramentas", label: "Ferramentas" },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
@@ -43,6 +49,9 @@ export default function AgentEditarPage() {
         {activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} />}
         {activeSection === "personalidade" && <PersonalidadeSection draft={status.draft} onPatch={patch} />}
         {activeSection === "regras" && <RegrasSection draft={status.draft} onPatch={patch} />}
+        {activeSection === "conhecimento" && <ConhecimentoSection agentId={agentId} draft={status.draft} onPatch={patch} />}
+        {activeSection === "playbooks" && <PlaybooksSection draft={status.draft} onPatch={patch} />}
+        {activeSection === "ferramentas" && <FerramentasSection draft={status.draft} onPatch={patch} />}
       </div>
     </div>
   );
