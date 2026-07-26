@@ -6,10 +6,12 @@ import { cn } from "@/lib/utils";
 import { useAgentConfig } from "@/components/agents/config/use-agent-config";
 import { GeralSection } from "@/components/agents/config/geral-section";
 import { PersonalidadeSection } from "@/components/agents/config/personalidade-section";
+import { RegrasSection } from "@/components/agents/config/regras-section";
 
 const SECTIONS = [
   { key: "geral", label: "Geral" },
   { key: "personalidade", label: "Personalidade" },
+  { key: "regras", label: "Regras" },
 ] as const;
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
@@ -40,6 +42,7 @@ export default function AgentEditarPage() {
       <div>
         {activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} />}
         {activeSection === "personalidade" && <PersonalidadeSection draft={status.draft} onPatch={patch} />}
+        {activeSection === "regras" && <RegrasSection draft={status.draft} onPatch={patch} />}
       </div>
     </div>
   );
