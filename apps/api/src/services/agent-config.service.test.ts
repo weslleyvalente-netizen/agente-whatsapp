@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, getOrCreateAgentConfig, publishAgentConfig } = vi.hoisted(() => ({
+const { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig } = vi.hoisted(() => ({
   getAgentById: vi.fn(),
   getOrCreateAgentConfig: vi.fn(),
   publishAgentConfig: vi.fn(),
+  getLatestAgentVersion: vi.fn(),
+  patchAgentConfig: vi.fn(),
 }));
 
-vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, publishAgentConfig }));
+vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig }));
 
-import { publishDraft } from "./agent-config.service.js";
+import { publishDraft, getAgentConfigWithStatus } from "./agent-config.service.js";
 
 const baseAgent = {
   id: "agent-1",
@@ -85,5 +87,53 @@ describe("publishDraft", () => {
   it("returns whatever publishAgentConfig returns", async () => {
     const result = await publishDraft({} as any, "agent-1", "changelog", "user-1");
     expect(result).toEqual({ id: "version-1", version: 1 });
+  });
+});
+
+describe("getAgentConfigWithStatus", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    getAgentById.mockResolvedValue(baseAgent);
+    getOrCreateAgentConfig.mockResolvedValue(baseDraft);
+  });
+
+  it("reports every section as changed when the agent has never been published", async () => {
+    getLatestAgentVersion.mockResolvedValue(null);
+
+    const result = await getAgentConfigWithStatus({} as any, "agent-1");
+
+    expect(result.hasPendingChanges).toBe(true);
+    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook"]);
+    expect(result.latestVersion).toBeNull();
+  });
+
+  it("reports no pending changes when the draft matches the latest published snapshot", async () => {
+    getLatestAgentVersion.mockResolvedValue({
+      id: "version-1",
+      config_snapshot: {
+        identity: baseDraft.identity, personality: baseDraft.personality, rules: baseDraft.rules,
+        knowledge: baseDraft.knowledge, playbook: baseDraft.playbook,
+      },
+    });
+
+    const result = await getAgentConfigWithStatus({} as any, "agent-1");
+
+    expect(result.hasPendingChanges).toBe(false);
+    expect(result.changedSections).toEqual([]);
+  });
+
+  it("reports only the sections that differ from the latest published snapshot", async () => {
+    getLatestAgentVersion.mockResolvedValue({
+      id: "version-1",
+      config_snapshot: {
+        identity: { nome: "Nome antigo", funcao: "", missao: "" },
+        personality: baseDraft.personality, rules: baseDraft.rules,
+        knowledge: baseDraft.knowledge, playbook: baseDraft.playbook,
+      },
+    });
+
+    const result = await getAgentConfigWithStatus({} as any, "agent-1");
+
+    expect(result.changedSections).toEqual(["identity"]);
   });
 });
