@@ -18,12 +18,18 @@ interface DraftStatusBarProps {
 
 export function DraftStatusBar({ agentId, status, onPublished }: DraftStatusBarProps) {
   const [discarding, setDiscarding] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDiscard = async () => {
     setDiscarding(true);
     try {
       await apiFetch(`/agents/${agentId}/config/discard`, { method: "POST" });
+      setError(null);
       await onPublished();
+      setConfirmOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível descartar as alterações.");
     } finally {
       setDiscarding(false);
     }
@@ -37,7 +43,15 @@ export function DraftStatusBar({ agentId, status, onPublished }: DraftStatusBarP
           : "Tudo publicado"}
       </Badge>
       <div className="flex items-center gap-2">
-        <Dialog>
+        <Dialog
+          open={confirmOpen}
+          onOpenChange={(nextOpen) => {
+            setConfirmOpen(nextOpen);
+            if (nextOpen) {
+              setError(null);
+            }
+          }}
+        >
           <DialogTrigger render={<Button variant="outline" disabled={!status.latestVersion || discarding}>Descartar</Button>} />
           <DialogContent>
             <DialogHeader>
@@ -46,9 +60,10 @@ export function DraftStatusBar({ agentId, status, onPublished }: DraftStatusBarP
                 O rascunho volta para o que está publicado atualmente (versão {status.latestVersion?.version}). Isso não pode ser desfeito.
               </DialogDescription>
             </DialogHeader>
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
             <DialogFooter>
               <DialogClose render={<Button variant="outline">Cancelar</Button>} />
-              <DialogClose render={<Button variant="destructive" onClick={handleDiscard}>Descartar</Button>} />
+              <Button variant="destructive" onClick={handleDiscard} disabled={discarding}>Descartar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
