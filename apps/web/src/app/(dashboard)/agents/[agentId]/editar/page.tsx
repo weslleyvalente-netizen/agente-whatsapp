@@ -5,8 +5,12 @@ import { useParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useAgentConfig } from "@/components/agents/config/use-agent-config";
 import { GeralSection } from "@/components/agents/config/geral-section";
+import { PersonalidadeSection } from "@/components/agents/config/personalidade-section";
 
-const SECTIONS = [{ key: "geral", label: "Geral" }] as const;
+const SECTIONS = [
+  { key: "geral", label: "Geral" },
+  { key: "personalidade", label: "Personalidade" },
+] as const;
 type SectionKey = (typeof SECTIONS)[number]["key"];
 
 export default function AgentEditarPage() {
@@ -33,7 +37,10 @@ export default function AgentEditarPage() {
           </button>
         ))}
       </nav>
-      <div>{activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} />}</div>
+      <div>
+        {activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} />}
+        {activeSection === "personalidade" && <PersonalidadeSection draft={status.draft} onPatch={patch} />}
+      </div>
     </div>
   );
 }
