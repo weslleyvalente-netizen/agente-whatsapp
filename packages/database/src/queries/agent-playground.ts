@@ -14,6 +14,19 @@ export async function createPlaygroundSession(
   return data as AgentPlaygroundSession;
 }
 
+export async function getPlaygroundSessionById(
+  client: SupabaseClient,
+  sessionId: string
+): Promise<AgentPlaygroundSession> {
+  const { data, error } = await client
+    .from("agent_playground_sessions")
+    .select("*")
+    .eq("id", sessionId)
+    .single();
+  if (error) throw error;
+  return data as AgentPlaygroundSession;
+}
+
 export async function getPlaygroundMessages(
   client: SupabaseClient,
   sessionId: string

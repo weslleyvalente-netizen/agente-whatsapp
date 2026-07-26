@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { updateAgentConfigSchema, publishAgentConfigSchema } from "@aula-agente/shared";
-import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages } from "@aula-agente/database";
+import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages, getPlaygroundSessionById } from "@aula-agente/database";
 import { publishDraft, getAgentConfigWithStatus } from "../../services/agent-config.service.js";
 import { sendPlaygroundMessage } from "../../services/playground.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
@@ -59,6 +59,11 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
       const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
+      const session = await getPlaygroundSessionById(db, request.params.sessionId);
+      if (session.agent_id !== request.params.agentId) {
+        return reply.status(403).send({ error: "Session does not belong to this agent" });
+      }
+
       const message = await sendPlaygroundMessage(db, {
         agentId: request.params.agentId,
         organizationId: agent.organization_id,
@@ -76,6 +81,11 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
       const agent = await getAgentById(db, request.params.agentId);
       const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
       if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const session = await getPlaygroundSessionById(db, request.params.sessionId);
+      if (session.agent_id !== request.params.agentId) {
+        return reply.status(403).send({ error: "Session does not belong to this agent" });
+      }
 
       return getPlaygroundMessages(db, request.params.sessionId);
     }
