@@ -9,6 +9,7 @@ import knowledgeFaqRoutes from "./routes/knowledge/faqs.js";
 import costRoutes from "./routes/costs/index.js";
 import dashboardRoutes from "./routes/dashboard/index.js";
 import taskRoutes from "./routes/tasks/index.js";
+import agentConfigRoutes from "./routes/agent-config/index.js";
 
 const server = Fastify({ logger: true });
 
@@ -29,6 +30,7 @@ server.register(knowledgeFaqRoutes);
 server.register(costRoutes);
 server.register(dashboardRoutes);
 server.register(taskRoutes);
+server.register(agentConfigRoutes);
 
 // Start
 const start = async () => {
