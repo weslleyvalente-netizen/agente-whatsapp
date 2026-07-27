@@ -62,7 +62,7 @@ export default function AgentEditarPage() {
               ))}
             </nav>
             <div>
-              {activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} />}
+              {activeSection === "geral" && <GeralSection draft={status.draft} onPatch={patch} agentId={agentId} onImported={refetch} />}
               {activeSection === "personalidade" && <PersonalidadeSection draft={status.draft} onPatch={patch} />}
               {activeSection === "regras" && <RegrasSection draft={status.draft} onPatch={patch} />}
               {activeSection === "conhecimento" && <ConhecimentoSection agentId={agentId} draft={status.draft} onPatch={patch} />}

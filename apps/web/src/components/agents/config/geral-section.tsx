@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ImportSystemPromptDialog } from "./import-system-prompt-dialog";
 import type { AgentConfigDraft, AgentModelSettings } from "@aula-agente/shared";
 
 const PROVIDER_LABELS: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", google: "Google" };
@@ -18,14 +19,19 @@ const MODELS: Record<string, string[]> = {
 interface GeralSectionProps {
   draft: AgentConfigDraft;
   onPatch: (patch: { identity?: AgentConfigDraft["identity"]; model_settings?: AgentModelSettings }) => Promise<void>;
+  agentId: string;
+  onImported: () => Promise<void>;
 }
 
-export function GeralSection({ draft, onPatch }: GeralSectionProps) {
+export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSectionProps) {
   const [identity, setIdentity] = useState(draft.identity);
   const [modelSettings, setModelSettings] = useState(draft.model_settings);
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <ImportSystemPromptDialog agentId={agentId} onApplied={onImported} />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>Identidade</CardTitle>
