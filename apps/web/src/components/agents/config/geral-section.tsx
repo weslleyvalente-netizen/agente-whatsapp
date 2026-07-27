@@ -26,11 +26,23 @@ interface GeralSectionProps {
 export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSectionProps) {
   const [identity, setIdentity] = useState(draft.identity);
   const [modelSettings, setModelSettings] = useState(draft.model_settings);
+  const [identityDirty, setIdentityDirty] = useState(false);
+  const [modelSettingsDirty, setModelSettingsDirty] = useState(false);
 
   useEffect(() => {
-    setIdentity(draft.identity);
-    setModelSettings(draft.model_settings);
+    if (!identityDirty) setIdentity(draft.identity);
+    if (!modelSettingsDirty) setModelSettings(draft.model_settings);
   }, [draft.updated_at]);
+
+  const saveIdentity = async (next: typeof identity) => {
+    await onPatch({ identity: next });
+    setIdentityDirty(false);
+  };
+
+  const saveModelSettings = async (next: AgentModelSettings) => {
+    await onPatch({ model_settings: next });
+    setModelSettingsDirty(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -44,15 +56,15 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>Nome</Label>
-            <Input value={identity.nome} onChange={(e) => setIdentity({ ...identity, nome: e.target.value })} onBlur={() => onPatch({ identity })} />
+            <Input value={identity.nome} onChange={(e) => { setIdentity({ ...identity, nome: e.target.value }); setIdentityDirty(true); }} onBlur={() => saveIdentity(identity)} />
           </div>
           <div className="space-y-2">
             <Label>Função</Label>
-            <Input value={identity.funcao} onChange={(e) => setIdentity({ ...identity, funcao: e.target.value })} onBlur={() => onPatch({ identity })} />
+            <Input value={identity.funcao} onChange={(e) => { setIdentity({ ...identity, funcao: e.target.value }); setIdentityDirty(true); }} onBlur={() => saveIdentity(identity)} />
           </div>
           <div className="space-y-2">
             <Label>Missão / instruções principais</Label>
-            <Textarea rows={8} value={identity.missao} onChange={(e) => setIdentity({ ...identity, missao: e.target.value })} onBlur={() => onPatch({ identity })} />
+            <Textarea rows={8} value={identity.missao} onChange={(e) => { setIdentity({ ...identity, missao: e.target.value }); setIdentityDirty(true); }} onBlur={() => saveIdentity(identity)} />
           </div>
         </CardContent>
       </Card>
@@ -71,7 +83,8 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
                   if (!v) return;
                   const next = { ...modelSettings, provider: v as AgentModelSettings["provider"], model: MODELS[v][0] };
                   setModelSettings(next);
-                  onPatch({ model_settings: next });
+                  setModelSettingsDirty(true);
+                  saveModelSettings(next);
                 }}
               >
                 <SelectTrigger>
@@ -92,7 +105,8 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
                   if (!v) return;
                   const next = { ...modelSettings, model: v };
                   setModelSettings(next);
-                  onPatch({ model_settings: next });
+                  setModelSettingsDirty(true);
+                  saveModelSettings(next);
                 }}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -110,8 +124,8 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
               <Input
                 type="range" min="0" max="2" step="0.1"
                 value={modelSettings.temperature}
-                onChange={(e) => setModelSettings({ ...modelSettings, temperature: Number(e.target.value) })}
-                onMouseUp={() => onPatch({ model_settings: modelSettings })}
+                onChange={(e) => { setModelSettings({ ...modelSettings, temperature: Number(e.target.value) }); setModelSettingsDirty(true); }}
+                onMouseUp={() => saveModelSettings(modelSettings)}
               />
             </div>
             <div className="space-y-2">
@@ -119,8 +133,8 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
               <Input
                 type="number"
                 value={modelSettings.max_tokens}
-                onChange={(e) => setModelSettings({ ...modelSettings, max_tokens: Number(e.target.value) })}
-                onBlur={() => onPatch({ model_settings: modelSettings })}
+                onChange={(e) => { setModelSettings({ ...modelSettings, max_tokens: Number(e.target.value) }); setModelSettingsDirty(true); }}
+                onBlur={() => saveModelSettings(modelSettings)}
               />
             </div>
           </div>
