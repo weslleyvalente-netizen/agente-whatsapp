@@ -15,42 +15,14 @@ import { PlaybooksSection } from "@/components/agents/config/playbooks-section";
 import { FerramentasSection } from "@/components/agents/config/ferramentas-section";
 import { HistoryPanel } from "@/components/agents/config/history-panel";
 import { ConfigTreeNav, type TreeNode } from "@/components/agents/config/config-tree-nav";
+import { SECTION_ORDER, SECTION_ITEMS, SECTION_LABELS } from "@aula-agente/shared";
 
-const TREE: TreeNode[] = [
-  { type: "leaf", key: "geral", label: "Geral" },
-  {
-    type: "group", key: "personalidade", label: "Personalidade",
-    items: [
-      { key: "tom_de_voz", label: "Tom de voz" },
-      { key: "emojis", label: "Emojis" },
-      { key: "perguntas_por_vez", label: "Perguntas por vez" },
-      { key: "postura_comercial", label: "Postura comercial" },
-      { key: "girias", label: "Gírias proibidas" },
-      { key: "proatividade", label: "Proatividade" },
-    ],
-  },
-  {
-    type: "group", key: "regras", label: "Regras",
-    items: [
-      { key: "transferencia", label: "Transferência para humano" },
-      { key: "promessas", label: "Promessas proibidas" },
-      { key: "regras_por_tipo", label: "Regras por tipo de atendimento" },
-      { key: "preco_desconto", label: "Preço e desconto" },
-      { key: "objecoes", label: "Objeções" },
-    ],
-  },
-  {
-    type: "group", key: "conhecimento", label: "Conhecimento",
-    items: [
-      { key: "documentos", label: "Base de Conhecimento" },
-      { key: "faq", label: "FAQ" },
-      { key: "precos", label: "Preços" },
-      { key: "links", label: "Links" },
-    ],
-  },
-  { type: "leaf", key: "playbooks", label: "Playbooks" },
-  { type: "leaf", key: "ferramentas", label: "Ferramentas" },
-];
+const TREE: TreeNode[] = SECTION_ORDER.map((key) => {
+  const items = SECTION_ITEMS[key];
+  return items
+    ? { type: "group" as const, key, label: SECTION_LABELS[key], items: Object.entries(items).map(([itemKey, label]) => ({ key: itemKey, label })) }
+    : { type: "leaf" as const, key, label: SECTION_LABELS[key] };
+});
 
 function findLabel(sectionKey: string, itemKey: string | null): { sectionLabel: string; itemLabel: string | null } {
   const node = TREE.find((n) => n.key === sectionKey);
