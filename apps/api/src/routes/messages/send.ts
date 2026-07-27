@@ -47,16 +47,17 @@ export default async function messageSendRoutes(app: FastifyInstance) {
 
       // A human replying manually takes the conversation over — the AI
       // agent stops responding until someone explicitly hands it back
-      // (the existing "Devolver ao Agente" toggle). Don't touch takeover
-      // state if a human already owns this conversation — the first
-      // responder keeps ownership.
-      if (!conversation.is_human_takeover) {
-        await updateConversation(db, conversation_id, {
-          is_human_takeover: true,
-          human_takeover_at: new Date().toISOString(),
-          assigned_to: request.user.id,
-        });
-      }
+      // (the existing "Devolver ao Agente" toggle). assigned_to is only
+      // set on the first takeover — the first responder keeps ownership —
+      // but human_takeover_at is refreshed on every reply, since it drives
+      // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS). Leaving it frozen
+      // at the first reply let the agent resume mid-conversation after 30
+      // minutes even while a human was still actively replying.
+      await updateConversation(db, conversation_id, {
+        is_human_takeover: true,
+        human_takeover_at: new Date().toISOString(),
+        ...(conversation.is_human_takeover ? {} : { assigned_to: request.user.id }),
+      });
 
       // Get instance for sending
       const instance = await getInstanceById(db, conversation.evolution_instance_id);

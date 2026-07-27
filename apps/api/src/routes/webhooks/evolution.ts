@@ -132,12 +132,15 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           return reply.status(200).send({ ok: true, skipped: "duplicate" });
         }
 
-        if (!conversation.is_human_takeover) {
-          await updateConversation(getAdminClient(), conversation.id, {
-            is_human_takeover: true,
-            human_takeover_at: new Date().toISOString(),
-          });
-        }
+        // Always refresh human_takeover_at, even if already in takeover —
+        // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS) counts from this
+        // timestamp, so leaving it frozen at the first reply let the agent
+        // resume mid-conversation after 30 minutes even while the human was
+        // still actively replying every few minutes.
+        await updateConversation(getAdminClient(), conversation.id, {
+          is_human_takeover: true,
+          human_takeover_at: new Date().toISOString(),
+        });
 
         if (isNew) {
           await syncContactToCrm(contact);
