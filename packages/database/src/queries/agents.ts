@@ -34,17 +34,6 @@ export async function createAgent(
   return data as Agent;
 }
 
-export async function updateAgent(client: SupabaseClient, id: string, updates: Partial<Agent>) {
-  const { data, error } = await client
-    .from("agents")
-    .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data as Agent;
-}
-
 export async function deleteAgent(client: SupabaseClient, id: string) {
   const { error } = await client.from("agents").delete().eq("id", id);
   if (error) throw error;
