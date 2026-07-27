@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,11 @@ interface GeralSectionProps {
 export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSectionProps) {
   const [identity, setIdentity] = useState(draft.identity);
   const [modelSettings, setModelSettings] = useState(draft.model_settings);
+
+  useEffect(() => {
+    setIdentity(draft.identity);
+    setModelSettings(draft.model_settings);
+  }, [draft.updated_at]);
 
   return (
     <div className="space-y-6">

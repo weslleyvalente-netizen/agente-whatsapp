@@ -22,18 +22,25 @@ export function ImportSystemPromptDialog({ agentId, onApplied }: ImportSystemPro
   const [currentSystemPrompt, setCurrentSystemPrompt] = useState("");
   const [suggestion, setSuggestion] = useState<AgentConfigSections | null>(null);
   const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleOpenChange = async (isOpen: boolean) => {
     setOpen(isOpen);
     if (isOpen && !suggestion) {
+      setError(null);
       setLoading(true);
-      const data = (await apiFetch(`/agents/${agentId}/config/import-suggestion`, { method: "POST" })) as {
-        currentSystemPrompt: string;
-        suggestion: AgentConfigSections;
-      };
-      setCurrentSystemPrompt(data.currentSystemPrompt);
-      setSuggestion(data.suggestion);
-      setLoading(false);
+      try {
+        const data = (await apiFetch(`/agents/${agentId}/config/import-suggestion`, { method: "POST" })) as {
+          currentSystemPrompt: string;
+          suggestion: AgentConfigSections;
+        };
+        setCurrentSystemPrompt(data.currentSystemPrompt);
+        setSuggestion(data.suggestion);
+      } catch (err) {
+        setError((err as Error).message || "Não foi possível gerar a sugestão.");
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -71,7 +78,11 @@ export function ImportSystemPromptDialog({ agentId, onApplied }: ImportSystemPro
           </DialogDescription>
         </DialogHeader>
 
-        {loading || !suggestion ? (
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Analisando o texto atual...</p>
+        ) : error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : !suggestion ? (
           <p className="text-sm text-muted-foreground">Analisando o texto atual...</p>
         ) : (
           <div className="grid grid-cols-2 gap-4">
