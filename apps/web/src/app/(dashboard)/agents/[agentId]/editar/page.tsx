@@ -106,7 +106,7 @@ export default function AgentEditarPage() {
               />
             </div>
 
-            <div className="flex min-h-0 flex-col lg:h-full lg:overflow-y-auto">
+            <div className="min-h-0 lg:h-full lg:overflow-y-auto">
               <div className="mb-4 border-b pb-3">
                 {itemLabel ? (
                   <>
