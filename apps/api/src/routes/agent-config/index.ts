@@ -3,6 +3,7 @@ import { updateAgentConfigSchema, publishAgentConfigSchema } from "@aula-agente/
 import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages, getPlaygroundSessionById } from "@aula-agente/database";
 import { publishDraft, getAgentConfigWithStatus, discardDraft, listVersions, getVersionWithDiff, restoreVersion } from "../../services/agent-config.service.js";
 import { sendPlaygroundMessage } from "../../services/playground.service.js";
+import { suggestConfigFromSystemPrompt } from "../../services/import-suggestion.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 export default async function agentConfigRoutes(app: FastifyInstance) {
@@ -118,6 +119,16 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.status(409).send({ error: (err as Error).message });
     }
+  });
+
+  app.post<{ Params: { agentId: string } }>("/agents/:agentId/config/import-suggestion", async (request, reply) => {
+    const db = getAdminClient();
+    const agent = await getAgentById(db, request.params.agentId);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    const suggestion = await suggestConfigFromSystemPrompt(db, request.params.agentId);
+    return { currentSystemPrompt: agent.system_prompt, suggestion };
   });
 
   app.get<{ Params: { agentId: string } }>("/agents/:agentId/versions", async (request, reply) => {

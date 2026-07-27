@@ -112,3 +112,11 @@ export const updateAgentConfigSchema = z.object({
 export const publishAgentConfigSchema = z.object({
   changelog: z.string().min(1).max(1000),
 });
+
+export const importSuggestionSchema = z.object({
+  identity: agentIdentitySchema,
+  personality: agentPersonalitySchema,
+  rules: agentRulesSchema,
+  knowledge: agentKnowledgeConfigSchema,
+  playbook: agentPlaybookSchema,
+});

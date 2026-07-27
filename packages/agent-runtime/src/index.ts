@@ -1,4 +1,5 @@
 export { runAgent, buildSystemPrompt, formatHistoryForLLM, extractToolCallTrace } from "./agent-runner.js";
+export { createModel } from "./agent-runner.js";
 export { buildToolsForAgent } from "./tools/registry.js";
 export { createSearchKnowledgeTool } from "./tools/search-knowledge.js";
 export { createSearchFaqTool } from "./tools/search-faq.js";

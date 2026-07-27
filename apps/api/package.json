@@ -19,7 +19,8 @@
     "@aula-agente/shared": "workspace:*",
     "@aula-agente/database": "workspace:*",
     "@aula-agente/queue": "workspace:*",
-    "@aula-agente/agent-runtime": "workspace:*"
+    "@aula-agente/agent-runtime": "workspace:*",
+    "ai": "^7.0.18"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
