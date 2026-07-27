@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,11 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
   const [identityDirty, setIdentityDirty] = useState(false);
   const [modelSettingsDirty, setModelSettingsDirty] = useState(false);
 
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const modelSettingsRef = useRef(modelSettings);
+  modelSettingsRef.current = modelSettings;
+
   useEffect(() => {
     if (!identityDirty) setIdentity(draft.identity);
     if (!modelSettingsDirty) setModelSettings(draft.model_settings);
@@ -36,12 +41,16 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
 
   const saveIdentity = async (next: typeof identity) => {
     await onPatch({ identity: next });
-    setIdentityDirty(false);
+    if (JSON.stringify(identityRef.current) === JSON.stringify(next)) {
+      setIdentityDirty(false);
+    }
   };
 
   const saveModelSettings = async (next: AgentModelSettings) => {
     await onPatch({ model_settings: next });
-    setModelSettingsDirty(false);
+    if (JSON.stringify(modelSettingsRef.current) === JSON.stringify(next)) {
+      setModelSettingsDirty(false);
+    }
   };
 
   return (
