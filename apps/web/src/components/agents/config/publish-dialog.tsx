@@ -2,27 +2,27 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { computeChangedSectionDetails } from "@aula-agente/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose,
 } from "@/components/ui/dialog";
-
-const SECTION_LABELS: Record<string, string> = {
-  identity: "Identidade", personality: "Personalidade", rules: "Regras", knowledge: "Conhecimento", playbook: "Playbook",
-};
+import type { AgentConfigStatus } from "./use-agent-config";
 
 interface PublishDialogProps {
   agentId: string;
-  changedSections: string[];
+  status: AgentConfigStatus;
   onPublished: () => Promise<void>;
 }
 
-export function PublishDialog({ agentId, changedSections, onPublished }: PublishDialogProps) {
+export function PublishDialog({ agentId, status, onPublished }: PublishDialogProps) {
   const [changelog, setChangelog] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [open, setOpen] = useState(false);
+
+  const details = computeChangedSectionDetails(status.draft, status.latestVersion?.config_snapshot ?? null);
 
   const handlePublish = async () => {
     setPublishing(true);
@@ -41,14 +41,27 @@ export function PublishDialog({ agentId, changedSections, onPublished }: Publish
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button disabled={changedSections.length === 0}>Publicar</Button>} />
+      <DialogTrigger render={<Button disabled={!status.hasPendingChanges}>Publicar</Button>} />
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Publicar alterações</DialogTitle>
-          <DialogDescription>
-            Isto atualiza a Helena que atende no WhatsApp agora. Seções alteradas: {changedSections.map((s) => SECTION_LABELS[s] ?? s).join(", ") || "nenhuma"}.
-          </DialogDescription>
+          <DialogDescription>Isto atualiza a Helena que atende no WhatsApp agora.</DialogDescription>
         </DialogHeader>
+        <div className="space-y-2 text-sm">
+          {details.length === 0 && <p className="text-muted-foreground">Nenhuma seção alterada.</p>}
+          {details.map((detail) => (
+            <div key={detail.section}>
+              <p className="font-medium">{detail.label}</p>
+              {detail.items.length > 0 && (
+                <ul className="ml-4 list-disc text-muted-foreground">
+                  {detail.items.map((item) => (
+                    <li key={item.key}>{item.label}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
         <div className="space-y-2">
           <Label>Changelog</Label>
           <Textarea value={changelog} onChange={(e) => setChangelog(e.target.value)} placeholder="O que mudou e por quê" />

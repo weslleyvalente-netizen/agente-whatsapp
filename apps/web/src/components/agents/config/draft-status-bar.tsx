@@ -67,7 +67,7 @@ export function DraftStatusBar({ agentId, status, onPublished }: DraftStatusBarP
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        <PublishDialog agentId={agentId} changedSections={status.changedSections} onPublished={onPublished} />
+        <PublishDialog agentId={agentId} status={status} onPublished={onPublished} />
       </div>
     </div>
   );
