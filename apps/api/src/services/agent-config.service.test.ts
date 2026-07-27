@@ -1,19 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig, restoreAgentConfigFromVersion } = vi.hoisted(() => ({
-  getAgentById: vi.fn(),
-  getOrCreateAgentConfig: vi.fn(),
-  publishAgentConfig: vi.fn(),
-  getLatestAgentVersion: vi.fn(),
-  patchAgentConfig: vi.fn(),
-  restoreAgentConfigFromVersion: vi.fn(),
+const {
+  getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion,
+  patchAgentConfig, restoreAgentConfigFromVersion, getAgentVersions, getAgentVersionById,
+} = vi.hoisted(() => ({
+  getAgentById: vi.fn(), getOrCreateAgentConfig: vi.fn(), publishAgentConfig: vi.fn(),
+  getLatestAgentVersion: vi.fn(), patchAgentConfig: vi.fn(), restoreAgentConfigFromVersion: vi.fn(),
+  getAgentVersions: vi.fn(), getAgentVersionById: vi.fn(),
 }));
 
 vi.mock("@aula-agente/database", () => ({
-  getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, patchAgentConfig, restoreAgentConfigFromVersion,
+  getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion,
+  patchAgentConfig, restoreAgentConfigFromVersion, getAgentVersions, getAgentVersionById,
 }));
 
-import { publishDraft, getAgentConfigWithStatus, discardDraft } from "./agent-config.service.js";
+import { publishDraft, getAgentConfigWithStatus, discardDraft, listVersions, getVersionWithDiff, restoreVersion } from "./agent-config.service.js";
 
 const baseAgent = {
   id: "agent-1",
@@ -161,5 +162,58 @@ describe("discardDraft", () => {
     getLatestAgentVersion.mockResolvedValue(null);
     await expect(discardDraft({} as any, "agent-1")).rejects.toThrow(/never been published/i);
     expect(restoreAgentConfigFromVersion).not.toHaveBeenCalled();
+  });
+});
+
+const emptySections = {
+  identity: { nome: "", funcao: "", missao: "" },
+  personality: baseDraft.personality,
+  rules: baseDraft.rules,
+  knowledge: baseDraft.knowledge,
+  playbook: baseDraft.playbook,
+};
+
+describe("listVersions", () => {
+  it("returns whatever getAgentVersions returns, newest first (that ordering lives in the query itself)", async () => {
+    getAgentVersions.mockResolvedValue([{ id: "v2", version: 2 }, { id: "v1", version: 1 }]);
+    const result = await listVersions({} as any, "agent-1");
+    expect(result).toEqual([{ id: "v2", version: 2 }, { id: "v1", version: 1 }]);
+  });
+});
+
+describe("getVersionWithDiff", () => {
+  it("diffs the requested version against the one immediately before it", async () => {
+    const older = { id: "v1", version: 1, config_snapshot: emptySections };
+    const newer = { id: "v2", version: 2, config_snapshot: { ...emptySections, identity: { nome: "Helena", funcao: "", missao: "" } } };
+    getAgentVersionById.mockResolvedValue(newer);
+    getAgentVersions.mockResolvedValue([newer, older]);
+
+    const result = await getVersionWithDiff({} as any, "agent-1", "v2");
+
+    expect(result.version).toEqual(newer);
+    expect(result.changedSections).toEqual(["identity"]);
+  });
+
+  it("treats every section as changed when diffing the very first version", async () => {
+    const onlyVersion = { id: "v1", version: 1, config_snapshot: emptySections };
+    getAgentVersionById.mockResolvedValue(onlyVersion);
+    getAgentVersions.mockResolvedValue([onlyVersion]);
+
+    const result = await getVersionWithDiff({} as any, "agent-1", "v1");
+
+    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook"]);
+  });
+});
+
+describe("restoreVersion", () => {
+  it("restores the given version's snapshot onto the draft", async () => {
+    const version = { id: "v1", version: 1, config_snapshot: emptySections };
+    getAgentVersionById.mockResolvedValue(version);
+    restoreAgentConfigFromVersion.mockResolvedValue(baseDraft);
+
+    const result = await restoreVersion({} as any, "agent-1", "v1");
+
+    expect(restoreAgentConfigFromVersion).toHaveBeenCalledWith({}, "agent-1", version);
+    expect(result).toEqual(baseDraft);
   });
 });

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, restoreAgentConfigFromVersion } from "@aula-agente/database";
+import { getAgentById, getOrCreateAgentConfig, publishAgentConfig, getLatestAgentVersion, restoreAgentConfigFromVersion, getAgentVersions, getAgentVersionById } from "@aula-agente/database";
 import { compileSystemPrompt, computeChangedSections } from "@aula-agente/shared";
 import type { AgentConfigDraft, AgentVersion } from "@aula-agente/shared";
 
@@ -58,4 +58,27 @@ export async function discardDraft(db: SupabaseClient, agentId: string): Promise
     throw new Error("This agent has never been published — there is nothing to discard to.");
   }
   return restoreAgentConfigFromVersion(db, agentId, latestVersion);
+}
+
+export async function listVersions(db: SupabaseClient, agentId: string): Promise<AgentVersion[]> {
+  return getAgentVersions(db, agentId);
+}
+
+export interface VersionWithDiff {
+  version: AgentVersion;
+  changedSections: string[];
+}
+
+export async function getVersionWithDiff(db: SupabaseClient, agentId: string, versionId: string): Promise<VersionWithDiff> {
+  const version = await getAgentVersionById(db, versionId);
+  const allVersions = await getAgentVersions(db, agentId);
+  const previous = allVersions.find((v) => v.version === version.version - 1) ?? null;
+
+  const changedSections = computeChangedSections(version.config_snapshot, previous?.config_snapshot ?? null);
+  return { version, changedSections };
+}
+
+export async function restoreVersion(db: SupabaseClient, agentId: string, versionId: string): Promise<AgentConfigDraft> {
+  const version = await getAgentVersionById(db, versionId);
+  return restoreAgentConfigFromVersion(db, agentId, version);
 }

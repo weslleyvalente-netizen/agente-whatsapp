@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { updateAgentConfigSchema, publishAgentConfigSchema } from "@aula-agente/shared";
 import { getAdminClient, getAgentById, patchAgentConfig, createPlaygroundSession, getPlaygroundMessages, getPlaygroundSessionById } from "@aula-agente/database";
-import { publishDraft, getAgentConfigWithStatus, discardDraft } from "../../services/agent-config.service.js";
+import { publishDraft, getAgentConfigWithStatus, discardDraft, listVersions, getVersionWithDiff, restoreVersion } from "../../services/agent-config.service.js";
 import { sendPlaygroundMessage } from "../../services/playground.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
@@ -119,4 +119,37 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
       return reply.status(409).send({ error: (err as Error).message });
     }
   });
+
+  app.get<{ Params: { agentId: string } }>("/agents/:agentId/versions", async (request, reply) => {
+    const db = getAdminClient();
+    const agent = await getAgentById(db, request.params.agentId);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    return listVersions(db, request.params.agentId);
+  });
+
+  app.get<{ Params: { agentId: string; versionId: string } }>(
+    "/agents/:agentId/versions/:versionId",
+    async (request, reply) => {
+      const db = getAdminClient();
+      const agent = await getAgentById(db, request.params.agentId);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      return getVersionWithDiff(db, request.params.agentId, request.params.versionId);
+    }
+  );
+
+  app.post<{ Params: { agentId: string; versionId: string } }>(
+    "/agents/:agentId/versions/:versionId/restore",
+    async (request, reply) => {
+      const db = getAdminClient();
+      const agent = await getAgentById(db, request.params.agentId);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      return restoreVersion(db, request.params.agentId, request.params.versionId);
+    }
+  );
 }
