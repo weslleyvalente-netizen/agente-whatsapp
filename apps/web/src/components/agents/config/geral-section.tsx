@@ -34,21 +34,26 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
   const modelSettingsRef = useRef(modelSettings);
   modelSettingsRef.current = modelSettings;
 
+  const identitySeqRef = useRef(0);
+  const modelSettingsSeqRef = useRef(0);
+
   useEffect(() => {
     if (!identityDirty) setIdentity(draft.identity);
     if (!modelSettingsDirty) setModelSettings(draft.model_settings);
   }, [draft.updated_at]);
 
   const saveIdentity = async (next: typeof identity) => {
+    const seq = ++identitySeqRef.current;
     await onPatch({ identity: next });
-    if (JSON.stringify(identityRef.current) === JSON.stringify(next)) {
+    if (identitySeqRef.current === seq && JSON.stringify(identityRef.current) === JSON.stringify(next)) {
       setIdentityDirty(false);
     }
   };
 
   const saveModelSettings = async (next: AgentModelSettings) => {
+    const seq = ++modelSettingsSeqRef.current;
     await onPatch({ model_settings: next });
-    if (JSON.stringify(modelSettingsRef.current) === JSON.stringify(next)) {
+    if (modelSettingsSeqRef.current === seq && JSON.stringify(modelSettingsRef.current) === JSON.stringify(next)) {
       setModelSettingsDirty(false);
     }
   };
