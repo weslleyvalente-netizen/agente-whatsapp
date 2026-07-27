@@ -7,3 +7,4 @@ export * from "./contact.js";
 export * from "./evolution.js";
 export * from "./knowledge.js";
 export * from "./task.js";
+export * from "./agent-trainer.js";
