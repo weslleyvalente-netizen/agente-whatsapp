@@ -14,7 +14,14 @@ import agentConfigRoutes from "./routes/agent-config/index.js";
 const server = Fastify({ logger: true });
 
 // Plugins
-server.register(cors, { origin: true });
+// `methods` must be explicit: @fastify/cors' default preflight response only
+// allows GET,HEAD,POST, silently blocking every PATCH (and PUT/DELETE) route
+// in the browser with a generic "Failed to fetch" — no server-side log entry
+// at all, since the browser never sends the real request once the preflight
+// response omits the method. Discovered live while testing the agent-config
+// PATCH route; affects every existing PATCH route in this file (e.g.
+// `PATCH /tasks/:taskId`), not something introduced by any one feature.
+server.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"] });
 
 // Health check
 server.get("/health", async () => {

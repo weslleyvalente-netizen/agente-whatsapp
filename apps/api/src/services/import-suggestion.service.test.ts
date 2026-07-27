@@ -11,7 +11,14 @@ vi.mock("@aula-agente/database", () => ({ getAgentById }));
 vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, createModel }));
 vi.mock("ai", () => ({ generateObject }));
 
-import { suggestConfigFromSystemPrompt } from "./import-suggestion.service.js";
+import {
+  suggestConfigFromSystemPrompt,
+  identityGenSchema,
+  personalityGenSchema,
+  rulesGenSchema,
+  knowledgeGenSchema,
+  playbookGenSchema,
+} from "./import-suggestion.service.js";
 
 const baseAgent = {
   id: "agent-1", organization_id: "org-1", name: "Helena", description: "",
@@ -42,22 +49,43 @@ describe("suggestConfigFromSystemPrompt", () => {
     getAgentById.mockResolvedValue(baseAgent);
     resolveApiKey.mockResolvedValue("test-key");
     createModel.mockReturnValue("mock-model" as any);
-    generateObject.mockResolvedValue({ object: suggestedObject });
+    // One generateObject call per section (identity, personality, rules,
+    // knowledge, playbook — issued in that order by Promise.all), since
+    // Anthropic rejects the combined 5-section schema in a single call
+    // ("too many optional parameters", then "compiled grammar too large"
+    // even with 0 optional fields).
+    generateObject
+      .mockResolvedValueOnce({ object: suggestedObject.identity })
+      .mockResolvedValueOnce({ object: suggestedObject.personality })
+      .mockResolvedValueOnce({ object: suggestedObject.rules })
+      .mockResolvedValueOnce({ object: suggestedObject.knowledge })
+      .mockResolvedValueOnce({ object: suggestedObject.playbook });
   });
 
-  it("never writes anything — it only returns the model's suggestion", async () => {
+  it("never writes anything — it only returns the model's suggestion, assembled from 5 section calls", async () => {
     const result = await suggestConfigFromSystemPrompt({} as any, "agent-1");
     expect(result).toEqual(suggestedObject);
+    expect(generateObject).toHaveBeenCalledTimes(5);
   });
 
-  it("includes the agent's current system_prompt text in the prompt sent to the model", async () => {
+  it("includes the agent's current system_prompt text in every section call's prompt", async () => {
     await suggestConfigFromSystemPrompt({} as any, "agent-1");
-    const call = generateObject.mock.calls[0][0];
-    expect(call.prompt).toContain(baseAgent.system_prompt);
+    expect(generateObject.mock.calls.length).toBe(5);
+    for (const call of generateObject.mock.calls) {
+      expect((call[0] as { prompt: string }).prompt).toContain(baseAgent.system_prompt);
+    }
   });
 
   it("resolves the API key using the agent's own provider, not a hardcoded one", async () => {
     await suggestConfigFromSystemPrompt({} as any, "agent-1");
     expect(resolveApiKey).toHaveBeenCalledWith("org-1", "openai");
+  });
+
+  it("issues each of the 5 section calls with its own matching schema, in order", async () => {
+    await suggestConfigFromSystemPrompt({} as any, "agent-1");
+    const expectedSchemas = [identityGenSchema, personalityGenSchema, rulesGenSchema, knowledgeGenSchema, playbookGenSchema];
+    generateObject.mock.calls.forEach((call, i) => {
+      expect((call[0] as { schema: unknown }).schema).toBe(expectedSchemas[i]);
+    });
   });
 });
