@@ -88,3 +88,32 @@ export async function getMessagesForDashboard(
   if (error) throw error;
   return data as Array<{ conversation_id: string; role: string; created_at: string }>;
 }
+
+// Scoped narrowly for the Trainer's "Analisar conversas reais" flow: only
+// role/content/created_at, never wa_contacts.name/phone or conversation_notes,
+// and bounded by both a conversation count and a time window.
+export async function getRecentMessagesForOrganization(
+  client: SupabaseClient,
+  organizationId: string,
+  params: { conversationLimit: number; sinceISO: string }
+): Promise<Array<{ conversation_id: string; role: string; content: string; created_at: string }>> {
+  const { data: conversationRows, error: convError } = await client
+    .from("conversations")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .order("last_message_at", { ascending: false })
+    .limit(params.conversationLimit);
+  if (convError) throw convError;
+
+  const conversationIds = (conversationRows as Array<{ id: string }>).map((c) => c.id);
+  if (conversationIds.length === 0) return [];
+
+  const { data, error } = await client
+    .from("messages")
+    .select("conversation_id, role, content, created_at")
+    .in("conversation_id", conversationIds)
+    .gte("created_at", params.sinceISO)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data as Array<{ conversation_id: string; role: string; content: string; created_at: string }>;
+}
