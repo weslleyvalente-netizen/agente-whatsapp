@@ -14,6 +14,7 @@ import { RegrasSection } from "@/components/agents/config/regras-section";
 import { ConhecimentoSection } from "@/components/agents/config/conhecimento-section";
 import { PlaybooksSection } from "@/components/agents/config/playbooks-section";
 import { FerramentasSection } from "@/components/agents/config/ferramentas-section";
+import { HistoryPanel } from "@/components/agents/config/history-panel";
 
 const SECTIONS = [
   { key: "geral", label: "Geral" },
@@ -40,6 +41,7 @@ export default function AgentEditarPage() {
         <TabsList variant="line">
           <TabsTrigger value="editar">Editar</TabsTrigger>
           <TabsTrigger value="playground">Playground</TabsTrigger>
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
         </TabsList>
 
         <TabsContent value="editar">
@@ -75,6 +77,10 @@ export default function AgentEditarPage() {
 
         <TabsContent value="playground">
           <PlaygroundPanel playground={playground} />
+        </TabsContent>
+
+        <TabsContent value="historico">
+          <HistoryPanel agentId={agentId} onRestored={refetch} />
         </TabsContent>
       </Tabs>
     </div>
