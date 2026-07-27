@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeChangedSections } from "./agent-config-diff.js";
+import { computeChangedSections, computeChangedSectionDetails } from "./agent-config-diff.js";
 import type { AgentConfigSections } from "./types/agent-config.js";
 
 function baseSections(): AgentConfigSections {
@@ -43,5 +43,33 @@ describe("computeChangedSections", () => {
       rules: { ...base.rules, objecoes: [{ id: "a", nome: "Preço", como_identificar: "", orientacao: "", pergunta_diagnostico: "", quando_escalar: "", ativo: true }] },
     };
     expect(computeChangedSections(draft, base)).toEqual(["rules"]);
+  });
+});
+
+describe("computeChangedSectionDetails", () => {
+  it("returns every item for every section when there is no base snapshot yet", () => {
+    const details = computeChangedSectionDetails(baseSections(), null);
+    const personalidade = details.find((d) => d.section === "personalidade");
+    expect(personalidade?.items.map((i) => i.key).sort()).toEqual(
+      ["emojis", "girias", "perguntas_por_vez", "postura_comercial", "proatividade", "tom_de_voz"].sort()
+    );
+  });
+
+  it("returns only the item that actually changed within Personalidade", () => {
+    const base = baseSections();
+    const draft = { ...base, personality: { ...base.personality, proatividade: "novo texto" } };
+    expect(computeChangedSectionDetails(draft, base)).toEqual([
+      { section: "personalidade", label: "Personalidade", items: [{ key: "proatividade", label: "Proatividade" }] },
+    ]);
+  });
+
+  it("returns no item breakdown for Geral (a section with no items)", () => {
+    const base = baseSections();
+    const draft = { ...base, identity: { ...base.identity, nome: "Helena 2.0" } };
+    expect(computeChangedSectionDetails(draft, base)).toEqual([{ section: "geral", label: "Geral", items: [] }]);
+  });
+
+  it("returns nothing when the draft matches the base snapshot", () => {
+    expect(computeChangedSectionDetails(baseSections(), baseSections())).toEqual([]);
   });
 });
