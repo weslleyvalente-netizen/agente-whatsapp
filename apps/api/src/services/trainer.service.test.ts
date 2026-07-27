@@ -1,0 +1,151 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessagesForOrganization, resolveApiKey, createModel } = vi.hoisted(() => ({
+  getAgentById: vi.fn(),
+  getOrCreateAgentConfig: vi.fn(),
+  getTrainerMessages: vi.fn(),
+  getRecentMessagesForOrganization: vi.fn(),
+  resolveApiKey: vi.fn(),
+  createModel: vi.fn(),
+}));
+const { generateObject } = vi.hoisted(() => ({ generateObject: vi.fn() }));
+
+vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessagesForOrganization }));
+vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, createModel }));
+vi.mock("ai", () => ({ generateObject }));
+
+import { proposeConfigChange, buildConversationPatternContext, redactPii, diffSectionValues } from "./trainer.service.js";
+
+const baseAgent = {
+  id: "agent-1", organization_id: "org-1", name: "Helena", description: "",
+  system_prompt: "publicado", model: "gpt-4o-mini", provider: "openai" as const,
+  temperature: 0.7, max_tokens: 1024,
+  tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: true, create_task: true },
+  is_active: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+};
+
+const baseDraft = {
+  id: "config-1", agent_id: "agent-1", organization_id: "org-1", base_version_id: null,
+  identity: { nome: "Helena", funcao: "", missao: "" },
+  personality: {
+    tom_de_voz: "equilibrado" as const, tom_de_voz_personalizado: "", tamanho_resposta: "curta" as const,
+    emojis: { ativo: true, maximo: 1, instrucao: "" }, perguntas_por_vez: { maximo: 1 },
+    postura_comercial: { tipo: "", instrucao: "" }, girias_proibidas: [], proatividade: "",
+  },
+  rules: {
+    transferencia_para_humano: [], promessas_proibidas: [], regras_por_tipo: [],
+    preco_desconto: { pode_autonomo: "", exige_humano: "", nunca_pode: "", observacoes: "" },
+    objecoes: [{ id: "a", nome: "Preço alto", como_identificar: "", orientacao: "", pergunta_diagnostico: "", quando_escalar: "", ativo: true }],
+  },
+  knowledge: { precos_notas: "", links: [], documentos_ativos: true, faqs_ativas: true },
+  playbook: { script_atendimento: "" },
+  tools_config: baseAgent.tools_config,
+  model_settings: { provider: "openai" as const, model: "gpt-4o-mini", temperature: 0.7, max_tokens: 1024 },
+  updated_at: "2026-01-01T00:00:00Z", updated_by: null,
+};
+
+describe("proposeConfigChange", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    getAgentById.mockResolvedValue(baseAgent);
+    getOrCreateAgentConfig.mockResolvedValue(baseDraft);
+    getTrainerMessages.mockResolvedValue([]);
+    getRecentMessagesForOrganization.mockResolvedValue([]);
+    resolveApiKey.mockResolvedValue("test-key");
+    createModel.mockReturnValue("mock-model" as any);
+  });
+
+  it("no-conflict scenario: issues a stage-1 and a stage-2 call, and returns a proposal with a full-section patch and a computed diff", async () => {
+    generateObject
+      .mockResolvedValueOnce({
+        object: {
+          content: "Vou aumentar o limite de emojis.",
+          candidates: [{ section: "personalidade", item: "emojis", summary: "Aumentar emojis de 1 para 3", rationale: "Pedido do usuário", conflicts: [] }],
+        },
+      })
+      .mockResolvedValueOnce({ object: { ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } } });
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "deixa até 3 emojis");
+
+    expect(generateObject).toHaveBeenCalledTimes(2);
+    expect(result.proposals).toHaveLength(1);
+    expect(result.proposals[0].status).toBe("proposed");
+    expect(result.proposals[0].conflicts).toEqual([]);
+    expect(result.proposals[0].patch).toEqual({ personality: { ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } } });
+    expect(result.proposals[0].diff).toEqual([{ field_path: "emojis.maximo", before: 1, after: 3 }]);
+  });
+
+  it("conflict scenario (perguntas_por_vez=1 + pedido de 3 juntas): stops after stage 1, patch is null, no stage-2 call", async () => {
+    generateObject.mockResolvedValueOnce({
+      object: {
+        content: "Isso contradiz uma regra existente — quer mudar o limite ou manter uma por vez?",
+        candidates: [
+          {
+            section: "personalidade",
+            item: "perguntas_por_vez",
+            summary: "Perguntar nome, cidade e modelo de uma vez",
+            rationale: "Pedido do usuário",
+            conflicts: [{ description: "Existe uma regra de 1 pergunta por vez", resolution_options: ["Aumentar o limite para 3", "Manter 1 e reformular o pedido"] }],
+          },
+        ],
+      },
+    });
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "pergunta nome, cidade e modelo de uma vez");
+
+    expect(generateObject).toHaveBeenCalledTimes(1);
+    expect(result.proposals).toHaveLength(1);
+    expect(result.proposals[0].patch).toBeNull();
+    expect(result.proposals[0].conflicts).toHaveLength(1);
+  });
+
+  it("duplication scenario: the stage-1 prompt includes the current objeções list so the model can compare before proposing a new one", async () => {
+    generateObject.mockResolvedValueOnce({ object: { content: "Já existe uma objeção parecida.", candidates: [] } });
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "cliente acha caro");
+
+    const stageOnePrompt = generateObject.mock.calls[0][0].prompt as string;
+    expect(stageOnePrompt).toContain("Preço alto");
+  });
+
+  it("only fetches conversation-pattern context when the message mentions conversas", async () => {
+    generateObject.mockResolvedValue({ object: { content: "ok", candidates: [] } });
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta o tom");
+    expect(getRecentMessagesForOrganization).not.toHaveBeenCalled();
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "veja as últimas conversas e sugira melhorias");
+    expect(getRecentMessagesForOrganization).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("redactPii", () => {
+  it("redacts a Brazilian phone number and an email out of free text", () => {
+    const text = "meu telefone é (11) 98888-7777 e email joao@example.com";
+    const redacted = redactPii(text);
+    expect(redacted).not.toContain("98888-7777");
+    expect(redacted).not.toContain("joao@example.com");
+  });
+});
+
+describe("buildConversationPatternContext", () => {
+  it("never includes wa_contacts data — only redacted message content", async () => {
+    getRecentMessagesForOrganization.mockResolvedValue([
+      { conversation_id: "11111111-aaaa", role: "user", content: "meu whatsapp é (21) 99999-1234", created_at: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const context = await buildConversationPatternContext({} as any, "org-1");
+    expect(context).not.toContain("99999-1234");
+  });
+});
+
+describe("diffSectionValues", () => {
+  it("treats arrays as atomic and only reports leaf primitives that changed", () => {
+    const before = { a: 1, nested: { b: "x" }, list: [1, 2] };
+    const after = { a: 1, nested: { b: "y" }, list: [1, 2, 3] };
+    expect(diffSectionValues(before, after)).toEqual([
+      { field_path: "nested.b", before: "x", after: "y" },
+      { field_path: "list", before: [1, 2], after: [1, 2, 3] },
+    ]);
+  });
+});
