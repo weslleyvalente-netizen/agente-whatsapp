@@ -1,6 +1,7 @@
 export * from "./organization.js";
 export * from "./agent.js";
 export * from "./agent-config.js";
+export * from "./agent-trainer.js";
 export * from "./contact.js";
 export * from "./conversation.js";
 export * from "./message.js";
