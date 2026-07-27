@@ -7,12 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ListEditor } from "./list-editor";
 import type { AgentConfigDraft, AgentRules } from "@aula-agente/shared";
 
+export type RegrasItemKey = "transferencia" | "promessas" | "regras_por_tipo" | "preco_desconto" | "objecoes";
+
 interface RegrasSectionProps {
   draft: AgentConfigDraft;
   onPatch: (patch: { rules: AgentRules }) => Promise<void>;
+  item: RegrasItemKey;
 }
 
-export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
+export function RegrasSection({ draft, onPatch, item }: RegrasSectionProps) {
   const [rules, setRules] = useState(draft.rules);
 
   const save = (next: AgentRules) => {
@@ -20,8 +23,8 @@ export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
     onPatch({ rules: next });
   };
 
-  return (
-    <div className="space-y-6">
+  if (item === "transferencia") {
+    return (
       <Card>
         <CardHeader><CardTitle>Transferência para humano</CardTitle></CardHeader>
         <CardContent>
@@ -38,7 +41,11 @@ export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
           />
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "promessas") {
+    return (
       <Card>
         <CardHeader><CardTitle>Promessas proibidas</CardTitle></CardHeader>
         <CardContent>
@@ -55,7 +62,11 @@ export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
           />
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "regras_por_tipo") {
+    return (
       <Card>
         <CardHeader><CardTitle>Regras por tipo de atendimento</CardTitle></CardHeader>
         <CardContent>
@@ -75,7 +86,11 @@ export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
           </p>
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "preco_desconto") {
+    return (
       <Card>
         <CardHeader><CardTitle>Preço e desconto</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -113,29 +128,31 @@ export function RegrasSection({ draft, onPatch }: RegrasSectionProps) {
           </div>
         </CardContent>
       </Card>
+    );
+  }
 
-      <Card>
-        <CardHeader><CardTitle>Objeções</CardTitle></CardHeader>
-        <CardContent>
-          <ListEditor
-            items={rules.objecoes}
-            titleKey="nome"
-            fields={[
-              { key: "nome", label: "Nome (ex.: Preço alto)", type: "text" },
-              { key: "como_identificar", label: "Como identificar", type: "textarea" },
-              { key: "orientacao", label: "Orientação de resposta", type: "textarea" },
-              { key: "pergunta_diagnostico", label: "Pergunta de diagnóstico", type: "text" },
-              { key: "quando_escalar", label: "Quando transferir para humano", type: "text" },
-            ]}
-            emptyItem={() => ({
-              id: crypto.randomUUID(), nome: "", como_identificar: "", orientacao: "",
-              pergunta_diagnostico: "", quando_escalar: "", ativo: true,
-            })}
-            onChange={(items) => save({ ...rules, objecoes: items })}
-            addLabel="+ Nova objeção"
-          />
-        </CardContent>
-      </Card>
-    </div>
+  return (
+    <Card>
+      <CardHeader><CardTitle>Objeções</CardTitle></CardHeader>
+      <CardContent>
+        <ListEditor
+          items={rules.objecoes}
+          titleKey="nome"
+          fields={[
+            { key: "nome", label: "Nome (ex.: Preço alto)", type: "text" },
+            { key: "como_identificar", label: "Como identificar", type: "textarea" },
+            { key: "orientacao", label: "Orientação de resposta", type: "textarea" },
+            { key: "pergunta_diagnostico", label: "Pergunta de diagnóstico", type: "text" },
+            { key: "quando_escalar", label: "Quando transferir para humano", type: "text" },
+          ]}
+          emptyItem={() => ({
+            id: crypto.randomUUID(), nome: "", como_identificar: "", orientacao: "",
+            pergunta_diagnostico: "", quando_escalar: "", ativo: true,
+          })}
+          onChange={(items) => save({ ...rules, objecoes: items })}
+          addLabel="+ Nova objeção"
+        />
+      </CardContent>
+    </Card>
   );
 }

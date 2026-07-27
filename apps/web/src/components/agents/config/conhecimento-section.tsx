@@ -11,13 +11,16 @@ import { FaqManager } from "@/components/agents/faq-manager";
 import { ListEditor } from "./list-editor";
 import type { AgentConfigDraft, AgentKnowledgeConfig, KnowledgeDocument, KnowledgeFaq } from "@aula-agente/shared";
 
+export type ConhecimentoItemKey = "documentos" | "faq" | "precos" | "links";
+
 interface ConhecimentoSectionProps {
   agentId: string;
   draft: AgentConfigDraft;
   onPatch: (patch: { knowledge: AgentKnowledgeConfig }) => Promise<void>;
+  item: ConhecimentoItemKey;
 }
 
-export function ConhecimentoSection({ agentId, draft, onPatch }: ConhecimentoSectionProps) {
+export function ConhecimentoSection({ agentId, draft, onPatch, item }: ConhecimentoSectionProps) {
   const [knowledge, setKnowledge] = useState(draft.knowledge);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [faqs, setFaqs] = useState<KnowledgeFaq[]>([]);
@@ -41,8 +44,8 @@ export function ConhecimentoSection({ agentId, draft, onPatch }: ConhecimentoSec
     onPatch({ knowledge: next });
   };
 
-  return (
-    <div className="space-y-6">
+  if (item === "documentos") {
+    return (
       <Card>
         <CardHeader>
           <CardTitle>Base de Conhecimento</CardTitle>
@@ -55,7 +58,11 @@ export function ConhecimentoSection({ agentId, draft, onPatch }: ConhecimentoSec
           <DocumentUpload agentId={agentId} documents={documents} onRefresh={fetchDocsAndFaqs} />
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "faq") {
+    return (
       <Card>
         <CardHeader>
           <CardTitle>FAQ</CardTitle>
@@ -68,7 +75,11 @@ export function ConhecimentoSection({ agentId, draft, onPatch }: ConhecimentoSec
           <FaqManager agentId={agentId} faqs={faqs} onRefresh={fetchDocsAndFaqs} />
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "precos") {
+    return (
       <Card>
         <CardHeader><CardTitle>Preços</CardTitle></CardHeader>
         <CardContent>
@@ -81,23 +92,25 @@ export function ConhecimentoSection({ agentId, draft, onPatch }: ConhecimentoSec
           />
         </CardContent>
       </Card>
+    );
+  }
 
-      <Card>
-        <CardHeader><CardTitle>Links</CardTitle></CardHeader>
-        <CardContent>
-          <ListEditor
-            items={knowledge.links}
-            titleKey="titulo"
-            fields={[
-              { key: "titulo", label: "Título", type: "text" },
-              { key: "url", label: "URL", type: "text" },
-            ]}
-            emptyItem={() => ({ id: crypto.randomUUID(), titulo: "", url: "", ativo: true })}
-            onChange={(items) => save({ ...knowledge, links: items })}
-            addLabel="+ Novo link"
-          />
-        </CardContent>
-      </Card>
-    </div>
+  return (
+    <Card>
+      <CardHeader><CardTitle>Links</CardTitle></CardHeader>
+      <CardContent>
+        <ListEditor
+          items={knowledge.links}
+          titleKey="titulo"
+          fields={[
+            { key: "titulo", label: "Título", type: "text" },
+            { key: "url", label: "URL", type: "text" },
+          ]}
+          emptyItem={() => ({ id: crypto.randomUUID(), titulo: "", url: "", ativo: true })}
+          onChange={(items) => save({ ...knowledge, links: items })}
+          addLabel="+ Novo link"
+        />
+      </CardContent>
+    </Card>
   );
 }

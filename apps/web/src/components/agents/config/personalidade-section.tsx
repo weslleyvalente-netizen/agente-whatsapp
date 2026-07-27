@@ -10,6 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TagInput } from "./tag-input";
 import type { AgentConfigDraft, AgentPersonality } from "@aula-agente/shared";
 
+export type PersonalidadeItemKey =
+  | "tom_de_voz"
+  | "emojis"
+  | "perguntas_por_vez"
+  | "postura_comercial"
+  | "girias"
+  | "proatividade";
+
 const TOM_LABELS: Record<AgentPersonality["tom_de_voz"], string> = {
   profissional: "Profissional", equilibrado: "Equilibrado", amigavel: "Amigável",
   divertido: "Divertido", personalizado: "Personalizado",
@@ -21,9 +29,10 @@ const TAMANHO_LABELS: Record<AgentPersonality["tamanho_resposta"], string> = {
 interface PersonalidadeSectionProps {
   draft: AgentConfigDraft;
   onPatch: (patch: { personality: AgentPersonality }) => Promise<void>;
+  item: PersonalidadeItemKey;
 }
 
-export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionProps) {
+export function PersonalidadeSection({ draft, onPatch, item }: PersonalidadeSectionProps) {
   const [personality, setPersonality] = useState(draft.personality);
 
   const save = (next: AgentPersonality) => {
@@ -31,8 +40,8 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
     onPatch({ personality: next });
   };
 
-  return (
-    <div className="space-y-6">
+  if (item === "tom_de_voz") {
+    return (
       <Card>
         <CardHeader><CardTitle>Tom de voz e tamanho das respostas</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -72,7 +81,11 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
           )}
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "emojis") {
+    return (
       <Card>
         <CardHeader><CardTitle>Emojis</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -100,7 +113,11 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
           </div>
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "perguntas_por_vez") {
+    return (
       <Card>
         <CardHeader><CardTitle>Perguntas por vez</CardTitle></CardHeader>
         <CardContent>
@@ -115,7 +132,11 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
           </div>
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "postura_comercial") {
+    return (
       <Card>
         <CardHeader><CardTitle>Postura comercial</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -139,7 +160,11 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
           </div>
         </CardContent>
       </Card>
+    );
+  }
 
+  if (item === "girias") {
+    return (
       <Card>
         <CardHeader><CardTitle>Gírias e expressões proibidas</CardTitle></CardHeader>
         <CardContent>
@@ -150,18 +175,20 @@ export function PersonalidadeSection({ draft, onPatch }: PersonalidadeSectionPro
           />
         </CardContent>
       </Card>
+    );
+  }
 
-      <Card>
-        <CardHeader><CardTitle>Proatividade</CardTitle></CardHeader>
-        <CardContent>
-          <Textarea
-            rows={6}
-            value={personality.proatividade}
-            onChange={(e) => setPersonality({ ...personality, proatividade: e.target.value })}
-            onBlur={() => save(personality)}
-          />
-        </CardContent>
-      </Card>
-    </div>
+  return (
+    <Card>
+      <CardHeader><CardTitle>Proatividade</CardTitle></CardHeader>
+      <CardContent>
+        <Textarea
+          rows={6}
+          value={personality.proatividade}
+          onChange={(e) => setPersonality({ ...personality, proatividade: e.target.value })}
+          onBlur={() => save(personality)}
+        />
+      </CardContent>
+    </Card>
   );
 }

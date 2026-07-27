@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,12 @@ interface PlaygroundPanelProps {
 export function PlaygroundPanel({ playground }: PlaygroundPanelProps) {
   const { messages, sendMessage, sending, reset } = playground;
   const [draft, setDraft] = useState("");
+  const messageListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   const handleSend = async () => {
     const content = draft.trim();
@@ -31,7 +37,7 @@ export function PlaygroundPanel({ playground }: PlaygroundPanelProps) {
           <RotateCcw className="h-4 w-4" />
         </Button>
       </div>
-      <div className="flex-1 space-y-3 overflow-y-auto p-3">
+      <div ref={messageListRef} className="flex-1 space-y-3 overflow-y-auto p-3">
         {messages.length === 0 && (
           <p className="text-sm text-muted-foreground">Mande uma mensagem como se fosse um lead.</p>
         )}
