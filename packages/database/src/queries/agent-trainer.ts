@@ -53,6 +53,16 @@ export async function addTrainerMessage(
 // with this id. jsonb `@>` containment matches array elements by partial
 // object match, so `[{id: proposalId}]` correctly locates it without
 // needing a dedicated proposals table.
+//
+// Uses `.filter(column, "cs", JSON.stringify(value))` rather than
+// `.contains(column, value)`: postgrest-js's `.contains()` special-cases a
+// JS array argument as a Postgres *native array* column and serializes it
+// via `` `{${value.join(',')}}` `` — for an array of objects that calls
+// `Object.prototype.toString` on each element, producing the literal
+// string "{[object Object]}", which Postgres rejects with "invalid input
+// syntax for type json". `.filter()` does no such branching, so
+// pre-serializing the value ourselves sends the correct JSON array (e.g.
+// `cs.[{"id":"..."}]`) that jsonb containment expects.
 export async function getTrainerMessageByProposalId(
   client: SupabaseClient,
   proposalId: string
@@ -60,7 +70,7 @@ export async function getTrainerMessageByProposalId(
   const { data, error } = await client
     .from("agent_trainer_messages")
     .select("*")
-    .contains("proposals", [{ id: proposalId }])
+    .filter("proposals", "cs", JSON.stringify([{ id: proposalId }]))
     .maybeSingle();
   if (error) throw error;
   return data as AgentTrainerMessage | null;
