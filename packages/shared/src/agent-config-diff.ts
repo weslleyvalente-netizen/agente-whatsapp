@@ -18,9 +18,14 @@ export function computeChangedSections(
 // Bridges each backend section (identity/personality/...) to the UI item
 // keys defined in agent-config-sections.ts's SECTION_ITEMS, so the publish
 // dialog can show "Personalidade > Emojis" instead of just "Personalidade".
-const ITEM_FIELD_MAP: Partial<Record<(typeof SECTION_KEYS)[number], Record<string, string>>> = {
+// An item can watch more than one backend field — e.g. "Tom de voz" covers
+// both the enum (`tom_de_voz`) and its free-text companion
+// (`tom_de_voz_personalizado`, only meaningful when the enum is
+// "personalizado"), so a change to either one surfaces under that item
+// rather than falling through to a bare section-only entry.
+const ITEM_FIELD_MAP: Partial<Record<(typeof SECTION_KEYS)[number], Record<string, string | string[]>>> = {
   personality: {
-    tom_de_voz: "tom_de_voz",
+    tom_de_voz: ["tom_de_voz", "tom_de_voz_personalizado"],
     emojis: "emojis",
     perguntas_por_vez: "perguntas_por_vez",
     postura_comercial: "postura_comercial",
@@ -68,7 +73,10 @@ export function computeChangedSectionDetails(
     const draftSection = draft[draftKey] as unknown as Record<string, unknown>;
     const baseSection = baseSnapshot[draftKey] as unknown as Record<string, unknown>;
     const items = Object.entries(itemFieldMap)
-      .filter(([, fieldKey]) => !deepEqual(draftSection[fieldKey], baseSection[fieldKey]))
+      .filter(([, fieldKeys]) => {
+        const keys = Array.isArray(fieldKeys) ? fieldKeys : [fieldKeys];
+        return keys.some((fieldKey) => !deepEqual(draftSection[fieldKey], baseSection[fieldKey]));
+      })
       .map(([itemKey]) => ({ key: itemKey, label: uiItems[itemKey] }));
 
     return { section, label, items };

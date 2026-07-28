@@ -72,4 +72,12 @@ describe("computeChangedSectionDetails", () => {
   it("returns nothing when the draft matches the base snapshot", () => {
     expect(computeChangedSectionDetails(baseSections(), baseSections())).toEqual([]);
   });
+
+  it("attributes a change in tom_de_voz_personalizado to the Tom de voz item, not just the bare section", () => {
+    const base = baseSections();
+    const draft = { ...base, personality: { ...base.personality, tom_de_voz_personalizado: "Texto novo do tom personalizado." } };
+    expect(computeChangedSectionDetails(draft, base)).toEqual([
+      { section: "personalidade", label: "Personalidade", items: [{ key: "tom_de_voz", label: "Tom de voz" }] },
+    ]);
+  });
 });
