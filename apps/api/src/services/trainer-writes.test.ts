@@ -12,11 +12,19 @@ import path from "node:path";
 // agents-published-fields.test.ts proves the agents-table boundary.
 
 const SERVICES_DIR = path.resolve(__dirname, ".");
+const ROUTES_FILE = path.resolve(__dirname, "../routes/agent-config/index.ts");
+
 const FORBIDDEN_PATTERNS = [
   /patchAgentConfig\s*\(/,
   /publishAgentConfig\s*\(/,
   /publish_agent_config/,
   /\.from\(\s*["'`]agents["'`]\s*\)/,
+  // Named helpers aren't the only way to write: the Supabase client itself
+  // can mutate directly. Forbid the mutating verbs and any reference to the
+  // agent_configs table, so a future change can't bypass patchAgentConfig
+  // and write the draft by hand while this test stays green.
+  /\.(update|insert|upsert|delete)\s*\(/,
+  /\.from\(\s*["'`]agent_configs["'`]\s*\)/,
 ];
 
 function read(file: string): string {
@@ -37,5 +45,17 @@ describe("trainer write boundary", () => {
     expect(content).not.toMatch(/publishAgentConfig\s*\(/);
     expect(content).not.toMatch(/publish_agent_config/);
     expect(content).not.toMatch(/\.from\(\s*["'`]agents["'`]\s*\)/);
+  });
+
+  it("the agent-config routes file has exactly one patchAgentConfig call — the non-Trainer PATCH /config handler", () => {
+    const content = readFileSync(ROUTES_FILE, "utf-8");
+
+    // All 5 Trainer routes live in this same file, alongside the
+    // pre-existing (and legitimate) PATCH /agents/:agentId/config handler
+    // that calls patchAgentConfig directly. So the count is pinned at 1
+    // rather than 0: 1 means "only the old non-Trainer handler writes".
+    // Any Trainer route that grew its own write path would push this to 2
+    // and fail here — that's the regression this guards.
+    expect(content.match(/patchAgentConfig\s*\(/g)?.length ?? 0).toBe(1);
   });
 });
