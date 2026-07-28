@@ -13,10 +13,18 @@ export interface TrainerChatMessage {
   created_at: string;
 }
 
-export function useTrainerSession(agentId: string) {
+// `onProposalApplied` fires only after a proposal is successfully applied —
+// that's the one decision that writes to agent_configs, so it's the one that
+// makes the page's cached config status (and DraftStatusBar's "Publicar N"
+// badge) stale. Rejecting never touches agent_configs, so it doesn't fire.
+export function useTrainerSession(agentId: string, onProposalApplied?: () => void) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<TrainerChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  // Keyed by proposal id: a failed apply/reject has to stay visible on the
+  // proposal it belongs to, otherwise the button just re-enables and the
+  // user cannot tell whether the config was written.
+  const [decisionErrors, setDecisionErrors] = useState<Record<string, string>>({});
 
   const ensureSession = useCallback(async () => {
     if (sessionId) return sessionId;
@@ -52,13 +60,33 @@ export function useTrainerSession(agentId: string) {
 
   const decideProposal = useCallback(
     async (proposalId: string, decision: "apply" | "reject") => {
-      const updated = (await apiFetch(`/agents/${agentId}/trainer/proposals/${proposalId}/${decision}`, { method: "POST" })) as TrainerProposal;
-      setMessages((prev) => prev.map((m) => ({ ...m, proposals: m.proposals.map((p) => (p.id === proposalId ? updated : p)) })));
+      try {
+        const updated = (await apiFetch(`/agents/${agentId}/trainer/proposals/${proposalId}/${decision}`, { method: "POST" })) as TrainerProposal;
+        setMessages((prev) => prev.map((m) => ({ ...m, proposals: m.proposals.map((p) => (p.id === proposalId ? updated : p)) })));
+        setDecisionErrors((prev) => {
+          if (!(proposalId in prev)) return prev;
+          return Object.fromEntries(Object.entries(prev).filter(([id]) => id !== proposalId));
+        });
+      } catch (err) {
+        // Swallowed on purpose: without this catch the rejection escapes
+        // TrainerProposalCard's handleDecide as an unhandled rejection and
+        // the failure is completely invisible. The message is surfaced on
+        // the proposal card instead.
+        const detail = err instanceof Error ? err.message : "";
+        const base = decision === "apply" ? "Falha ao aplicar" : "Falha ao rejeitar";
+        setDecisionErrors((prev) => ({ ...prev, [proposalId]: detail ? `${base}: ${detail}` : `${base} — tente novamente` }));
+        return;
+      }
+
+      // Outside the try so a failing refresh can never be reported as a
+      // failed apply — by this point the write already succeeded. Only
+      // "apply" writes agent_configs; "reject" leaves the draft untouched.
+      if (decision === "apply") onProposalApplied?.();
     },
-    [agentId]
+    [agentId, onProposalApplied]
   );
 
   const pendingProposalsCount = messages.reduce((count, m) => count + m.proposals.filter((p) => p.status === "proposed").length, 0);
 
-  return { messages, sendMessage, sending, decideProposal, pendingProposalsCount };
+  return { messages, sendMessage, sending, decideProposal, decisionErrors, pendingProposalsCount };
 }

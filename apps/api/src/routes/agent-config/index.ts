@@ -282,6 +282,11 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       try {
+        // The patched draft is deliberately not returned: this response's
+        // shape is the decided proposal, and the client refreshes the full
+        // config status (draft + changedSections + hasPendingChanges) via
+        // GET /config after a successful apply, so a partial draft here
+        // would just be a second source of truth to keep in sync.
         const { proposal } = await applyTrainerProposal(db, request.params.agentId, request.params.proposalId, request.user.id);
         return proposal;
       } catch (err) {

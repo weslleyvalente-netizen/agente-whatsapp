@@ -24,7 +24,7 @@ const QUICK_ACTIONS: { label: string; prompt: string; analyzeConversations?: boo
 ];
 
 export function TrainerPanel({ trainer }: TrainerPanelProps) {
-  const { messages, sendMessage, sending, decideProposal } = trainer;
+  const { messages, sendMessage, sending, decideProposal, decisionErrors } = trainer;
   const [draft, setDraft] = useState("");
   // Quick actions only prefill the input, so the "analyse real conversations"
   // intent has to survive from the click until the user actually sends. Any
@@ -86,7 +86,12 @@ export function TrainerPanel({ trainer }: TrainerPanelProps) {
             >
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
               {message.proposals.map((proposal) => (
-                <TrainerProposalCard key={proposal.id} proposal={proposal} onDecide={decideProposal} />
+                <TrainerProposalCard
+                  key={proposal.id}
+                  proposal={proposal}
+                  onDecide={decideProposal}
+                  decisionError={decisionErrors[proposal.id]}
+                />
               ))}
             </div>
           </div>

@@ -46,7 +46,10 @@ export default function AgentEditarPage() {
     conhecimento: true,
   });
   const playground = usePlaygroundSession(agentId);
-  const trainer = useTrainerSession(agentId);
+  // Applying a Trainer proposal writes the draft, so the config status this
+  // page holds (and DraftStatusBar's "Publicar N" badge) has to refresh —
+  // same `refetch` used after publish/discard/import/restore.
+  const trainer = useTrainerSession(agentId, refetch);
 
   if (loading || !status) return <div className="p-6">Carregando configuração...</div>;
 

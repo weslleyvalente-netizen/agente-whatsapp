@@ -8,9 +8,12 @@ import type { TrainerProposal } from "@aula-agente/shared";
 interface TrainerProposalCardProps {
   proposal: TrainerProposal;
   onDecide: (proposalId: string, decision: "apply" | "reject") => Promise<void>;
+  // Set when the last apply/reject for this proposal failed. Rendered so a
+  // failed decision is never mistaken for a successful one.
+  decisionError?: string;
 }
 
-export function TrainerProposalCard({ proposal, onDecide }: TrainerProposalCardProps) {
+export function TrainerProposalCard({ proposal, onDecide, decisionError }: TrainerProposalCardProps) {
   const [deciding, setDeciding] = useState(false);
 
   const handleDecide = async (decision: "apply" | "reject") => {
@@ -71,6 +74,10 @@ export function TrainerProposalCard({ proposal, onDecide }: TrainerProposalCardP
             Rejeitar
           </Button>
         </div>
+      )}
+
+      {decisionError && (
+        <p className="mt-2 rounded-md bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">{decisionError}</p>
       )}
 
       {proposal.status === "applied" && (
