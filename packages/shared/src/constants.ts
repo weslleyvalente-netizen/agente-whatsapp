@@ -89,7 +89,11 @@ export const DEFAULT_TASK_RULES = {
 
 export const INSTANCE_STATUSES = ["connected", "disconnected", "connecting"] as const;
 
-export const HUMAN_TAKEOVER_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+// Fallback used when an organization hasn't configured its own
+// human_takeover_timeout_minutes (see OrganizationSettings) — orgs can set
+// a different value, or disable auto-resume entirely, from Configurações.
+export const DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES = 30;
+export const HUMAN_TAKEOVER_TIMEOUT_MS = DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES * 60 * 1000;
 
 export const EMBEDDING_DIMENSION = 1536;
 

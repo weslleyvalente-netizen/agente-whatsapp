@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Conversation, ConversationNote, ConversationMetrics } from "@aula-agente/shared";
+import type { Conversation, ConversationNote, ConversationMetrics, OrganizationSettings } from "@aula-agente/shared";
+import { isHumanTakeoverExpired } from "@aula-agente/shared";
 
 export async function getConversationsByOrganization(
   client: SupabaseClient,
@@ -86,15 +87,33 @@ export async function updateConversation(
   return data as Conversation;
 }
 
-export async function getExpiredTakeovers(client: SupabaseClient, timeoutMs: number) {
-  const cutoff = new Date(Date.now() - timeoutMs).toISOString();
+// defaultTimeoutMs applies only to orgs that haven't configured their own
+// human_takeover_timeout_minutes (see OrganizationSettings) — each org's
+// setting is read here rather than filtered in SQL, since it can disable
+// auto-resume entirely (null) or use a value the database can't compare
+// against with a single fixed cutoff.
+export async function getExpiredTakeovers(client: SupabaseClient, defaultTimeoutMs: number) {
   const { data, error } = await client
     .from("conversations")
-    .select("*")
-    .eq("is_human_takeover", true)
-    .lt("human_takeover_at", cutoff);
+    .select("*, organizations(settings)")
+    .eq("is_human_takeover", true);
   if (error) throw error;
-  return data as Conversation[];
+
+  const now = Date.now();
+  const rows = data as unknown as Array<
+    Conversation & { organizations: { settings: OrganizationSettings } | null }
+  >;
+
+  return rows
+    .filter((row) =>
+      isHumanTakeoverExpired(
+        row.human_takeover_at,
+        row.organizations?.settings?.human_takeover_timeout_minutes,
+        defaultTimeoutMs,
+        now
+      )
+    )
+    .map(({ organizations: _organizations, ...conversation }) => conversation as Conversation);
 }
 
 export async function getStaleWaitingConversations(

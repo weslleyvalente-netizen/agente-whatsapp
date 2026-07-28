@@ -4,6 +4,7 @@ export * from "./constants.js";
 export * from "./pricing.js";
 export * from "./date.js";
 export * from "./task-helpers.js";
+export * from "./conversation-helpers.js";
 export * from "./prompt-builder.js";
 export * from "./agent-config-diff.js";
 export * from "./agent-config-sections.js";
