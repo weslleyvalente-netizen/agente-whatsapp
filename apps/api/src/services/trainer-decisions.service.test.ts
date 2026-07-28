@@ -54,6 +54,16 @@ describe("applyTrainerProposal", () => {
     await expect(applyTrainerProposal({} as any, "agent-1", "proposal-1", "user-1")).rejects.toThrow();
     expect(patchAgentConfig).not.toHaveBeenCalled();
   });
+
+  it("throws and never calls patchAgentConfig when the proposal is already applied", async () => {
+    getTrainerMessageByProposalId.mockResolvedValue({
+      ...message,
+      proposals: [{ ...proposal, status: "applied" }],
+    });
+
+    await expect(applyTrainerProposal({} as any, "agent-1", "proposal-1", "user-1")).rejects.toThrow();
+    expect(patchAgentConfig).not.toHaveBeenCalled();
+  });
 });
 
 describe("rejectTrainerProposal", () => {
@@ -64,10 +74,22 @@ describe("rejectTrainerProposal", () => {
     updateTrainerMessageProposals.mockResolvedValue({ ...message, proposals: [{ ...proposal, status: "rejected" }] });
   });
 
-  it("marks the proposal rejected and never calls patchAgentConfig", async () => {
+  it("marks the proposal rejected, persists it via updateTrainerMessageProposals, and never calls patchAgentConfig", async () => {
     const result = await rejectTrainerProposal({} as any, "agent-1", "proposal-1");
 
     expect(result.status).toBe("rejected");
+    expect(updateTrainerMessageProposals).toHaveBeenCalledWith({}, "message-1", [expect.objectContaining({ id: "proposal-1", status: "rejected" })]);
+    expect(patchAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it("throws and never calls updateTrainerMessageProposals or patchAgentConfig when the proposal is already decided", async () => {
+    getTrainerMessageByProposalId.mockResolvedValue({
+      ...message,
+      proposals: [{ ...proposal, status: "rejected" }],
+    });
+
+    await expect(rejectTrainerProposal({} as any, "agent-1", "proposal-1")).rejects.toThrow();
+    expect(updateTrainerMessageProposals).not.toHaveBeenCalled();
     expect(patchAgentConfig).not.toHaveBeenCalled();
   });
 });
