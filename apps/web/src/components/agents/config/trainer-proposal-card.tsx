@@ -55,11 +55,18 @@ export function TrainerProposalCard({ proposal, onDecide }: TrainerProposalCardP
         </div>
       )}
 
-      {proposal.status === "proposed" && proposal.conflicts.length === 0 && (
+      {/* Conflicts block applying, never rejecting: the server refuses to
+          apply a conflicted proposal (409) but rejects one happily. Gating
+          both buttons together left conflicted proposals — including the
+          synthesised stage-2 failures — stuck at "proposed" forever, which
+          also pinned the Trainer tab's pending badge above zero. */}
+      {proposal.status === "proposed" && (
         <div className="mt-3 flex gap-2">
-          <Button size="sm" onClick={() => handleDecide("apply")} disabled={deciding}>
-            Aplicar
-          </Button>
+          {proposal.conflicts.length === 0 && (
+            <Button size="sm" onClick={() => handleDecide("apply")} disabled={deciding}>
+              Aplicar
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={() => handleDecide("reject")} disabled={deciding}>
             Rejeitar
           </Button>
