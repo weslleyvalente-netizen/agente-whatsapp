@@ -15,6 +15,9 @@ import { PlaybooksSection } from "@/components/agents/config/playbooks-section";
 import { FerramentasSection } from "@/components/agents/config/ferramentas-section";
 import { HistoryPanel } from "@/components/agents/config/history-panel";
 import { ConfigTreeNav, type TreeNode } from "@/components/agents/config/config-tree-nav";
+import { useTrainerSession } from "@/components/agents/config/use-trainer-session";
+import { TrainerPanel } from "@/components/agents/config/trainer-panel";
+import { Badge } from "@/components/ui/badge";
 import { SECTION_ORDER, SECTION_ITEMS, SECTION_LABELS } from "@aula-agente/shared";
 
 const TREE: TreeNode[] = SECTION_ORDER.map((key) => {
@@ -43,6 +46,7 @@ export default function AgentEditarPage() {
     conhecimento: true,
   });
   const playground = usePlaygroundSession(agentId);
+  const trainer = useTrainerSession(agentId);
 
   if (loading || !status) return <div className="p-6">Carregando configuração...</div>;
 
@@ -56,6 +60,14 @@ export default function AgentEditarPage() {
           <TabsTrigger value="editar">Editar</TabsTrigger>
           <TabsTrigger value="playground">Playground</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
+          <TabsTrigger value="trainer">
+            Trainer
+            {trainer.pendingProposalsCount > 0 && (
+              <Badge variant="default" className="h-4 min-w-4 px-1 text-[10px]">
+                {trainer.pendingProposalsCount}
+              </Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="editar" className="min-h-0">
@@ -118,6 +130,17 @@ export default function AgentEditarPage() {
 
         <TabsContent value="historico" className="min-h-0">
           <HistoryPanel agentId={agentId} onRestored={refetch} />
+        </TabsContent>
+
+        <TabsContent value="trainer" className="min-h-0">
+          <div className="grid h-full min-h-0 grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
+            <div className="min-h-0 lg:h-full">
+              <TrainerPanel trainer={trainer} />
+            </div>
+            <div className="hidden min-h-0 lg:block lg:h-full">
+              <PlaygroundPanel playground={playground} />
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
