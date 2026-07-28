@@ -19,6 +19,9 @@ export interface MessageMetadata {
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  cache_status?: "hit" | "write" | "none";
   latency_ms?: number;
   tool_calls?: string[];
   duration_seconds?: number;

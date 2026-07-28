@@ -73,5 +73,29 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
       : createCreateTaskTool({ contactId, conversationId, organizationId });
   }
 
-  return tools;
+  return markLastToolCacheable(tools);
+}
+
+// Anthropic's prompt cache_control is a prefix marker: caching it on the
+// last tool definition caches every tool definition before it too, as one
+// contiguous block — no need to mark each tool individually. Which tool
+// ends up last depends on toolsConfig, so this is resolved after all the
+// conditional registration above rather than hardcoded to one tool name.
+// The tool set only changes when someone edits Configurações, so this
+// block is static across every message of every conversation for an agent.
+function markLastToolCacheable(tools: ToolSet): ToolSet {
+  const names = Object.keys(tools);
+  if (names.length === 0) return tools;
+  const lastName = names[names.length - 1];
+  const lastTool = tools[lastName];
+  return {
+    ...tools,
+    [lastName]: {
+      ...lastTool,
+      providerOptions: {
+        ...lastTool.providerOptions,
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      },
+    },
+  };
 }

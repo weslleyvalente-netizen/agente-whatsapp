@@ -37,3 +37,32 @@ describe("buildToolsForAgent sandbox mode", () => {
     expect(result).toContain("[SIMULADO]");
   });
 });
+
+describe("buildToolsForAgent prompt caching", () => {
+  it("marks only the last registered tool as cacheable, caching every tool before it too", () => {
+    const tools = buildToolsForAgent(baseParams);
+    expect(Object.keys(tools)).toEqual(["searchKnowledge", "searchFaq", "searchCatalog", "sendVehiclePhoto", "createTask"]);
+    expect(tools.createTask.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } });
+    expect(tools.searchKnowledge.providerOptions).toBeUndefined();
+    expect(tools.searchFaq.providerOptions).toBeUndefined();
+    expect(tools.searchCatalog.providerOptions).toBeUndefined();
+    expect(tools.sendVehiclePhoto.providerOptions).toBeUndefined();
+  });
+
+  it("marks whichever tool ends up last when only a subset of tools is enabled", () => {
+    const tools = buildToolsForAgent({
+      ...baseParams,
+      toolsConfig: { search_knowledge: true, search_faq: false, send_catalog_photo: false, create_task: false },
+    });
+    expect(Object.keys(tools)).toEqual(["searchKnowledge"]);
+    expect(tools.searchKnowledge.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } });
+  });
+
+  it("does nothing when no tools are enabled", () => {
+    const tools = buildToolsForAgent({
+      ...baseParams,
+      toolsConfig: { search_knowledge: false, search_faq: false, send_catalog_photo: false, create_task: false },
+    });
+    expect(tools).toEqual({});
+  });
+});
