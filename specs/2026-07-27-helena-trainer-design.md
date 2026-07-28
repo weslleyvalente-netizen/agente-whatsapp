@@ -272,6 +272,12 @@ Este serviço só lê e retorna JSON. Não há nenhum `await patchAgentConfig`
 nem `await db.from(...).update` em nenhum caminho deste arquivo — o teste
 estático descrito em "Estratégia de testes" garante isso permanentemente.
 
+O rascunho é lido por `getAgentConfigIfExists` (SELECT puro), não por
+`getOrCreateAgentConfig` — este último faz INSERT quando o agente ainda não
+tem rascunho, o que seria uma escrita. Quando não existe linha, o serviço
+monta um rascunho padrão **em memória** (`buildDefaultAgentConfigDraft`,
+com exatamente os mesmos valores que a linha teria) e nunca persiste nada.
+
 ## Detecção de conflitos e duplicações
 
 Não é um passo separado de código determinístico — é uma instrução de
