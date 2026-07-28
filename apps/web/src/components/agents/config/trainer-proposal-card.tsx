@@ -1,0 +1,81 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import type { TrainerProposal } from "@aula-agente/shared";
+
+interface TrainerProposalCardProps {
+  proposal: TrainerProposal;
+  onDecide: (proposalId: string, decision: "apply" | "reject") => Promise<void>;
+}
+
+export function TrainerProposalCard({ proposal, onDecide }: TrainerProposalCardProps) {
+  const [deciding, setDeciding] = useState(false);
+
+  const handleDecide = async (decision: "apply" | "reject") => {
+    setDeciding(true);
+    try {
+      await onDecide(proposal.id, decision);
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border bg-background p-3 text-sm text-foreground">
+      <p className="font-medium">{proposal.summary}</p>
+      <p className="mt-1 text-muted-foreground">{proposal.rationale}</p>
+
+      {proposal.conflicts.length > 0 && (
+        <div className="mt-2 space-y-2 rounded-md bg-amber-50 p-2 dark:bg-amber-950">
+          {proposal.conflicts.map((conflict, i) => (
+            <div key={i}>
+              <p className="text-amber-800 dark:text-amber-200">{conflict.description}</p>
+              <ul className="ml-4 list-disc text-xs text-amber-700 dark:text-amber-300">
+                {conflict.resolution_options.map((option, j) => (
+                  <li key={j}>{option}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {proposal.diff.length > 0 && (
+        <div className="mt-2 space-y-1 border-t pt-2">
+          {proposal.diff.map((entry, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">{entry.field_path}:</span>
+              <span className="line-through opacity-60">{JSON.stringify(entry.before)}</span>
+              <span>→</span>
+              <span className="font-medium">{JSON.stringify(entry.after)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {proposal.status === "proposed" && proposal.conflicts.length === 0 && (
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" onClick={() => handleDecide("apply")} disabled={deciding}>
+            Aplicar
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => handleDecide("reject")} disabled={deciding}>
+            Rejeitar
+          </Button>
+        </div>
+      )}
+
+      {proposal.status === "applied" && (
+        <Badge className="mt-3" variant="default">
+          Aplicada
+        </Badge>
+      )}
+      {proposal.status === "rejected" && (
+        <Badge className="mt-3" variant="secondary">
+          Rejeitada
+        </Badge>
+      )}
+    </div>
+  );
+}
