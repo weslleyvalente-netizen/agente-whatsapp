@@ -26,38 +26,73 @@ function defaultConfigSections() {
   };
 }
 
+// The column values a brand-new agent_configs row starts life with.
+// Shared by the INSERT in getOrCreateAgentConfig and by the never-persisted
+// in-memory draft built by buildDefaultAgentConfigDraft, so the two can't
+// drift apart.
+//
+// identity/personality/rules/knowledge/playbook start empty (filled in later
+// via the import-suggestion flow or manual editing), but
+// model_settings/tools_config are copied from the agent's current published
+// values since those are already structured data with no need for a
+// suggestion step.
+function newAgentConfigValues(agent: Agent) {
+  return {
+    agent_id: agent.id,
+    organization_id: agent.organization_id,
+    base_version_id: null,
+    ...defaultConfigSections(),
+    tools_config: agent.tools_config,
+    model_settings: {
+      provider: agent.provider,
+      model: agent.model,
+      temperature: agent.temperature,
+      max_tokens: agent.max_tokens,
+    },
+  };
+}
+
+// Purely in-memory default draft for read-only callers that must not seed a
+// row as a side effect of reading (the Trainer's proposal-generation path).
+// `id` is intentionally the empty string: there is no row, and nothing may
+// use this value as a primary key. `updated_at` mirrors the agent's own
+// timestamp since the (non-existent) draft has never been edited.
+export function buildDefaultAgentConfigDraft(agent: Agent): AgentConfigDraft {
+  return {
+    id: "",
+    ...newAgentConfigValues(agent),
+    updated_at: agent.updated_at,
+    updated_by: null,
+  };
+}
+
+// Strictly read-only: plain SELECT, returns null when the agent has no draft
+// row yet. Use this (never getOrCreateAgentConfig) from any code path that
+// must not write to the database — see trainer-writes.test.ts.
+export async function getAgentConfigIfExists(
+  client: SupabaseClient,
+  agentId: string
+): Promise<AgentConfigDraft | null> {
+  const { data, error } = await client
+    .from("agent_configs")
+    .select("*")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as AgentConfigDraft | null) ?? null;
+}
+
 export async function getOrCreateAgentConfig(
   client: SupabaseClient,
   agent: Agent
 ): Promise<AgentConfigDraft> {
-  const { data: existing, error: fetchError } = await client
-    .from("agent_configs")
-    .select("*")
-    .eq("agent_id", agent.id)
-    .maybeSingle();
-  if (fetchError) throw fetchError;
-  if (existing) return existing as AgentConfigDraft;
+  const existing = await getAgentConfigIfExists(client, agent.id);
+  if (existing) return existing;
 
-  // Lazy-seeded on first access: identity/personality/rules/knowledge/playbook
-  // start empty (filled in later via the import-suggestion flow or manual
-  // editing), but model_settings/tools_config are copied from the agent's
-  // current published values since those are already structured data with
-  // no need for a suggestion step.
+  // Lazy-seeded on first access.
   const { data: created, error: insertError } = await client
     .from("agent_configs")
-    .insert({
-      agent_id: agent.id,
-      organization_id: agent.organization_id,
-      base_version_id: null,
-      ...defaultConfigSections(),
-      tools_config: agent.tools_config,
-      model_settings: {
-        provider: agent.provider,
-        model: agent.model,
-        temperature: agent.temperature,
-        max_tokens: agent.max_tokens,
-      },
-    })
+    .insert(newAgentConfigValues(agent))
     .select()
     .single();
   if (insertError) throw insertError;

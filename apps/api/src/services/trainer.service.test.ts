@@ -1,8 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessagesForOrganization, resolveApiKey, createModel } = vi.hoisted(() => ({
+const {
+  getAgentById,
+  getAgentConfigIfExists,
+  buildDefaultAgentConfigDraft,
+  getOrCreateAgentConfig,
+  patchAgentConfig,
+  getTrainerMessages,
+  getRecentMessagesForOrganization,
+  resolveApiKey,
+  createModel,
+} = vi.hoisted(() => ({
   getAgentById: vi.fn(),
+  getAgentConfigIfExists: vi.fn(),
+  buildDefaultAgentConfigDraft: vi.fn(),
+  // Mocked only so the "never writes" test can assert they were never
+  // reached — trainer.service.ts must not import either of them.
   getOrCreateAgentConfig: vi.fn(),
+  patchAgentConfig: vi.fn(),
   getTrainerMessages: vi.fn(),
   getRecentMessagesForOrganization: vi.fn(),
   resolveApiKey: vi.fn(),
@@ -10,7 +25,15 @@ const { getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessa
 }));
 const { generateObject } = vi.hoisted(() => ({ generateObject: vi.fn() }));
 
-vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessagesForOrganization }));
+vi.mock("@aula-agente/database", () => ({
+  getAgentById,
+  getAgentConfigIfExists,
+  buildDefaultAgentConfigDraft,
+  getOrCreateAgentConfig,
+  patchAgentConfig,
+  getTrainerMessages,
+  getRecentMessagesForOrganization,
+}));
 vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, createModel }));
 vi.mock("ai", () => ({ generateObject }));
 
@@ -48,7 +71,8 @@ describe("proposeConfigChange", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     getAgentById.mockResolvedValue(baseAgent);
-    getOrCreateAgentConfig.mockResolvedValue(baseDraft);
+    getAgentConfigIfExists.mockResolvedValue(baseDraft);
+    buildDefaultAgentConfigDraft.mockReturnValue({ ...baseDraft, id: "", identity: { nome: "", funcao: "", missao: "" } });
     getTrainerMessages.mockResolvedValue([]);
     getRecentMessagesForOrganization.mockResolvedValue([]);
     resolveApiKey.mockResolvedValue("test-key");
@@ -106,6 +130,34 @@ describe("proposeConfigChange", () => {
 
     const stageOnePrompt = generateObject.mock.calls[0][0].prompt as string;
     expect(stageOnePrompt).toContain("Preço alto");
+  });
+
+  it("reads the draft through the read-only query — never getOrCreateAgentConfig, which INSERTs", async () => {
+    generateObject.mockResolvedValue({ object: { content: "ok", candidates: [] } });
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta o tom");
+
+    expect(getAgentConfigIfExists).toHaveBeenCalledWith({}, "agent-1");
+    expect(getOrCreateAgentConfig).not.toHaveBeenCalled();
+    expect(patchAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it("falls back to an in-memory default draft (no row insert) when the agent has no draft yet", async () => {
+    getAgentConfigIfExists.mockResolvedValue(null);
+    generateObject.mockResolvedValue({ object: { content: "ok", candidates: [] } });
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta o tom");
+
+    expect(buildDefaultAgentConfigDraft).toHaveBeenCalledWith(baseAgent);
+    // Nothing insert-capable was reached: the only DB functions called were
+    // the three read queries.
+    expect(getOrCreateAgentConfig).not.toHaveBeenCalled();
+    expect(patchAgentConfig).not.toHaveBeenCalled();
+    // The in-memory default still produced a usable prompt with the empty
+    // identity section, so generation works on a brand-new agent.
+    const stageOnePrompt = generateObject.mock.calls[0][0].prompt as string;
+    expect(stageOnePrompt).toContain('"identity"');
+    expect(result.content).toBe("ok");
   });
 
   it("only fetches conversation-pattern context when the message mentions conversas", async () => {

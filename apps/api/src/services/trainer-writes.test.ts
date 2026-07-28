@@ -2,13 +2,14 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// proposeConfigChange (trainer.service.ts) must never write anything — it
-// only reads the draft and returns proposals for a human to approve. The
-// only approved write path is applyTrainerProposal in
-// trainer-decisions.service.ts, reached exclusively from the /apply route
-// after an explicit human click. This proves that boundary at the source
-// level, the same way agents-published-fields.test.ts proves the
-// agents-table boundary.
+// proposeConfigChange (trainer.service.ts) must never mutate an existing
+// draft or write anything at all — it only reads the draft (via the
+// read-only getAgentConfigIfExists, falling back to an in-memory default)
+// and returns proposals for a human to approve. The only approved write
+// path is applyTrainerProposal in trainer-decisions.service.ts, reached
+// exclusively from the /apply route after an explicit human click. This
+// proves that boundary at the source level, the same way
+// agents-published-fields.test.ts proves the agents-table boundary.
 
 const SERVICES_DIR = path.resolve(__dirname, ".");
 const FORBIDDEN_PATTERNS = [

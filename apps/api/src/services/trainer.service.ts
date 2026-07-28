@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { SupabaseClient } from "@aula-agente/database";
-import { getAgentById, getOrCreateAgentConfig, getTrainerMessages, getRecentMessagesForOrganization } from "@aula-agente/database";
+import {
+  getAgentById,
+  getAgentConfigIfExists,
+  buildDefaultAgentConfigDraft,
+  getTrainerMessages,
+  getRecentMessagesForOrganization,
+} from "@aula-agente/database";
 import { createModel, resolveApiKey } from "@aula-agente/agent-runtime";
 import {
   trainerReplyGenSchema,
@@ -165,7 +171,11 @@ export async function proposeConfigChange(
   userMessage: string
 ): Promise<{ content: string; proposals: TrainerProposal[] }> {
   const agent = await getAgentById(db, agentId);
-  const draft = await getOrCreateAgentConfig(db, agent);
+  // Deliberately NOT getOrCreateAgentConfig: that one INSERTs a row when the
+  // agent has no draft yet, and proposal generation must never write. An
+  // agent with no draft row simply reads from an in-memory default built
+  // from the same values the row would have been seeded with.
+  const draft = (await getAgentConfigIfExists(db, agentId)) ?? buildDefaultAgentConfigDraft(agent);
   const history = await getTrainerMessages(db, sessionId);
   const apiKey = await resolveApiKey(agent.organization_id, agent.provider);
   const model = createModel(agent.provider, agent.model, apiKey);
