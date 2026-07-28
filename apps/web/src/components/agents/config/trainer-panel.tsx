@@ -29,8 +29,8 @@ export function TrainerPanel({ trainer }: TrainerPanelProps) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  const handleSend = async (content?: string) => {
-    const text = (content ?? draft).trim();
+  const handleSend = async () => {
+    const text = draft.trim();
     if (!text || sending) return;
     setDraft("");
     await sendMessage(text);
@@ -42,7 +42,7 @@ export function TrainerPanel({ trainer }: TrainerPanelProps) {
         <p className="mb-2 text-sm font-medium">Treine a Helena conversando</p>
         <div className="flex flex-wrap gap-2">
           {QUICK_ACTIONS.map((action) => (
-            <Button key={action.label} type="button" variant="outline" size="sm" onClick={() => handleSend(action.prompt)} disabled={sending}>
+            <Button key={action.label} type="button" variant="outline" size="sm" onClick={() => setDraft(action.prompt)} disabled={sending}>
               {action.label}
             </Button>
           ))}
