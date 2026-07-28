@@ -76,6 +76,11 @@ export function TrainerProposalCard({ proposal, onDecide }: TrainerProposalCardP
           Rejeitada
         </Badge>
       )}
+      {proposal.status !== "proposed" && proposal.status !== "applied" && proposal.status !== "rejected" && (
+        <Badge className="mt-3" variant="outline">
+          {proposal.status}
+        </Badge>
+      )}
     </div>
   );
 }
