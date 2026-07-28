@@ -4,10 +4,10 @@ Runbook prático para deploys e migrations deste projeto. Curto e objetivo — p
 
 ## Fluxo de deploy
 
-- **`apps/api`**: deploy manual no EasyPanel. Botão "Implantar" em
-  `http://187.77.226.182:3000/projects/agente-whatsapp/app/api`.
-- **`apps/worker`**: deploy manual no EasyPanel. Botão "Implantar" em
-  `http://187.77.226.182:3000/projects/agente-whatsapp/app/worker`.
+- **`apps/api`**: deploy manual no EasyPanel. EasyPanel → Projeto
+  `agente-whatsapp` → Serviço `api` → Implantar.
+- **`apps/worker`**: deploy manual no EasyPanel. EasyPanel → Projeto
+  `agente-whatsapp` → Serviço `worker` → Implantar.
 - **Push para `main` NÃO dispara deploy automático.** O EasyPanel builda a
   partir do Dockerfile de cada serviço, mas só quando alguém clica em
   "Implantar" — código pode estar mergeado em `main` e não estar em produção.
