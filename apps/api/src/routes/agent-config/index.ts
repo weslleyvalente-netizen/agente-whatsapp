@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { updateAgentConfigSchema, publishAgentConfigSchema, sendTrainerMessageSchema } from "@aula-agente/shared";
 import {
   getAdminClient, getAgentById, patchAgentConfig,
@@ -11,6 +11,19 @@ import { suggestConfigFromSystemPrompt } from "../../services/import-suggestion.
 import { proposeConfigChange } from "../../services/trainer.service.js";
 import { applyTrainerProposal, rejectTrainerProposal } from "../../services/trainer-decisions.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
+
+// `loadOwnedProposal` (in trainer-decisions.service.ts) throws distinct,
+// distinguishable messages for three different failure conditions. Map each
+// to the HTTP status that actually reflects it: not-found -> 404,
+// cross-agent ownership -> 403 (this is the auth boundary), and every
+// remaining condition (already decided, unresolved conflicts, no patch) is a
+// genuine conflict state -> 409.
+function sendTrainerProposalError(reply: FastifyReply, err: unknown) {
+  const message = (err as Error).message;
+  if (message.includes("does not belong to this agent")) return reply.status(403).send({ error: message });
+  if (message.includes("not found")) return reply.status(404).send({ error: message });
+  return reply.status(409).send({ error: message });
+}
 
 export default async function agentConfigRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -219,21 +232,36 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Session does not belong to this agent" });
       }
 
-      const { content, proposals } = await proposeConfigChange(db, request.params.agentId, request.params.sessionId, parseResult.data.content);
-
-      await addTrainerMessage(db, {
+      const userMessageParams = {
         sessionId: request.params.sessionId,
         organizationId: agent.organization_id,
-        role: "user",
+        role: "user" as const,
         content: parseResult.data.content,
         proposals: [],
-      });
+      };
+
+      // proposeConfigChange must run BEFORE the user message is persisted —
+      // it reads history via getTrainerMessages, and persisting first would
+      // make it see the just-saved user message a second time. But that
+      // ordering means a failure here (LLM/network error) must not lose the
+      // user's message: persist it here on the failure path too, then
+      // propagate the error, so the user at least sees their message survived
+      // even though the Trainer's reply failed.
+      let proposeResult: Awaited<ReturnType<typeof proposeConfigChange>>;
+      try {
+        proposeResult = await proposeConfigChange(db, request.params.agentId, request.params.sessionId, parseResult.data.content);
+      } catch (err) {
+        await addTrainerMessage(db, userMessageParams);
+        return reply.status(502).send({ error: (err as Error).message });
+      }
+
+      await addTrainerMessage(db, userMessageParams);
       const assistantMessage = await addTrainerMessage(db, {
         sessionId: request.params.sessionId,
         organizationId: agent.organization_id,
         role: "assistant",
-        content,
-        proposals,
+        content: proposeResult.content,
+        proposals: proposeResult.proposals,
       });
       return reply.status(201).send(assistantMessage);
     }
@@ -251,7 +279,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
         const { proposal } = await applyTrainerProposal(db, request.params.agentId, request.params.proposalId, request.user.id);
         return proposal;
       } catch (err) {
-        return reply.status(409).send({ error: (err as Error).message });
+        return sendTrainerProposalError(reply, err);
       }
     }
   );
@@ -268,7 +296,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
         const proposal = await rejectTrainerProposal(db, request.params.agentId, request.params.proposalId);
         return proposal;
       } catch (err) {
-        return reply.status(409).send({ error: (err as Error).message });
+        return sendTrainerProposalError(reply, err);
       }
     }
   );
