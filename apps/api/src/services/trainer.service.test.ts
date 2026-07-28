@@ -117,6 +117,75 @@ describe("proposeConfigChange", () => {
     await proposeConfigChange({} as any, "agent-1", "session-1", "veja as últimas conversas e sugira melhorias");
     expect(getRecentMessagesForOrganization).toHaveBeenCalledTimes(1);
   });
+
+  it("a stage-2 failure for one candidate doesn't take down content or the other candidates' proposals", async () => {
+    generateObject
+      .mockResolvedValueOnce({
+        object: {
+          content: "Vou ajustar duas coisas.",
+          candidates: [
+            { section: "personalidade", item: "emojis", summary: "Aumentar emojis de 1 para 3", rationale: "Pedido do usuário", conflicts: [] },
+            { section: "conhecimento", item: "links", summary: "Adicionar link inválido", rationale: "Pedido do usuário", conflicts: [] },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ object: { ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } } })
+      .mockRejectedValueOnce(new Error("schema validation failed"));
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta emojis e adiciona um link ruim");
+
+    expect(result.content).toBe("Vou ajustar duas coisas.");
+    expect(result.proposals).toHaveLength(2);
+
+    const [okProposal, failedProposal] = result.proposals;
+    expect(okProposal.section).toBe("personalidade");
+    expect(okProposal.status).toBe("proposed");
+    expect(okProposal.patch).toEqual({ personality: { ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } } });
+
+    expect(failedProposal.section).toBe("conhecimento");
+    expect(failedProposal.status).toBe("proposed");
+    expect(failedProposal.patch).toBeNull();
+    expect(failedProposal.diff).toEqual([]);
+    expect(failedProposal.conflicts).toHaveLength(1);
+  });
+
+  it("issues stage-2 calls for multiple conflict-free candidates via Promise.all, not a serial await loop", async () => {
+    let concurrentInFlight = 0;
+    let maxConcurrentInFlight = 0;
+
+    generateObject.mockImplementationOnce(async () => ({
+      object: {
+        content: "Vou ajustar duas coisas.",
+        candidates: [
+          { section: "personalidade", item: "emojis", summary: "Aumentar emojis", rationale: "r", conflicts: [] },
+          { section: "playbooks", item: null, summary: "Atualizar script", rationale: "r", conflicts: [] },
+        ],
+      },
+    }));
+
+    const trackConcurrency = async (result: unknown) => {
+      concurrentInFlight += 1;
+      maxConcurrentInFlight = Math.max(maxConcurrentInFlight, concurrentInFlight);
+      // Yield without resolving immediately, so both stage-2 calls have a
+      // chance to start before either finishes — proving they were fanned
+      // out rather than awaited one at a time.
+      await Promise.resolve();
+      concurrentInFlight -= 1;
+      return { object: result };
+    };
+
+    generateObject
+      .mockImplementationOnce(() => trackConcurrency({ ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } }))
+      .mockImplementationOnce(() => trackConcurrency({ ...baseDraft.playbook, script_atendimento: "novo script" }));
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta emojis e o script");
+
+    expect(generateObject).toHaveBeenCalledTimes(3);
+    expect(maxConcurrentInFlight).toBe(2);
+    expect(result.proposals).toHaveLength(2);
+    expect(result.proposals[0].section).toBe("personalidade");
+    expect(result.proposals[1].section).toBe("playbooks");
+  });
 });
 
 describe("redactPii", () => {
@@ -136,6 +205,32 @@ describe("buildConversationPatternContext", () => {
 
     const context = await buildConversationPatternContext({} as any, "org-1");
     expect(context).not.toContain("99999-1234");
+  });
+
+  it("truncates to the most recent messages, dropping the oldest whole lines, when the joined context would overflow the budget", async () => {
+    // 500 messages of ~60 chars each joins to ~30000 chars, well past any
+    // reasonable single-prompt budget — this must get truncated rather
+    // than passed through whole.
+    const messages = Array.from({ length: 500 }, (_, i) => ({
+      conversation_id: `conversation-${i}`,
+      role: "user",
+      content: `mensagem numero ${i} sobre um assunto qualquer do cliente`,
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    getRecentMessagesForOrganization.mockResolvedValue(messages);
+
+    const context = await buildConversationPatternContext({} as any, "org-1");
+
+    expect(context.length).toBeLessThanOrEqual(8000);
+    // The most recent message (highest index, last in the ascending-order
+    // result) must survive; the oldest must have been dropped.
+    expect(context).toContain("mensagem numero 499");
+    expect(context).not.toContain("mensagem numero 0 ");
+    // No line should be cut mid-line: every kept line ends with the full
+    // "sobre um assunto qualquer do cliente" suffix.
+    for (const line of context.split("\n")) {
+      expect(line).toMatch(/sobre um assunto qualquer do cliente$/);
+    }
   });
 });
 

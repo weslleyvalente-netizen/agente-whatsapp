@@ -59,10 +59,36 @@ export function redactPii(text: string): string {
   return PII_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, "[redigido]"), text);
 }
 
+// Bounds how much conversation history can be joined into the stage-1
+// prompt. Even with the query's conversationLimit/sinceISO bounds, a busy
+// org can produce thousands of messages in a 14-day window; without a
+// character budget that would silently overflow the model's context on
+// any message matching /conversa/i and turn a normal request into a hard
+// failure.
+const MAX_CONVERSATION_CONTEXT_CHARS = 8000;
+
 export async function buildConversationPatternContext(db: SupabaseClient, organizationId: string): Promise<string> {
   const sinceISO = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const messages = await getRecentMessagesForOrganization(db, organizationId, { conversationLimit: 50, sinceISO });
-  return messages.map((m) => `[${m.conversation_id.slice(0, 8)}] ${m.role}: ${redactPii(m.content)}`).join("\n");
+  const lines = messages.map((m) => `[${m.conversation_id.slice(0, 8)}] ${m.role}: ${redactPii(m.content)}`);
+  return truncateToMostRecent(lines, MAX_CONVERSATION_CONTEXT_CHARS);
+}
+
+// Keeps whichever suffix of `lines` fits within `maxChars` — the messages
+// query orders ascending by created_at, so the suffix is the most recent
+// messages. Drops whole lines from the oldest end rather than cutting a
+// line in half, so the joined context is always readable.
+function truncateToMostRecent(lines: string[], maxChars: number): string {
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const addedChars = line.length + (kept.length > 0 ? 1 : 0); // +1 accounts for the eventual "\n" join
+    if (total + addedChars > maxChars) break;
+    kept.unshift(line);
+    total += addedChars;
+  }
+  return kept.join("\n");
 }
 
 // Server-computed diff (not authored by the LLM): recurses into plain
@@ -152,25 +178,46 @@ export async function proposeConfigChange(
     prompt: buildStageOnePrompt({ agentName: agent.name, draft, conversationContext, history, userMessage }),
   });
 
-  const proposals: TrainerProposal[] = [];
-  for (const candidate of stageOne.object.candidates) {
-    if (candidate.conflicts.length > 0) {
-      proposals.push({
-        id: randomUUID(),
-        section: candidate.section,
-        item: candidate.item,
-        summary: candidate.summary,
-        rationale: candidate.rationale,
-        conflicts: candidate.conflicts.map((c) => ({ ...c, section: candidate.section, item: candidate.item })),
-        diff: [],
-        patch: null,
-        status: "proposed",
-      });
-      continue;
-    }
+  // Conflicted candidates short-circuit with no stage-2 call. Conflict-free
+  // candidates each need their own stage-2 generation call; those are
+  // independent of one another, so they're fanned out with Promise.all
+  // instead of a serial loop (mirroring import-suggestion.service.ts's
+  // per-section fan-out) to keep latency from scaling with candidate count.
+  // Promise.all preserves result order to match `candidates`' order
+  // regardless of resolution order, and a failure in one candidate's
+  // stage-2 call/parse is caught locally so it degrades that one proposal
+  // instead of discarding stageOne.object.content and every other proposal.
+  const proposals: TrainerProposal[] = await Promise.all(
+    stageOne.object.candidates.map((candidate) => buildProposalForCandidate(model, draft, userMessage, candidate))
+  );
 
-    const draftKey = SECTION_TO_DRAFT_KEY[candidate.section];
-    const before = draft[draftKey];
+  return { content: stageOne.object.content, proposals };
+}
+
+async function buildProposalForCandidate(
+  model: ReturnType<typeof createModel>,
+  draft: AgentConfigDraft,
+  userMessage: string,
+  candidate: z.infer<typeof trainerReplyGenSchema>["candidates"][number]
+): Promise<TrainerProposal> {
+  if (candidate.conflicts.length > 0) {
+    return {
+      id: randomUUID(),
+      section: candidate.section,
+      item: candidate.item,
+      summary: candidate.summary,
+      rationale: candidate.rationale,
+      conflicts: candidate.conflicts.map((c) => ({ ...c, section: candidate.section, item: candidate.item })),
+      diff: [],
+      patch: null,
+      status: "proposed",
+    };
+  }
+
+  const draftKey = SECTION_TO_DRAFT_KEY[candidate.section];
+  const before = draft[draftKey];
+
+  try {
     const stageTwo = await generateObject({
       model,
       schema: SECTION_GEN_SCHEMA[candidate.section],
@@ -179,7 +226,7 @@ export async function proposeConfigChange(
     const after = stageTwo.object;
     const patch = updateAgentConfigSchema.parse({ [draftKey]: after });
 
-    proposals.push({
+    return {
       id: randomUUID(),
       section: candidate.section,
       item: candidate.item,
@@ -189,8 +236,31 @@ export async function proposeConfigChange(
       diff: diffSectionValues(before, after),
       patch,
       status: "proposed",
-    });
+    };
+  } catch {
+    // Stage-2 generation or schema validation failed for this candidate
+    // alone (e.g. the model emitted an invalid section shape). Degrade
+    // gracefully to a proposal the user can see and retry, rather than
+    // letting the rejection propagate out of proposeConfigChange and
+    // discard stageOne.object.content plus every other candidate's
+    // already-built proposal.
+    return {
+      id: randomUUID(),
+      section: candidate.section,
+      item: candidate.item,
+      summary: candidate.summary,
+      rationale: candidate.rationale,
+      conflicts: [
+        {
+          description: "Não foi possível gerar essa mudança automaticamente. Tente reformular o pedido.",
+          section: candidate.section,
+          item: candidate.item,
+          resolution_options: ["Tentar novamente com outra descrição"],
+        },
+      ],
+      diff: [],
+      patch: null,
+      status: "proposed",
+    };
   }
-
-  return { content: stageOne.object.content, proposals };
 }
