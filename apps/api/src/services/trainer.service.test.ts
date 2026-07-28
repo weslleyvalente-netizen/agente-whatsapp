@@ -160,14 +160,35 @@ describe("proposeConfigChange", () => {
     expect(result.content).toBe("ok");
   });
 
-  it("only fetches conversation-pattern context when the message mentions conversas", async () => {
+  it("fetches conversation-pattern context only when analyzeConversations is explicitly true", async () => {
     generateObject.mockResolvedValue({ object: { content: "ok", candidates: [] } });
 
-    await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta o tom");
+    // Omitted -> off, even for a message that mentions "conversas": the old
+    // /conversa/i sniffing must not silently scan real customer messages.
+    await proposeConfigChange({} as any, "agent-1", "session-1", "melhora o tom da conversa");
     expect(getRecentMessagesForOrganization).not.toHaveBeenCalled();
 
-    await proposeConfigChange({} as any, "agent-1", "session-1", "veja as últimas conversas e sugira melhorias");
+    // Explicit false -> off.
+    await proposeConfigChange({} as any, "agent-1", "session-1", "veja as últimas conversas e sugira melhorias", false);
+    expect(getRecentMessagesForOrganization).not.toHaveBeenCalled();
+
+    // Explicit true -> on, even for a message that never says "conversa":
+    // a reworded quick-action prompt still analyses real data.
+    await proposeConfigChange({} as any, "agent-1", "session-1", "olha o histórico real e sugira melhorias", true);
     expect(getRecentMessagesForOrganization).toHaveBeenCalledTimes(1);
+  });
+
+  it("injects the conversation context into the stage-1 prompt when analyzeConversations is true", async () => {
+    generateObject.mockResolvedValue({ object: { content: "ok", candidates: [] } });
+    getRecentMessagesForOrganization.mockResolvedValue([
+      { conversation_id: "11111111-aaaa", role: "user", content: "vocês entregam em Curitiba?", created_at: "2026-01-01T00:00:00Z" },
+    ]);
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "sugira melhorias", true);
+
+    const stageOnePrompt = generateObject.mock.calls[0][0].prompt as string;
+    expect(stageOnePrompt).toContain("Padrões observados em conversas reais recentes");
+    expect(stageOnePrompt).toContain("vocês entregam em Curitiba?");
   });
 
   it("a stage-2 failure for one candidate doesn't take down content or the other candidates' proposals", async () => {

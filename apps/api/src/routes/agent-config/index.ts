@@ -214,7 +214,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post<{ Params: { agentId: string; sessionId: string }; Body: { content: string } }>(
+  app.post<{ Params: { agentId: string; sessionId: string }; Body: { content: string; analyzeConversations?: boolean } }>(
     "/agents/:agentId/trainer/sessions/:sessionId/messages",
     async (request, reply) => {
       const parseResult = sendTrainerMessageSchema.safeParse(request.body);
@@ -249,7 +249,13 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
       // even though the Trainer's reply failed.
       let proposeResult: Awaited<ReturnType<typeof proposeConfigChange>>;
       try {
-        proposeResult = await proposeConfigChange(db, request.params.agentId, request.params.sessionId, parseResult.data.content);
+        proposeResult = await proposeConfigChange(
+          db,
+          request.params.agentId,
+          request.params.sessionId,
+          parseResult.data.content,
+          parseResult.data.analyzeConversations ?? false
+        );
       } catch (err) {
         await addTrainerMessage(db, userMessageParams);
         return reply.status(502).send({ error: (err as Error).message });

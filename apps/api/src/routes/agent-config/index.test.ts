@@ -187,4 +187,36 @@ describe("POST /agents/:agentId/trainer/sessions/:sessionId/messages — propose
     expect(addTrainerMessage).toHaveBeenNthCalledWith(1, {}, expect.objectContaining({ role: "user", content: "hello" }));
     expect(addTrainerMessage).toHaveBeenNthCalledWith(2, {}, expect.objectContaining({ role: "assistant", content: "Sure, done." }));
   });
+
+  it("passes analyzeConversations straight through, defaulting to false when the client omits it", async () => {
+    proposeConfigChange.mockResolvedValue({ content: "ok", proposals: [] });
+    addTrainerMessage.mockResolvedValue({ id: "msg-1" });
+
+    await app.inject({
+      method: "POST",
+      url: "/agents/agent-1/trainer/sessions/session-1/messages",
+      payload: { content: "melhora o tom da conversa" },
+    });
+    // Omitted -> false. The word "conversa" in the message must not opt the
+    // user into a scan of real customer messages.
+    expect(proposeConfigChange).toHaveBeenLastCalledWith({}, "agent-1", "session-1", "melhora o tom da conversa", false);
+
+    await app.inject({
+      method: "POST",
+      url: "/agents/agent-1/trainer/sessions/session-1/messages",
+      payload: { content: "sugira melhorias", analyzeConversations: true },
+    });
+    expect(proposeConfigChange).toHaveBeenLastCalledWith({}, "agent-1", "session-1", "sugira melhorias", true);
+  });
+
+  it("rejects a non-boolean analyzeConversations with 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/agents/agent-1/trainer/sessions/session-1/messages",
+      payload: { content: "oi", analyzeConversations: "sim" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(proposeConfigChange).not.toHaveBeenCalled();
+  });
 });

@@ -69,8 +69,8 @@ export function redactPii(text: string): string {
 // prompt. Even with the query's conversationLimit/sinceISO bounds, a busy
 // org can produce thousands of messages in a 14-day window; without a
 // character budget that would silently overflow the model's context on
-// any message matching /conversa/i and turn a normal request into a hard
-// failure.
+// any request that opts into conversation analysis and turn a normal
+// request into a hard failure.
 const MAX_CONVERSATION_CONTEXT_CHARS = 8000;
 
 export async function buildConversationPatternContext(db: SupabaseClient, organizationId: string): Promise<string> {
@@ -168,7 +168,8 @@ export async function proposeConfigChange(
   db: SupabaseClient,
   agentId: string,
   sessionId: string,
-  userMessage: string
+  userMessage: string,
+  analyzeConversations = false
 ): Promise<{ content: string; proposals: TrainerProposal[] }> {
   const agent = await getAgentById(db, agentId);
   // Deliberately NOT getOrCreateAgentConfig: that one INSERTs a row when the
@@ -180,7 +181,12 @@ export async function proposeConfigChange(
   const apiKey = await resolveApiKey(agent.organization_id, agent.provider);
   const model = createModel(agent.provider, agent.model, apiKey);
 
-  const conversationContext = /conversa/i.test(userMessage) ? await buildConversationPatternContext(db, agent.organization_id) : null;
+  // Explicit, structural opt-in from the client (the "Analisar conversas
+  // reais" quick action) — never sniffed out of the message text. Sniffing
+  // for "conversa" both missed reworded requests (answering as if it had
+  // analysed real data when it hadn't) and silently triggered a 50-
+  // conversation scan on any message that happened to use the word.
+  const conversationContext = analyzeConversations ? await buildConversationPatternContext(db, agent.organization_id) : null;
 
   const stageOne = await generateObject({
     model,

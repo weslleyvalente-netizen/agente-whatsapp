@@ -26,7 +26,7 @@ export function useTrainerSession(agentId: string) {
   }, [agentId, sessionId]);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, options: { analyzeConversations?: boolean } = {}) => {
       setSending(true);
       try {
         const id = await ensureSession();
@@ -37,7 +37,10 @@ export function useTrainerSession(agentId: string) {
 
         const assistantMessage = (await apiFetch(`/agents/${agentId}/trainer/sessions/${id}/messages`, {
           method: "POST",
-          body: JSON.stringify({ content }),
+          // analyzeConversations is an explicit opt-in from the caller (the
+          // "Analisar conversas reais" quick action), never inferred from
+          // the text the user typed.
+          body: JSON.stringify({ content, analyzeConversations: options.analyzeConversations ?? false }),
         })) as TrainerChatMessage;
         setMessages((prev) => [...prev, assistantMessage]);
       } finally {
