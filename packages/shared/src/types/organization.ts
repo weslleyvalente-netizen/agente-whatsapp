@@ -18,6 +18,12 @@ export interface OrganizationSettings {
   max_documents: number;
   max_agents: number;
   max_instances: number;
+  // Minutes of human-takeover inactivity before the AI agent auto-resumes.
+  // `null` disables auto-resume entirely — takeover then only ends when a
+  // human explicitly hands the conversation back via "Devolver ao Agente".
+  // `undefined` (orgs that haven't configured this yet) falls back to
+  // DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES.
+  human_takeover_timeout_minutes?: number | null;
 }
 
 export interface OrganizationMember {

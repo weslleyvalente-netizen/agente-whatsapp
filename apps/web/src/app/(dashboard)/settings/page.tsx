@@ -9,7 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Eye, EyeOff, Save } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import type { LLMProvider } from "@aula-agente/shared";
+import { DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES } from "@aula-agente/shared";
 
 const PROVIDERS: { id: LLMProvider; name: string; placeholder: string }[] = [
   { id: "openai", name: "OpenAI", placeholder: "sk-..." },
@@ -24,11 +26,18 @@ export default function SettingsPage() {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [savingKeys, setSavingKeys] = useState(false);
+  const [takeoverEnabled, setTakeoverEnabled] = useState(true);
+  const [takeoverMinutes, setTakeoverMinutes] = useState(String(DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES));
+  const [savingTakeover, setSavingTakeover] = useState(false);
 
   useEffect(() => {
     if (!currentOrg) return;
     setName(currentOrg.name);
     fetchApiKeys();
+
+    const configured = currentOrg.settings.human_takeover_timeout_minutes;
+    setTakeoverEnabled(configured !== null);
+    setTakeoverMinutes(String(configured ?? DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES));
   }, [currentOrg]);
 
   const fetchApiKeys = async () => {
@@ -86,6 +95,24 @@ export default function SettingsPage() {
     }
 
     setSavingKeys(false);
+  };
+
+  const handleSaveTakeoverSettings = async () => {
+    if (!currentOrg) return;
+    setSavingTakeover(true);
+
+    const supabase = createClient();
+    const minutes = takeoverEnabled ? Math.max(1, Number(takeoverMinutes) || DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES) : null;
+
+    await supabase
+      .from("organizations")
+      .update({
+        settings: { ...currentOrg.settings, human_takeover_timeout_minutes: minutes },
+      })
+      .eq("id", currentOrg.id);
+
+    await refetch();
+    setSavingTakeover(false);
   };
 
   if (!currentOrg) return <div>Carregando...</div>;
@@ -168,6 +195,46 @@ export default function SettingsPage() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Retomada automática da IA</CardTitle>
+          <CardDescription>
+            Quando um humano assume uma conversa manualmente, a IA para de responder. Por
+            padrão, ela retoma sozinha depois de um tempo sem atividade humana registrada no
+            sistema. Ajuste esse tempo ou desligue a retomada automática por completo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="takeover-enabled">Retomada automática ativada</Label>
+            <Switch id="takeover-enabled" checked={takeoverEnabled} onCheckedChange={setTakeoverEnabled} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Tempo até a IA retomar (minutos)</Label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min={1}
+                value={takeoverMinutes}
+                onChange={(e) => setTakeoverMinutes(e.target.value)}
+                disabled={!takeoverEnabled}
+              />
+              <Button onClick={handleSaveTakeoverSettings} disabled={savingTakeover}>
+                <Save className="mr-2 h-4 w-4" />
+                {savingTakeover ? "Salvando..." : "Salvar"}
+              </Button>
+            </div>
+            {!takeoverEnabled && (
+              <p className="text-sm text-muted-foreground">
+                Com a retomada desligada, a conversa só volta para a IA quando alguém clicar em
+                "Devolver ao Agente".
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
