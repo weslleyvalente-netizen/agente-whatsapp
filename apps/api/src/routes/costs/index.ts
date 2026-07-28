@@ -49,8 +49,13 @@ function buildSummary(messages: Array<{ created_at: string; metadata: MessageMet
       continue;
     }
 
+    // Undefined on messages sent before prompt caching shipped — treating
+    // them as 0 cache tokens reproduces the exact pre-caching cost math.
+    const cacheReadTokens = metadata?.cache_read_tokens ?? 0;
+    const cacheWriteTokens = metadata?.cache_write_tokens ?? 0;
+
     exactMessageCount++;
-    const cost = computeMessageCostUsd(model, inputTokens, outputTokens);
+    const cost = computeMessageCostUsd(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
     const date = message.created_at.slice(0, 10);
 
     const modelEntry = byModel.get(model) || {

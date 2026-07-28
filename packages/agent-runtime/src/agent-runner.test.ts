@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { formatHistoryForLLM, buildSystemPrompt } from "./agent-runner.js";
+import { buildDynamicContextBlock, buildCacheableSystemMessages, deriveCacheStatus } from "./agent-runner.js";
 import { extractToolCallTrace } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
 
@@ -57,6 +58,50 @@ describe("buildSystemPrompt", () => {
     const now = new Date("2026-07-24T17:32:00.000Z"); // 14:32 in São Paulo (UTC-3)
     const result = buildSystemPrompt("Você é a Helena.", now);
     expect(result).toBe("Você é a Helena.\n\nData e hora atual: sexta-feira, 24 de julho de 2026 às 14:32");
+  });
+});
+
+describe("buildCacheableSystemMessages", () => {
+  const now = new Date("2026-07-24T17:32:00.000Z");
+
+  it("splits the prompt into a cached static block and an uncached dynamic block", () => {
+    const messages = buildCacheableSystemMessages("Você é a Helena.", now);
+    expect(messages).toEqual([
+      {
+        role: "system",
+        content: "Você é a Helena.",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      },
+      {
+        role: "system",
+        content: buildDynamicContextBlock(now),
+      },
+    ]);
+  });
+
+  it("concatenates to exactly what buildSystemPrompt produces as a single string", () => {
+    const messages = buildCacheableSystemMessages("Você é a Helena.", now);
+    const concatenated = messages.map((m) => m.content).join("");
+    expect(concatenated).toBe(buildSystemPrompt("Você é a Helena.", now));
+  });
+
+  it("never puts provider options on the dynamic (datetime) block", () => {
+    const messages = buildCacheableSystemMessages("Você é a Helena.", now);
+    expect(messages[1].providerOptions).toBeUndefined();
+  });
+});
+
+describe("deriveCacheStatus", () => {
+  it("reports write when cache tokens were written, regardless of reads", () => {
+    expect(deriveCacheStatus(0, 1800)).toBe("write");
+  });
+
+  it("reports hit when tokens were read and nothing was written", () => {
+    expect(deriveCacheStatus(1800, 0)).toBe("hit");
+  });
+
+  it("reports none when caching had no effect", () => {
+    expect(deriveCacheStatus(0, 0)).toBe("none");
   });
 });
 
