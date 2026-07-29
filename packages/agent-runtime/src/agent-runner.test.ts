@@ -89,6 +89,30 @@ describe("buildCacheableSystemMessages", () => {
     const messages = buildCacheableSystemMessages("Você é a Helena.", now);
     expect(messages[1].providerOptions).toBeUndefined();
   });
+
+  it("includes the contact's WhatsApp name in the dynamic block, not the cached one, when provided", () => {
+    const messages = buildCacheableSystemMessages("Você é a Helena.", now, "Dauanaguimaraes23");
+    expect(messages[0].content).toBe("Você é a Helena.");
+    expect(messages[1].content).toContain('Dauanaguimaraes23');
+    expect(messages[1].content).toContain("primeiro nome");
+  });
+
+  it("omits the contact-name instruction entirely when no name is given", () => {
+    const withNull = buildCacheableSystemMessages("Você é a Helena.", now, null);
+    const withUndefined = buildCacheableSystemMessages("Você é a Helena.", now);
+    expect(withNull[1].content).toBe(withUndefined[1].content);
+    expect(withNull[1].content).not.toContain("Nome salvo");
+  });
+});
+
+describe("buildDynamicContextBlock with contactName", () => {
+  const now = new Date("2026-07-24T17:32:00.000Z");
+
+  it("tells the model to judge whether the raw WhatsApp name is a real person, not just use it blindly", () => {
+    const block = buildDynamicContextBlock(now, "Moto e Trilha Yamaha");
+    expect(block).toContain("Moto e Trilha Yamaha");
+    expect(block).toContain("não presuma e não use");
+  });
 });
 
 describe("deriveCacheStatus", () => {
