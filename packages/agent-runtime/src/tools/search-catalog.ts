@@ -45,13 +45,18 @@ const TYPE_BY_WORD: Record<string, CatalogVehicle["tipo"]> = {
   bikes: "eletrico",
 };
 
-// Every query word must appear in the field, but not necessarily in the same
-// order the catalog wrote them in — customers reorder words naturally (e.g.
-// "fan 160" for a catalog entry named "CG 160 - FAN - Basico"), and a plain
-// whole-string substring check rejects that even though every word matches.
-function matchesAllWords(field: string, words: string[]): boolean {
-  const normalizedField = normalize(field);
-  return words.every((word) => normalizedField.includes(word));
+// Every query word must appear somewhere in the vehicle's searchable text,
+// but not necessarily in the same field or order the catalog wrote them in —
+// customers naturally mix brand and model ("Honda Bros") or reorder words
+// ("fan 160" for a catalog entry named "CG 160 - FAN - Basico"), and neither
+// a single-field nor an ordered substring check catches those.
+function matchesAllWords(text: string, words: string[]): boolean {
+  const normalizedText = normalize(text);
+  return words.every((word) => normalizedText.includes(word));
+}
+
+function searchableText(v: CatalogVehicle): string {
+  return [v.modelo, v.marca, v.cor, v.descricao].filter(Boolean).join(" ");
 }
 
 export function filterVehicles(vehicles: CatalogVehicle[], query: string): CatalogVehicle[] {
@@ -68,12 +73,7 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
   }
 
   return vehicles.filter((v) => {
-    if (
-      matchesAllWords(v.modelo, words) ||
-      matchesAllWords(v.marca, words) ||
-      matchesAllWords(v.cor ?? "", words) ||
-      matchesAllWords(v.descricao ?? "", words)
-    ) {
+    if (matchesAllWords(searchableText(v), words)) {
       return true;
     }
     return v.tipo !== undefined && impliedTypes.has(v.tipo);

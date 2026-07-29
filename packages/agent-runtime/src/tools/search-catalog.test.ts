@@ -67,6 +67,12 @@ describe("filterVehicles", () => {
     ];
     expect(filterVehicles(withFan, "fan 160")).toEqual([withFan[5]]);
   });
+
+  it("matches when the query combines words from different fields (brand + model)", () => {
+    // "bros" only appears in modelo, "honda" only appears in marca — neither
+    // field alone contains both words, so this needs a cross-field match.
+    expect(filterVehicles(vehicles, "honda bros")).toEqual([vehicles[0]]);
+  });
 });
 
 describe("findVehicleByModel", () => {
