@@ -45,12 +45,23 @@ const TYPE_BY_WORD: Record<string, CatalogVehicle["tipo"]> = {
   bikes: "eletrico",
 };
 
+// Every query word must appear in the field, but not necessarily in the same
+// order the catalog wrote them in — customers reorder words naturally (e.g.
+// "fan 160" for a catalog entry named "CG 160 - FAN - Basico"), and a plain
+// whole-string substring check rejects that even though every word matches.
+function matchesAllWords(field: string, words: string[]): boolean {
+  const normalizedField = normalize(field);
+  return words.every((word) => normalizedField.includes(word));
+}
+
 export function filterVehicles(vehicles: CatalogVehicle[], query: string): CatalogVehicle[] {
   const q = normalize(query.trim());
   if (!q) return vehicles;
 
+  const words = q.split(/\s+/);
+
   const impliedTypes = new Set<CatalogVehicle["tipo"]>();
-  for (const word of q.split(/\s+/)) {
+  for (const word of words) {
     if (word.startsWith("eletric")) impliedTypes.add("eletrico");
     const mapped = TYPE_BY_WORD[word];
     if (mapped) impliedTypes.add(mapped);
@@ -58,10 +69,10 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
 
   return vehicles.filter((v) => {
     if (
-      normalize(v.modelo).includes(q) ||
-      normalize(v.marca).includes(q) ||
-      normalize(v.cor ?? "").includes(q) ||
-      normalize(v.descricao ?? "").includes(q)
+      matchesAllWords(v.modelo, words) ||
+      matchesAllWords(v.marca, words) ||
+      matchesAllWords(v.cor ?? "", words) ||
+      matchesAllWords(v.descricao ?? "", words)
     ) {
       return true;
     }

@@ -56,6 +56,17 @@ describe("filterVehicles", () => {
     expect(filterVehicles(vehicles, "branco")).toEqual([vehicles[4]]);
     expect(filterVehicles(vehicles, "hidraulica")).toEqual([vehicles[4]]);
   });
+
+  it("matches all query words regardless of their order in the model name", () => {
+    // Real production case: catalog has "CG 160 - FAN - Basico" but the
+    // customer said "fan 160" — word order differs, so a single-substring
+    // match fails even though every word is present.
+    const withFan = [
+      ...vehicles,
+      { id: 6, modelo: "CG 160 - FAN - Basico", marca: "HONDA", ano: 2026, preco: 15900, imageUrl: "/manus-storage/vehicles/fan.png", tipo: "moto" as const },
+    ];
+    expect(filterVehicles(withFan, "fan 160")).toEqual([withFan[5]]);
+  });
 });
 
 describe("findVehicleByModel", () => {
