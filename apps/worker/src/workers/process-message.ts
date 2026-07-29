@@ -153,6 +153,7 @@ export function startProcessMessageWorker() {
           instanceId: instance.id,
           phone,
           contactId: conversation.contact_id,
+          contactName: conversation.wa_contacts?.name ?? null,
         });
 
         // Save and send the agent's text reply — skipped if the agent's

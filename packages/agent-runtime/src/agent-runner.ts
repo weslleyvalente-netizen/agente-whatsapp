@@ -17,6 +17,7 @@ interface RunAgentParams {
   instanceId: string;
   phone: string;
   contactId: string;
+  contactName?: string | null;
   sandbox?: boolean;
 }
 
@@ -88,9 +89,27 @@ export function createModel(provider: LLMProvider, modelName: string, apiKey: st
 // Isolated so the ever-changing timestamp never lands in the same block as
 // the static prompt text — concatenating them (as buildSystemPrompt does)
 // would force a cache rewrite on literally every call, since Anthropic's
-// prompt cache matches on exact block content.
-export function buildDynamicContextBlock(now: Date): string {
-  return `\n\nData e hora atual: ${formatDateTimeForPrompt(now)}`;
+// prompt cache matches on exact block content. contactName lives here too,
+// for the same reason: it's constant within one conversation but different
+// across conversations of the same agent, so it can never sit in the
+// agent-level cached block without corrupting the cache across contacts.
+//
+// The raw WhatsApp display name is handed to the model as-is rather than
+// parsed in code — it's arbitrary user-set text ("Dauanaguimaraes23", but
+// also plausibly "Moto e Trilha Yamaha" or a group name), and judging
+// whether it's actually a person's name is exactly the kind of ambiguous
+// call the model is already trusted to make throughout the rest of the
+// prompt.
+export function buildDynamicContextBlock(now: Date, contactName?: string | null): string {
+  let block = `\n\nData e hora atual: ${formatDateTimeForPrompt(now)}`;
+  if (contactName) {
+    block +=
+      `\n\nNome salvo deste contato no WhatsApp: "${contactName}". Se for claramente um nome de pessoa, ` +
+      `use o primeiro nome dela(e) de forma natural ao longo da conversa (ex.: "Oi, {primeiro nome}!"). ` +
+      `Se parecer nome de empresa, grupo, apelido genérico, ou não for claramente um nome de pessoa, ` +
+      `não presuma e não use.`;
+  }
+  return block;
 }
 
 export function buildSystemPrompt(basePrompt: string, now: Date): string {
@@ -103,7 +122,11 @@ export function buildSystemPrompt(basePrompt: string, now: Date): string {
 // changes on every single call — stays in a separate, uncached block right
 // after it. Concatenating them into one string first (as buildSystemPrompt
 // does) and only then trying to cache it would defeat the cache entirely.
-export function buildCacheableSystemMessages(basePrompt: string, now: Date): SystemModelMessage[] {
+export function buildCacheableSystemMessages(
+  basePrompt: string,
+  now: Date,
+  contactName?: string | null
+): SystemModelMessage[] {
   return [
     {
       role: "system",
@@ -112,7 +135,7 @@ export function buildCacheableSystemMessages(basePrompt: string, now: Date): Sys
     },
     {
       role: "system",
-      content: buildDynamicContextBlock(now),
+      content: buildDynamicContextBlock(now, contactName),
     },
   ];
 }
@@ -164,7 +187,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const result = await generateText({
     model,
-    system: buildCacheableSystemMessages(agent.system_prompt, new Date()),
+    system: buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName),
     messages: [
       ...history,
       { role: "user", content: currentMessage.content },
