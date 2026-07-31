@@ -29,6 +29,24 @@ interface ConversationListProps {
   onSelect: (id: string) => void;
 }
 
+// Derived purely from fields already on the conversation — no schema change.
+// Mirrors the multi-badge pattern seen in Assis: a conversation the AI is
+// handling fine shows no badge at all (visual noise reduction), while one
+// that needs human eyes stacks up to three.
+function getConversationTags(conv: ConversationItem): Array<{ label: string; variant: "secondary" | "destructive" | "outline" }> {
+  const tags: Array<{ label: string; variant: "secondary" | "destructive" | "outline" }> = [];
+  if (conv.status === "open" || conv.status === "waiting") {
+    tags.push({ label: "Em andamento", variant: "secondary" });
+  }
+  if (conv.is_human_takeover) {
+    tags.push({ label: "Atenção Humana", variant: "destructive" });
+    if (!conv.assigned_to) {
+      tags.push({ label: "Disponível para assumir", variant: "outline" });
+    }
+  }
+  return tags;
+}
+
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
   const statusLamp: Record<string, LampTone> = {
     open: "green",
@@ -70,16 +88,22 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
                 })}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <p className="truncate text-xs text-muted-foreground">
-                {conv.messages?.[0]?.content || conv.agents.name}
-              </p>
-              {conv.is_human_takeover && (
-                <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px]">
-                  Atenção
-                </Badge>
-              )}
-            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {conv.messages?.[0]?.content || conv.agents.name}
+            </p>
+            {(() => {
+              const tags = getConversationTags(conv);
+              if (tags.length === 0) return null;
+              return (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {tags.map((tag) => (
+                    <Badge key={tag.label} variant={tag.variant} className="h-4 px-1.5 text-[10px]">
+                      {tag.label}
+                    </Badge>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </button>
       ))}
