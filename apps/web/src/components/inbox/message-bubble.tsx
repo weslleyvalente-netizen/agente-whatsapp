@@ -27,12 +27,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         className={cn(
           "min-w-0 max-w-[70%] rounded-lg px-3 py-2",
           isContact && "bg-muted",
-          isAgent && "bg-primary text-primary-foreground",
+          isAgent && "bg-primary/10 text-foreground",
           isHuman && "bg-steel text-white"
         )}
       >
         {(isAgent || isHuman) && (
-          <p className="mb-1 text-[10px] opacity-70">
+          <p className={cn("mb-1 text-[10px] font-semibold", isAgent ? "text-primary" : "opacity-70")}>
             {isAgent ? "Agente" : "Atendente"}
           </p>
         )}

@@ -32,16 +32,20 @@ interface ConversationListProps {
 // Derived purely from fields already on the conversation — no schema change.
 // Mirrors the multi-badge pattern seen in Assis: a conversation the AI is
 // handling fine shows no badge at all (visual noise reduction), while one
-// that needs human eyes stacks up to three.
-function getConversationTags(conv: ConversationItem): Array<{ label: string; variant: "secondary" | "destructive" | "outline" }> {
-  const tags: Array<{ label: string; variant: "secondary" | "destructive" | "outline" }> = [];
+// that needs human eyes stacks up to three. "Disponível para assumir" is
+// plain colored text rather than a badge — same distinction Assis draws
+// between a status pill and a lighter-weight annotation.
+function getConversationTags(
+  conv: ConversationItem
+): Array<{ label: string; kind: "badge"; variant: "tonal" | "destructive" } | { label: string; kind: "text" }> {
+  const tags: Array<{ label: string; kind: "badge"; variant: "tonal" | "destructive" } | { label: string; kind: "text" }> = [];
   if (conv.status === "open" || conv.status === "waiting") {
-    tags.push({ label: "Em andamento", variant: "secondary" });
+    tags.push({ label: "Em andamento", kind: "badge", variant: "tonal" });
   }
   if (conv.is_human_takeover) {
-    tags.push({ label: "Atenção Humana", variant: "destructive" });
+    tags.push({ label: "Atenção Humana", kind: "badge", variant: "destructive" });
     if (!conv.assigned_to) {
-      tags.push({ label: "Disponível para assumir", variant: "outline" });
+      tags.push({ label: "Disponível para assumir", kind: "text" });
     }
   }
   return tags;
@@ -95,12 +99,18 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
               const tags = getConversationTags(conv);
               if (tags.length === 0) return null;
               return (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {tags.map((tag) => (
-                    <Badge key={tag.label} variant={tag.variant} className="h-4 px-1.5 text-[10px]">
-                      {tag.label}
-                    </Badge>
-                  ))}
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {tags.map((tag) =>
+                    tag.kind === "badge" ? (
+                      <Badge key={tag.label} variant={tag.variant} className="h-4 px-1.5 text-[10px] font-semibold">
+                        {tag.label}
+                      </Badge>
+                    ) : (
+                      <span key={tag.label} className="text-[10px] font-semibold text-destructive">
+                        {tag.label}
+                      </span>
+                    )
+                  )}
                 </div>
               );
             })()}

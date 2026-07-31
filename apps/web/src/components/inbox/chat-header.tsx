@@ -16,7 +16,7 @@ const STATUS_LABELS: Record<ConversationStatus, string> = {
 };
 
 const PILL_TRIGGER_CLASS =
-  "h-8 w-auto rounded-full border-border bg-background px-3 text-xs font-medium";
+  "h-8 w-auto rounded-full border-transparent bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/20";
 
 interface ChatHeaderProps {
   conversation: {
@@ -77,9 +77,9 @@ export function ChatHeader({
         />
 
         <Button
-          variant={conversation.is_human_takeover ? "default" : "outline"}
+          variant={conversation.is_human_takeover ? "tonal" : "default"}
           size="sm"
-          className="rounded-full"
+          className="rounded-full font-semibold"
           onClick={onTakeoverToggle}
         >
           {conversation.is_human_takeover ? (
