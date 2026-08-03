@@ -148,7 +148,13 @@ export function startProcessMessageWorker() {
         // above: it's a pipeline step that runs here in the worker, not the
         // webhook, so the webhook keeps acking Evolution fast regardless of
         // how long the vision call takes.
-        if (currentMessage.media_type === "image") {
+        // Guarded with the "📷 " prefix check so a BullMQ retry (attempts: 3
+        // on this queue — see packages/queue/src/queues.ts) doesn't re-run
+        // the vision call against the already-described content. Without
+        // this, a retry would treat the first attempt's own description
+        // (now sitting in currentMessage.content) as if it were the
+        // customer's caption and feed it back into the prompt.
+        if (currentMessage.media_type === "image" && !currentMessage.content.startsWith("📷 ")) {
           const caption = currentMessage.content === "[imagem]" ? undefined : currentMessage.content;
 
           const description = await describeImageMessage({
@@ -171,7 +177,7 @@ export function startProcessMessageWorker() {
             return;
           }
 
-          const describedContent = `📷 ${description.text}`;
+          const describedContent = caption ? `📷 ${description.text}\n\n${caption}` : `📷 ${description.text}`;
           await updateMessageContent(db, currentMessage.id, describedContent);
           effectiveMessage = { ...currentMessage, content: describedContent };
         }

@@ -81,7 +81,12 @@ export async function describeImageMessage(params: {
           ],
         },
       ],
+      abortSignal: AbortSignal.timeout(60_000),
     });
+
+    console.log(
+      `[image-description] inputTokens=${result.usage?.inputTokens || 0} outputTokens=${result.usage?.outputTokens || 0}`
+    );
 
     if (!result.text.trim()) {
       return { ok: false, reason: "empty_description" };
