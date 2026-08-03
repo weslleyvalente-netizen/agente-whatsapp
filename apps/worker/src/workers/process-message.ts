@@ -10,10 +10,13 @@ import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js
 import { resolveApiKey } from "@aula-agente/agent-runtime";
 import { runAgent } from "@aula-agente/agent-runtime";
 import { transcribeAudioMessage } from "../lib/audio-transcription.js";
+import { describeImageMessage } from "../lib/image-description.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
 const AUDIO_FALLBACK_TEXT =
   "Desculpa, não consegui entender esse áudio 🙏 Pode escrever a mensagem, por favor?";
+const IMAGE_FALLBACK_TEXT =
+  "Desculpa, não consegui analisar essa imagem 🙏 Pode me contar em texto o que tem nela?";
 
 async function sendFallbackText(
   db: SupabaseClient,
@@ -137,6 +140,40 @@ export function startProcessMessageWorker() {
           const transcribedContent = `🎤 ${transcription.text}`;
           await updateMessageContent(db, currentMessage.id, transcribedContent);
           effectiveMessage = { ...currentMessage, content: transcribedContent };
+        }
+
+        // Photos arrive with a "[imagem]" placeholder (or just the caption,
+        // if the customer wrote one) — describe the actual image content
+        // before the agent ever sees it, same reasoning as the audio branch
+        // above: it's a pipeline step that runs here in the worker, not the
+        // webhook, so the webhook keeps acking Evolution fast regardless of
+        // how long the vision call takes.
+        if (currentMessage.media_type === "image") {
+          const caption = currentMessage.content === "[imagem]" ? undefined : currentMessage.content;
+
+          const description = await describeImageMessage({
+            instanceName: instance.instance_name,
+            evolutionMessageId: currentMessage.evolution_message_id!,
+            caption,
+            provider: agent.provider,
+            model: agent.model,
+            apiKey,
+          });
+
+          if (!description.ok) {
+            console.log(`Message ${messageId} image description failed: ${description.reason}`);
+            await sendFallbackText(db, IMAGE_FALLBACK_TEXT, {
+              conversationId,
+              organizationId,
+              instanceId: instance.id,
+              phone,
+            });
+            return;
+          }
+
+          const describedContent = `📷 ${description.text}`;
+          await updateMessageContent(db, currentMessage.id, describedContent);
+          effectiveMessage = { ...currentMessage, content: describedContent };
         }
 
         // Remove current message from history
