@@ -21,6 +21,7 @@ async function fetchImage(instanceName: string, evolutionMessageId: string): Pro
     body: JSON.stringify({
       message: { key: { id: evolutionMessageId } },
     }),
+    signal: AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {
