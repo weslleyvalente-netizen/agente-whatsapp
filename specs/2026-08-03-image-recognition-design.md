@@ -104,7 +104,10 @@ if (currentMessage.media_type === "image") {
   const description = await describeImageMessage({
     instanceName: instance.instance_name,
     evolutionMessageId: currentMessage.evolution_message_id!,
-    caption: isPlaceholderCaption(currentMessage.content) ? undefined : currentMessage.content,
+    // The webhook stores the literal placeholder "[imagem]" when the
+    // customer sent no caption — don't forward that literal string as if
+    // it were real context.
+    caption: currentMessage.content === "[imagem]" ? undefined : currentMessage.content,
     provider: agent.provider,
     model: agent.model,
     apiKey,
