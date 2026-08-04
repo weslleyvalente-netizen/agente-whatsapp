@@ -136,7 +136,7 @@ export async function upsertConversationQualification(
 
   const hasCommercialWrites = Object.keys(commercialWrites).length > 0;
   if (hasCommercialWrites) {
-    await client.from("conversation_qualification_events").insert({
+    const { error: eventError } = await client.from("conversation_qualification_events").insert({
       organization_id: params.organizationId,
       conversation_qualification_id: qualification.id,
       event_type: "field_updated",
@@ -144,10 +144,11 @@ export async function upsertConversationQualification(
       changed_by_type: params.changedByType,
       changed_by_id: params.changedById,
     });
+    if (eventError) throw eventError;
   }
 
   if (cpfAction === "replace") {
-    await client.from("conversation_qualification_events").insert({
+    const { error: cpfEventError } = await client.from("conversation_qualification_events").insert({
       organization_id: params.organizationId,
       conversation_qualification_id: qualification.id,
       event_type: "cpf_replaced",
@@ -155,6 +156,7 @@ export async function upsertConversationQualification(
       changed_by_type: params.changedByType,
       changed_by_id: params.changedById,
     });
+    if (cpfEventError) throw cpfEventError;
   }
 
   return qualification;
