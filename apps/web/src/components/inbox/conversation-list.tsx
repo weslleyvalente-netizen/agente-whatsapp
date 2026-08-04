@@ -83,7 +83,12 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
           </div>
           <div className="flex-1 overflow-hidden">
             <div className="flex items-center justify-between gap-2">
-              <p className={cn("truncate text-sm", conv.unread ? "font-semibold" : "font-medium")}>
+              <p
+                className={cn(
+                  "truncate text-sm",
+                  conv.unread ? "font-semibold text-foreground" : "font-medium text-muted-foreground"
+                )}
+              >
                 {conv.wa_contacts.name || formatPhone(conv.wa_contacts.phone)}
               </p>
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-data">
