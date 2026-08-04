@@ -17,3 +17,13 @@ export function isHumanTakeoverExpired(
 
   return new Date(humanTakeoverAt).getTime() < nowMs - timeoutMs;
 }
+
+// A conversation is "unread" for a given attendant when its last activity
+// is newer than that attendant's last visit — or they've never visited it
+// at all (lastReadAt undefined). Pure timestamp comparison: the caller is
+// responsible for keeping lastMessageAt accurate (see the last_message_at
+// fix in the webhook) and for looking up the right attendant's lastReadAt.
+export function isUnread(lastMessageAt: string, lastReadAt: string | undefined): boolean {
+  if (!lastReadAt) return true;
+  return new Date(lastMessageAt).getTime() > new Date(lastReadAt).getTime();
+}

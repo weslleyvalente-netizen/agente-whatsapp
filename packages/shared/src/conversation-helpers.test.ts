@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isHumanTakeoverExpired } from "./conversation-helpers.js";
+import { isHumanTakeoverExpired, isUnread } from "./conversation-helpers.js";
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -31,5 +31,23 @@ describe("isHumanTakeoverExpired", () => {
     const daysAgo = new Date("2026-07-01T00:00:00Z").toISOString();
     const now = new Date("2026-07-28T12:00:00Z").getTime();
     expect(isHumanTakeoverExpired(daysAgo, null, DEFAULT_TIMEOUT_MS, now)).toBe(false);
+  });
+});
+
+describe("isUnread", () => {
+  it("is true when the conversation has never been read", () => {
+    expect(isUnread("2026-08-03T12:00:00Z", undefined)).toBe(true);
+  });
+
+  it("is true when the last message came after the last read", () => {
+    expect(isUnread("2026-08-03T12:05:00Z", "2026-08-03T12:00:00Z")).toBe(true);
+  });
+
+  it("is false when the last read was after the last message", () => {
+    expect(isUnread("2026-08-03T12:00:00Z", "2026-08-03T12:05:00Z")).toBe(false);
+  });
+
+  it("is false when read exactly at the last message timestamp", () => {
+    expect(isUnread("2026-08-03T12:00:00Z", "2026-08-03T12:00:00Z")).toBe(false);
   });
 });
