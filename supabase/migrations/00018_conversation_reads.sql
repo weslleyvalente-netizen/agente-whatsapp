@@ -23,8 +23,14 @@ CREATE POLICY "conversation_reads_insert" ON conversation_reads
     )
   );
 
--- Update (re-opening, or a new message arriving while open): same
--- ownership check; Postgres reuses USING as the WITH CHECK when none is
--- given, so this also prevents changing the row's own user_id via update.
+-- Update (re-opening, or a new message arriving while open): must be marking
+-- their own row, for a conversation in an org they belong to. Explicit WITH CHECK
+-- prevents rewriting conversation_id to an out-of-org value.
 CREATE POLICY "conversation_reads_update" ON conversation_reads
-  FOR UPDATE USING (user_id = auth.uid());
+  FOR UPDATE USING (user_id = auth.uid())
+  WITH CHECK (
+    user_id = auth.uid()
+    AND conversation_id IN (
+      SELECT id FROM conversations WHERE organization_id IN (SELECT get_user_org_ids())
+    )
+  );
