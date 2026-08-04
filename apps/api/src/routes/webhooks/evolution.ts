@@ -79,7 +79,13 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       const instanceId = payload.instance;
       const evolutionMessageId = payload.data.key.id;
       const phone = payload.data.key.remoteJid.replace("@s.whatsapp.net", "");
-      const contactName = payload.data.pushName || null;
+      // For a fromMe delivery (human replying directly from the connected
+      // phone), pushName is the connected WhatsApp account's own profile
+      // name, not the customer's — passing it through here overwrote the
+      // customer's real contact name with the attendant's own name on
+      // every manual reply. null is safe: upsertContact already falls
+      // back to whatever name is already on file when name is null.
+      const contactName = payload.data.key.fromMe ? null : payload.data.pushName || null;
 
       // Look up instance
       let instance;
