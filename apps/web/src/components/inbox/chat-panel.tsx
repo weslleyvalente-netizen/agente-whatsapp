@@ -25,7 +25,13 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
   const [sending, setSending] = useState(false);
   const [conversation, setConversation] = useState<any>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+  }, []);
 
   const fetchMessages = useCallback(async () => {
     const supabase = createClient();
@@ -47,10 +53,25 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     setConversation(data);
   }, [conversationId]);
 
+  const markAsRead = useCallback(async () => {
+    if (!userId) return;
+    const supabase = createClient();
+    await supabase
+      .from("conversation_reads")
+      .upsert(
+        { conversation_id: conversationId, user_id: userId, last_read_at: new Date().toISOString() },
+        { onConflict: "conversation_id,user_id" }
+      );
+  }, [conversationId, userId]);
+
   useEffect(() => {
     fetchMessages();
     fetchConversation();
   }, [fetchMessages, fetchConversation]);
+
+  useEffect(() => {
+    markAsRead();
+  }, [markAsRead]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -63,6 +84,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     filter: `conversation_id=eq.${conversationId}`,
     onInsert: (newMsg) => {
       setMessages((prev) => [...prev, newMsg]);
+      markAsRead();
     },
     onUpdate: (updatedMsg) => {
       setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)));

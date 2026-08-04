@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
@@ -21,6 +21,16 @@ export function useRealtime<T extends { [key: string]: any }>({
   onDelete,
   enabled = true,
 }: UseRealtimeOptions<T>) {
+  const onInsertRef = useRef(onInsert);
+  const onUpdateRef = useRef(onUpdate);
+  const onDeleteRef = useRef(onDelete);
+
+  useEffect(() => {
+    onInsertRef.current = onInsert;
+    onUpdateRef.current = onUpdate;
+    onDeleteRef.current = onDelete;
+  });
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -42,14 +52,14 @@ export function useRealtime<T extends { [key: string]: any }>({
         "postgres_changes" as any,
         channelConfig,
         (payload: RealtimePostgresChangesPayload<T>) => {
-          if (payload.eventType === "INSERT" && onInsert) {
-            onInsert(payload.new as T);
+          if (payload.eventType === "INSERT" && onInsertRef.current) {
+            onInsertRef.current(payload.new as T);
           }
-          if (payload.eventType === "UPDATE" && onUpdate) {
-            onUpdate(payload.new as T);
+          if (payload.eventType === "UPDATE" && onUpdateRef.current) {
+            onUpdateRef.current(payload.new as T);
           }
-          if (payload.eventType === "DELETE" && onDelete) {
-            onDelete(payload.old as T);
+          if (payload.eventType === "DELETE" && onDeleteRef.current) {
+            onDeleteRef.current(payload.old as T);
           }
         }
       )
@@ -58,5 +68,6 @@ export function useRealtime<T extends { [key: string]: any }>({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [table, filter, event, onInsert, onUpdate, onDelete, enabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table, filter, event, enabled]);
 }

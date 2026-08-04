@@ -13,6 +13,7 @@ interface ConversationItem {
   last_message_at: string;
   tags: string[];
   assigned_to: string | null;
+  unread: boolean;
   wa_contacts: {
     phone: string;
     name: string | null;
@@ -82,10 +83,11 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
           </div>
           <div className="flex-1 overflow-hidden">
             <div className="flex items-center justify-between gap-2">
-              <p className="truncate text-sm font-medium">
+              <p className={cn("truncate text-sm", conv.unread ? "font-semibold" : "font-medium")}>
                 {conv.wa_contacts.name || formatPhone(conv.wa_contacts.phone)}
               </p>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-data">
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-data">
+                {conv.unread && <span className="h-2 w-2 rounded-full bg-primary" aria-label="Não lida" />}
                 {new Date(conv.last_message_at).toLocaleTimeString("pt-BR", {
                   hour: "2-digit",
                   minute: "2-digit",

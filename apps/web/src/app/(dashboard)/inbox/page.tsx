@@ -10,6 +10,7 @@ import { ChatPanel } from "@/components/inbox/chat-panel";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isUnread } from "@aula-agente/shared";
 
 type FilterTab = "all" | "mine" | "agent" | "others" | "attention";
 
@@ -30,6 +31,7 @@ export default function InboxPage() {
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [readMap, setReadMap] = useState<Map<string, string>>(new Map());
 
   const selectedId = searchParams.get("id");
 
@@ -67,6 +69,30 @@ export default function InboxPage() {
     enabled: !!currentOrg,
   });
 
+  const fetchReads = useCallback(async () => {
+    if (!userId) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("conversation_reads")
+      .select("conversation_id, last_read_at")
+      .eq("user_id", userId);
+    setReadMap(new Map((data || []).map((r) => [r.conversation_id, r.last_read_at])));
+  }, [userId]);
+
+  useEffect(() => {
+    fetchReads();
+  }, [fetchReads]);
+
+  // Keeps this attendant's own read state in sync if they read the same
+  // conversation from another tab/device.
+  useRealtime({
+    table: "conversation_reads",
+    filter: userId ? `user_id=eq.${userId}` : undefined,
+    onInsert: () => fetchReads(),
+    onUpdate: () => fetchReads(),
+    enabled: !!userId,
+  });
+
   const handleSelect = (id: string) => {
     router.push(`/inbox?id=${id}`);
   };
@@ -86,7 +112,16 @@ export default function InboxPage() {
     }
   };
 
-  const filtered = conversations.filter((c) => {
+  const withUnread = conversations.map((c) => ({
+    ...c,
+    // The conversation currently open in ChatPanel must never show as
+    // unread, even for the instant before markAsRead()'s realtime
+    // round-trip lands — the customer/AI reply the attendant is already
+    // looking at should never flash a false "you missed this" signal.
+    unread: c.id === selectedId ? false : isUnread(c.last_message_at, readMap.get(c.id)),
+  }));
+
+  const filtered = withUnread.filter((c) => {
     if (!matchesTab(c)) return false;
     if (!search) return true;
     const searchLower = search.toLowerCase();
