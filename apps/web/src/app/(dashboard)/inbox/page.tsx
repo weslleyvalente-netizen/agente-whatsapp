@@ -114,7 +114,11 @@ export default function InboxPage() {
 
   const withUnread = conversations.map((c) => ({
     ...c,
-    unread: isUnread(c.last_message_at, readMap.get(c.id)),
+    // The conversation currently open in ChatPanel must never show as
+    // unread, even for the instant before markAsRead()'s realtime
+    // round-trip lands — the customer/AI reply the attendant is already
+    // looking at should never flash a false "you missed this" signal.
+    unread: c.id === selectedId ? false : isUnread(c.last_message_at, readMap.get(c.id)),
   }));
 
   const filtered = withUnread.filter((c) => {
