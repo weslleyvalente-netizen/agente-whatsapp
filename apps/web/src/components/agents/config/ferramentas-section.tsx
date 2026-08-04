@@ -16,6 +16,7 @@ const TOOL_ROWS: ToolRow[] = [
   { key: "search_faq", title: "Busca de FAQs", description: "Permite ao agente consultar perguntas frequentes" },
   { key: "send_catalog_photo", title: "Catálogo de Veículos", description: "Permite ao agente buscar veículos e enviar fotos pelo WhatsApp" },
   { key: "create_task", title: "Criar tarefas de follow-up", description: "Permite ao agente criar tarefas de acompanhamento comercial em Tarefas" },
+  { key: "update_qualification", title: "Atualizar dados de qualificação", description: "Permite ao agente registrar automaticamente produto de interesse, valores, CPF e outros dados comerciais durante a conversa" },
 ];
 
 interface FerramentasSectionProps {
