@@ -98,6 +98,16 @@ git commit -m "feat: add conversation_reads table for per-attendant unread track
 
 ### Task 2: Bump `last_message_at` on every message, not just Helena's replies
 
+> **Reverted during final review (this task is now a no-op, kept as historical record):**
+> `saveMessage()` (`apps/api/src/services/message.service.ts:39-42`) already
+> bumps `conversations.last_message_at` unconditionally on every call, and is
+> called by both webhook branches this task modified — so the updates added
+> here were pure duplication (double `conversations` UPDATEs, double
+> realtime broadcasts, extra failure surface). The `evolution.ts` changes
+> below were reverted; see the "Correction" note in
+> `specs/2026-08-03-inbox-unread-design.md`'s "Confirmed current behavior"
+> section for the full explanation.
+
 **Files:**
 - Modify: `apps/api/src/routes/webhooks/evolution.ts`
 
@@ -492,4 +502,5 @@ Run `apps/web` locally (`cd apps/web && pnpm dev`) with two different logged-in 
 2. Attendant A opens the conversation. Confirm: it un-bolds and the dot disappears for A, but stays bold+dotted for attendant B (per-attendant isolation — this is the core thing Approach 3/the jsonb alternative would have gotten wrong).
 3. While attendant A still has it open, send another WhatsApp message that triggers a Helena reply. Confirm: it does **not** flash unread for A (still looking at it), but does show unread for B.
 4. Attendant B opens it. Confirm: unread clears for B too.
-5. Reload attendant A's page entirely (fresh mount, not just re-selecting). Confirm: still shows as read for A (state persisted server-side, not just in React state).
+5. After attendant A reads a conversation, have them click away to a different conversation, then back. Confirm: the first conversation stays un-bolded (not just while it was the open/selected one) — this catches a stale-`readMap` regression if `conversation_reads` realtime isn't actually wired up.
+6. Reload attendant A's page entirely (fresh mount, not just re-selecting). Confirm: still shows as read for A (state persisted server-side, not just in React state).

@@ -40,6 +40,14 @@ this field via `idx_conversations_org_last_msg`), not just this feature —
 fixing it is in scope here because "unread" cannot be computed reliably
 without an accurate last-activity timestamp.
 
+**Correction (found during final review):** `conversations.last_message_at`
+was already being bumped on every message via `saveMessage()` in
+`apps/api/src/services/message.service.ts:39-42`, called by both webhook
+branches — the original "Confirmed current behavior" claim above was based
+on checking the webhook's call site but not `saveMessage`'s own body, and
+was wrong. No fix was needed for this; the webhook-level updates this
+design originally called for were reverted as redundant duplication.
+
 **Multiple attendants share one Inbox.** `organization_members` (role:
 owner/admin/member) and `conversations.assigned_to` already establish that
 more than one human can work the same organization's conversations

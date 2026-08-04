@@ -140,7 +140,6 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         await updateConversation(getAdminClient(), conversation.id, {
           is_human_takeover: true,
           human_takeover_at: new Date().toISOString(),
-          last_message_at: new Date().toISOString(),
         });
 
         if (isNew) {
@@ -165,13 +164,6 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       if (!message) {
         return reply.status(200).send({ ok: true, skipped: "duplicate" });
       }
-
-      // Bump last-activity so the Inbox list's sort order and unread
-      // indicator reflect this message immediately, regardless of whether
-      // the agent ends up replying (human takeover may skip that below).
-      await updateConversation(getAdminClient(), conversation.id, {
-        last_message_at: new Date().toISOString(),
-      });
 
       // If human takeover is active, don't enqueue for LLM processing
       if (conversation.is_human_takeover) {

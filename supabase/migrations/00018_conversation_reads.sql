@@ -34,3 +34,21 @@ CREATE POLICY "conversation_reads_update" ON conversation_reads
       SELECT id FROM conversations WHERE organization_id IN (SELECT get_user_org_ids())
     )
   );
+
+ALTER PUBLICATION supabase_realtime ADD TABLE conversation_reads;
+
+-- Force last_read_at to always be set by the database's own clock, never
+-- the client's. last_message_at is written server-side (API/worker); if
+-- last_read_at came from the browser's clock instead, a skewed client
+-- clock comparing the two with `>` in isUnread could leave a just-read
+-- conversation flashing back to unread, or stay marked read forever.
+CREATE FUNCTION set_conversation_read_at() RETURNS trigger AS $$
+BEGIN
+  NEW.last_read_at := now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER conversation_reads_set_read_at
+  BEFORE INSERT OR UPDATE ON conversation_reads
+  FOR EACH ROW EXECUTE FUNCTION set_conversation_read_at();
