@@ -97,9 +97,16 @@ export async function upsertConversationQualification(
     if (cpfAction === "set" || cpfAction === "replace") {
       identityWrites.cpf_encrypted = encryptCpf(params.identity.cpf);
       identityWrites.cpf_hash = newHash;
-      identityWrites.birth_date = params.identity.birth_date ?? null;
-      identityWrites.has_driver_license = params.identity.has_driver_license ?? null;
-      identityWrites.driver_license_category = params.identity.driver_license_category ?? null;
+      identityWrites.birth_date =
+        params.identity.birth_date !== undefined ? params.identity.birth_date : existing?.birth_date ?? null;
+      identityWrites.has_driver_license =
+        params.identity.has_driver_license !== undefined
+          ? params.identity.has_driver_license
+          : existing?.has_driver_license ?? null;
+      identityWrites.driver_license_category =
+        params.identity.driver_license_category !== undefined
+          ? params.identity.driver_license_category
+          : existing?.driver_license_category ?? null;
     }
   }
 
