@@ -1,19 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatCurrencyBRL } from "@/lib/utils";
 
 export type QualificationFieldDescriptor =
-  | { key: string; label: string; kind: "text" }
-  | { key: string; label: string; kind: "textarea" }
-  | { key: string; label: string; kind: "number" }
-  | { key: string; label: string; kind: "currency" }
-  | { key: string; label: string; kind: "date" }
-  | { key: string; label: string; kind: "boolean" }
-  | { key: string; label: string; kind: "select"; options: Array<{ value: string; label: string }> };
+  | { key: string; label: string; kind: "text"; emphasize?: boolean }
+  | { key: string; label: string; kind: "textarea"; emphasize?: boolean }
+  | { key: string; label: string; kind: "number"; emphasize?: boolean }
+  | { key: string; label: string; kind: "currency"; emphasize?: boolean }
+  | { key: string; label: string; kind: "date"; emphasize?: boolean }
+  | { key: string; label: string; kind: "boolean"; emphasize?: boolean }
+  | { key: string; label: string; kind: "select"; options: Array<{ value: string; label: string }>; emphasize?: boolean };
 
 function formatReadValue(field: QualificationFieldDescriptor, value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
@@ -22,6 +23,22 @@ function formatReadValue(field: QualificationFieldDescriptor, value: unknown): s
   if (field.kind === "date") return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
   if (field.kind === "select") return field.options.find((o) => o.value === value)?.label ?? String(value);
   return String(value);
+}
+
+function TruncatedText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <p className={expanded ? "text-sm" : "line-clamp-3 text-sm"}>{text}</p>
+      <button
+        type="button"
+        className="mt-1 text-xs font-medium text-primary hover:underline"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        {expanded ? "Mostrar menos" : "Mostrar mais"}
+      </button>
+    </div>
+  );
 }
 
 function draftToPatch(
@@ -56,9 +73,11 @@ interface QualificationSectionProps {
   fields: QualificationFieldDescriptor[];
   values: Record<string, unknown>;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
+  truncateSummary?: boolean;
+  hideTitle?: boolean;
 }
 
-export function QualificationSection({ title, fields, values, onSave }: QualificationSectionProps) {
+export function QualificationSection({ title, fields, values, onSave, truncateSummary = false, hideTitle = false }: QualificationSectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -97,28 +116,52 @@ export function QualificationSection({ title, fields, values, onSave }: Qualific
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{title}</h3>
+      <div className={hideTitle ? "mb-2 flex items-center justify-end" : "mb-2 flex items-center justify-between"}>
+        {!hideTitle && <h3 className="text-sm font-semibold">{title}</h3>}
         {!editing && (
-          <Button variant="ghost" size="sm" onClick={startEditing}>
-            Editar
+          <Button variant="ghost" size="icon-sm" onClick={startEditing}>
+            <Pencil className="size-3.5" />
           </Button>
         )}
       </div>
 
       {!editing ? (
-        <div>
-          {fields.map((f) => {
-            const display = formatReadValue(f, values[f.key]);
-            return (
-              <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
-                <span className="text-muted-foreground">{f.label}</span>
-                <span className={display ? "font-medium" : "text-muted-foreground italic"}>
-                  {display ?? "Não informado"}
-                </span>
-              </div>
-            );
-          })}
+        <div className="space-y-3">
+          {fields.some((f) => f.emphasize) && (
+            <div className="grid grid-cols-2 gap-2">
+              {fields
+                .filter((f) => f.emphasize)
+                .map((f) => {
+                  const display = formatReadValue(f, values[f.key]);
+                  return (
+                    <div key={f.key} className="rounded-md border bg-muted/30 p-2">
+                      <p className={display ? "text-lg font-semibold" : "text-sm text-muted-foreground italic"}>
+                        {display ?? "Não informado"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{f.label}</p>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+          <div>
+            {fields
+              .filter((f) => !f.emphasize)
+              .map((f) => {
+                const display = formatReadValue(f, values[f.key]);
+                if (truncateSummary && f.kind === "textarea" && display) {
+                  return <TruncatedText key={f.key} text={display} />;
+                }
+                return (
+                  <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
+                    <span className="text-muted-foreground">{f.label}</span>
+                    <span className={display ? "font-medium" : "text-muted-foreground italic"}>
+                      {display ?? "Não informado"}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

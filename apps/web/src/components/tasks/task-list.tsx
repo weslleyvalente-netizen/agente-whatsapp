@@ -6,27 +6,25 @@ import { TaskCard, type TaskWithRelations } from "./task-card";
 interface TaskListProps {
   tasks: TaskWithRelations[];
   bucket: TaskBucket;
-  organizationId: string;
   memberEmailsById: Record<string, string>;
-  onRefresh: () => void;
+  selectedTaskId: string | null;
   onOpenDetails: (taskId: string) => void;
 }
 
-export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRefresh, onOpenDetails }: TaskListProps) {
+export function TaskList({ tasks, bucket, memberEmailsById, selectedTaskId, onOpenDetails }: TaskListProps) {
   if (tasks.length === 0) {
     return <p className="text-sm text-muted-foreground">Nenhuma tarefa aqui.</p>;
   }
 
   if (bucket !== "today") {
     return (
-      <div className="space-y-3">
+      <div className="space-y-2">
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
-            organizationId={organizationId}
             memberEmailsById={memberEmailsById}
-            onRefresh={onRefresh}
+            isSelected={task.id === selectedTaskId}
             onOpenDetails={onOpenDetails}
           />
         ))}
@@ -51,30 +49,28 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
   return (
     <div className="space-y-6">
       {hot.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h3 className="text-sm font-semibold">🔥 Leads quentes</h3>
           {hot.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
-              organizationId={organizationId}
               memberEmailsById={memberEmailsById}
-              onRefresh={onRefresh}
+              isSelected={task.id === selectedTaskId}
               onOpenDetails={onOpenDetails}
             />
           ))}
         </div>
       )}
       {warm.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h3 className="text-sm font-semibold">🟡 Follow-ups</h3>
           {warm.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
-              organizationId={organizationId}
               memberEmailsById={memberEmailsById}
-              onRefresh={onRefresh}
+              isSelected={task.id === selectedTaskId}
               onOpenDetails={onOpenDetails}
             />
           ))}

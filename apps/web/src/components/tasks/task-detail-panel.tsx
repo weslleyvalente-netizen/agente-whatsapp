@@ -3,11 +3,23 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { formatPhone } from "@/lib/utils";
+import { formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { QualificationSection, type QualificationFieldDescriptor } from "./qualification-section";
+import type { TaskWithRelations } from "./task-card";
+import { RescheduleDialog } from "./reschedule-dialog";
+import { TaskDialog } from "./task-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { Pencil, MoreVertical, XIcon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS } from "@aula-agente/shared";
 
 interface QualificationValues {
   attendance_type: string | null;
@@ -100,24 +112,27 @@ function commercialFields(attendanceType: string | null): QualificationFieldDesc
   const base: QualificationFieldDescriptor[] = [
     { key: "product_interest", label: "Produto", kind: "text" },
     { key: "product_model", label: "Modelo", kind: "text" },
-    { key: "sale_amount", label: "Valor da venda", kind: "currency" },
+    { key: "sale_amount", label: "Valor da venda", kind: "currency", emphasize: true },
   ];
-  const financialFields: QualificationFieldDescriptor[] =
-    attendanceType === "consortium"
-      ? [
-          { key: "credit_amount", label: "Crédito desejado", kind: "currency" },
-          { key: "bid_amount", label: "Lance", kind: "currency" },
-        ]
-      : [{ key: "down_payment_amount", label: "Entrada", kind: "currency" }];
+  const downPayment: QualificationFieldDescriptor[] =
+    attendanceType === "consortium" ? [] : [{ key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true }];
   return [
     ...base,
-    ...financialFields,
-    { key: "target_installment_amount", label: "Parcela desejada", kind: "currency" },
-    { key: "term_months", label: "Prazo (meses)", kind: "number" },
+    ...downPayment,
+    { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
+    { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
     { key: "next_action", label: "Próxima ação", kind: "text" },
-    { key: "commercial_notes", label: "Observações", kind: "textarea" },
   ];
 }
+
+const CONSORTIUM_FIELDS: QualificationFieldDescriptor[] = [
+  { key: "credit_amount", label: "Crédito desejado", kind: "currency", emphasize: true },
+  { key: "bid_amount", label: "Lance", kind: "currency", emphasize: true },
+];
+
+const OBSERVATION_FIELDS: QualificationFieldDescriptor[] = [
+  { key: "commercial_notes", label: "Observações", kind: "textarea" },
+];
 
 function openWhatsApp(phone: string) {
   const digits = phone.replace(/\D/g, "");
@@ -126,12 +141,14 @@ function openWhatsApp(phone: string) {
 }
 
 interface TaskDetailPanelProps {
+  task: TaskWithRelations;
   taskId: string;
+  organizationId: string;
   onClose: () => void;
   onTaskChanged: () => void;
 }
 
-export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged }: TaskDetailPanelProps) {
   const router = useRouter();
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,15 +191,52 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
     }
   };
 
+  const handleCancel = async () => {
+    if (!confirm("Cancelar esta tarefa?")) return;
+    try {
+      await apiFetch(`/tasks/${taskId}/cancel`, { method: "POST", body: JSON.stringify({}) });
+      onTaskChanged();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao cancelar tarefa");
+    }
+  };
+
   const isOpenTask = details ? details.task.status !== "completed" && details.task.status !== "cancelled" : false;
   const qualification = details?.qualification ?? EMPTY_QUALIFICATION;
   const attendanceType = qualification.attendance_type;
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-lg" showCloseButton={false}>
         <SheetHeader>
-          <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
+          <div className="flex items-center justify-between gap-2">
+            <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
+            <div className="flex shrink-0 items-center gap-1">
+              {isOpenTask && (
+                <TaskDialog
+                  organizationId={organizationId}
+                  task={task}
+                  presetContact={{ id: task.contact_id, name: task.wa_contacts?.name ?? null, phone: task.wa_contacts?.phone ?? "" }}
+                  triggerButton={<Button variant="ghost" size="icon-sm" />}
+                  triggerLabel={<Pencil className="size-3.5" />}
+                  onSaved={onTaskChanged}
+                />
+              )}
+              <Button variant="ghost" size="icon-sm" onClick={onClose}>
+                <XIcon className="size-3.5" />
+                <span className="sr-only">Fechar</span>
+              </Button>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {details?.customer ? formatPhone(details.customer.phone) : ""} · {TASK_TYPE_LABELS[task.type]}
+          </p>
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant="secondary">{TASK_PRIORITY_LABELS[task.priority]}</Badge>
+            <span className="text-xs text-muted-foreground">
+              {formatRelativeTime(details?.conversation?.lastMessageAt)}
+            </span>
+          </div>
         </SheetHeader>
 
         {loading && <p className="p-4 text-sm text-muted-foreground">Carregando...</p>}
@@ -198,9 +252,14 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
 
         {details && !loading && !error && (
           <div className="space-y-4 p-4">
-            {details.customer && <p className="text-sm text-muted-foreground">{formatPhone(details.customer.phone)}</p>}
-
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                disabled={!isOpenTask}
+                onClick={handleComplete}
+              >
+                Concluir
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -220,55 +279,109 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
                 WhatsApp
               </Button>
               {isOpenTask && (
-                <Button size="sm" onClick={handleComplete}>
-                  Concluir
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" />}>
+                    <MoreVertical className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <RescheduleDialog task={task} onRescheduled={onTaskChanged} />
+                    <DropdownMenuItem variant="destructive" onClick={handleCancel}>
+                      Cancelar tarefa
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
 
-            <Separator />
+            <Accordion defaultValue={["resumo", "comercial"]}>
+              <AccordionItem value="resumo">
+                <AccordionTrigger>Resumo do atendimento</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Resumo do atendimento"
+                    fields={SUMMARY_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                    truncateSummary
+                    hideTitle
+                  />
+                </AccordionContent>
+              </AccordionItem>
 
-            <QualificationSection
-              title="Resumo do atendimento"
-              fields={SUMMARY_FIELDS}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-            />
+              <AccordionItem value="comercial">
+                <AccordionTrigger>Informações comerciais</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Informações comerciais"
+                    fields={commercialFields(attendanceType)}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                    hideTitle
+                  />
+                </AccordionContent>
+              </AccordionItem>
 
-            <Separator />
+              <AccordionItem value="cliente">
+                <AccordionTrigger>Dados do cliente</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Dados do cliente"
+                    fields={CLIENT_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                    hideTitle
+                  />
+                  {details.conversation && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
+                    </p>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
 
-            <QualificationSection
-              title="Dados do cliente"
-              fields={CLIENT_FIELDS}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-            />
-            {details.conversation && (
-              <p className="text-xs text-muted-foreground">
-                Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
-              </p>
-            )}
+              {attendanceType === "financing" && (
+                <AccordionItem value="financiamento">
+                  <AccordionTrigger>Financiamento</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Financiamento"
+                      fields={FINANCING_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              )}
 
-            <Separator />
+              {attendanceType === "consortium" && (
+                <AccordionItem value="consorcio">
+                  <AccordionTrigger>Consórcio</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Consórcio"
+                      fields={CONSORTIUM_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              )}
 
-            <QualificationSection
-              title="Informações comerciais"
-              fields={commercialFields(attendanceType)}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-            />
-
-            {attendanceType === "financing" && (
-              <>
-                <Separator />
-                <QualificationSection
-                  title="Financiamento"
-                  fields={FINANCING_FIELDS}
-                  values={qualification as unknown as Record<string, unknown>}
-                  onSave={handleSaveSection}
-                />
-              </>
-            )}
+              <AccordionItem value="observacoes">
+                <AccordionTrigger>Observações</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Observações"
+                    fields={OBSERVATION_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                    hideTitle
+                  />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </div>
         )}
       </SheetContent>

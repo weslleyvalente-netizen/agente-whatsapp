@@ -132,22 +132,27 @@ export default function TasksPage() {
       <TaskList
         tasks={bucketed[tab]}
         bucket={tab}
-        organizationId={currentOrg.id}
         memberEmailsById={memberEmailsById}
-        onRefresh={fetchTasks}
+        selectedTaskId={selectedTaskId}
         onOpenDetails={setSelectedTaskId}
       />
 
-      {selectedTaskId && (
-        <TaskDetailPanel
-          taskId={selectedTaskId}
-          onClose={() => setSelectedTaskId(null)}
-          onTaskChanged={() => {
-            fetchTasks();
-            setSelectedTaskId(null);
-          }}
-        />
-      )}
+      {selectedTaskId && (() => {
+        const selectedTask = tasks.find((t) => t.id === selectedTaskId);
+        if (!selectedTask) return null;
+        return (
+          <TaskDetailPanel
+            task={selectedTask}
+            taskId={selectedTaskId}
+            organizationId={currentOrg.id}
+            onClose={() => setSelectedTaskId(null)}
+            onTaskChanged={() => {
+              fetchTasks();
+              setSelectedTaskId(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
