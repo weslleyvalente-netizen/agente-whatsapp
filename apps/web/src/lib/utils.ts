@@ -26,3 +26,20 @@ export function formatCurrencyBRL(value: number | null | undefined): string {
   if (value === null || value === undefined) return "Não informado";
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 }
+
+// Renders how long ago an ISO timestamp was, e.g. "agora", "há 12 min",
+// "há 3h", "há 2 dias". Falls back to an absolute date past ~30 days —
+// "há 45 dias" stops being useful information at that point. Returns a
+// fixed string for null/undefined (a task's conversation can be missing).
+export function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return "Sem interações registradas";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return "agora";
+  if (diffMin < 60) return `há ${diffMin} min`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `há ${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `há ${diffDays} dia${diffDays === 1 ? "" : "s"}`;
+  return new Date(iso).toLocaleDateString("pt-BR");
+}

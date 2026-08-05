@@ -132,9 +132,7 @@ export default function TasksPage() {
       <TaskList
         tasks={bucketed[tab]}
         bucket={tab}
-        organizationId={currentOrg.id}
         memberEmailsById={memberEmailsById}
-        onRefresh={fetchTasks}
         onOpenDetails={setSelectedTaskId}
       />
 
