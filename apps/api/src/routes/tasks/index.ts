@@ -51,6 +51,15 @@ export default async function taskRoutes(app: FastifyInstance) {
       ? await getQualificationByConversationId(db, task.conversation_id)
       : null;
 
+    let decryptedCpf: string | null = null;
+    if (qualification?.cpf_encrypted) {
+      try {
+        decryptedCpf = decryptCpf(qualification.cpf_encrypted);
+      } catch (err) {
+        console.error(`Failed to decrypt CPF for qualification ${qualification.id}:`, err);
+      }
+    }
+
     return {
       task,
       customer: conversation
@@ -71,7 +80,7 @@ export default async function taskRoutes(app: FastifyInstance) {
             bid_amount: qualification.bid_amount,
             target_installment_amount: qualification.target_installment_amount,
             term_months: qualification.term_months,
-            cpf: qualification.cpf_encrypted ? decryptCpf(qualification.cpf_encrypted) : null,
+            cpf: decryptedCpf,
             birth_date: qualification.birth_date,
             has_driver_license: qualification.has_driver_license,
             driver_license_category: qualification.driver_license_category,
@@ -230,7 +239,7 @@ export default async function taskRoutes(app: FastifyInstance) {
       const { cpf, birth_date, has_driver_license, driver_license_category, ...commercialFields } =
         parseResult.data;
 
-      const qualification = await upsertConversationQualification(db, {
+      await upsertConversationQualification(db, {
         organizationId: conversation.organization_id,
         conversationId: request.params.conversationId,
         contactId: conversation.contact_id,
@@ -242,7 +251,7 @@ export default async function taskRoutes(app: FastifyInstance) {
           : undefined,
       });
 
-      return qualification;
+      return { ok: true };
     }
   );
 }

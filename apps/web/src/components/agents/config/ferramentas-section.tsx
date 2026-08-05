@@ -40,7 +40,7 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
               <p className="text-sm text-muted-foreground">{row.description}</p>
             </div>
             <Switch
-              checked={toolsConfig[row.key]}
+              checked={toolsConfig[row.key] ?? false}
               onCheckedChange={(v) => {
                 const next = { ...toolsConfig, [row.key]: v };
                 setToolsConfig(next);

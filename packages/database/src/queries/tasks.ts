@@ -178,9 +178,17 @@ export async function createTaskWithDedup(
   // One-time photograph of "what we knew when this task was made" — never
   // read back as a live value. The panel always reads the qualification's
   // own summary via conversation_id, not this snapshot.
-  const qualification = input.conversation_id
-    ? await getQualificationByConversationId(client, input.conversation_id)
-    : null;
+  let qualification: Awaited<ReturnType<typeof getQualificationByConversationId>> = null;
+  if (input.conversation_id) {
+    try {
+      qualification = await getQualificationByConversationId(client, input.conversation_id);
+    } catch (err) {
+      // The ai_summary snapshot is explicitly best-effort — a lookup failure
+      // (e.g. this migration not applied yet in this environment) must never
+      // block task creation itself.
+      console.error("Failed to look up qualification for ai_summary snapshot:", err);
+    }
+  }
 
   const task = await createTask(client, {
     organization_id: input.organization_id,

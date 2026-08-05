@@ -24,16 +24,28 @@ function formatReadValue(field: QualificationFieldDescriptor, value: unknown): s
   return String(value);
 }
 
-function draftToPatch(fields: QualificationFieldDescriptor[], draft: Record<string, string>): Record<string, unknown> {
+function draftToPatch(
+  fields: QualificationFieldDescriptor[],
+  draft: Record<string, string>,
+  values: Record<string, unknown>
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   for (const f of fields) {
     const raw = draft[f.key] ?? "";
+    let newValue: unknown;
     if (f.kind === "number" || f.kind === "currency") {
-      patch[f.key] = raw === "" ? null : Number(raw);
+      newValue = raw === "" ? null : Number(raw);
     } else if (f.kind === "boolean") {
-      patch[f.key] = raw === "" ? null : raw === "true";
+      newValue = raw === "" ? null : raw === "true";
     } else {
-      patch[f.key] = raw === "" ? null : raw;
+      newValue = raw === "" ? null : raw;
+    }
+    const currentValue = values[f.key] ?? null;
+    // Only send fields that actually changed — sending an unchanged field
+    // would lock it in human_locked_fields even though the user never
+    // touched it, permanently blocking Helena from updating it.
+    if (newValue !== currentValue) {
+      patch[f.key] = newValue;
     }
   }
   return patch;
@@ -62,9 +74,16 @@ export function QualificationSection({ title, fields, values, onSave }: Qualific
   };
 
   const handleSave = async () => {
+    const patch = draftToPatch(fields, draft, values);
+    if (Object.keys(patch).length === 0) {
+      // Nothing actually changed — skip the API call entirely rather than
+      // sending an empty patch (which would be a no-op write anyway).
+      setEditing(false);
+      return;
+    }
     setSaving(true);
     try {
-      await onSave(draftToPatch(fields, draft));
+      await onSave(patch);
       setEditing(false);
     } catch (err) {
       // Deliberately does NOT setEditing(false) or clear `draft` here — the

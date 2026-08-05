@@ -216,7 +216,7 @@ path forces `human_locked_fields` additions.
 New module, `packages/database/src/crypto/cpf.ts`:
 `encryptCpf(plain: string): string`, `decryptCpf(ciphertext: string): string`
 (AES-256-GCM, key from a new `QUALIFICATION_CPF_ENCRYPTION_KEY` env var —
-32-byte, base64), and `hashCpf(plain: string): string` (HMAC-SHA256, keyed by
+32-byte, 64-character hex), and `hashCpf(plain: string): string` (HMAC-SHA256, keyed by
 a separate `QUALIFICATION_CPF_HASH_PEPPER` env var — deliberately a
 different secret from the encryption key, so either one leaking alone
 doesn't compromise the other). Both env vars must be generated and set on

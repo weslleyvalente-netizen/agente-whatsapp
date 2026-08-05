@@ -207,7 +207,7 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
               <p className="text-sm text-muted-foreground">Permite ao agente registrar produto de interesse, valores, CPF e outros dados comerciais durante a conversa</p>
             </div>
             <Switch
-              checked={form.watch("tools_config.update_qualification")}
+              checked={form.watch("tools_config.update_qualification") ?? false}
               onCheckedChange={(v) => form.setValue("tools_config.update_qualification", v)}
             />
           </div>

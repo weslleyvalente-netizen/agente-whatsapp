@@ -103,6 +103,20 @@ export async function upsertConversationQualification(
     }
   }
 
+  // Independent of the CPF itself: birth_date/license can be edited on their
+  // own (e.g. a human correcting just the birth date, or entering it before
+  // any CPF is on file) without requiring — or being blocked by — a CPF
+  // change in the same call. Skipped when the block above already set these
+  // fields as part of a CPF set/replace, to avoid two conflicting writes to
+  // the same field in one call.
+  if (cpfAction !== "set" && cpfAction !== "replace") {
+    if (params.identity?.birth_date !== undefined) identityWrites.birth_date = params.identity.birth_date;
+    if (params.identity?.has_driver_license !== undefined)
+      identityWrites.has_driver_license = params.identity.has_driver_license;
+    if (params.identity?.driver_license_category !== undefined)
+      identityWrites.driver_license_category = params.identity.driver_license_category;
+  }
+
   const writePayload = {
     ...commercialWrites,
     ...identityWrites,
