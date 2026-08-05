@@ -107,7 +107,7 @@ describe("getAgentConfigWithStatus", () => {
     const result = await getAgentConfigWithStatus({} as any, "agent-1");
 
     expect(result.hasPendingChanges).toBe(true);
-    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook"]);
+    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook", "tools_config"]);
     expect(result.latestVersion).toBeNull();
   });
 
@@ -118,6 +118,7 @@ describe("getAgentConfigWithStatus", () => {
         identity: baseDraft.identity, personality: baseDraft.personality, rules: baseDraft.rules,
         knowledge: baseDraft.knowledge, playbook: baseDraft.playbook,
       },
+      tools_config: baseDraft.tools_config,
     });
 
     const result = await getAgentConfigWithStatus({} as any, "agent-1");
@@ -134,11 +135,29 @@ describe("getAgentConfigWithStatus", () => {
         personality: baseDraft.personality, rules: baseDraft.rules,
         knowledge: baseDraft.knowledge, playbook: baseDraft.playbook,
       },
+      tools_config: baseDraft.tools_config,
     });
 
     const result = await getAgentConfigWithStatus({} as any, "agent-1");
 
     expect(result.changedSections).toEqual(["identity"]);
+  });
+
+  it("reports a tools_config-only change as pending (regression: this used to never surface)", async () => {
+    getLatestAgentVersion.mockResolvedValue({
+      id: "version-1",
+      config_snapshot: {
+        identity: baseDraft.identity, personality: baseDraft.personality, rules: baseDraft.rules,
+        knowledge: baseDraft.knowledge, playbook: baseDraft.playbook,
+      },
+      tools_config: { ...baseDraft.tools_config, update_qualification: false },
+    });
+    getOrCreateAgentConfig.mockResolvedValue({ ...baseDraft, tools_config: { ...baseDraft.tools_config, update_qualification: true } });
+
+    const result = await getAgentConfigWithStatus({} as any, "agent-1");
+
+    expect(result.hasPendingChanges).toBe(true);
+    expect(result.changedSections).toEqual(["tools_config"]);
   });
 });
 
@@ -201,7 +220,7 @@ describe("getVersionWithDiff", () => {
 
     const result = await getVersionWithDiff({} as any, "agent-1", "v1");
 
-    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook"]);
+    expect(result.changedSections).toEqual(["identity", "personality", "rules", "knowledge", "playbook", "tools_config"]);
   });
 });
 

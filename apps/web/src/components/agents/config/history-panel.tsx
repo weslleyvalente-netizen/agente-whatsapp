@@ -12,6 +12,7 @@ import type { AgentVersion } from "@aula-agente/shared";
 
 const SECTION_LABELS: Record<string, string> = {
   identity: "Identidade", personality: "Personalidade", rules: "Regras", knowledge: "Conhecimento", playbook: "Playbook",
+  tools_config: "Ferramentas",
 };
 
 interface HistoryPanelProps {
