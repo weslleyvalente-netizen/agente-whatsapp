@@ -12,6 +12,7 @@ import {
 } from "@aula-agente/shared";
 import { TaskList } from "@/components/tasks/task-list";
 import { TaskDialog } from "@/components/tasks/task-dialog";
+import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ export default function TasksPage() {
   const [memberEmailsById, setMemberEmailsById] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<TaskBucket>("today");
   const [loading, setLoading] = useState(true);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async () => {
     if (!currentOrg) return;
@@ -133,7 +135,19 @@ export default function TasksPage() {
         organizationId={currentOrg.id}
         memberEmailsById={memberEmailsById}
         onRefresh={fetchTasks}
+        onOpenDetails={setSelectedTaskId}
       />
+
+      {selectedTaskId && (
+        <TaskDetailPanel
+          taskId={selectedTaskId}
+          onClose={() => setSelectedTaskId(null)}
+          onTaskChanged={() => {
+            fetchTasks();
+            setSelectedTaskId(null);
+          }}
+        />
+      )}
     </div>
   );
 }
