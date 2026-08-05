@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/api";
 import { formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { QualificationSection, type QualificationFieldDescriptor } from "./qualification-section";
 import type { TaskWithRelations } from "./task-card";
 import { RescheduleDialog } from "./reschedule-dialog";
@@ -108,28 +108,26 @@ const FINANCING_FIELDS: QualificationFieldDescriptor[] = [
   { key: "driver_license_category", label: "Categoria da CNH", kind: "text" },
 ];
 
-function commercialFields(attendanceType: string | null): QualificationFieldDescriptor[] {
-  const base: QualificationFieldDescriptor[] = [
+function commercialFields(): QualificationFieldDescriptor[] {
+  return [
     { key: "product_interest", label: "Produto", kind: "text" },
     { key: "product_model", label: "Modelo", kind: "text" },
     { key: "sale_amount", label: "Valor da venda", kind: "currency", emphasize: true },
-  ];
-  const financialFields: QualificationFieldDescriptor[] =
-    attendanceType === "consortium"
-      ? [
-          { key: "credit_amount", label: "Crédito desejado", kind: "currency", emphasize: true },
-          { key: "bid_amount", label: "Lance", kind: "currency", emphasize: true },
-        ]
-      : [{ key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true }];
-  return [
-    ...base,
-    ...financialFields,
+    { key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true },
     { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
     { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
     { key: "next_action", label: "Próxima ação", kind: "text" },
-    { key: "commercial_notes", label: "Observações", kind: "textarea" },
   ];
 }
+
+const CONSORTIUM_FIELDS: QualificationFieldDescriptor[] = [
+  { key: "credit_amount", label: "Crédito desejado", kind: "currency", emphasize: true },
+  { key: "bid_amount", label: "Lance", kind: "currency", emphasize: true },
+];
+
+const OBSERVATION_FIELDS: QualificationFieldDescriptor[] = [
+  { key: "commercial_notes", label: "Observações", kind: "textarea" },
+];
 
 function openWhatsApp(phone: string) {
   const digits = phone.replace(/\D/g, "");
@@ -290,50 +288,89 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               )}
             </div>
 
-            <Separator />
+            <Accordion defaultValue={["resumo", "comercial"]}>
+              <AccordionItem value="resumo">
+                <AccordionTrigger>Resumo do atendimento</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Resumo do atendimento"
+                    fields={SUMMARY_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                    truncateSummary
+                  />
+                </AccordionContent>
+              </AccordionItem>
 
-            <QualificationSection
-              title="Resumo do atendimento"
-              fields={SUMMARY_FIELDS}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-              truncateSummary
-            />
+              <AccordionItem value="comercial">
+                <AccordionTrigger>Informações comerciais</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Informações comerciais"
+                    fields={commercialFields()}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                  />
+                </AccordionContent>
+              </AccordionItem>
 
-            <Separator />
+              <AccordionItem value="cliente">
+                <AccordionTrigger>Dados do cliente</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Dados do cliente"
+                    fields={CLIENT_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                  />
+                  {details.conversation && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
+                    </p>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
 
-            <QualificationSection
-              title="Dados do cliente"
-              fields={CLIENT_FIELDS}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-            />
-            {details.conversation && (
-              <p className="text-xs text-muted-foreground">
-                Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
-              </p>
-            )}
+              {attendanceType === "financing" && (
+                <AccordionItem value="financiamento">
+                  <AccordionTrigger>Financiamento</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Financiamento"
+                      fields={FINANCING_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              )}
 
-            <Separator />
+              {attendanceType === "consortium" && (
+                <AccordionItem value="consorcio">
+                  <AccordionTrigger>Consórcio</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Consórcio"
+                      fields={CONSORTIUM_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              )}
 
-            <QualificationSection
-              title="Informações comerciais"
-              fields={commercialFields(attendanceType)}
-              values={qualification as unknown as Record<string, unknown>}
-              onSave={handleSaveSection}
-            />
-
-            {attendanceType === "financing" && (
-              <>
-                <Separator />
-                <QualificationSection
-                  title="Financiamento"
-                  fields={FINANCING_FIELDS}
-                  values={qualification as unknown as Record<string, unknown>}
-                  onSave={handleSaveSection}
-                />
-              </>
-            )}
+              <AccordionItem value="observacoes">
+                <AccordionTrigger>Observações</AccordionTrigger>
+                <AccordionContent>
+                  <QualificationSection
+                    title="Observações"
+                    fields={OBSERVATION_FIELDS}
+                    values={qualification as unknown as Record<string, unknown>}
+                    onSave={handleSaveSection}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </div>
         )}
       </SheetContent>

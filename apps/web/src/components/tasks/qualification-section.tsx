@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -117,8 +118,8 @@ export function QualificationSection({ title, fields, values, onSave, truncateSu
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">{title}</h3>
         {!editing && (
-          <Button variant="ghost" size="sm" onClick={startEditing}>
-            Editar
+          <Button variant="ghost" size="icon-sm" onClick={startEditing}>
+            <Pencil className="size-3.5" />
           </Button>
         )}
       </div>
