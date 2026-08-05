@@ -7,13 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatCurrencyBRL } from "@/lib/utils";
 
 export type QualificationFieldDescriptor =
-  | { key: string; label: string; kind: "text" }
-  | { key: string; label: string; kind: "textarea" }
-  | { key: string; label: string; kind: "number" }
-  | { key: string; label: string; kind: "currency" }
-  | { key: string; label: string; kind: "date" }
-  | { key: string; label: string; kind: "boolean" }
-  | { key: string; label: string; kind: "select"; options: Array<{ value: string; label: string }> };
+  | { key: string; label: string; kind: "text"; emphasize?: boolean }
+  | { key: string; label: string; kind: "textarea"; emphasize?: boolean }
+  | { key: string; label: string; kind: "number"; emphasize?: boolean }
+  | { key: string; label: string; kind: "currency"; emphasize?: boolean }
+  | { key: string; label: string; kind: "date"; emphasize?: boolean }
+  | { key: string; label: string; kind: "boolean"; emphasize?: boolean }
+  | { key: string; label: string; kind: "select"; options: Array<{ value: string; label: string }>; emphasize?: boolean };
 
 function formatReadValue(field: QualificationFieldDescriptor, value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
@@ -124,21 +124,42 @@ export function QualificationSection({ title, fields, values, onSave, truncateSu
       </div>
 
       {!editing ? (
-        <div>
-          {fields.map((f) => {
-            const display = formatReadValue(f, values[f.key]);
-            if (truncateSummary && f.kind === "textarea" && display) {
-              return <TruncatedText key={f.key} text={display} />;
-            }
-            return (
-              <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
-                <span className="text-muted-foreground">{f.label}</span>
-                <span className={display ? "font-medium" : "text-muted-foreground italic"}>
-                  {display ?? "Não informado"}
-                </span>
-              </div>
-            );
-          })}
+        <div className="space-y-3">
+          {fields.some((f) => f.emphasize) && (
+            <div className="grid grid-cols-2 gap-2">
+              {fields
+                .filter((f) => f.emphasize)
+                .map((f) => {
+                  const display = formatReadValue(f, values[f.key]);
+                  return (
+                    <div key={f.key} className="rounded-md border bg-muted/30 p-2">
+                      <p className={display ? "text-lg font-semibold" : "text-sm text-muted-foreground italic"}>
+                        {display ?? "Não informado"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{f.label}</p>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+          <div>
+            {fields
+              .filter((f) => !f.emphasize)
+              .map((f) => {
+                const display = formatReadValue(f, values[f.key]);
+                if (truncateSummary && f.kind === "textarea" && display) {
+                  return <TruncatedText key={f.key} text={display} />;
+                }
+                return (
+                  <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
+                    <span className="text-muted-foreground">{f.label}</span>
+                    <span className={display ? "font-medium" : "text-muted-foreground italic"}>
+                      {display ?? "Não informado"}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

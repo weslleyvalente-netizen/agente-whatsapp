@@ -112,20 +112,20 @@ function commercialFields(attendanceType: string | null): QualificationFieldDesc
   const base: QualificationFieldDescriptor[] = [
     { key: "product_interest", label: "Produto", kind: "text" },
     { key: "product_model", label: "Modelo", kind: "text" },
-    { key: "sale_amount", label: "Valor da venda", kind: "currency" },
+    { key: "sale_amount", label: "Valor da venda", kind: "currency", emphasize: true },
   ];
   const financialFields: QualificationFieldDescriptor[] =
     attendanceType === "consortium"
       ? [
-          { key: "credit_amount", label: "Crédito desejado", kind: "currency" },
-          { key: "bid_amount", label: "Lance", kind: "currency" },
+          { key: "credit_amount", label: "Crédito desejado", kind: "currency", emphasize: true },
+          { key: "bid_amount", label: "Lance", kind: "currency", emphasize: true },
         ]
-      : [{ key: "down_payment_amount", label: "Entrada", kind: "currency" }];
+      : [{ key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true }];
   return [
     ...base,
     ...financialFields,
-    { key: "target_installment_amount", label: "Parcela desejada", kind: "currency" },
-    { key: "term_months", label: "Prazo (meses)", kind: "number" },
+    { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
+    { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
     { key: "next_action", label: "Próxima ação", kind: "text" },
     { key: "commercial_notes", label: "Observações", kind: "textarea" },
   ];
