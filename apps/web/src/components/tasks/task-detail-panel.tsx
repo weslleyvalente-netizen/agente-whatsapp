@@ -17,7 +17,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
-import { Pencil, MoreVertical } from "lucide-react";
+import { Pencil, MoreVertical, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS } from "@aula-agente/shared";
 
@@ -204,20 +204,26 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-md" showCloseButton={false}>
         <SheetHeader>
           <div className="flex items-center justify-between gap-2">
             <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
-            {isOpenTask && (
-              <TaskDialog
-                organizationId={organizationId}
-                task={task}
-                presetContact={{ id: task.contact_id, name: task.wa_contacts?.name ?? null, phone: task.wa_contacts?.phone ?? "" }}
-                triggerButton={<Button variant="ghost" size="icon-sm" />}
-                triggerLabel={<Pencil className="size-3.5" />}
-                onSaved={onTaskChanged}
-              />
-            )}
+            <div className="flex shrink-0 items-center gap-1">
+              {isOpenTask && (
+                <TaskDialog
+                  organizationId={organizationId}
+                  task={task}
+                  presetContact={{ id: task.contact_id, name: task.wa_contacts?.name ?? null, phone: task.wa_contacts?.phone ?? "" }}
+                  triggerButton={<Button variant="ghost" size="icon-sm" />}
+                  triggerLabel={<Pencil className="size-3.5" />}
+                  onSaved={onTaskChanged}
+                />
+              )}
+              <Button variant="ghost" size="icon-sm" onClick={onClose}>
+                <XIcon className="size-3.5" />
+                <span className="sr-only">Fechar</span>
+              </Button>
+            </div>
           </div>
           <p className="text-sm text-muted-foreground">
             {details?.customer ? formatPhone(details.customer.phone) : ""} · {TASK_TYPE_LABELS[task.type]}
