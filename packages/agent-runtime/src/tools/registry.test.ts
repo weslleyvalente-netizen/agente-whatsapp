@@ -4,7 +4,7 @@ import { buildToolsForAgent } from "./registry.js";
 const baseParams = {
   organizationId: "org-1",
   agentId: "agent-1",
-  toolsConfig: { search_knowledge: true, search_faq: true, send_catalog_photo: true, create_task: true },
+  toolsConfig: { search_knowledge: true, search_faq: true, send_catalog_photo: true, create_task: true, update_qualification: false },
   apiKey: "test-key",
   conversationId: "conv-1",
   instanceId: "instance-1",
@@ -52,7 +52,7 @@ describe("buildToolsForAgent prompt caching", () => {
   it("marks whichever tool ends up last when only a subset of tools is enabled", () => {
     const tools = buildToolsForAgent({
       ...baseParams,
-      toolsConfig: { search_knowledge: true, search_faq: false, send_catalog_photo: false, create_task: false },
+      toolsConfig: { search_knowledge: true, search_faq: false, send_catalog_photo: false, create_task: false, update_qualification: false },
     });
     expect(Object.keys(tools)).toEqual(["searchKnowledge"]);
     expect(tools.searchKnowledge.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } });
@@ -61,7 +61,7 @@ describe("buildToolsForAgent prompt caching", () => {
   it("does nothing when no tools are enabled", () => {
     const tools = buildToolsForAgent({
       ...baseParams,
-      toolsConfig: { search_knowledge: false, search_faq: false, send_catalog_photo: false, create_task: false },
+      toolsConfig: { search_knowledge: false, search_faq: false, send_catalog_photo: false, create_task: false, update_qualification: false },
     });
     expect(tools).toEqual({});
   });

@@ -33,6 +33,7 @@ const toolsConfigGenSchema = z.object({
   search_faq: z.boolean(),
   send_catalog_photo: z.boolean(),
   create_task: z.boolean(),
+  update_qualification: z.boolean(),
 });
 
 const SECTION_GEN_SCHEMA: Record<SectionKey, z.ZodTypeAny> = {

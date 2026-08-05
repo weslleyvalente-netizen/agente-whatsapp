@@ -9,9 +9,10 @@ interface TaskListProps {
   organizationId: string;
   memberEmailsById: Record<string, string>;
   onRefresh: () => void;
+  onOpenDetails: (taskId: string) => void;
 }
 
-export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRefresh }: TaskListProps) {
+export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRefresh, onOpenDetails }: TaskListProps) {
   if (tasks.length === 0) {
     return <p className="text-sm text-muted-foreground">Nenhuma tarefa aqui.</p>;
   }
@@ -26,6 +27,7 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
             organizationId={organizationId}
             memberEmailsById={memberEmailsById}
             onRefresh={onRefresh}
+            onOpenDetails={onOpenDetails}
           />
         ))}
       </div>
@@ -58,6 +60,7 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
               organizationId={organizationId}
               memberEmailsById={memberEmailsById}
               onRefresh={onRefresh}
+              onOpenDetails={onOpenDetails}
             />
           ))}
         </div>
@@ -72,6 +75,7 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
               organizationId={organizationId}
               memberEmailsById={memberEmailsById}
               onRefresh={onRefresh}
+              onOpenDetails={onOpenDetails}
             />
           ))}
         </div>

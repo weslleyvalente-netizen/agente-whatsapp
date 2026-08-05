@@ -41,7 +41,7 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
       provider: "openai",
       temperature: 0.7,
       max_tokens: 1024,
-      tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: false, create_task: false },
+      tools_config: { search_knowledge: true, search_faq: true, send_catalog_photo: false, create_task: false, update_qualification: false },
       is_active: true,
       ...defaultValues,
     },
@@ -198,6 +198,17 @@ export function AgentForm({ defaultValues, onSubmit, submitLabel }: AgentFormPro
             <Switch
               checked={form.watch("tools_config.create_task")}
               onCheckedChange={(v) => form.setValue("tools_config.create_task", v)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Atualizar dados de qualificação</p>
+              <p className="text-sm text-muted-foreground">Permite ao agente registrar produto de interesse, valores, CPF e outros dados comerciais durante a conversa</p>
+            </div>
+            <Switch
+              checked={form.watch("tools_config.update_qualification") ?? false}
+              onCheckedChange={(v) => form.setValue("tools_config.update_qualification", v)}
             />
           </div>
         </CardContent>

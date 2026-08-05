@@ -21,4 +21,5 @@ export interface ToolsConfig {
   search_faq: boolean;
   send_catalog_photo: boolean;
   create_task: boolean;
+  update_qualification: boolean;
 }

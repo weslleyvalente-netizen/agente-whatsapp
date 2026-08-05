@@ -23,6 +23,7 @@ interface TaskCardProps {
   organizationId: string;
   memberEmailsById: Record<string, string>;
   onRefresh: () => void;
+  onOpenDetails: (taskId: string) => void;
 }
 
 function assigneeLabel(task: Task, memberEmailsById: Record<string, string>): string {
@@ -80,7 +81,7 @@ function RescheduleDialog({ task, onRescheduled }: { task: Task; onRescheduled: 
   );
 }
 
-export function TaskCard({ task, organizationId, memberEmailsById, onRefresh }: TaskCardProps) {
+export function TaskCard({ task, organizationId, memberEmailsById, onRefresh, onOpenDetails }: TaskCardProps) {
   const router = useRouter();
   const hot = isHotLead(task);
   const isOpen = task.status !== "completed" && task.status !== "cancelled";
@@ -106,7 +107,7 @@ export function TaskCard({ task, organizationId, memberEmailsById, onRefresh }: 
 
   return (
     <div className="flex items-start justify-between gap-4 rounded-md border p-4">
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 cursor-pointer space-y-1" onClick={() => onOpenDetails(task.id)}>
         <p className="font-medium">
           {hot && "🔥 "}
           {task.wa_contacts?.name || formatPhone(task.wa_contacts?.phone) || "Cliente"}

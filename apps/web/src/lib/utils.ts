@@ -19,3 +19,10 @@ export function formatPhone(phone: string | null | undefined): string {
     number.length === 9 ? `${number.slice(0, 5)}-${number.slice(5)}` : `${number.slice(0, 4)}-${number.slice(4)}`;
   return `(${ddd}) ${numberFormatted}`;
 }
+
+// Renders a numeric value (or null/undefined, when the field hasn't been
+// filled in yet) as Brazilian currency, e.g. 5000 -> "R$ 5.000,00".
+export function formatCurrencyBRL(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "Não informado";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+}

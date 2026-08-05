@@ -1,6 +1,20 @@
 import type { FastifyInstance } from "fastify";
-import { createTaskSchema, updateTaskSchema, rescheduleTaskSchema, cancelTaskSchema } from "@aula-agente/shared";
-import { getAdminClient, createTaskWithDedup, getTaskById } from "@aula-agente/database";
+import {
+  createTaskSchema,
+  updateTaskSchema,
+  rescheduleTaskSchema,
+  cancelTaskSchema,
+  updateConversationQualificationSchema,
+} from "@aula-agente/shared";
+import {
+  getAdminClient,
+  createTaskWithDedup,
+  getTaskById,
+  getConversationById,
+  getQualificationByConversationId,
+  upsertConversationQualification,
+  decryptCpf,
+} from "@aula-agente/database";
 import {
   completeTask,
   cancelTask,
@@ -25,6 +39,58 @@ export default async function taskRoutes(app: FastifyInstance) {
       return members;
     }
   );
+
+  app.get<{ Params: { taskId: string } }>("/tasks/:taskId/details", async (request, reply) => {
+    const db = getAdminClient();
+    const task = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find((m) => m.organization_id === task.organization_id);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    const conversation = task.conversation_id ? await getConversationById(db, task.conversation_id) : null;
+    const qualification = task.conversation_id
+      ? await getQualificationByConversationId(db, task.conversation_id)
+      : null;
+
+    let decryptedCpf: string | null = null;
+    if (qualification?.cpf_encrypted) {
+      try {
+        decryptedCpf = decryptCpf(qualification.cpf_encrypted);
+      } catch (err) {
+        console.error(`Failed to decrypt CPF for qualification ${qualification.id}:`, err);
+      }
+    }
+
+    return {
+      task,
+      customer: conversation
+        ? { id: conversation.wa_contacts.id, name: conversation.wa_contacts.name, phone: conversation.wa_contacts.phone }
+        : null,
+      conversation: conversation ? { id: conversation.id, lastMessageAt: conversation.last_message_at } : null,
+      qualification: qualification
+        ? {
+            attendance_type: qualification.attendance_type,
+            product_interest: qualification.product_interest,
+            product_model: qualification.product_model,
+            usage_purpose: qualification.usage_purpose,
+            city: qualification.city,
+            urgency: qualification.urgency,
+            sale_amount: qualification.sale_amount,
+            credit_amount: qualification.credit_amount,
+            down_payment_amount: qualification.down_payment_amount,
+            bid_amount: qualification.bid_amount,
+            target_installment_amount: qualification.target_installment_amount,
+            term_months: qualification.term_months,
+            cpf: decryptedCpf,
+            birth_date: qualification.birth_date,
+            has_driver_license: qualification.has_driver_license,
+            driver_license_category: qualification.driver_license_category,
+            summary: qualification.summary,
+            next_action: qualification.next_action,
+            commercial_notes: qualification.commercial_notes,
+          }
+        : null,
+    };
+  });
 
   app.post<{ Params: { organizationId: string } }>(
     "/organizations/:organizationId/tasks",
@@ -154,4 +220,38 @@ export default async function taskRoutes(app: FastifyInstance) {
     );
     return task;
   });
+
+  app.patch<{ Params: { conversationId: string } }>(
+    "/conversations/:conversationId/qualification",
+    async (request, reply) => {
+      const parseResult = updateConversationQualificationSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({ error: parseResult.error.issues });
+      }
+
+      const db = getAdminClient();
+      const conversation = await getConversationById(db, request.params.conversationId);
+      const membership = request.user.memberships.find(
+        (m) => m.organization_id === conversation.organization_id
+      );
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const { cpf, birth_date, has_driver_license, driver_license_category, ...commercialFields } =
+        parseResult.data;
+
+      await upsertConversationQualification(db, {
+        organizationId: conversation.organization_id,
+        conversationId: request.params.conversationId,
+        contactId: conversation.contact_id,
+        changedByType: "human",
+        changedById: request.user.id,
+        fields: commercialFields,
+        identity: cpf !== undefined || birth_date !== undefined || has_driver_license !== undefined || driver_license_category !== undefined
+          ? { cpf, birth_date, has_driver_license, driver_license_category }
+          : undefined,
+      });
+
+      return { ok: true };
+    }
+  );
 }

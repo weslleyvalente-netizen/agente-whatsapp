@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskEvent, TaskType, TaskCreatedByType, TaskAssigneeType } from "@aula-agente/shared";
 import { TASK_TYPE_LABELS, OPPORTUNITY_SIGNAL_TASK_TYPES, resolveTaskDedupAction } from "@aula-agente/shared";
+import { getQualificationByConversationId } from "./conversation-qualification.js";
 
 const OPEN_TASK_STATUSES = ["pending", "in_progress", "rescheduled"];
 
@@ -174,6 +175,21 @@ export async function createTaskWithDedup(
     input.assignee_type !== undefined ? input.assignee_type : input.created_by_type === "ai" ? "ai" : null;
   const assigneeId = assigneeType === "human" ? input.assignee_id ?? null : null;
 
+  // One-time photograph of "what we knew when this task was made" — never
+  // read back as a live value. The panel always reads the qualification's
+  // own summary via conversation_id, not this snapshot.
+  let qualification: Awaited<ReturnType<typeof getQualificationByConversationId>> = null;
+  if (input.conversation_id) {
+    try {
+      qualification = await getQualificationByConversationId(client, input.conversation_id);
+    } catch (err) {
+      // The ai_summary snapshot is explicitly best-effort — a lookup failure
+      // (e.g. this migration not applied yet in this environment) must never
+      // block task creation itself.
+      console.error("Failed to look up qualification for ai_summary snapshot:", err);
+    }
+  }
+
   const task = await createTask(client, {
     organization_id: input.organization_id,
     contact_id: input.contact_id,
@@ -183,7 +199,7 @@ export async function createTaskWithDedup(
     type: input.type,
     title: TASK_TYPE_LABELS[input.type],
     description: input.description,
-    ai_summary: null,
+    ai_summary: qualification?.summary ?? null,
     reason: input.reason,
     priority: input.priority,
     status: "pending",
