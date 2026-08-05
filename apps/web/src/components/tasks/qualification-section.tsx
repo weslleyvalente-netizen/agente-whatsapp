@@ -24,6 +24,22 @@ function formatReadValue(field: QualificationFieldDescriptor, value: unknown): s
   return String(value);
 }
 
+function TruncatedText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <p className={expanded ? "text-sm" : "line-clamp-3 text-sm"}>{text}</p>
+      <button
+        type="button"
+        className="mt-1 text-xs font-medium text-primary hover:underline"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        {expanded ? "Mostrar menos" : "Mostrar mais"}
+      </button>
+    </div>
+  );
+}
+
 function draftToPatch(
   fields: QualificationFieldDescriptor[],
   draft: Record<string, string>,
@@ -56,9 +72,10 @@ interface QualificationSectionProps {
   fields: QualificationFieldDescriptor[];
   values: Record<string, unknown>;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
+  truncateSummary?: boolean;
 }
 
-export function QualificationSection({ title, fields, values, onSave }: QualificationSectionProps) {
+export function QualificationSection({ title, fields, values, onSave, truncateSummary = false }: QualificationSectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -110,6 +127,9 @@ export function QualificationSection({ title, fields, values, onSave }: Qualific
         <div>
           {fields.map((f) => {
             const display = formatReadValue(f, values[f.key]);
+            if (truncateSummary && f.kind === "textarea" && display) {
+              return <TruncatedText key={f.key} text={display} />;
+            }
             return (
               <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
                 <span className="text-muted-foreground">{f.label}</span>

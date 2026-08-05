@@ -297,6 +297,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               fields={SUMMARY_FIELDS}
               values={qualification as unknown as Record<string, unknown>}
               onSave={handleSaveSection}
+              truncateSummary
             />
 
             <Separator />
