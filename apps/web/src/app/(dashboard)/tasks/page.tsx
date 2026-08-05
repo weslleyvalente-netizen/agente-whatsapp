@@ -137,16 +137,22 @@ export default function TasksPage() {
         onOpenDetails={setSelectedTaskId}
       />
 
-      {selectedTaskId && (
-        <TaskDetailPanel
-          taskId={selectedTaskId}
-          onClose={() => setSelectedTaskId(null)}
-          onTaskChanged={() => {
-            fetchTasks();
-            setSelectedTaskId(null);
-          }}
-        />
-      )}
+      {selectedTaskId && (() => {
+        const selectedTask = tasks.find((t) => t.id === selectedTaskId);
+        if (!selectedTask) return null;
+        return (
+          <TaskDetailPanel
+            task={selectedTask}
+            taskId={selectedTaskId}
+            organizationId={currentOrg.id}
+            onClose={() => setSelectedTaskId(null)}
+            onTaskChanged={() => {
+              fetchTasks();
+              setSelectedTaskId(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

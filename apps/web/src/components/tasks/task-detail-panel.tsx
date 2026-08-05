@@ -3,11 +3,23 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { formatPhone } from "@/lib/utils";
+import { formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { QualificationSection, type QualificationFieldDescriptor } from "./qualification-section";
+import type { TaskWithRelations } from "./task-card";
+import { RescheduleDialog } from "./reschedule-dialog";
+import { TaskDialog } from "./task-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { Pencil, MoreVertical } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS } from "@aula-agente/shared";
 
 interface QualificationValues {
   attendance_type: string | null;
@@ -126,12 +138,14 @@ function openWhatsApp(phone: string) {
 }
 
 interface TaskDetailPanelProps {
+  task: TaskWithRelations;
   taskId: string;
+  organizationId: string;
   onClose: () => void;
   onTaskChanged: () => void;
 }
 
-export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged }: TaskDetailPanelProps) {
   const router = useRouter();
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,6 +188,16 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
     }
   };
 
+  const handleCancel = async () => {
+    if (!confirm("Cancelar esta tarefa?")) return;
+    try {
+      await apiFetch(`/tasks/${taskId}/cancel`, { method: "POST", body: JSON.stringify({}) });
+      onTaskChanged();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao cancelar tarefa");
+    }
+  };
+
   const isOpenTask = details ? details.task.status !== "completed" && details.task.status !== "cancelled" : false;
   const qualification = details?.qualification ?? EMPTY_QUALIFICATION;
   const attendanceType = qualification.attendance_type;
@@ -182,7 +206,28 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
+          <div className="flex items-center justify-between gap-2">
+            <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
+            {isOpenTask && (
+              <TaskDialog
+                organizationId={organizationId}
+                task={task}
+                presetContact={{ id: task.contact_id, name: task.wa_contacts?.name ?? null, phone: task.wa_contacts?.phone ?? "" }}
+                triggerButton={<Button variant="ghost" size="icon-sm" />}
+                triggerLabel={<Pencil className="size-3.5" />}
+                onSaved={onTaskChanged}
+              />
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {details?.customer ? formatPhone(details.customer.phone) : ""} · {TASK_TYPE_LABELS[task.type]}
+          </p>
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant="secondary">{TASK_PRIORITY_LABELS[task.priority]}</Badge>
+            <span className="text-xs text-muted-foreground">
+              {formatRelativeTime(details?.conversation?.lastMessageAt)}
+            </span>
+          </div>
         </SheetHeader>
 
         {loading && <p className="p-4 text-sm text-muted-foreground">Carregando...</p>}
@@ -198,9 +243,14 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
 
         {details && !loading && !error && (
           <div className="space-y-4 p-4">
-            {details.customer && <p className="text-sm text-muted-foreground">{formatPhone(details.customer.phone)}</p>}
-
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                disabled={!isOpenTask}
+                onClick={handleComplete}
+              >
+                Concluir
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -220,9 +270,17 @@ export function TaskDetailPanel({ taskId, onClose, onTaskChanged }: TaskDetailPa
                 WhatsApp
               </Button>
               {isOpenTask && (
-                <Button size="sm" onClick={handleComplete}>
-                  Concluir
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto" />}>
+                    <MoreVertical className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <RescheduleDialog task={task} onRescheduled={onTaskChanged} />
+                    <DropdownMenuItem variant="destructive" onClick={handleCancel}>
+                      Cancelar tarefa
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
 
