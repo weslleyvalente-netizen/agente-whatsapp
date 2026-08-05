@@ -202,7 +202,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-md" showCloseButton={false}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-lg" showCloseButton={false}>
         <SheetHeader>
           <div className="flex items-center justify-between gap-2">
             <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
