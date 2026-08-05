@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { computeChangedSections, computeChangedSectionDetails } from "./agent-config-diff.js";
-import type { AgentConfigSections } from "./types/agent-config.js";
+import { computeChangedSections, computeChangedSectionDetails, type DiffableConfig } from "./agent-config-diff.js";
 
-function baseSections(): AgentConfigSections {
+function baseSections(): DiffableConfig {
   return {
     identity: { nome: "Helena", funcao: "", missao: "" },
     personality: {
@@ -16,13 +15,14 @@ function baseSections(): AgentConfigSections {
     },
     knowledge: { precos_notas: "", links: [], documentos_ativos: true, faqs_ativas: true },
     playbook: { script_atendimento: "" },
+    tools_config: { search_faq: true, create_task: true, search_knowledge: true, send_catalog_photo: true, update_qualification: false },
   };
 }
 
 describe("computeChangedSections", () => {
   it("returns every section when there is no base snapshot yet (never published)", () => {
     expect(computeChangedSections(baseSections(), null)).toEqual([
-      "identity", "personality", "rules", "knowledge", "playbook",
+      "identity", "personality", "rules", "knowledge", "playbook", "tools_config",
     ]);
   });
 
@@ -43,6 +43,19 @@ describe("computeChangedSections", () => {
       rules: { ...base.rules, objecoes: [{ id: "a", nome: "Preço", como_identificar: "", orientacao: "", pergunta_diagnostico: "", quando_escalar: "", ativo: true }] },
     };
     expect(computeChangedSections(draft, base)).toEqual(["rules"]);
+  });
+
+  it("detects a tools_config-only change (regression: this used to never surface)", () => {
+    const base = baseSections();
+    const draft = { ...base, tools_config: { ...base.tools_config!, update_qualification: true } };
+    expect(computeChangedSections(draft, base)).toEqual(["tools_config"]);
+  });
+
+  it("treats a missing tools_config on both sides as unchanged", () => {
+    const base = baseSections();
+    const { tools_config: _baseTools, ...baseWithoutTools } = base;
+    const { tools_config: _draftTools, ...draftWithoutTools } = base;
+    expect(computeChangedSections(draftWithoutTools, baseWithoutTools)).toEqual([]);
   });
 });
 

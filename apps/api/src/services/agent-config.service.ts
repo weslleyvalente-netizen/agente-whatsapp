@@ -43,9 +43,14 @@ export async function getAgentConfigWithStatus(db: SupabaseClient, agentId: stri
   const draft = await getOrCreateAgentConfig(db, agent);
   const latestVersion = await getLatestAgentVersion(db, agentId);
 
-  const baseSnapshot = latestVersion?.config_snapshot ?? null;
+  const baseSnapshot = latestVersion
+    ? { ...latestVersion.config_snapshot, tools_config: latestVersion.tools_config }
+    : null;
   const changedSections = computeChangedSections(
-    { identity: draft.identity, personality: draft.personality, rules: draft.rules, knowledge: draft.knowledge, playbook: draft.playbook },
+    {
+      identity: draft.identity, personality: draft.personality, rules: draft.rules,
+      knowledge: draft.knowledge, playbook: draft.playbook, tools_config: draft.tools_config,
+    },
     baseSnapshot
   );
 
@@ -74,7 +79,10 @@ export async function getVersionWithDiff(db: SupabaseClient, agentId: string, ve
   const allVersions = await getAgentVersions(db, agentId);
   const previous = allVersions.find((v) => v.version === version.version - 1) ?? null;
 
-  const changedSections = computeChangedSections(version.config_snapshot, previous?.config_snapshot ?? null);
+  const changedSections = computeChangedSections(
+    { ...version.config_snapshot, tools_config: version.tools_config },
+    previous ? { ...previous.config_snapshot, tools_config: previous.tools_config } : null
+  );
   return { version, changedSections };
 }
 
