@@ -108,12 +108,17 @@ const FINANCING_FIELDS: QualificationFieldDescriptor[] = [
   { key: "driver_license_category", label: "Categoria da CNH", kind: "text" },
 ];
 
-function commercialFields(): QualificationFieldDescriptor[] {
-  return [
+function commercialFields(attendanceType: string | null): QualificationFieldDescriptor[] {
+  const base: QualificationFieldDescriptor[] = [
     { key: "product_interest", label: "Produto", kind: "text" },
     { key: "product_model", label: "Modelo", kind: "text" },
     { key: "sale_amount", label: "Valor da venda", kind: "currency", emphasize: true },
-    { key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true },
+  ];
+  const downPayment: QualificationFieldDescriptor[] =
+    attendanceType === "consortium" ? [] : [{ key: "down_payment_amount", label: "Entrada", kind: "currency", emphasize: true }];
+  return [
+    ...base,
+    ...downPayment,
     { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
     { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
     { key: "next_action", label: "Próxima ação", kind: "text" },
@@ -298,6 +303,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                     values={qualification as unknown as Record<string, unknown>}
                     onSave={handleSaveSection}
                     truncateSummary
+                    hideTitle
                   />
                 </AccordionContent>
               </AccordionItem>
@@ -307,9 +313,10 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 <AccordionContent>
                   <QualificationSection
                     title="Informações comerciais"
-                    fields={commercialFields()}
+                    fields={commercialFields(attendanceType)}
                     values={qualification as unknown as Record<string, unknown>}
                     onSave={handleSaveSection}
+                    hideTitle
                   />
                 </AccordionContent>
               </AccordionItem>
@@ -322,6 +329,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                     fields={CLIENT_FIELDS}
                     values={qualification as unknown as Record<string, unknown>}
                     onSave={handleSaveSection}
+                    hideTitle
                   />
                   {details.conversation && (
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -340,6 +348,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       fields={FINANCING_FIELDS}
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
+                      hideTitle
                     />
                   </AccordionContent>
                 </AccordionItem>
@@ -354,6 +363,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       fields={CONSORTIUM_FIELDS}
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
+                      hideTitle
                     />
                   </AccordionContent>
                 </AccordionItem>
@@ -367,6 +377,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                     fields={OBSERVATION_FIELDS}
                     values={qualification as unknown as Record<string, unknown>}
                     onSave={handleSaveSection}
+                    hideTitle
                   />
                 </AccordionContent>
               </AccordionItem>

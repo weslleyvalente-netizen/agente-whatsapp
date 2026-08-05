@@ -74,9 +74,10 @@ interface QualificationSectionProps {
   values: Record<string, unknown>;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
   truncateSummary?: boolean;
+  hideTitle?: boolean;
 }
 
-export function QualificationSection({ title, fields, values, onSave, truncateSummary = false }: QualificationSectionProps) {
+export function QualificationSection({ title, fields, values, onSave, truncateSummary = false, hideTitle = false }: QualificationSectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -115,8 +116,8 @@ export function QualificationSection({ title, fields, values, onSave, truncateSu
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{title}</h3>
+      <div className={hideTitle ? "mb-2 flex items-center justify-end" : "mb-2 flex items-center justify-between"}>
+        {!hideTitle && <h3 className="text-sm font-semibold">{title}</h3>}
         {!editing && (
           <Button variant="ghost" size="icon-sm" onClick={startEditing}>
             <Pencil className="size-3.5" />

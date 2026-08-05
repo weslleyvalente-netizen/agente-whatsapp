@@ -32,10 +32,11 @@ function dueLabel(task: Task): string {
   today.setHours(0, 0, 0, 0);
   const diffDays = Math.round((due.getTime() - today.getTime()) / 86_400_000);
   const time = task.due_time ? ` ${task.due_time.slice(0, 5)}` : "";
+  const dateStr = due.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
   if (diffDays === 0) return `Vence hoje${time}`;
   if (diffDays === 1) return `Vence amanhã${time}`;
-  if (diffDays < 0) return `Venceu ${due.toLocaleDateString("pt-BR")}`;
-  return `Vence ${due.toLocaleDateString("pt-BR")}${time}`;
+  if (diffDays < 0) return `Venceu ${dateStr}`;
+  return `Vence ${dateStr}${time}`;
 }
 
 export function TaskCard({ task, memberEmailsById, isSelected, onOpenDetails }: TaskCardProps) {
