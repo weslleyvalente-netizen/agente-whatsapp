@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { formatPhone, formatRelativeTime } from "@/lib/utils";
+import { formatPhone, formatRelativeTime, cn } from "@/lib/utils";
 import { isHotLead, TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from "@aula-agente/shared";
 import type { Task } from "@aula-agente/shared";
 import { Flame } from "lucide-react";
@@ -14,6 +14,7 @@ export interface TaskWithRelations extends Task {
 interface TaskCardProps {
   task: TaskWithRelations;
   memberEmailsById: Record<string, string>;
+  isSelected: boolean;
   onOpenDetails: (taskId: string) => void;
 }
 
@@ -37,14 +38,18 @@ function dueLabel(task: Task): string {
   return `Vence ${due.toLocaleDateString("pt-BR")}${time}`;
 }
 
-export function TaskCard({ task, memberEmailsById, onOpenDetails }: TaskCardProps) {
+export function TaskCard({ task, memberEmailsById, isSelected, onOpenDetails }: TaskCardProps) {
   const hot = isHotLead(task);
 
   return (
     <div
-      className="cursor-pointer space-y-0.5 rounded-md border p-3 transition-colors hover:bg-accent/30"
+      className={cn(
+        "relative cursor-pointer space-y-0.5 rounded-md border p-3 transition-colors",
+        isSelected ? "border-transparent bg-accent/40" : "hover:bg-accent/30"
+      )}
       onClick={() => onOpenDetails(task.id)}
     >
+      {isSelected && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary" />}
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 truncate text-sm font-medium">
           {task.wa_contacts?.name || formatPhone(task.wa_contacts?.phone) || "Cliente"}

@@ -7,10 +7,11 @@ interface TaskListProps {
   tasks: TaskWithRelations[];
   bucket: TaskBucket;
   memberEmailsById: Record<string, string>;
+  selectedTaskId: string | null;
   onOpenDetails: (taskId: string) => void;
 }
 
-export function TaskList({ tasks, bucket, memberEmailsById, onOpenDetails }: TaskListProps) {
+export function TaskList({ tasks, bucket, memberEmailsById, selectedTaskId, onOpenDetails }: TaskListProps) {
   if (tasks.length === 0) {
     return <p className="text-sm text-muted-foreground">Nenhuma tarefa aqui.</p>;
   }
@@ -19,7 +20,13 @@ export function TaskList({ tasks, bucket, memberEmailsById, onOpenDetails }: Tas
     return (
       <div className="space-y-2">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} memberEmailsById={memberEmailsById} onOpenDetails={onOpenDetails} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            memberEmailsById={memberEmailsById}
+            isSelected={task.id === selectedTaskId}
+            onOpenDetails={onOpenDetails}
+          />
         ))}
       </div>
     );
@@ -45,7 +52,13 @@ export function TaskList({ tasks, bucket, memberEmailsById, onOpenDetails }: Tas
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">🔥 Leads quentes</h3>
           {hot.map((task) => (
-            <TaskCard key={task.id} task={task} memberEmailsById={memberEmailsById} onOpenDetails={onOpenDetails} />
+            <TaskCard
+              key={task.id}
+              task={task}
+              memberEmailsById={memberEmailsById}
+              isSelected={task.id === selectedTaskId}
+              onOpenDetails={onOpenDetails}
+            />
           ))}
         </div>
       )}
@@ -53,7 +66,13 @@ export function TaskList({ tasks, bucket, memberEmailsById, onOpenDetails }: Tas
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">🟡 Follow-ups</h3>
           {warm.map((task) => (
-            <TaskCard key={task.id} task={task} memberEmailsById={memberEmailsById} onOpenDetails={onOpenDetails} />
+            <TaskCard
+              key={task.id}
+              task={task}
+              memberEmailsById={memberEmailsById}
+              isSelected={task.id === selectedTaskId}
+              onOpenDetails={onOpenDetails}
+            />
           ))}
         </div>
       )}

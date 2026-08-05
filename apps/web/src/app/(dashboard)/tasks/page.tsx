@@ -133,6 +133,7 @@ export default function TasksPage() {
         tasks={bucketed[tab]}
         bucket={tab}
         memberEmailsById={memberEmailsById}
+        selectedTaskId={selectedTaskId}
         onOpenDetails={setSelectedTaskId}
       />
 
