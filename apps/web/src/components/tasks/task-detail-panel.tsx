@@ -181,7 +181,6 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       body: JSON.stringify(patch),
     });
     await fetchDetails();
-    setForceShowGeneric(false);
   };
 
   const handleComplete = async () => {
@@ -207,12 +206,14 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const qualification = details?.qualification ?? EMPTY_QUALIFICATION;
   const attendanceType = qualification.attendance_type;
 
+  const commercialHasContent = sectionHasContent(
+    commercialFields(attendanceType).filter((f) => !f.hideInView),
+    qualification as unknown as Record<string, unknown>
+  );
+  const clientHasContent = sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>);
   const hasAnyQualificationSection =
-    sectionHasContent(
-      commercialFields(attendanceType).filter((f) => !f.hideInView),
-      qualification as unknown as Record<string, unknown>
-    ) ||
-    sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>) ||
+    commercialHasContent ||
+    clientHasContent ||
     (attendanceType === "financing" &&
       sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>)) ||
     (attendanceType === "consortium" &&
@@ -328,11 +329,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
             )}
 
             <Accordion key={forceShowGeneric ? "forced" : "default"} defaultValue={forceShowGeneric ? ["comercial", "cliente"] : ["comercial"]}>
-              {(forceShowGeneric ||
-                sectionHasContent(
-                  commercialFields(attendanceType).filter((f) => !f.hideInView),
-                  qualification as unknown as Record<string, unknown>
-                )) && (
+              {(forceShowGeneric || commercialHasContent) && (
                 <AccordionItem value="comercial">
                   <AccordionTrigger>Informações comerciais</AccordionTrigger>
                   <AccordionContent>
@@ -342,7 +339,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
-                      startInEditMode={forceShowGeneric}
+                      startInEditMode={forceShowGeneric && !commercialHasContent}
                     />
                     {attendanceType === "financing" &&
                       qualification.sale_amount != null &&
@@ -358,8 +355,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 </AccordionItem>
               )}
 
-              {(forceShowGeneric ||
-                sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>)) && (
+              {(forceShowGeneric || clientHasContent) && (
                 <AccordionItem value="cliente">
                   <AccordionTrigger>Dados do cliente</AccordionTrigger>
                   <AccordionContent>
@@ -369,7 +365,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
-                      startInEditMode={forceShowGeneric}
+                      startInEditMode={forceShowGeneric && !clientHasContent}
                     />
                     {details.conversation && (
                       <p className="mt-2 text-xs text-muted-foreground">
