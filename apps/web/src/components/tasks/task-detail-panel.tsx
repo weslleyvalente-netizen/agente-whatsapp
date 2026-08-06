@@ -7,7 +7,7 @@ import { formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import { QualificationSection, type QualificationFieldDescriptor } from "./qualification-section";
+import { QualificationSection, sectionHasContent, type QualificationFieldDescriptor } from "./qualification-section";
 import type { TaskWithRelations } from "./task-card";
 import { RescheduleDialog } from "./reschedule-dialog";
 import { TaskDialog } from "./task-dialog";
@@ -121,7 +121,7 @@ function commercialFields(attendanceType: string | null): QualificationFieldDesc
     ...downPayment,
     { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
     { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
-    { key: "next_action", label: "Próxima ação", kind: "text" },
+    { key: "next_action", label: "Próxima ação", kind: "text", hideInView: true },
   ];
 }
 
@@ -293,59 +293,27 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               )}
             </div>
 
-            <Accordion defaultValue={["resumo", "comercial"]}>
-              <AccordionItem value="resumo">
-                <AccordionTrigger>Resumo do atendimento</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Resumo do atendimento"
-                    fields={SUMMARY_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    truncateSummary
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
+            <QualificationSection
+              title="Resumo do atendimento"
+              fields={SUMMARY_FIELDS}
+              values={qualification as unknown as Record<string, unknown>}
+              onSave={handleSaveSection}
+              truncateSummary
+              hideTitle
+              emptyFallback="Nenhum resumo disponível ainda."
+            />
 
-              <AccordionItem value="comercial">
-                <AccordionTrigger>Informações comerciais</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Informações comerciais"
-                    fields={commercialFields(attendanceType)}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
-
-              <AccordionItem value="cliente">
-                <AccordionTrigger>Dados do cliente</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Dados do cliente"
-                    fields={CLIENT_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                  {details.conversation && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
-                    </p>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
-
-              {attendanceType === "financing" && (
-                <AccordionItem value="financiamento">
-                  <AccordionTrigger>Financiamento</AccordionTrigger>
+            <Accordion defaultValue={["comercial"]}>
+              {sectionHasContent(
+                commercialFields(attendanceType).filter((f) => !f.hideInView),
+                qualification as unknown as Record<string, unknown>
+              ) && (
+                <AccordionItem value="comercial">
+                  <AccordionTrigger>Informações comerciais</AccordionTrigger>
                   <AccordionContent>
                     <QualificationSection
-                      title="Financiamento"
-                      fields={FINANCING_FIELDS}
+                      title="Informações comerciais"
+                      fields={commercialFields(attendanceType)}
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
@@ -354,13 +322,65 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 </AccordionItem>
               )}
 
-              {attendanceType === "consortium" && (
-                <AccordionItem value="consorcio">
-                  <AccordionTrigger>Consórcio</AccordionTrigger>
+              {sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                <AccordionItem value="cliente">
+                  <AccordionTrigger>Dados do cliente</AccordionTrigger>
                   <AccordionContent>
                     <QualificationSection
-                      title="Consórcio"
-                      fields={CONSORTIUM_FIELDS}
+                      title="Dados do cliente"
+                      fields={CLIENT_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                    />
+                    {details.conversation && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
+                      </p>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
+              {attendanceType === "financing" &&
+                sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                  <AccordionItem value="financiamento">
+                    <AccordionTrigger>Financiamento</AccordionTrigger>
+                    <AccordionContent>
+                      <QualificationSection
+                        title="Financiamento"
+                        fields={FINANCING_FIELDS}
+                        values={qualification as unknown as Record<string, unknown>}
+                        onSave={handleSaveSection}
+                        hideTitle
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+
+              {attendanceType === "consortium" &&
+                sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                  <AccordionItem value="consorcio">
+                    <AccordionTrigger>Consórcio</AccordionTrigger>
+                    <AccordionContent>
+                      <QualificationSection
+                        title="Consórcio"
+                        fields={CONSORTIUM_FIELDS}
+                        values={qualification as unknown as Record<string, unknown>}
+                        onSave={handleSaveSection}
+                        hideTitle
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+
+              {sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                <AccordionItem value="observacoes">
+                  <AccordionTrigger>Observações</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Observações"
+                      fields={OBSERVATION_FIELDS}
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
@@ -368,19 +388,6 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                   </AccordionContent>
                 </AccordionItem>
               )}
-
-              <AccordionItem value="observacoes">
-                <AccordionTrigger>Observações</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Observações"
-                    fields={OBSERVATION_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
             </Accordion>
           </div>
         )}
