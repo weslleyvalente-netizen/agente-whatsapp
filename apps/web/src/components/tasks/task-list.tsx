@@ -18,7 +18,7 @@ export function TaskList({ tasks, bucket, memberEmailsById, selectedTaskId, onOp
 
   if (bucket !== "today") {
     return (
-      <div className="space-y-2">
+      <div className="divide-y overflow-hidden rounded-md border">
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -51,29 +51,33 @@ export function TaskList({ tasks, bucket, memberEmailsById, selectedTaskId, onOp
       {hot.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">🔥 Leads quentes</h3>
-          {hot.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              memberEmailsById={memberEmailsById}
-              isSelected={task.id === selectedTaskId}
-              onOpenDetails={onOpenDetails}
-            />
-          ))}
+          <div className="divide-y overflow-hidden rounded-md border">
+            {hot.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                memberEmailsById={memberEmailsById}
+                isSelected={task.id === selectedTaskId}
+                onOpenDetails={onOpenDetails}
+              />
+            ))}
+          </div>
         </div>
       )}
       {warm.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">🟡 Follow-ups</h3>
-          {warm.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              memberEmailsById={memberEmailsById}
-              isSelected={task.id === selectedTaskId}
-              onOpenDetails={onOpenDetails}
-            />
-          ))}
+          <div className="divide-y overflow-hidden rounded-md border">
+            {warm.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                memberEmailsById={memberEmailsById}
+                isSelected={task.id === selectedTaskId}
+                onOpenDetails={onOpenDetails}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

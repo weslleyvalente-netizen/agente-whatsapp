@@ -3,11 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { formatPhone, formatRelativeTime } from "@/lib/utils";
+import { formatCurrencyBRL, formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import { QualificationSection, type QualificationFieldDescriptor } from "./qualification-section";
+import { QualificationSection, sectionHasContent, type QualificationFieldDescriptor } from "./qualification-section";
 import type { TaskWithRelations } from "./task-card";
 import { RescheduleDialog } from "./reschedule-dialog";
 import { TaskDialog } from "./task-dialog";
@@ -121,7 +121,7 @@ function commercialFields(attendanceType: string | null): QualificationFieldDesc
     ...downPayment,
     { key: "target_installment_amount", label: "Parcela desejada", kind: "currency", emphasize: true },
     { key: "term_months", label: "Prazo (meses)", kind: "number", emphasize: true },
-    { key: "next_action", label: "Próxima ação", kind: "text" },
+    { key: "next_action", label: "Próxima ação", kind: "text", hideInView: true },
   ];
 }
 
@@ -153,6 +153,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [forceShowGeneric, setForceShowGeneric] = useState(false);
 
   const fetchDetails = useCallback(async () => {
     setLoading(true);
@@ -204,6 +205,20 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const isOpenTask = details ? details.task.status !== "completed" && details.task.status !== "cancelled" : false;
   const qualification = details?.qualification ?? EMPTY_QUALIFICATION;
   const attendanceType = qualification.attendance_type;
+
+  const commercialHasContent = sectionHasContent(
+    commercialFields(attendanceType).filter((f) => !f.hideInView),
+    qualification as unknown as Record<string, unknown>
+  );
+  const clientHasContent = sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>);
+  const hasAnyQualificationSection =
+    commercialHasContent ||
+    clientHasContent ||
+    (attendanceType === "financing" &&
+      sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    (attendanceType === "consortium" &&
+      sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>);
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -293,59 +308,113 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               )}
             </div>
 
-            <Accordion defaultValue={["resumo", "comercial"]}>
-              <AccordionItem value="resumo">
-                <AccordionTrigger>Resumo do atendimento</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Resumo do atendimento"
-                    fields={SUMMARY_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    truncateSummary
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
+            <QualificationSection
+              title="Resumo do atendimento"
+              fields={SUMMARY_FIELDS}
+              values={qualification as unknown as Record<string, unknown>}
+              onSave={handleSaveSection}
+              truncateSummary
+              hideTitle
+              emptyFallback="Nenhum resumo disponível ainda."
+            />
 
-              <AccordionItem value="comercial">
-                <AccordionTrigger>Informações comerciais</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Informações comerciais"
-                    fields={commercialFields(attendanceType)}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
+            {!hasAnyQualificationSection && !forceShowGeneric && (
+              <button
+                type="button"
+                className="text-sm font-medium text-primary hover:underline"
+                onClick={() => setForceShowGeneric(true)}
+              >
+                + Adicionar informações
+              </button>
+            )}
 
-              <AccordionItem value="cliente">
-                <AccordionTrigger>Dados do cliente</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Dados do cliente"
-                    fields={CLIENT_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                  {details.conversation && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
-                    </p>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
-
-              {attendanceType === "financing" && (
-                <AccordionItem value="financiamento">
-                  <AccordionTrigger>Financiamento</AccordionTrigger>
+            <Accordion key={forceShowGeneric ? "forced" : "default"} defaultValue={forceShowGeneric ? ["comercial", "cliente"] : ["comercial"]}>
+              {(forceShowGeneric || commercialHasContent) && (
+                <AccordionItem value="comercial">
+                  <AccordionTrigger>Informações comerciais</AccordionTrigger>
                   <AccordionContent>
                     <QualificationSection
-                      title="Financiamento"
-                      fields={FINANCING_FIELDS}
+                      title="Informações comerciais"
+                      fields={commercialFields(attendanceType)}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                      startInEditMode={forceShowGeneric && !commercialHasContent}
+                    />
+                    {attendanceType === "financing" &&
+                      qualification.sale_amount != null &&
+                      qualification.down_payment_amount != null && (
+                        <div className="mt-2 rounded-md border bg-muted/30 p-2">
+                          <p className="text-lg font-semibold">
+                            {formatCurrencyBRL(qualification.sale_amount - qualification.down_payment_amount)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Valor a financiar</p>
+                        </div>
+                      )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
+              {(forceShowGeneric || clientHasContent) && (
+                <AccordionItem value="cliente">
+                  <AccordionTrigger>Dados do cliente</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Dados do cliente"
+                      fields={CLIENT_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                      startInEditMode={forceShowGeneric && !clientHasContent}
+                    />
+                    {details.conversation && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
+                      </p>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
+              {attendanceType === "financing" &&
+                sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                  <AccordionItem value="financiamento">
+                    <AccordionTrigger>Financiamento</AccordionTrigger>
+                    <AccordionContent>
+                      <QualificationSection
+                        title="Financiamento"
+                        fields={FINANCING_FIELDS}
+                        values={qualification as unknown as Record<string, unknown>}
+                        onSave={handleSaveSection}
+                        hideTitle
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+
+              {attendanceType === "consortium" &&
+                sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                  <AccordionItem value="consorcio">
+                    <AccordionTrigger>Consórcio</AccordionTrigger>
+                    <AccordionContent>
+                      <QualificationSection
+                        title="Consórcio"
+                        fields={CONSORTIUM_FIELDS}
+                        values={qualification as unknown as Record<string, unknown>}
+                        onSave={handleSaveSection}
+                        hideTitle
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+
+              {sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>) && (
+                <AccordionItem value="observacoes">
+                  <AccordionTrigger>Observações</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Observações"
+                      fields={OBSERVATION_FIELDS}
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
@@ -353,35 +422,14 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                   </AccordionContent>
                 </AccordionItem>
               )}
-
-              {attendanceType === "consortium" && (
-                <AccordionItem value="consorcio">
-                  <AccordionTrigger>Consórcio</AccordionTrigger>
-                  <AccordionContent>
-                    <QualificationSection
-                      title="Consórcio"
-                      fields={CONSORTIUM_FIELDS}
-                      values={qualification as unknown as Record<string, unknown>}
-                      onSave={handleSaveSection}
-                      hideTitle
-                    />
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-
-              <AccordionItem value="observacoes">
-                <AccordionTrigger>Observações</AccordionTrigger>
-                <AccordionContent>
-                  <QualificationSection
-                    title="Observações"
-                    fields={OBSERVATION_FIELDS}
-                    values={qualification as unknown as Record<string, unknown>}
-                    onSave={handleSaveSection}
-                    hideTitle
-                  />
-                </AccordionContent>
-              </AccordionItem>
             </Accordion>
+
+            {qualification.next_action && (
+              <div className="rounded-md border bg-muted/30 p-2">
+                <p className="text-xs text-muted-foreground">Próxima ação</p>
+                <p className="text-sm font-medium">{qualification.next_action}</p>
+              </div>
+            )}
           </div>
         )}
       </SheetContent>
