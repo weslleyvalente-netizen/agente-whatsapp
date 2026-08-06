@@ -8,16 +8,31 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatCurrencyBRL } from "@/lib/utils";
 
 export type QualificationFieldDescriptor =
-  | { key: string; label: string; kind: "text"; emphasize?: boolean }
-  | { key: string; label: string; kind: "textarea"; emphasize?: boolean }
-  | { key: string; label: string; kind: "number"; emphasize?: boolean }
-  | { key: string; label: string; kind: "currency"; emphasize?: boolean }
-  | { key: string; label: string; kind: "date"; emphasize?: boolean }
-  | { key: string; label: string; kind: "boolean"; emphasize?: boolean }
-  | { key: string; label: string; kind: "select"; options: Array<{ value: string; label: string }>; emphasize?: boolean };
+  | { key: string; label: string; kind: "text"; emphasize?: boolean; hideInView?: boolean }
+  | { key: string; label: string; kind: "textarea"; emphasize?: boolean; hideInView?: boolean }
+  | { key: string; label: string; kind: "number"; emphasize?: boolean; hideInView?: boolean }
+  | { key: string; label: string; kind: "currency"; emphasize?: boolean; hideInView?: boolean }
+  | { key: string; label: string; kind: "date"; emphasize?: boolean; hideInView?: boolean }
+  | { key: string; label: string; kind: "boolean"; emphasize?: boolean; hideInView?: boolean }
+  | {
+      key: string;
+      label: string;
+      kind: "select";
+      options: Array<{ value: string; label: string }>;
+      emphasize?: boolean;
+      hideInView?: boolean;
+    };
 
-function formatReadValue(field: QualificationFieldDescriptor, value: unknown): string | null {
-  if (value === null || value === undefined || value === "") return null;
+export function hasValue(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== "";
+}
+
+export function sectionHasContent(fields: QualificationFieldDescriptor[], values: Record<string, unknown>): boolean {
+  return fields.some((f) => hasValue(values[f.key]));
+}
+
+export function formatReadValue(field: QualificationFieldDescriptor, value: unknown): string | null {
+  if (!hasValue(value)) return null;
   if (field.kind === "currency") return formatCurrencyBRL(value as number);
   if (field.kind === "boolean") return value === true ? "Sim" : "Não";
   if (field.kind === "date") return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
@@ -75,9 +90,18 @@ interface QualificationSectionProps {
   onSave: (patch: Record<string, unknown>) => Promise<void>;
   truncateSummary?: boolean;
   hideTitle?: boolean;
+  emptyFallback?: string;
 }
 
-export function QualificationSection({ title, fields, values, onSave, truncateSummary = false, hideTitle = false }: QualificationSectionProps) {
+export function QualificationSection({
+  title,
+  fields,
+  values,
+  onSave,
+  truncateSummary = false,
+  hideTitle = false,
+  emptyFallback,
+}: QualificationSectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -127,41 +151,44 @@ export function QualificationSection({ title, fields, values, onSave, truncateSu
 
       {!editing ? (
         <div className="space-y-3">
-          {fields.some((f) => f.emphasize) && (
-            <div className="grid grid-cols-2 gap-2">
-              {fields
-                .filter((f) => f.emphasize)
-                .map((f) => {
-                  const display = formatReadValue(f, values[f.key]);
-                  return (
-                    <div key={f.key} className="rounded-md border bg-muted/30 p-2">
-                      <p className={display ? "text-lg font-semibold" : "text-sm text-muted-foreground italic"}>
-                        {display ?? "Não informado"}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{f.label}</p>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-          <div>
-            {fields
-              .filter((f) => !f.emphasize)
-              .map((f) => {
-                const display = formatReadValue(f, values[f.key]);
-                if (truncateSummary && f.kind === "textarea" && display) {
-                  return <TruncatedText key={f.key} text={display} />;
-                }
-                return (
-                  <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
-                    <span className="text-muted-foreground">{f.label}</span>
-                    <span className={display ? "font-medium" : "text-muted-foreground italic"}>
-                      {display ?? "Não informado"}
-                    </span>
+          {(() => {
+            const visibleFields = fields.filter((f) => !f.hideInView && hasValue(values[f.key]));
+            if (visibleFields.length === 0) {
+              return emptyFallback ? <p className="text-sm text-muted-foreground italic">{emptyFallback}</p> : null;
+            }
+            const emphasized = visibleFields.filter((f) => f.emphasize);
+            const regular = visibleFields.filter((f) => !f.emphasize);
+            return (
+              <>
+                {emphasized.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {emphasized.map((f) => (
+                      <div key={f.key} className="rounded-md border bg-muted/30 p-2">
+                        <p className="text-lg font-semibold">{formatReadValue(f, values[f.key])}</p>
+                        <p className="text-xs text-muted-foreground">{f.label}</p>
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
-          </div>
+                )}
+                {regular.length > 0 && (
+                  <div>
+                    {regular.map((f) => {
+                      const display = formatReadValue(f, values[f.key]);
+                      if (truncateSummary && f.kind === "textarea" && display) {
+                        return <TruncatedText key={f.key} text={display} />;
+                      }
+                      return (
+                        <div key={f.key} className="flex items-center justify-between gap-4 py-1 text-sm">
+                          <span className="text-muted-foreground">{f.label}</span>
+                          <span className="font-medium">{display}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       ) : (
         <div className="space-y-3">
