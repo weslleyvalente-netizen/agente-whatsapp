@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { formatPhone, formatRelativeTime } from "@/lib/utils";
+import { formatCurrencyBRL, formatPhone, formatRelativeTime } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
@@ -318,6 +318,16 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       onSave={handleSaveSection}
                       hideTitle
                     />
+                    {attendanceType === "financing" &&
+                      qualification.sale_amount != null &&
+                      qualification.down_payment_amount != null && (
+                        <div className="mt-2 rounded-md border bg-muted/30 p-2">
+                          <p className="text-lg font-semibold">
+                            {formatCurrencyBRL(qualification.sale_amount - qualification.down_payment_amount)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Valor a financiar</p>
+                        </div>
+                      )}
                   </AccordionContent>
                 </AccordionItem>
               )}
@@ -389,6 +399,13 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 </AccordionItem>
               )}
             </Accordion>
+
+            {qualification.next_action && (
+              <div className="rounded-md border bg-muted/30 p-2">
+                <p className="text-xs text-muted-foreground">Próxima ação</p>
+                <p className="text-sm font-medium">{qualification.next_action}</p>
+              </div>
+            )}
           </div>
         )}
       </SheetContent>
