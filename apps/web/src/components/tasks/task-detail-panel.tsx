@@ -153,6 +153,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [forceShowGeneric, setForceShowGeneric] = useState(false);
 
   const fetchDetails = useCallback(async () => {
     setLoading(true);
@@ -204,6 +205,18 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const isOpenTask = details ? details.task.status !== "completed" && details.task.status !== "cancelled" : false;
   const qualification = details?.qualification ?? EMPTY_QUALIFICATION;
   const attendanceType = qualification.attendance_type;
+
+  const hasAnyQualificationSection =
+    sectionHasContent(
+      commercialFields(attendanceType).filter((f) => !f.hideInView),
+      qualification as unknown as Record<string, unknown>
+    ) ||
+    sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>) ||
+    (attendanceType === "financing" &&
+      sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    (attendanceType === "consortium" &&
+      sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>);
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -303,11 +316,22 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               emptyFallback="Nenhum resumo disponível ainda."
             />
 
-            <Accordion defaultValue={["comercial"]}>
-              {sectionHasContent(
-                commercialFields(attendanceType).filter((f) => !f.hideInView),
-                qualification as unknown as Record<string, unknown>
-              ) && (
+            {!hasAnyQualificationSection && !forceShowGeneric && (
+              <button
+                type="button"
+                className="text-sm font-medium text-primary hover:underline"
+                onClick={() => setForceShowGeneric(true)}
+              >
+                + Adicionar informações
+              </button>
+            )}
+
+            <Accordion key={forceShowGeneric ? "forced" : "default"} defaultValue={forceShowGeneric ? ["comercial", "cliente"] : ["comercial"]}>
+              {(forceShowGeneric ||
+                sectionHasContent(
+                  commercialFields(attendanceType).filter((f) => !f.hideInView),
+                  qualification as unknown as Record<string, unknown>
+                )) && (
                 <AccordionItem value="comercial">
                   <AccordionTrigger>Informações comerciais</AccordionTrigger>
                   <AccordionContent>
@@ -317,6 +341,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
+                      startInEditMode={forceShowGeneric}
                     />
                     {attendanceType === "financing" &&
                       qualification.sale_amount != null &&
@@ -332,7 +357,8 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 </AccordionItem>
               )}
 
-              {sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>) && (
+              {(forceShowGeneric ||
+                sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>)) && (
                 <AccordionItem value="cliente">
                   <AccordionTrigger>Dados do cliente</AccordionTrigger>
                   <AccordionContent>
@@ -342,6 +368,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       values={qualification as unknown as Record<string, unknown>}
                       onSave={handleSaveSection}
                       hideTitle
+                      startInEditMode={forceShowGeneric}
                     />
                     {details.conversation && (
                       <p className="mt-2 text-xs text-muted-foreground">

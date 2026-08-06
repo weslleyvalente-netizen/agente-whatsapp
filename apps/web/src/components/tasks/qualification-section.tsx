@@ -91,6 +91,7 @@ interface QualificationSectionProps {
   truncateSummary?: boolean;
   hideTitle?: boolean;
   emptyFallback?: string;
+  startInEditMode?: boolean;
 }
 
 export function QualificationSection({
@@ -101,9 +102,18 @@ export function QualificationSection({
   truncateSummary = false,
   hideTitle = false,
   emptyFallback,
+  startInEditMode = false,
 }: QualificationSectionProps) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(startInEditMode);
+  const [draft, setDraft] = useState<Record<string, string>>(() => {
+    if (!startInEditMode) return {};
+    const initial: Record<string, string> = {};
+    for (const f of fields) {
+      const v = values[f.key];
+      initial[f.key] = v === null || v === undefined ? "" : String(v);
+    }
+    return initial;
+  });
   const [saving, setSaving] = useState(false);
 
   const startEditing = () => {
