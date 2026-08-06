@@ -55,7 +55,7 @@ export function TaskCard({ task, memberEmailsById, isSelected, onOpenDetails }: 
         <p className="min-w-0 truncate text-sm font-medium">
           {task.wa_contacts?.name || formatPhone(task.wa_contacts?.phone) || "Cliente"}
         </p>
-        <div className="flex shrink-0 flex-wrap items-center gap-1">
+        <div className="flex shrink-0 flex-wrap basis-full items-center gap-1 sm:basis-auto">
           <span className="text-xs text-muted-foreground">{TASK_TYPE_LABELS[task.type]}</span>
           {hot && (
             <Badge variant="tonal">
