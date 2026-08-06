@@ -181,6 +181,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       body: JSON.stringify(patch),
     });
     await fetchDetails();
+    setForceShowGeneric(false);
   };
 
   const handleComplete = async () => {
