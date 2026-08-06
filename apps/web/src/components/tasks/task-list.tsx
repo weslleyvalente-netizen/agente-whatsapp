@@ -18,7 +18,7 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
 
   if (bucket !== "today") {
     return (
-      <div className="divide-y overflow-hidden rounded-md border">
+      <div className="space-y-3">
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -49,35 +49,31 @@ export function TaskList({ tasks, bucket, organizationId, memberEmailsById, onRe
   return (
     <div className="space-y-6">
       {hot.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <h3 className="text-sm font-semibold">🔥 Leads quentes</h3>
-          <div className="divide-y overflow-hidden rounded-md border">
-            {hot.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                organizationId={organizationId}
-                memberEmailsById={memberEmailsById}
-                onRefresh={onRefresh}
-              />
-            ))}
-          </div>
+          {hot.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              organizationId={organizationId}
+              memberEmailsById={memberEmailsById}
+              onRefresh={onRefresh}
+            />
+          ))}
         </div>
       )}
       {warm.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <h3 className="text-sm font-semibold">🟡 Follow-ups</h3>
-          <div className="divide-y overflow-hidden rounded-md border">
-            {warm.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                organizationId={organizationId}
-                memberEmailsById={memberEmailsById}
-                onRefresh={onRefresh}
-              />
-            ))}
-          </div>
+          {warm.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              organizationId={organizationId}
+              memberEmailsById={memberEmailsById}
+              onRefresh={onRefresh}
+            />
+          ))}
         </div>
       )}
     </div>
