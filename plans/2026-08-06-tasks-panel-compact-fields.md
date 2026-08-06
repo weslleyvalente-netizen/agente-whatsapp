@@ -717,7 +717,257 @@ git commit -m "feat(web): replace stacked task cards with a single divided list"
 
 ---
 
-### Task 6: Final validation — all scenarios, before/after comparison
+### Task 6: Panel — entry point to add data when qualification is fully empty
+
+**Context:** discovered during final validation, not in the original spec.
+Once "Informações comerciais" and "Dados do cliente" only render when they
+already have content (Task 2), a task whose `conversation_qualifications`
+row is entirely null loses every way to reach those sections' edit forms —
+their pencil icons live inside `AccordionContent`, which never mounts when
+`sectionHasContent` is false. `task-dialog.tsx` (the "Editar tarefa" pencil
+in the panel header) only edits task metadata (priority, due date, assignee,
+etc.) — it has no qualification fields at all. Confirmed live against real
+production-mirrored data: at least two real tasks in the current dataset
+have zero qualification and, before this task, offer no way to manually add
+commercial/client data through the panel. Human-approved fix: a single
+"+ Adicionar informações" entry point, shown only when none of the 5
+accordion sections would otherwise render, that opens "Informações
+comerciais" and "Dados do cliente" together in edit mode. Financiamento and
+Consórcio are intentionally NOT covered by this fix — they stay gated on
+`attendanceType`, which the vendor sets via this same "Dados do cliente"
+form; once saved, a refetch naturally reveals whichever type-specific
+section becomes applicable. Observações is not covered either — it is a
+free-text notes field, not required to unblock the core workflow.
+
+**Files:**
+- Modify: `apps/web/src/components/tasks/qualification-section.tsx`
+- Modify: `apps/web/src/components/tasks/task-detail-panel.tsx`
+
+**Interfaces:**
+- Produces: `QualificationSectionProps` gains an optional
+  `startInEditMode?: boolean` (default `false`). When `true`, the component
+  mounts already in edit mode with the draft pre-populated from `values`
+  (same shape `startEditing()` already builds) — the vendor sees the edit
+  form immediately, no pencil click needed. When `false` (or omitted),
+  behavior is 100% unchanged from Task 1/2/3's final state.
+- Consumes: `sectionHasContent` (Task 1), `commercialFields`/`CLIENT_FIELDS`
+  (existing, from Task 2's final state).
+
+- [ ] **Step 1: Add `startInEditMode` to `QualificationSection`**
+
+In `apps/web/src/components/tasks/qualification-section.tsx`, add the prop
+to the interface:
+
+```tsx
+interface QualificationSectionProps {
+  title: string;
+  fields: QualificationFieldDescriptor[];
+  values: Record<string, unknown>;
+  onSave: (patch: Record<string, unknown>) => Promise<void>;
+  truncateSummary?: boolean;
+  hideTitle?: boolean;
+  emptyFallback?: string;
+  startInEditMode?: boolean;
+}
+```
+
+Destructure it with a default and use it to initialize both `editing` and
+`draft`, replacing the current `useState(false)` / `useState({})` calls:
+
+```tsx
+export function QualificationSection({
+  title,
+  fields,
+  values,
+  onSave,
+  truncateSummary = false,
+  hideTitle = false,
+  emptyFallback,
+  startInEditMode = false,
+}: QualificationSectionProps) {
+  const [editing, setEditing] = useState(startInEditMode);
+  const [draft, setDraft] = useState<Record<string, string>>(() => {
+    if (!startInEditMode) return {};
+    const initial: Record<string, string> = {};
+    for (const f of fields) {
+      const v = values[f.key];
+      initial[f.key] = v === null || v === undefined ? "" : String(v);
+    }
+    return initial;
+  });
+  const [saving, setSaving] = useState(false);
+```
+
+Do not change `startEditing` itself (still used by the pencil-click path for
+the normal, already-has-content case) or anything else in the component.
+
+- [ ] **Step 2: Typecheck**
+
+Run: `pnpm --filter web typecheck`
+Expected: no errors. `startInEditMode` has no callers yet — Step 3 adds them.
+
+- [ ] **Step 3: Wire the "+ Adicionar informações" entry point in the panel**
+
+In `apps/web/src/components/tasks/task-detail-panel.tsx`, add local state
+right after the existing `useState`/`useCallback` declarations inside
+`TaskDetailPanel`:
+
+```tsx
+  const [forceShowGeneric, setForceShowGeneric] = useState(false);
+```
+
+(Add `useState` to the existing `"react"` import if not already destructured
+— check the current import line first; `useState` is already imported per
+Task 1-5's code, so this is likely already available.)
+
+Compute whether any of the 5 accordion sections would render, right before
+the `return (` statement (reuse the exact same conditions the Accordion
+already evaluates):
+
+```tsx
+  const hasAnyQualificationSection =
+    sectionHasContent(
+      commercialFields(attendanceType).filter((f) => !f.hideInView),
+      qualification as unknown as Record<string, unknown>
+    ) ||
+    sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>) ||
+    (attendanceType === "financing" &&
+      sectionHasContent(FINANCING_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    (attendanceType === "consortium" &&
+      sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>)) ||
+    sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>);
+```
+
+Insert the button between the Resumo `QualificationSection` and the
+`Accordion`:
+
+```tsx
+            <QualificationSection
+              title="Resumo do atendimento"
+              fields={SUMMARY_FIELDS}
+              values={qualification as unknown as Record<string, unknown>}
+              onSave={handleSaveSection}
+              truncateSummary
+              hideTitle
+              emptyFallback="Nenhum resumo disponível ainda."
+            />
+
+            {!hasAnyQualificationSection && !forceShowGeneric && (
+              <button
+                type="button"
+                className="text-sm font-medium text-primary hover:underline"
+                onClick={() => setForceShowGeneric(true)}
+              >
+                + Adicionar informações
+              </button>
+            )}
+
+            <Accordion key={forceShowGeneric ? "forced" : "default"} defaultValue={forceShowGeneric ? ["comercial", "cliente"] : ["comercial"]}>
+              {(forceShowGeneric ||
+                sectionHasContent(
+                  commercialFields(attendanceType).filter((f) => !f.hideInView),
+                  qualification as unknown as Record<string, unknown>
+                )) && (
+                <AccordionItem value="comercial">
+                  <AccordionTrigger>Informações comerciais</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Informações comerciais"
+                      fields={commercialFields(attendanceType)}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                      startInEditMode={forceShowGeneric}
+                    />
+                    {attendanceType === "financing" &&
+                      qualification.sale_amount != null &&
+                      qualification.down_payment_amount != null && (
+                        <div className="mt-2 rounded-md border bg-muted/30 p-2">
+                          <p className="text-lg font-semibold">
+                            {formatCurrencyBRL(qualification.sale_amount - qualification.down_payment_amount)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Valor a financiar</p>
+                        </div>
+                      )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
+              {(forceShowGeneric ||
+                sectionHasContent(CLIENT_FIELDS, qualification as unknown as Record<string, unknown>)) && (
+                <AccordionItem value="cliente">
+                  <AccordionTrigger>Dados do cliente</AccordionTrigger>
+                  <AccordionContent>
+                    <QualificationSection
+                      title="Dados do cliente"
+                      fields={CLIENT_FIELDS}
+                      values={qualification as unknown as Record<string, unknown>}
+                      onSave={handleSaveSection}
+                      hideTitle
+                      startInEditMode={forceShowGeneric}
+                    />
+                    {details.conversation && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Última interação: {new Date(details.conversation.lastMessageAt).toLocaleString("pt-BR")}
+                      </p>
+                    )}
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+```
+
+The remaining three `AccordionItem`s (`financiamento`, `consorcio`,
+`observacoes`) are unchanged from Task 2/3's final state — do not modify
+them, do not add `forceShowGeneric` to their gates. Everything after the
+`cliente` AccordionItem (financiamento/consorcio/observacoes, the closing
+`</Accordion>`, and the "Próxima ação" block) stays exactly as Task 3 left
+it.
+
+The `key={forceShowGeneric ? "forced" : "default"}` on `<Accordion>` is
+required — Base UI's Accordion `defaultValue` is read once on mount
+(uncontrolled), so changing `defaultValue` alone after the initial render
+would not re-open "cliente". The `key` change forces React to remount the
+Accordion with the new `defaultValue` the moment the button is clicked.
+
+- [ ] **Step 4: Typecheck**
+
+Run: `pnpm --filter web typecheck`
+Expected: no errors.
+
+- [ ] **Step 5: Live verification**
+
+Using the dev server:
+
+1. Open a real (or temporarily-blanked-then-reverted) task with a fully
+   empty `conversation_qualifications` row — confirm "+ Adicionar
+   informações" appears below the Resumo fallback text, and nothing else.
+2. Click it — confirm "Informações comerciais" and "Dados do cliente" both
+   appear, both expanded, both already in their edit form (not read mode) —
+   no extra pencil click needed. Confirm the "+ Adicionar informações"
+   button itself disappears once clicked.
+3. Set `attendance_type` to `financing` (or `consortium`) and save — confirm
+   the save succeeds through the normal `handleSaveSection`/PATCH flow (no
+   change to that flow), and after the refetch, the newly-relevant
+   type-specific section (Financiamento/Consórcio) becomes reachable the
+   next time it has content, exactly as for any other task.
+4. Revert whatever was set back to null through the same edit form, confirm
+   via a fresh page load (not just client state) that the task returns to
+   showing only the Resumo fallback + the "+ Adicionar informações" button,
+   with no leftover data.
+5. Confirm, on a task that already has SOME qualification data (any of the
+   existing test tasks from Tasks 2/3), that "+ Adicionar informações" does
+   NOT appear — this fix must not resurface on tasks that already work.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/src/components/tasks/qualification-section.tsx apps/web/src/components/tasks/task-detail-panel.tsx
+git commit -m "feat(web): add an entry point to add data when qualification is fully empty"
+```
+
+---
+
+### Task 7: Final validation — all scenarios, before/after comparison
 
 **Files:** none (verification only, no code changes expected; if verification
 surfaces a real defect, fix it in the file it belongs to and note the fix
@@ -749,8 +999,9 @@ tasks covering each of:
    only the Resumo block renders, no accordion sections appear at all.
 6. Tarefa sem qualificação nenhuma (`EMPTY_QUALIFICATION` — a task with no
    `conversation_qualifications` row, or one where every column is null) —
-   confirm Resumo shows "Nenhum resumo disponível ainda." and nothing else
-   renders below it.
+   confirm Resumo shows "Nenhum resumo disponível ainda.", the "+ Adicionar
+   informações" button (Task 6) appears and works, and nothing else renders
+   below the Resumo/button.
 
 - [ ] **Step 3: List scenarios**
 
