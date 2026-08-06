@@ -967,7 +967,75 @@ git commit -m "feat(web): add an entry point to add data when qualification is f
 
 ---
 
-### Task 7: Final validation — all scenarios, before/after comparison
+### Task 7: Fix badge cluster overflow on narrow viewports
+
+**Context:** discovered during final validation, live at 375px width. The
+name/badges row in `task-card.tsx` (`<div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">`)
+wraps its two direct children (the name `<p>` and the badges cluster `<div>`)
+correctly, but the badges cluster itself — `<div className="flex shrink-0 flex-wrap items-center gap-1">`
+holding the type label + Quente + priority + status badges — has no maximum
+width of its own. A flex item with `flex-wrap` but no width constraint sizes
+itself to fit all its children on one line before ever wrapping internally,
+so on a task with all 4 items (type label, "Quente", priority, status), the
+cluster renders wider than the row itself and overflows/gets clipped instead
+of wrapping to a second line. Confirmed live: at 375px, a hot-lead task's
+badge cluster measured 347px wide inside a 237px-wide row. Confirmed live
+that adding `flex-basis: 100%` to the cluster (so it claims the full row
+width once it wraps below the name, giving its own internal `flex-wrap`
+something to wrap against) fixes it — the cluster's own items then wrap
+correctly (type + "Quente" on one line, priority + status on the next) and
+stay within the row's width.
+
+**Files:**
+- Modify: `apps/web/src/components/tasks/task-card.tsx`
+
+- [ ] **Step 1: Add `basis-full` to the badges cluster**
+
+Change:
+
+```tsx
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+```
+
+to:
+
+```tsx
+        <div className="flex shrink-0 flex-wrap basis-full items-center gap-1 sm:basis-auto">
+```
+
+`basis-full` (Tailwind: `flex-basis: 100%`) gives the cluster a real width to
+wrap against once it drops below the name, fixing the overflow. `sm:basis-auto`
+reverts to the natural (content-sized) width at `sm` and above (≥640px),
+where Task 4/5's live-verified desktop/tablet layout (768px, 1280px) already
+renders correctly on one line with room to spare — this change is scoped to
+narrow viewports only, it must not alter anything at ≥640px.
+
+- [ ] **Step 2: Typecheck**
+
+Run: `pnpm --filter web typecheck`
+Expected: no errors (this is a className-only change, typecheck is a
+formality here but still required per this plan's verification standard).
+
+- [ ] **Step 3: Live verification**
+
+Using the dev server, resize to 375px and open a task whose row has all 4
+badge-cluster items populated (type label + "Quente" + priority + status —
+e.g. any hot-lead task). Confirm the badges cluster now wraps within the
+row's width with no clipped/overflowing text, confirm the name is not
+truncated more aggressively than before, and confirm nothing changed at
+768px and 1280px (re-check both, since this is exactly the kind of change
+that can silently regress a breakpoint that already worked).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add apps/web/src/components/tasks/task-card.tsx
+git commit -m "fix(web): wrap the badge cluster within the row on narrow viewports"
+```
+
+---
+
+### Task 8: Final validation — all scenarios, before/after comparison
 
 **Files:** none (verification only, no code changes expected; if verification
 surfaces a real defect, fix it in the file it belongs to and note the fix
