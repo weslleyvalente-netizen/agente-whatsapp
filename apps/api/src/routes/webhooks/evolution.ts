@@ -175,6 +175,14 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       if (conversation.is_human_takeover) {
         return reply.status(200).send({ ok: true, skipped: "human_takeover" });
       }
+      // NOTE: `ai_disabled` was added to the wa_contacts table (migration
+      // 00021) but the shared `Contact` type (packages/shared/src/types/contact.ts)
+      // was not updated to include it, so a plain `contact.ai_disabled` fails
+      // typecheck. Cast locally here rather than widening `contact`'s type,
+      // since `contact` is also passed to syncContactToCrm() below.
+      if ((contact as { ai_disabled?: boolean | null }).ai_disabled) {
+        return reply.status(200).send({ ok: true, skipped: "ai_disabled" });
+      }
 
       // Enqueue for LLM processing
       await enqueueProcessMessage({

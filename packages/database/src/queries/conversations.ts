@@ -133,18 +133,35 @@ export async function getStaleWaitingConversations(
 }
 
 export async function getHumanTakeoverConversations(client: SupabaseClient, organizationId: string) {
-  const { data, error } = await client
-    .from("conversations")
-    .select("id, human_takeover_at, wa_contacts(name, phone)")
-    .eq("organization_id", organizationId)
-    .eq("is_human_takeover", true)
-    .order("human_takeover_at", { ascending: true });
-  if (error) throw error;
-  return data as unknown as Array<{
+  const [takeoverResult, aiDisabledResult] = await Promise.all([
+    client
+      .from("conversations")
+      .select("id, human_takeover_at, wa_contacts(name, phone)")
+      .eq("organization_id", organizationId)
+      .eq("is_human_takeover", true),
+    client
+      .from("conversations")
+      .select("id, human_takeover_at, wa_contacts!inner(name, phone, ai_disabled)")
+      .eq("organization_id", organizationId)
+      .eq("wa_contacts.ai_disabled", true),
+  ]);
+  if (takeoverResult.error) throw takeoverResult.error;
+  if (aiDisabledResult.error) throw aiDisabledResult.error;
+
+  type Row = {
     id: string;
     human_takeover_at: string | null;
     wa_contacts: { name: string | null; phone: string } | null;
-  }>;
+  };
+
+  const byId = new Map<string, Row>();
+  for (const row of [...(takeoverResult.data as unknown as Row[]), ...(aiDisabledResult.data as unknown as Row[])]) {
+    byId.set(row.id, row);
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    (a.human_takeover_at ?? "").localeCompare(b.human_takeover_at ?? "")
+  );
 }
 
 export async function addConversationNote(
