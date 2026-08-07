@@ -102,11 +102,11 @@ export default function InboxPage() {
       case "mine":
         return userId !== null && c.assigned_to === userId;
       case "agent":
-        return !c.is_human_takeover;
+        return !c.is_human_takeover && !c.wa_contacts?.ai_disabled;
       case "others":
         return userId !== null && c.assigned_to !== null && c.assigned_to !== userId;
       case "attention":
-        return c.is_human_takeover === true;
+        return c.is_human_takeover === true || c.wa_contacts?.ai_disabled === true;
       default:
         return true;
     }
