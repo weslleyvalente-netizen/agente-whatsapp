@@ -142,6 +142,18 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     fetchConversation();
   };
 
+  const handleReenableAi = async () => {
+    if (!confirm("Reativar a IA para este contato?")) return;
+    const supabase = createClient();
+
+    await supabase
+      .from("wa_contacts")
+      .update({ ai_disabled: false, ai_disabled_at: null, ai_disabled_by: null })
+      .eq("id", conversation.wa_contacts.id);
+
+    fetchConversation();
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
     setSending(true);
@@ -182,6 +194,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
             onStatusChange={handleStatusChange}
             onTakeoverToggle={handleTakeoverToggle}
             onDisableAi={handleDisableAi}
+            onReenableAi={handleReenableAi}
             onUpdate={fetchConversation}
             onOpenDetails={() => setDetailsOpen(true)}
             onClose={() => router.push("/inbox")}
@@ -198,7 +211,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
 
         {/* Notice + Input */}
         <div className="border-t">
-          {conversation && !conversation.is_human_takeover && (
+          {conversation && !conversation.is_human_takeover && !conversation.wa_contacts?.ai_disabled && (
             <div className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
               O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.
             </div>

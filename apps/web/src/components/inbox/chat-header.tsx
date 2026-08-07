@@ -37,6 +37,7 @@ interface ChatHeaderProps {
   onStatusChange: (status: string) => void;
   onTakeoverToggle: () => void;
   onDisableAi: () => void;
+  onReenableAi: () => void;
   onUpdate: () => void;
   onOpenDetails: () => void;
   onClose: () => void;
@@ -47,6 +48,7 @@ export function ChatHeader({
   onStatusChange,
   onTakeoverToggle,
   onDisableAi,
+  onReenableAi,
   onUpdate,
   onOpenDetails,
   onClose,
@@ -84,35 +86,49 @@ export function ChatHeader({
           triggerClassName={PILL_TRIGGER_CLASS}
         />
 
-        <Button
-          variant={conversation.is_human_takeover ? "tonal" : "default"}
-          size="sm"
-          className="rounded-full font-semibold"
-          onClick={onTakeoverToggle}
-        >
-          {conversation.is_human_takeover ? (
-            <>
-              <Bot className="mr-1.5 h-3.5 w-3.5" />
-              Devolver ao Agente
-            </>
-          ) : (
-            <>
-              <UserCheck className="mr-1.5 h-3.5 w-3.5" />
-              Assumir Conversa
-            </>
-          )}
-        </Button>
+        {conversation.wa_contacts?.ai_disabled ? (
+          <Button
+            variant="tonal"
+            size="sm"
+            className="rounded-full font-semibold"
+            onClick={onReenableAi}
+          >
+            <Bot className="mr-1.5 h-3.5 w-3.5" />
+            Reativar IA
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant={conversation.is_human_takeover ? "tonal" : "default"}
+              size="sm"
+              className="rounded-full font-semibold"
+              onClick={onTakeoverToggle}
+            >
+              {conversation.is_human_takeover ? (
+                <>
+                  <Bot className="mr-1.5 h-3.5 w-3.5" />
+                  Devolver ao Agente
+                </>
+              ) : (
+                <>
+                  <UserCheck className="mr-1.5 h-3.5 w-3.5" />
+                  Assumir Conversa
+                </>
+              )}
+            </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
-            <MoreVertical className="h-4 w-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem variant="destructive" onClick={onDisableAi}>
-              Desativar IA permanentemente
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
+                <MoreVertical className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem variant="destructive" onClick={onDisableAi}>
+                  Desativar IA permanentemente
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
 
         {conversation.wa_contacts && (
           <TaskDialog
