@@ -46,7 +46,7 @@ export default function InboxPage() {
 
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(phone, name), agents(name), messages(content, created_at)")
+      .select("*, wa_contacts(phone, name, ai_disabled), agents(name), messages(content, created_at)")
       .eq("organization_id", currentOrg.id)
       .order("created_at", { ascending: false, referencedTable: "messages" })
       .limit(1, { referencedTable: "messages" })

@@ -17,6 +17,7 @@ interface ConversationItem {
   wa_contacts: {
     phone: string;
     name: string | null;
+    ai_disabled: boolean;
   };
   agents: {
     name: string;
@@ -42,6 +43,9 @@ function getConversationTags(
   const tags: Array<{ label: string; kind: "badge"; variant: "tonal" | "destructive" } | { label: string; kind: "text" }> = [];
   if (conv.status === "open" || conv.status === "waiting") {
     tags.push({ label: "Em andamento", kind: "badge", variant: "tonal" });
+  }
+  if (conv.wa_contacts.ai_disabled) {
+    tags.push({ label: "IA desativada", kind: "badge", variant: "destructive" });
   }
   if (conv.is_human_takeover) {
     tags.push({ label: "Atenção Humana", kind: "badge", variant: "destructive" });
