@@ -47,7 +47,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     const supabase = createClient();
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(id, phone, name), agents(name)")
+      .select("*, wa_contacts(id, phone, name, ai_disabled), agents(name)")
       .eq("id", conversationId)
       .single();
     setConversation(data);
@@ -117,6 +117,31 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     fetchConversation();
   };
 
+  const handleDisableAi = async () => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    await supabase
+      .from("wa_contacts")
+      .update({
+        ai_disabled: true,
+        ai_disabled_at: new Date().toISOString(),
+        ai_disabled_by: user?.id,
+      })
+      .eq("id", conversation.wa_contacts.id);
+
+    await supabase
+      .from("conversations")
+      .update({
+        is_human_takeover: true,
+        human_takeover_at: new Date().toISOString(),
+        assigned_to: user?.id,
+      })
+      .eq("id", conversationId);
+
+    fetchConversation();
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
     setSending(true);
@@ -156,6 +181,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
             conversation={conversation}
             onStatusChange={handleStatusChange}
             onTakeoverToggle={handleTakeoverToggle}
+            onDisableAi={handleDisableAi}
             onUpdate={fetchConversation}
             onOpenDetails={() => setDetailsOpen(true)}
             onClose={() => router.push("/inbox")}
