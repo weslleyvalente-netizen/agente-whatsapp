@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filterVehicles, formatVehicleList, buildCatalogSearchResult, findVehicleByModel } from "./search-catalog.js";
+import { filterVehicles, formatVehicleList, buildCatalogSearchResult, findVehicleByModel, getVehicleImageUrl } from "./search-catalog.js";
 
 const vehicles = [
   { id: 1, modelo: "BROS 160 ESDD ABS", marca: "HONDA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/bros.png", tipo: "moto" as const },
@@ -89,6 +89,32 @@ describe("findVehicleByModel", () => {
   });
 });
 
+describe("getVehicleImageUrl", () => {
+  it("resolves the vehicle's own imageUrl when present", () => {
+    expect(getVehicleImageUrl(vehicles[0])).toBe("https://catalogomotoetrilha.manus.space/manus-storage/vehicles/bros.png");
+  });
+
+  it("falls back to the first extraImages entry when imageUrl is null", () => {
+    // Real production case: the catalog's "FAZER FZ15 ABS CONNECTED" has
+    // imageUrl: null but does have extraImages — sending null straight
+    // into a URL template produced "...manus.spacenull", a broken link
+    // the customer's WhatsApp app just failed to load silently.
+    const vehicleWithOnlyExtraImages = {
+      ...vehicles[0],
+      imageUrl: null as unknown as string,
+      extraImages: [{ url: "/manus-storage/vehicles/1786450742608_f55c92e6.png" }],
+    };
+    expect(getVehicleImageUrl(vehicleWithOnlyExtraImages)).toBe(
+      "https://catalogomotoetrilha.manus.space/manus-storage/vehicles/1786450742608_f55c92e6.png"
+    );
+  });
+
+  it("returns null when the vehicle has no image at all", () => {
+    const vehicleWithNoImage = { ...vehicles[0], imageUrl: null as unknown as string, extraImages: [] };
+    expect(getVehicleImageUrl(vehicleWithNoImage)).toBeNull();
+  });
+});
+
 describe("formatVehicleList", () => {
   it("formats price in pt-BR currency style and resolves the full image URL", () => {
     const result = formatVehicleList([vehicles[0]]);
@@ -111,6 +137,13 @@ describe("formatVehicleList", () => {
     const result = formatVehicleList([absoluteUrlVehicle]);
     expect(result).toContain("foto: https://motos-img.autoflows.com.br/some-org/photo.png");
     expect(result).not.toContain("manus.spacehttps");
+  });
+
+  it("shows a 'no photo' placeholder instead of a corrupted URL when the vehicle has no image", () => {
+    const vehicleWithNoImage = { ...vehicles[0], imageUrl: null as unknown as string };
+    const result = formatVehicleList([vehicleWithNoImage]);
+    expect(result).toContain("foto: sem foto disponível");
+    expect(result).not.toContain("manus.spacenull");
   });
 
   it("includes color, mileage and description when the catalog provides them", () => {

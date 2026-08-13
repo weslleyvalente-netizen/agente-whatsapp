@@ -2,7 +2,7 @@ import { tool, type Tool } from "ai";
 import { z } from "zod";
 import { createMessage, getAdminClient } from "@aula-agente/database";
 import { getSendMessageQueue } from "@aula-agente/queue";
-import { fetchCatalog, findVehicleByModel, resolveImageUrl } from "./search-catalog.js";
+import { fetchCatalog, findVehicleByModel, getVehicleImageUrl } from "./search-catalog.js";
 
 interface SendVehiclePhotoContext {
   conversationId: string;
@@ -35,8 +35,12 @@ export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): To
         return `Veículo "${modelo}" não encontrado no catálogo. Confira o nome exato com searchCatalog antes de tentar de novo.`;
       }
 
+      const imageUrl = getVehicleImageUrl(vehicle);
+      if (!imageUrl) {
+        return `O veículo "${vehicle.modelo}" ainda não tem foto cadastrada no catálogo. Avise o cliente que a foto será enviada em breve por um consultor — não diga que a foto foi enviada.`;
+      }
+
       const caption = formatVehicleCaption(vehicle.modelo, vehicle.preco);
-      const imageUrl = resolveImageUrl(vehicle.imageUrl);
       const db = getAdminClient();
 
       const message = await createMessage(db, {

@@ -9,7 +9,8 @@ export interface CatalogVehicle {
   marca: string;
   ano: number;
   preco: number;
-  imageUrl: string;
+  imageUrl: string | null;
+  extraImages?: { url: string }[] | null;
   tipo?: "moto" | "carro" | "eletrico";
   cor?: string | null;
   quilometragem?: number | null;
@@ -106,12 +107,24 @@ export function resolveImageUrl(imageUrl: string): string {
   return /^https?:\/\//.test(imageUrl) ? imageUrl : `${CATALOG_BASE_URL}${imageUrl}`;
 }
 
+// The catalog sometimes leaves a vehicle's main imageUrl null (e.g. a
+// just-added listing) while still carrying real photos in extraImages.
+// Feeding that null straight into resolveImageUrl produced a broken link
+// like ".../manus.spacenull" that WhatsApp/Evolution silently failed to
+// deliver — the tool still reported success. Falling back to the first
+// extraImages entry, and returning null only when there's truly no photo,
+// lets callers tell the truth instead of sending a dead link.
+export function getVehicleImageUrl(vehicle: CatalogVehicle): string | null {
+  const raw = vehicle.imageUrl || vehicle.extraImages?.[0]?.url;
+  return raw ? resolveImageUrl(raw) : null;
+}
+
 export function formatVehicleList(vehicles: CatalogVehicle[]): string {
   return vehicles
     .slice(0, 5)
     .map((v) => {
       const price = `R$ ${v.preco.toLocaleString("pt-BR")}`;
-      const imageUrl = resolveImageUrl(v.imageUrl);
+      const imageUrl = getVehicleImageUrl(v) ?? "sem foto disponível";
       const details = [v.cor, v.ano].filter(Boolean).join(", ");
       const km = v.quilometragem !== undefined && v.quilometragem !== null
         ? `${v.quilometragem.toLocaleString("pt-BR")} km`
