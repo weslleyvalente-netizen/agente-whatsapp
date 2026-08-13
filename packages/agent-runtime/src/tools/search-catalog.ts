@@ -1,7 +1,17 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
 
-const CATALOG_BASE_URL = "https://catalogomotoetrilha.manus.space";
+// The catalog moved from a manus.space tRPC backend to its own Supabase
+// project behind catalogo.motoetrilha.com.br. This is the same anon key the
+// site's own frontend embeds in its JS bundle — public by Supabase's design,
+// scoped by RLS, not a secret.
+const CATALOG_SUPABASE_URL = "https://orpyesziyiknpebsnhvp.supabase.co";
+const CATALOG_SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycHllc3ppeWlrbnBlYnNuaHZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NjE4MzAsImV4cCI6MjEwMjEzNzgzMH0.PtubhSu11y3ez8anj3MX19sY3sHEjmnJMkj59vTy84k";
+// Used only to make a relative image path absolute — the Supabase API above
+// always returns fully-qualified storage URLs, but resolveImageUrl() stays
+// generic in case that ever changes.
+const CATALOG_BASE_URL = "https://catalogo.motoetrilha.com.br";
 
 export interface CatalogVehicle {
   id: number;
@@ -145,15 +155,48 @@ export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: stri
   return `Nenhum veículo encontrado para "${query}". Aqui estão outras opções disponíveis no catálogo — se alguma for parecida com o que o cliente quer, sugira antes de dizer que não há disponibilidade:\n${formatVehicleList(fallback)}`;
 }
 
+interface CatalogVehicleRow {
+  id: number;
+  modelo: string;
+  marca: string;
+  ano: number;
+  preco: number;
+  quilometragem: number | null;
+  cor: string | null;
+  descricao: string | null;
+  tipo?: CatalogVehicle["tipo"];
+  status?: string;
+  image_url: string | null;
+  vehicle_images?: { url: string }[] | null;
+}
+
 export async function fetchCatalog(): Promise<CatalogVehicle[]> {
-  const input = encodeURIComponent(JSON.stringify({ "0": { json: { search: "" } } }));
-  const response = await fetch(`${CATALOG_BASE_URL}/api/trpc/vehicles.list?batch=1&input=${input}`);
+  const response = await fetch(`${CATALOG_SUPABASE_URL}/rest/v1/vehicles?select=*,vehicle_images(*)&status=eq.available&order=created_at.desc`, {
+    headers: {
+      apikey: CATALOG_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${CATALOG_SUPABASE_ANON_KEY}`,
+    },
+  });
   if (!response.ok) {
     throw new Error(`Catalog API error ${response.status}`);
   }
-  const data = await response.json();
-  const vehicles = data[0].result.data.json as CatalogVehicle[];
-  return vehicles.filter((v) => v.status === undefined || v.status === "available");
+  const rows = (await response.json()) as CatalogVehicleRow[];
+  return rows
+    .map((row) => ({
+      id: row.id,
+      modelo: row.modelo,
+      marca: row.marca,
+      ano: row.ano,
+      preco: row.preco,
+      imageUrl: row.image_url,
+      extraImages: row.vehicle_images,
+      tipo: row.tipo,
+      cor: row.cor,
+      quilometragem: row.quilometragem,
+      descricao: row.descricao,
+      status: row.status,
+    }))
+    .filter((v) => v.status === undefined || v.status === "available");
 }
 
 export function createSearchCatalogTool(): Tool {

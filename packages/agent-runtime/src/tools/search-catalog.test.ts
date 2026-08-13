@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { filterVehicles, formatVehicleList, buildCatalogSearchResult, findVehicleByModel, getVehicleImageUrl } from "./search-catalog.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { filterVehicles, formatVehicleList, buildCatalogSearchResult, findVehicleByModel, getVehicleImageUrl, fetchCatalog } from "./search-catalog.js";
 
 const vehicles = [
   { id: 1, modelo: "BROS 160 ESDD ABS", marca: "HONDA", ano: 2026, preco: 28900, imageUrl: "/manus-storage/vehicles/bros.png", tipo: "moto" as const },
@@ -91,7 +91,7 @@ describe("findVehicleByModel", () => {
 
 describe("getVehicleImageUrl", () => {
   it("resolves the vehicle's own imageUrl when present", () => {
-    expect(getVehicleImageUrl(vehicles[0])).toBe("https://catalogomotoetrilha.manus.space/manus-storage/vehicles/bros.png");
+    expect(getVehicleImageUrl(vehicles[0])).toBe("https://catalogo.motoetrilha.com.br/manus-storage/vehicles/bros.png");
   });
 
   it("falls back to the first extraImages entry when imageUrl is null", () => {
@@ -105,7 +105,7 @@ describe("getVehicleImageUrl", () => {
       extraImages: [{ url: "/manus-storage/vehicles/1786450742608_f55c92e6.png" }],
     };
     expect(getVehicleImageUrl(vehicleWithOnlyExtraImages)).toBe(
-      "https://catalogomotoetrilha.manus.space/manus-storage/vehicles/1786450742608_f55c92e6.png"
+      "https://catalogo.motoetrilha.com.br/manus-storage/vehicles/1786450742608_f55c92e6.png"
     );
   });
 
@@ -119,7 +119,7 @@ describe("formatVehicleList", () => {
   it("formats price in pt-BR currency style and resolves the full image URL", () => {
     const result = formatVehicleList([vehicles[0]]);
     expect(result).toBe(
-      "- BROS 160 ESDD ABS (HONDA, 2026) — R$ 28.900 — foto: https://catalogomotoetrilha.manus.space/manus-storage/vehicles/bros.png"
+      "- BROS 160 ESDD ABS (HONDA, 2026) — R$ 28.900 — foto: https://catalogo.motoetrilha.com.br/manus-storage/vehicles/bros.png"
     );
   });
 
@@ -149,8 +149,68 @@ describe("formatVehicleList", () => {
   it("includes color, mileage and description when the catalog provides them", () => {
     const result = formatVehicleList([vehicles[4]]);
     expect(result).toBe(
-      "- CELTA LT (CHEVROLET, BRANCO, 2013, 180.000 km) — R$ 32.900 — Completo, com ar condicionado, direção hidráulica — foto: https://catalogomotoetrilha.manus.space/manus-storage/vehicles/celta.png"
+      "- CELTA LT (CHEVROLET, BRANCO, 2013, 180.000 km) — R$ 32.900 — Completo, com ar condicionado, direção hidráulica — foto: https://catalogo.motoetrilha.com.br/manus-storage/vehicles/celta.png"
     );
+  });
+});
+
+describe("fetchCatalog", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("queries the catalog's Supabase REST API and maps image_url/vehicle_images onto imageUrl/extraImages", async () => {
+    // Real production data: catalogo.motoetrilha.com.br (the new catalog
+    // site) fetches vehicles from its own Supabase project directly from
+    // the browser — this is that same request, replayed server-side.
+    const row = {
+      id: 63,
+      modelo: "CG 160 START",
+      marca: "HONDA",
+      ano: 2025,
+      quilometragem: 0,
+      cor: "PRATA",
+      preco: 21900,
+      descricao: "",
+      tipo: "moto",
+      status: "available",
+      image_url: "https://orpyesziyiknpebsnhvp.supabase.co/storage/v1/object/public/vehicle-photos/63/a.png",
+      vehicle_images: [
+        { id: 84, url: "https://orpyesziyiknpebsnhvp.supabase.co/storage/v1/object/public/vehicle-photos/63/a.png", ordem: 0, vehicle_id: 63 },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [row] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchCatalog();
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain("orpyesziyiknpebsnhvp.supabase.co/rest/v1/vehicles");
+    expect(url).toContain("status=eq.available");
+    expect(options.headers.apikey).toBeTruthy();
+    expect(options.headers.Authorization).toBe(`Bearer ${options.headers.apikey}`);
+
+    expect(result).toEqual([
+      {
+        id: 63,
+        modelo: "CG 160 START",
+        marca: "HONDA",
+        ano: 2025,
+        preco: 21900,
+        imageUrl: row.image_url,
+        extraImages: row.vehicle_images,
+        tipo: "moto",
+        cor: "PRATA",
+        quilometragem: 0,
+        descricao: "",
+        status: "available",
+      },
+    ]);
+  });
+
+  it("throws when the catalog API responds with an error status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    await expect(fetchCatalog()).rejects.toThrow("Catalog API error 500");
   });
 });
 

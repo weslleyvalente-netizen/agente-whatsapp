@@ -60,7 +60,7 @@ describe("createSendVehiclePhotoTool", () => {
     expect(result).toContain("Foto enviada");
     expect(addToQueue).toHaveBeenCalledWith(
       "send-message",
-      expect.objectContaining({ mediaUrl: "https://catalogomotoetrilha.manus.space/manus-storage/vehicles/1786450742608_f55c92e6.png" })
+      expect.objectContaining({ mediaUrl: "https://catalogo.motoetrilha.com.br/manus-storage/vehicles/1786450742608_f55c92e6.png" })
     );
   });
 });
