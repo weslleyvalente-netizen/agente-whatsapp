@@ -227,4 +227,21 @@ describe("buildCatalogSearchResult", () => {
     expect(result).toContain("BROS 160 ESDD ABS");
     expect(result).toContain("YZF R15");
   });
+
+  it("ranks fallback suggestions by word overlap instead of showing arbitrary vehicles", () => {
+    // Real production case: a customer asked about the "XTZ 250 Lander ABS
+    // Connected" — the LiberaCred program's reference name for this bike —
+    // but the actual inventory lists it simply as "LANDER 250 ABS". "xtz"
+    // and "connected" don't appear there, so the strict AND-match found
+    // nothing, and the old vehicles.slice(0, 5) fallback (first 5 by
+    // insertion order) showed unrelated vehicles instead of the Lander,
+    // which sat further down the list — so the agent told the customer
+    // "não encontrei a Lander" even though it was in stock with a photo.
+    const withLander = [
+      ...vehicles,
+      { id: 7, modelo: "LANDER 250 ABS", marca: "YAMAHA", ano: 2026, preco: 34900, imageUrl: "/manus-storage/vehicles/lander.png", tipo: "moto" as const },
+    ];
+    const result = buildCatalogSearchResult(withLander, "XTZ 250 Lander ABS Connected");
+    expect(result).toContain("LANDER 250 ABS");
+  });
 });

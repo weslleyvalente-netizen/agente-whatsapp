@@ -146,12 +146,26 @@ export function formatVehicleList(vehicles: CatalogVehicle[]): string {
     .join("\n");
 }
 
+// How many of the query's words appear in this vehicle's searchable text.
+// Used only to rank the "nothing matched" fallback — a customer's wording
+// (often an official marketing name like "XTZ 250 Lander ABS Connected")
+// can include words the dealer's own inventory entry never used ("XTZ",
+// "Connected"), which fails the strict AND-match in filterVehicles even
+// though the bike itself ("LANDER 250 ABS") is in stock with a photo.
+function wordOverlapCount(v: CatalogVehicle, words: string[]): number {
+  const normalizedText = normalize(searchableText(v));
+  return words.filter((word) => normalizedText.includes(word)).length;
+}
+
 export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: string): string {
   const matches = filterVehicles(vehicles, query);
   if (matches.length > 0) {
     return formatVehicleList(matches);
   }
-  const fallback = vehicles.slice(0, 5);
+  const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
+  const fallback = [...vehicles]
+    .sort((a, b) => wordOverlapCount(b, words) - wordOverlapCount(a, words))
+    .slice(0, 5);
   return `Nenhum veículo encontrado para "${query}". Aqui estão outras opções disponíveis no catálogo — se alguma for parecida com o que o cliente quer, sugira antes de dizer que não há disponibilidade:\n${formatVehicleList(fallback)}`;
 }
 
