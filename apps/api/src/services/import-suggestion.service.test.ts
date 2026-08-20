@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, resolveApiKey, createModel } = vi.hoisted(() => ({
+const { getAgentById, resolveApiKey, createModel, recordAiUsageEvent } = vi.hoisted(() => ({
   getAgentById: vi.fn(),
   resolveApiKey: vi.fn(),
   createModel: vi.fn(),
+  recordAiUsageEvent: vi.fn(),
 }));
 const { generateObject } = vi.hoisted(() => ({ generateObject: vi.fn() }));
 
-vi.mock("@aula-agente/database", () => ({ getAgentById }));
-vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, createModel }));
+vi.mock("@aula-agente/database", () => ({ getAgentById, recordAiUsageEvent }));
+vi.mock("@aula-agente/agent-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@aula-agente/agent-runtime")>();
+  return { ...actual, resolveApiKey, createModel };
+});
 vi.mock("ai", () => ({ generateObject }));
 
 import {
@@ -49,17 +53,19 @@ describe("suggestConfigFromSystemPrompt", () => {
     getAgentById.mockResolvedValue(baseAgent);
     resolveApiKey.mockResolvedValue("test-key");
     createModel.mockReturnValue("mock-model" as any);
+    recordAiUsageEvent.mockResolvedValue(undefined);
     // One generateObject call per section (identity, personality, rules,
     // knowledge, playbook — issued in that order by Promise.all), since
     // Anthropic rejects the combined 5-section schema in a single call
     // ("too many optional parameters", then "compiled grammar too large"
     // even with 0 optional fields).
+    const usage = { inputTokens: 1000, outputTokens: 100, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } };
     generateObject
-      .mockResolvedValueOnce({ object: suggestedObject.identity })
-      .mockResolvedValueOnce({ object: suggestedObject.personality })
-      .mockResolvedValueOnce({ object: suggestedObject.rules })
-      .mockResolvedValueOnce({ object: suggestedObject.knowledge })
-      .mockResolvedValueOnce({ object: suggestedObject.playbook });
+      .mockResolvedValueOnce({ object: suggestedObject.identity, usage })
+      .mockResolvedValueOnce({ object: suggestedObject.personality, usage })
+      .mockResolvedValueOnce({ object: suggestedObject.rules, usage })
+      .mockResolvedValueOnce({ object: suggestedObject.knowledge, usage })
+      .mockResolvedValueOnce({ object: suggestedObject.playbook, usage });
   });
 
   it("never writes anything — it only returns the model's suggestion, assembled from 5 section calls", async () => {
@@ -87,5 +93,23 @@ describe("suggestConfigFromSystemPrompt", () => {
     generateObject.mock.calls.forEach((call, i) => {
       expect((call[0] as { schema: unknown }).schema).toBe(expectedSchemas[i]);
     });
+  });
+
+  it("records one ai_usage_event summing all 5 section calls' token usage", async () => {
+    await suggestConfigFromSystemPrompt({} as any, "agent-1");
+
+    expect(recordAiUsageEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        organizationId: "org-1",
+        agentId: "agent-1",
+        source: "import_suggestion",
+        model: "gpt-4o-mini",
+        inputTokens: 5000,
+        outputTokens: 500,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      })
+    );
   });
 });

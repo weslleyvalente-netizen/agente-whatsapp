@@ -4,7 +4,7 @@ import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { ProcessMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection, getSendMessageQueue } from "@aula-agente/queue";
 import { getAdminClient, getAgentById, getRecentMessages, getConversationById } from "@aula-agente/database";
-import { createMessage, updateConversation, updateMessageContent } from "@aula-agente/database";
+import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 import { resolveApiKey } from "@aula-agente/agent-runtime";
@@ -71,10 +71,6 @@ export function startProcessMessageWorker() {
         const conversation = await getConversationById(db, conversationId);
         if (conversation.is_human_takeover) {
           console.log(`Conversation ${conversationId} is in human takeover, skipping`);
-          return;
-        }
-        if (conversation.wa_contacts?.ai_disabled) {
-          console.log(`Conversation ${conversationId} contact has AI permanently disabled, skipping`);
           return;
         }
 
@@ -169,6 +165,23 @@ export function startProcessMessageWorker() {
             model: agent.model,
             apiKey,
           });
+
+          // Best-effort: a vision call happened (and cost money) whenever
+          // `usage` is present, even on the "empty_description" failure
+          // path — only the "image_too_large" and fetch/timeout paths skip
+          // the LLM entirely and have no usage to log.
+          if (description.usage) {
+            recordAiUsageEvent(db, {
+              organizationId,
+              agentId: agent.id,
+              source: "image_description",
+              model: agent.model,
+              inputTokens: description.usage.inputTokens,
+              outputTokens: description.usage.outputTokens,
+              cacheReadTokens: description.usage.cacheReadTokens,
+              cacheWriteTokens: description.usage.cacheWriteTokens,
+            }).catch((err) => console.error("[process-message] failed to record ai_usage_event", err));
+          }
 
           if (!description.ok) {
             console.log(`Message ${messageId} image description failed: ${description.reason}`);

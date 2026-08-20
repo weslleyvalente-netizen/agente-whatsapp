@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages, resolveApiKey, runAgent } = vi.hoisted(() => ({
+const { getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages, resolveApiKey, runAgent, recordAiUsageEvent } = vi.hoisted(() => ({
   getAgentById: vi.fn(),
   getOrCreateAgentConfig: vi.fn(),
   addPlaygroundMessage: vi.fn(),
   getPlaygroundMessages: vi.fn(),
   resolveApiKey: vi.fn(),
   runAgent: vi.fn(),
+  recordAiUsageEvent: vi.fn(),
 }));
 
-vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages }));
+vi.mock("@aula-agente/database", () => ({ getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages, recordAiUsageEvent }));
 vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, runAgent }));
 
 import { sendPlaygroundMessage } from "./playground.service.js";
@@ -55,6 +56,7 @@ describe("sendPlaygroundMessage", () => {
     addPlaygroundMessage.mockImplementation((_db: unknown, params: any) =>
       Promise.resolve({ id: "msg-1", session_id: params.sessionId, organization_id: params.organizationId, role: params.role, content: params.content, tool_calls: params.toolCalls ?? [], created_at: "2026-01-01T00:00:00Z" })
     );
+    recordAiUsageEvent.mockResolvedValue(undefined);
   });
 
   it("always calls runAgent with sandbox: true, never false or omitted", async () => {
@@ -95,5 +97,30 @@ describe("sendPlaygroundMessage", () => {
       })
     );
     expect(result.content).toBe("Resposta");
+  });
+
+  it("records an ai_usage_event with the playground source and the run's token usage", async () => {
+    runAgent.mockResolvedValue({
+      text: "Resposta", model: "gpt-4o-mini", inputTokens: 300, outputTokens: 40,
+      cacheReadTokens: 250, cacheWriteTokens: 0, latencyMs: 1, toolCalls: [], toolCallTrace: [],
+    });
+
+    await sendPlaygroundMessage({} as any, {
+      agentId: "agent-1", organizationId: "org-1", sessionId: "session-1", content: "Oi",
+    });
+
+    expect(recordAiUsageEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        organizationId: "org-1",
+        agentId: "agent-1",
+        source: "playground",
+        model: "gpt-4o-mini",
+        inputTokens: 300,
+        outputTokens: 40,
+        cacheReadTokens: 250,
+        cacheWriteTokens: 0,
+      })
+    );
   });
 });

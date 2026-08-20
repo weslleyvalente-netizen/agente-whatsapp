@@ -8,8 +8,9 @@ import {
   buildDefaultAgentConfigDraft,
   getTrainerMessages,
   getRecentMessagesForOrganization,
+  recordAiUsageEvent,
 } from "@aula-agente/database";
-import { createModel, resolveApiKey } from "@aula-agente/agent-runtime";
+import { createModel, resolveApiKey, extractTokenUsage, type TokenUsage } from "@aula-agente/agent-runtime";
 import {
   trainerReplyGenSchema,
   updateAgentConfigSchema,
@@ -33,7 +34,6 @@ const toolsConfigGenSchema = z.object({
   search_faq: z.boolean(),
   send_catalog_photo: z.boolean(),
   create_task: z.boolean(),
-  update_qualification: z.boolean(),
 });
 
 const SECTION_GEN_SCHEMA: Record<SectionKey, z.ZodTypeAny> = {
@@ -204,30 +204,59 @@ export async function proposeConfigChange(
   // regardless of resolution order, and a failure in one candidate's
   // stage-2 call/parse is caught locally so it degrades that one proposal
   // instead of discarding stageOne.object.content and every other proposal.
-  const proposals: TrainerProposal[] = await Promise.all(
+  const built = await Promise.all(
     stageOne.object.candidates.map((candidate) => buildProposalForCandidate(model, draft, userMessage, candidate))
   );
+  const proposals: TrainerProposal[] = built.map((b) => b.proposal);
+
+  // Best-effort: a turn's worth of cost (stage-1 + every stage-2 call,
+  // summed into one event) is logged for the cost dashboard, but a failure
+  // here must never break the reply the user is waiting on.
+  const totalUsage = built.reduce(
+    (sum, b) => ({
+      inputTokens: sum.inputTokens + b.usage.inputTokens,
+      outputTokens: sum.outputTokens + b.usage.outputTokens,
+      cacheReadTokens: sum.cacheReadTokens + b.usage.cacheReadTokens,
+      cacheWriteTokens: sum.cacheWriteTokens + b.usage.cacheWriteTokens,
+    }),
+    extractTokenUsage(stageOne.usage)
+  );
+  recordAiUsageEvent(db, {
+    organizationId: agent.organization_id,
+    agentId: agent.id,
+    source: "trainer",
+    model: agent.model,
+    inputTokens: totalUsage.inputTokens,
+    outputTokens: totalUsage.outputTokens,
+    cacheReadTokens: totalUsage.cacheReadTokens,
+    cacheWriteTokens: totalUsage.cacheWriteTokens,
+  }).catch((err) => console.error("[trainer] failed to record ai_usage_event", err));
 
   return { content: stageOne.object.content, proposals };
 }
+
+const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
 async function buildProposalForCandidate(
   model: ReturnType<typeof createModel>,
   draft: AgentConfigDraft,
   userMessage: string,
   candidate: z.infer<typeof trainerReplyGenSchema>["candidates"][number]
-): Promise<TrainerProposal> {
+): Promise<{ proposal: TrainerProposal; usage: TokenUsage }> {
   if (candidate.conflicts.length > 0) {
     return {
-      id: randomUUID(),
-      section: candidate.section,
-      item: candidate.item,
-      summary: candidate.summary,
-      rationale: candidate.rationale,
-      conflicts: candidate.conflicts.map((c) => ({ ...c, section: candidate.section, item: candidate.item })),
-      diff: [],
-      patch: null,
-      status: "proposed",
+      usage: ZERO_USAGE,
+      proposal: {
+        id: randomUUID(),
+        section: candidate.section,
+        item: candidate.item,
+        summary: candidate.summary,
+        rationale: candidate.rationale,
+        conflicts: candidate.conflicts.map((c) => ({ ...c, section: candidate.section, item: candidate.item })),
+        diff: [],
+        patch: null,
+        status: "proposed",
+      },
     };
   }
 
@@ -244,15 +273,18 @@ async function buildProposalForCandidate(
     const patch = updateAgentConfigSchema.parse({ [draftKey]: after });
 
     return {
-      id: randomUUID(),
-      section: candidate.section,
-      item: candidate.item,
-      summary: candidate.summary,
-      rationale: candidate.rationale,
-      conflicts: [],
-      diff: diffSectionValues(before, after),
-      patch,
-      status: "proposed",
+      usage: extractTokenUsage(stageTwo.usage),
+      proposal: {
+        id: randomUUID(),
+        section: candidate.section,
+        item: candidate.item,
+        summary: candidate.summary,
+        rationale: candidate.rationale,
+        conflicts: [],
+        diff: diffSectionValues(before, after),
+        patch,
+        status: "proposed",
+      },
     };
   } catch {
     // Stage-2 generation or schema validation failed for this candidate
@@ -262,22 +294,25 @@ async function buildProposalForCandidate(
     // discard stageOne.object.content plus every other candidate's
     // already-built proposal.
     return {
-      id: randomUUID(),
-      section: candidate.section,
-      item: candidate.item,
-      summary: candidate.summary,
-      rationale: candidate.rationale,
-      conflicts: [
-        {
-          description: "Não foi possível gerar essa mudança automaticamente. Tente reformular o pedido.",
-          section: candidate.section,
-          item: candidate.item,
-          resolution_options: ["Tentar novamente com outra descrição"],
-        },
-      ],
-      diff: [],
-      patch: null,
-      status: "proposed",
+      usage: ZERO_USAGE,
+      proposal: {
+        id: randomUUID(),
+        section: candidate.section,
+        item: candidate.item,
+        summary: candidate.summary,
+        rationale: candidate.rationale,
+        conflicts: [
+          {
+            description: "Não foi possível gerar essa mudança automaticamente. Tente reformular o pedido.",
+            section: candidate.section,
+            item: candidate.item,
+            resolution_options: ["Tentar novamente com outra descrição"],
+          },
+        ],
+        diff: [],
+        patch: null,
+        status: "proposed",
+      },
     };
   }
 }

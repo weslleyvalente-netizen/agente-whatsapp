@@ -8,6 +8,7 @@ const {
   patchAgentConfig,
   getTrainerMessages,
   getRecentMessagesForOrganization,
+  recordAiUsageEvent,
   resolveApiKey,
   createModel,
 } = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const {
   patchAgentConfig: vi.fn(),
   getTrainerMessages: vi.fn(),
   getRecentMessagesForOrganization: vi.fn(),
+  recordAiUsageEvent: vi.fn(),
   resolveApiKey: vi.fn(),
   createModel: vi.fn(),
 }));
@@ -33,8 +35,12 @@ vi.mock("@aula-agente/database", () => ({
   patchAgentConfig,
   getTrainerMessages,
   getRecentMessagesForOrganization,
+  recordAiUsageEvent,
 }));
-vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, createModel }));
+vi.mock("@aula-agente/agent-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@aula-agente/agent-runtime")>();
+  return { ...actual, resolveApiKey, createModel };
+});
 vi.mock("ai", () => ({ generateObject }));
 
 import { proposeConfigChange, buildConversationPatternContext, redactPii, diffSectionValues } from "./trainer.service.js";
@@ -77,6 +83,7 @@ describe("proposeConfigChange", () => {
     getRecentMessagesForOrganization.mockResolvedValue([]);
     resolveApiKey.mockResolvedValue("test-key");
     createModel.mockReturnValue("mock-model" as any);
+    recordAiUsageEvent.mockResolvedValue(undefined);
   });
 
   it("no-conflict scenario: issues a stage-1 and a stage-2 call, and returns a proposal with a full-section patch and a computed diff", async () => {
@@ -258,6 +265,44 @@ describe("proposeConfigChange", () => {
     expect(result.proposals).toHaveLength(2);
     expect(result.proposals[0].section).toBe("personalidade");
     expect(result.proposals[1].section).toBe("playbooks");
+  });
+
+  it("records one ai_usage_event summing stage-1 and every stage-2 call's token usage", async () => {
+    generateObject
+      .mockResolvedValueOnce({
+        object: {
+          content: "Vou ajustar duas coisas.",
+          candidates: [
+            { section: "personalidade", item: "emojis", summary: "Aumentar emojis de 1 para 3", rationale: "Pedido do usuário", conflicts: [] },
+            { section: "conhecimento", item: "links", summary: "Adicionar link", rationale: "Pedido do usuário", conflicts: [] },
+          ],
+        },
+        usage: { inputTokens: 20000, outputTokens: 300, inputTokenDetails: { cacheReadTokens: 18000, cacheWriteTokens: 0 } },
+      })
+      .mockResolvedValueOnce({
+        object: { ...baseDraft.personality, emojis: { ativo: true, maximo: 3, instrucao: "" } },
+        usage: { inputTokens: 5000, outputTokens: 150, inputTokenDetails: { cacheReadTokens: 4000, cacheWriteTokens: 0 } },
+      })
+      .mockResolvedValueOnce({
+        object: { ...baseDraft.knowledge, links: [] },
+        usage: { inputTokens: 4500, outputTokens: 120, inputTokenDetails: { cacheReadTokens: 3500, cacheWriteTokens: 0 } },
+      });
+
+    await proposeConfigChange({} as any, "agent-1", "session-1", "ajusta emojis e adiciona um link");
+
+    expect(recordAiUsageEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        organizationId: "org-1",
+        agentId: "agent-1",
+        source: "trainer",
+        model: "gpt-4o-mini",
+        inputTokens: 29500,
+        outputTokens: 570,
+        cacheReadTokens: 25500,
+        cacheWriteTokens: 0,
+      })
+    );
   });
 });
 
