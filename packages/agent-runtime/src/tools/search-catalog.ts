@@ -157,15 +157,40 @@ function wordOverlapCount(v: CatalogVehicle, words: string[]): number {
   return words.filter((word) => normalizedText.includes(word)).length;
 }
 
+// When the query shares no vocabulary with anything in stock (e.g. a brand
+// the dealership doesn't carry, like "Volkswagen Polo"), every vehicle ties
+// at a word-overlap score of 0. A plain top-N-by-score sort then falls back
+// to insertion order, which — in a catalog that's mostly motorcycles — can
+// bury or fully exclude other vehicle types (cars, electrics) from the
+// suggestions. That starves the agent of evidence that those types exist at
+// all, which has produced false claims like "não temos carros no catálogo"
+// when cars were in stock the whole time. Guaranteeing one vehicle per tipo
+// up front keeps every type visible regardless of word-overlap ties.
+function diverseByType(ranked: CatalogVehicle[], limit: number): CatalogVehicle[] {
+  const seenTipos = new Set<CatalogVehicle["tipo"]>();
+  const result: CatalogVehicle[] = [];
+  for (const v of ranked) {
+    if (v.tipo !== undefined && !seenTipos.has(v.tipo)) {
+      seenTipos.add(v.tipo);
+      result.push(v);
+    }
+  }
+  for (const v of ranked) {
+    if (result.length >= limit) break;
+    if (!result.includes(v)) result.push(v);
+  }
+  return result.slice(0, limit);
+}
+
 export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: string): string {
   const matches = filterVehicles(vehicles, query);
   if (matches.length > 0) {
     return formatVehicleList(matches);
   }
   const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
-  const fallback = [...vehicles]
-    .sort((a, b) => wordOverlapCount(b, words) - wordOverlapCount(a, words))
-    .slice(0, 5);
+  const ranked = [...vehicles].sort((a, b) => wordOverlapCount(b, words) - wordOverlapCount(a, words));
+  const fallback =
+    ranked.length > 0 && wordOverlapCount(ranked[0], words) > 0 ? ranked.slice(0, 5) : diverseByType(ranked, 5);
   return `Nenhum veículo encontrado para "${query}". Aqui estão outras opções disponíveis no catálogo — se alguma for parecida com o que o cliente quer, sugira antes de dizer que não há disponibilidade:\n${formatVehicleList(fallback)}`;
 }
 

@@ -244,4 +244,26 @@ describe("buildCatalogSearchResult", () => {
     const result = buildCatalogSearchResult(withLander, "XTZ 250 Lander ABS Connected");
     expect(result).toContain("LANDER 250 ABS");
   });
+
+  it("includes at least one vehicle of each tipo in the fallback when nothing shares any word with the query", () => {
+    // Real production case: a customer sent a photo of their own Volkswagen
+    // Polo (a brand/model the catalog doesn't carry at all, so word overlap
+    // is 0 for every vehicle). With 6+ motos ranked ahead of the dealership's
+    // actual cars by insertion order alone, the old top-5-by-score fallback
+    // showed only motorcycles and electric vehicles — no car anywhere in the
+    // result — which led the agent to falsely tell the customer "não temos
+    // carros no nosso catálogo" (they do: a Celta and a BMW are in stock).
+    const manyMotos = Array.from({ length: 6 }, (_, i) => ({
+      id: 10 + i,
+      modelo: `MOTO ${i}`,
+      marca: "HONDA",
+      ano: 2026,
+      preco: 20000,
+      imageUrl: "/manus-storage/vehicles/moto.png",
+      tipo: "moto" as const,
+    }));
+    const catalog = [...manyMotos, ...vehicles]; // vehicles[4] is the CELTA LT (tipo: carro)
+    const result = buildCatalogSearchResult(catalog, "Volkswagen Polo");
+    expect(result).toContain("CELTA LT");
+  });
 });
