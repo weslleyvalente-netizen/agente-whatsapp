@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AiUsageEvent, AiUsageSource } from "@aula-agente/shared";
+import { fetchAllPages } from "../pagination.js";
 
 export async function recordAiUsageEvent(
   client: SupabaseClient,
@@ -27,15 +28,20 @@ export async function recordAiUsageEvent(
   if (error) throw error;
 }
 
-export async function getAiUsageEventsForCost(
-  client: SupabaseClient,
-  organizationId: string
-): Promise<Pick<AiUsageEvent, "created_at" | "source" | "model" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens">[]> {
-  const { data, error } = await client
-    .from("ai_usage_events")
-    .select("created_at, source, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens")
-    .eq("organization_id", organizationId)
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data;
+type CostUsageEvent = Pick<
+  AiUsageEvent,
+  "created_at" | "source" | "model" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens"
+>;
+
+export async function getAiUsageEventsForCost(client: SupabaseClient, organizationId: string): Promise<CostUsageEvent[]> {
+  return fetchAllPages<CostUsageEvent>(async (from, to) => {
+    const { data, error } = await client
+      .from("ai_usage_events")
+      .select("created_at, source, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens")
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: true })
+      .range(from, to);
+    if (error) throw error;
+    return data;
+  });
 }

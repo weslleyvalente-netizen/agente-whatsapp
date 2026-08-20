@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Message } from "@aula-agente/shared";
+import { fetchAllPages } from "../pagination.js";
 
 export async function getMessagesByConversation(
   client: SupabaseClient,
@@ -63,14 +64,17 @@ export async function messageExistsByEvolutionId(
 }
 
 export async function getAgentMessagesForCost(client: SupabaseClient, organizationId: string) {
-  const { data, error } = await client
-    .from("messages")
-    .select("created_at, metadata")
-    .eq("organization_id", organizationId)
-    .eq("role", "agent")
-    .order("created_at", { ascending: true });
-  if (error) throw error;
-  return data as Pick<Message, "created_at" | "metadata">[];
+  return fetchAllPages<Pick<Message, "created_at" | "metadata">>(async (from, to) => {
+    const { data, error } = await client
+      .from("messages")
+      .select("created_at, metadata")
+      .eq("organization_id", organizationId)
+      .eq("role", "agent")
+      .order("created_at", { ascending: true })
+      .range(from, to);
+    if (error) throw error;
+    return data as Pick<Message, "created_at" | "metadata">[];
+  });
 }
 
 export async function getMessagesForDashboard(
