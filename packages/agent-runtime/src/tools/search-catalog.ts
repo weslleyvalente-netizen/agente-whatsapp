@@ -66,6 +66,21 @@ function matchesAllWords(text: string, words: string[]): boolean {
   return words.every((word) => normalizedText.includes(word));
 }
 
+// Strips spaces and punctuation so "mt03" (typed as one token) can match a
+// catalog entry that splits letters and digits with a separator, like "MT 03
+// ABS". A real production case: the customer typed "mt03", the catalog has
+// "MT 03 ABS", and the plain substring check in matchesAllWords fails
+// because "mt03" never literally appears inside "mt 03 abs" — the model
+// then told the customer the bike wasn't in stock when it was.
+function collapse(s: string): string {
+  return normalize(s).replace(/[^a-z0-9]/g, "");
+}
+
+function matchesAllWordsCollapsed(text: string, words: string[]): boolean {
+  const collapsedText = collapse(text);
+  return words.every((word) => collapsedText.includes(collapse(word)));
+}
+
 function searchableText(v: CatalogVehicle): string {
   return [v.modelo, v.marca, v.cor, v.descricao].filter(Boolean).join(" ");
 }
@@ -84,7 +99,8 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
   }
 
   return vehicles.filter((v) => {
-    if (matchesAllWords(searchableText(v), words)) {
+    const text = searchableText(v);
+    if (matchesAllWords(text, words) || matchesAllWordsCollapsed(text, words)) {
       return true;
     }
     return v.tipo !== undefined && impliedTypes.has(v.tipo);
