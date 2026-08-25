@@ -80,7 +80,11 @@ export default function InstanceDetailPage() {
         <InstanceStatus
           instanceId={instanceId}
           initialStatus={instance.status}
-          onStatusChange={(s) => setInstance((prev) => prev ? { ...prev, status: s as EvolutionInstance["status"] } : null)}
+          onStatusChange={(s, phoneNumber) =>
+            setInstance((prev) =>
+              prev ? { ...prev, status: s as EvolutionInstance["status"], phone_number: phoneNumber } : null
+            )
+          }
         />
       </div>
 

@@ -86,16 +86,20 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
       const status = await getInstanceStatus(instance.instance_name);
 
-      // Sync status to DB
+      // Sync status to DB. phone_number is checked independently of the
+      // status transition — otherwise a phone number that arrives after the
+      // status already reads "connected" (or wasn't captured on the first
+      // open) never gets persisted on subsequent checks.
       const newStatus = status?.instance?.state === "open" ? "connected" : "disconnected";
-      if (newStatus !== instance.status) {
+      const newPhoneNumber = status?.instance?.phoneNumber || instance.phone_number;
+      if (newStatus !== instance.status || newPhoneNumber !== instance.phone_number) {
         await updateInstance(db, instance.id, {
           status: newStatus,
-          phone_number: status?.instance?.phoneNumber || instance.phone_number,
+          phone_number: newPhoneNumber,
         });
       }
 
-      return { ...instance, status: newStatus, live: status };
+      return { ...instance, status: newStatus, phone_number: newPhoneNumber, live: status };
     }
   );
 
