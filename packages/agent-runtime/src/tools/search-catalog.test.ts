@@ -73,6 +73,21 @@ describe("filterVehicles", () => {
     // field alone contains both words, so this needs a cross-field match.
     expect(filterVehicles(vehicles, "honda bros")).toEqual([vehicles[0]]);
   });
+
+  it("matches a model written as one word when the catalog splits it with a space", () => {
+    // Real production case: catalog has "MT 03 ABS" (space between letters
+    // and digits) but the customer typed "mt03" as a single token — a plain
+    // substring check fails because "mt03" never literally appears inside
+    // "mt 03 abs". The agent told the customer the MT-03 wasn't in stock
+    // when it was, then flip-flopped when a broader query happened to
+    // surface it via the empty-query fallback.
+    const withMt03 = [
+      ...vehicles,
+      { id: 7, modelo: "MT 03 ABS", marca: "YAMAHA", ano: 2026, preco: 38500, imageUrl: "/manus-storage/vehicles/mt03.png", tipo: "moto" as const },
+    ];
+    expect(filterVehicles(withMt03, "mt03")).toEqual([withMt03[5]]);
+    expect(filterVehicles(withMt03, "mt-03")).toEqual([withMt03[5]]);
+  });
 });
 
 describe("findVehicleByModel", () => {
