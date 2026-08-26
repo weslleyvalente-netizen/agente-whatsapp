@@ -281,4 +281,33 @@ describe("buildCatalogSearchResult", () => {
     const result = buildCatalogSearchResult(catalog, "Volkswagen Polo");
     expect(result).toContain("CELTA LT");
   });
+
+  it("surfaces every vehicle of an underrepresented tipo, not just one, when nothing matches", () => {
+    // Real production case: a customer asked about financing an HB20 (a
+    // Hyundai, not carried at all). The catalog has 3 cars in stock (BMW
+    // 320i, Celta LT, HRV EX) among ~30 motorcycles. The old fallback only
+    // guaranteed one vehicle per tipo, so it showed the BMW and buried the
+    // other two cars behind motorcycles — the agent then told the customer
+    // "temos só um carro (BMW 320i)", undercounting real inventory instead
+    // of mentioning all three.
+    const manyMotos = Array.from({ length: 6 }, (_, i) => ({
+      id: 20 + i,
+      modelo: `MOTO ${i}`,
+      marca: "HONDA",
+      ano: 2026,
+      preco: 20000,
+      imageUrl: "/manus-storage/vehicles/moto.png",
+      tipo: "moto" as const,
+    }));
+    const threeCars = [
+      { id: 30, modelo: "BMW 320I", marca: "BMW", ano: 2024, preco: 280000, imageUrl: "/manus-storage/vehicles/bmw.png", tipo: "carro" as const },
+      { id: 31, modelo: "CELTA LT", marca: "CHEVROLET", ano: 2013, preco: 32900, imageUrl: "/manus-storage/vehicles/celta.png", tipo: "carro" as const },
+      { id: 32, modelo: "HRV EX", marca: "HONDA", ano: 2022, preco: 120000, imageUrl: "/manus-storage/vehicles/hrv.png", tipo: "carro" as const },
+    ];
+    const catalog = [...manyMotos, ...threeCars];
+    const result = buildCatalogSearchResult(catalog, "HB20");
+    expect(result).toContain("BMW 320I");
+    expect(result).toContain("CELTA LT");
+    expect(result).toContain("HRV EX");
+  });
 });

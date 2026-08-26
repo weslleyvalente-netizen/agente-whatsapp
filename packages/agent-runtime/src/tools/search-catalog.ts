@@ -174,28 +174,40 @@ function wordOverlapCount(v: CatalogVehicle, words: string[]): number {
 }
 
 // When the query shares no vocabulary with anything in stock (e.g. a brand
-// the dealership doesn't carry, like "Volkswagen Polo"), every vehicle ties
-// at a word-overlap score of 0. A plain top-N-by-score sort then falls back
-// to insertion order, which — in a catalog that's mostly motorcycles — can
-// bury or fully exclude other vehicle types (cars, electrics) from the
-// suggestions. That starves the agent of evidence that those types exist at
-// all, which has produced false claims like "não temos carros no catálogo"
-// when cars were in stock the whole time. Guaranteeing one vehicle per tipo
-// up front keeps every type visible regardless of word-overlap ties.
+// the dealership doesn't carry, like "Volkswagen Polo" or "HB20"), every
+// vehicle ties at a word-overlap score of 0. A plain top-N-by-score sort
+// then falls back to insertion order, which — in a catalog that's mostly
+// motorcycles — can bury or fully exclude other vehicle types (cars,
+// electrics) from the suggestions. That starves the agent of evidence that
+// those types exist at all, which has produced false claims like "não
+// temos carros no catálogo" when cars were in stock the whole time.
+//
+// Picking underrepresented tipos first (smallest group first) rather than
+// just one-per-tipo matters in practice: with 3 cars among ~30 motorcycles,
+// a "one per tipo" guarantee still buried 2 of the 3 cars behind
+// motorcycles — the agent then undercounted real inventory ("temos só um
+// carro") instead of listing all three. Motorcycles being the majority
+// tipo are already well covered by the primary (non-fallback) search path
+// for the vast majority of real moto queries, so this fallback — reserved
+// for "nothing matched" — can afford to prioritize full coverage of the
+// rarer tipos.
 function diverseByType(ranked: CatalogVehicle[], limit: number): CatalogVehicle[] {
-  const seenTipos = new Set<CatalogVehicle["tipo"]>();
-  const result: CatalogVehicle[] = [];
+  const byTipo = new Map<CatalogVehicle["tipo"], CatalogVehicle[]>();
   for (const v of ranked) {
-    if (v.tipo !== undefined && !seenTipos.has(v.tipo)) {
-      seenTipos.add(v.tipo);
+    if (!byTipo.has(v.tipo)) byTipo.set(v.tipo, []);
+    byTipo.get(v.tipo)!.push(v);
+  }
+  const groupsSmallestFirst = [...byTipo.values()].sort((a, b) => a.length - b.length);
+
+  const result: CatalogVehicle[] = [];
+  for (const group of groupsSmallestFirst) {
+    for (const v of group) {
+      if (result.length >= limit) break;
       result.push(v);
     }
-  }
-  for (const v of ranked) {
     if (result.length >= limit) break;
-    if (!result.includes(v)) result.push(v);
   }
-  return result.slice(0, limit);
+  return result;
 }
 
 export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: string): string {
