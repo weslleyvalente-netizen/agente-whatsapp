@@ -100,3 +100,31 @@ export function computeTaskSummary(tasks: TaskSummaryInput[], todayISODate: stri
 
   return summary;
 }
+
+export type FollowupStageAction = "none" | "send_stage_1" | "send_stage_2";
+
+export interface DecideFollowupStageParams {
+  hoursSinceCustomerReply: number;
+  primeiroFollowupHoras: number;
+  segundoFollowupHoras: number;
+  stage1AlreadySent: boolean;
+  stage2AlreadySent: boolean;
+}
+
+export function decideFollowupStage(params: DecideFollowupStageParams): FollowupStageAction {
+  const {
+    hoursSinceCustomerReply,
+    primeiroFollowupHoras,
+    segundoFollowupHoras,
+    stage1AlreadySent,
+    stage2AlreadySent,
+  } = params;
+
+  if (stage2AlreadySent) return "none";
+
+  if (!stage1AlreadySent) {
+    return hoursSinceCustomerReply >= primeiroFollowupHoras ? "send_stage_1" : "none";
+  }
+
+  return hoursSinceCustomerReply >= segundoFollowupHoras ? "send_stage_2" : "none";
+}

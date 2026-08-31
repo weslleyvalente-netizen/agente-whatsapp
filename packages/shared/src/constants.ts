@@ -87,6 +87,14 @@ export const DEFAULT_TASK_RULES = {
   think_it_over_days: 2,
 };
 
+// Used whenever agent.tools_config.followup_automatico is absent (every row
+// written before this feature shipped) — see ToolsConfig, FollowupAutomaticoConfig.
+export const DEFAULT_FOLLOWUP_AUTOMATICO = {
+  ativo: false,
+  primeiro_followup_horas: 1,
+  segundo_followup_horas: 23,
+};
+
 export const INSTANCE_STATUSES = ["connected", "disconnected", "connecting"] as const;
 
 // Fallback used when an organization hasn't configured its own

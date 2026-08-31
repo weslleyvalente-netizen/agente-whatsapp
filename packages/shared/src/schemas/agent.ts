@@ -1,10 +1,21 @@
 import { z } from "zod";
 
+export const followupAutomaticoConfigSchema = z.object({
+  ativo: z.boolean().default(false),
+  primeiro_followup_horas: z.number().min(0.5).max(168).default(1),
+  segundo_followup_horas: z.number().min(0.5).max(168).default(23),
+});
+
 export const toolsConfigSchema = z.object({
   search_knowledge: z.boolean().default(true),
   search_faq: z.boolean().default(true),
   send_catalog_photo: z.boolean().default(false),
   create_task: z.boolean().default(false),
+  followup_automatico: followupAutomaticoConfigSchema.default({
+    ativo: false,
+    primeiro_followup_horas: 1,
+    segundo_followup_horas: 23,
+  }),
 });
 
 export const createAgentSchema = z.object({

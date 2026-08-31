@@ -29,7 +29,15 @@ export interface Task {
   updated_at: string;
 }
 
-export type TaskEventType = "created" | "updated" | "rescheduled" | "completed" | "cancelled" | "assigned";
+export type TaskEventType =
+  | "created"
+  | "updated"
+  | "rescheduled"
+  | "completed"
+  | "cancelled"
+  | "assigned"
+  | "auto_followup_stage_1"
+  | "auto_followup_stage_2";
 
 export interface TaskEvent {
   id: string;

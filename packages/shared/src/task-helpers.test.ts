@@ -6,6 +6,7 @@ import {
   resolveTaskDedupAction,
   sortTasksForToday,
   computeTaskSummary,
+  decideFollowupStage,
   type SortableTask,
 } from "./task-helpers.js";
 
@@ -148,5 +149,57 @@ describe("computeTaskSummary", () => {
       completedToday: 1,
       hotOpenLeads: 1,
     });
+  });
+});
+
+describe("decideFollowupStage", () => {
+  const base = {
+    primeiroFollowupHoras: 1,
+    segundoFollowupHoras: 23,
+    stage1AlreadySent: false,
+    stage2AlreadySent: false,
+  };
+
+  it("does nothing before the first window elapses", () => {
+    expect(decideFollowupStage({ ...base, hoursSinceCustomerReply: 0.5 })).toBe("none");
+  });
+
+  it("sends stage 1 once the first window elapses and stage 1 hasn't fired", () => {
+    expect(decideFollowupStage({ ...base, hoursSinceCustomerReply: 1 })).toBe("send_stage_1");
+  });
+
+  it("does nothing between stage 1 and the second window", () => {
+    expect(
+      decideFollowupStage({ ...base, hoursSinceCustomerReply: 5, stage1AlreadySent: true })
+    ).toBe("none");
+  });
+
+  it("sends stage 2 once the second window elapses and stage 1 already fired", () => {
+    expect(
+      decideFollowupStage({ ...base, hoursSinceCustomerReply: 23, stage1AlreadySent: true })
+    ).toBe("send_stage_2");
+  });
+
+  it("never fires again once stage 2 already fired, no matter how many hours pass", () => {
+    expect(
+      decideFollowupStage({
+        ...base,
+        hoursSinceCustomerReply: 1000,
+        stage1AlreadySent: true,
+        stage2AlreadySent: true,
+      })
+    ).toBe("none");
+  });
+
+  it("doesn't crash on a misconfigured second window shorter than the first — fires stage 2 on the very next check after stage 1", () => {
+    expect(
+      decideFollowupStage({
+        hoursSinceCustomerReply: 1,
+        primeiroFollowupHoras: 1,
+        segundoFollowupHoras: 0.5,
+        stage1AlreadySent: true,
+        stage2AlreadySent: false,
+      })
+    ).toBe("send_stage_2");
   });
 });
