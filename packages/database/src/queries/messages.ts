@@ -31,6 +31,19 @@ export async function getRecentMessages(
   return (data as Message[]).reverse();
 }
 
+export async function getLastContactMessage(client: SupabaseClient, conversationId: string) {
+  const { data, error } = await client
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", conversationId)
+    .eq("role", "contact")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { created_at: string } | null;
+}
+
 export async function createMessage(
   client: SupabaseClient,
   message: Omit<Message, "id" | "created_at">
