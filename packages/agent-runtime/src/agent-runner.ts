@@ -1,5 +1,5 @@
 import { generateText, stepCountIs } from "ai";
-import type { LanguageModel, SystemModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -163,6 +163,19 @@ export function formatHistoryForLLM(messages: Message[]) {
     }));
 }
 
+// The trigger for a normal reply is always a real customer message — always
+// a "user" turn. The stale-conversation follow-up worker (apps/worker) has
+// no real customer message to react to; it synthesizes one with
+// role: "system" so the model sees an operational instruction ("the
+// customer went quiet, decide whether to nudge them") instead of something
+// that looks like the customer speaking.
+export function buildFinalTurnMessage(currentMessage: Pick<Message, "role" | "content">): ModelMessage {
+  if (currentMessage.role === "system") {
+    return { role: "system", content: currentMessage.content };
+  }
+  return { role: "user", content: currentMessage.content };
+}
+
 export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> {
   const { agent, messages, currentMessage, apiKey, organizationId, conversationId, instanceId, phone, contactId } =
     params;
@@ -188,10 +201,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   const result = await generateText({
     model,
     system: buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName),
-    messages: [
-      ...history,
-      { role: "user", content: currentMessage.content },
-    ],
+    messages: [...history, buildFinalTurnMessage(currentMessage)],
     tools,
     stopWhen: stepCountIs(5), // Max tool calling iterations
     temperature: agent.temperature,

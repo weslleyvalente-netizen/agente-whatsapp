@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatHistoryForLLM, buildSystemPrompt } from "./agent-runner.js";
+import { formatHistoryForLLM, buildSystemPrompt, buildFinalTurnMessage } from "./agent-runner.js";
 import { buildDynamicContextBlock, buildCacheableSystemMessages, deriveCacheStatus } from "./agent-runner.js";
 import { extractToolCallTrace } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
@@ -50,6 +50,28 @@ describe("formatHistoryForLLM", () => {
       { role: "user", content: "Oi" },
       { role: "assistant", content: "Tudo bem?" },
     ]);
+  });
+});
+
+describe("buildFinalTurnMessage", () => {
+  it("wraps a contact message as a user turn", () => {
+    expect(buildFinalTurnMessage({ role: "contact", content: "oi, tudo bem?" })).toEqual({
+      role: "user",
+      content: "oi, tudo bem?",
+    });
+  });
+
+  it("wraps an agent message as a user turn too — only 'system' is special-cased", () => {
+    expect(buildFinalTurnMessage({ role: "agent", content: "..." })).toEqual({
+      role: "user",
+      content: "...",
+    });
+  });
+
+  it("wraps a system-role trigger as a system turn, not a user turn", () => {
+    expect(
+      buildFinalTurnMessage({ role: "system", content: "cliente sem resposta há 1h" })
+    ).toEqual({ role: "system", content: "cliente sem resposta há 1h" });
   });
 });
 
