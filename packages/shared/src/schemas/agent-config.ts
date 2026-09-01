@@ -4,7 +4,7 @@ import { toolsConfigSchema } from "./agent.js";
 export const agentIdentitySchema = z.object({
   nome: z.string().max(100).default(""),
   funcao: z.string().max(200).default(""),
-  missao: z.string().max(2000).default(""),
+  missao: z.string().max(6000).default(""),
 });
 
 export const agentEmojisConfigSchema = z.object({

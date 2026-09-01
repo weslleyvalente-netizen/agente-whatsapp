@@ -7,3 +7,4 @@ export { createSearchCatalogTool } from "./tools/search-catalog.js";
 export { createSendVehiclePhotoTool } from "./tools/send-vehicle-photo.js";
 export { createCreateTaskTool } from "./tools/create-task.js";
 export { resolveApiKey } from "./vault.js";
+export { extractTokenUsage, type TokenUsage } from "./token-usage.js";

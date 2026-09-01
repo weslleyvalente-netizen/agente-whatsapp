@@ -22,7 +22,10 @@ export function PublishDialog({ agentId, status, onPublished }: PublishDialogPro
   const [publishing, setPublishing] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const details = computeChangedSectionDetails(status.draft, status.latestVersion?.config_snapshot ?? null);
+  const baseSnapshot = status.latestVersion
+    ? { ...status.latestVersion.config_snapshot, tools_config: status.latestVersion.tools_config }
+    : null;
+  const details = computeChangedSectionDetails(status.draft, baseSnapshot);
 
   const handlePublish = async () => {
     setPublishing(true);

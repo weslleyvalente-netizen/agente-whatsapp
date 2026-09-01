@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages } from "@aula-agente/database";
+import { getAgentById, getOrCreateAgentConfig, addPlaygroundMessage, getPlaygroundMessages, recordAiUsageEvent } from "@aula-agente/database";
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { compileSystemPrompt } from "@aula-agente/shared";
 import type { AgentPlaygroundMessage, Message } from "@aula-agente/shared";
@@ -67,6 +67,20 @@ export async function sendPlaygroundMessage(
     contactId: "playground",
     sandbox: true,
   });
+
+  // Best-effort: a failure here must never break the actual playground
+  // reply the user is waiting on, so it's logged and swallowed rather than
+  // rethrown.
+  recordAiUsageEvent(db, {
+    organizationId: params.organizationId,
+    agentId: params.agentId,
+    source: "playground",
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    cacheReadTokens: result.cacheReadTokens,
+    cacheWriteTokens: result.cacheWriteTokens,
+  }).catch((err) => console.error("[playground] failed to record ai_usage_event", err));
 
   return addPlaygroundMessage(db, {
     sessionId: params.sessionId,

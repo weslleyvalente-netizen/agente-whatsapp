@@ -6,6 +6,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message, PlaygroundToolCall } from "@aula-agente/shared";
 import { formatDateTimeForPrompt } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
+import { extractTokenUsage } from "./token-usage.js";
 
 interface RunAgentParams {
   agent: Agent;
@@ -214,10 +215,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     .flatMap((step) => step.toolCalls || [])
     .map((tc) => tc.toolName);
 
-  const inputTokens = result.usage?.inputTokens || 0;
-  const outputTokens = result.usage?.outputTokens || 0;
-  const cacheReadTokens = result.usage?.inputTokenDetails?.cacheReadTokens || 0;
-  const cacheWriteTokens = result.usage?.inputTokenDetails?.cacheWriteTokens || 0;
+  const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = extractTokenUsage(result.usage);
   const cacheStatus = deriveCacheStatus(cacheReadTokens, cacheWriteTokens);
 
   console.log(

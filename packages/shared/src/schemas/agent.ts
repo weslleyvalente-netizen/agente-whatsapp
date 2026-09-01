@@ -11,6 +11,7 @@ export const toolsConfigSchema = z.object({
   search_faq: z.boolean().default(true),
   send_catalog_photo: z.boolean().default(false),
   create_task: z.boolean().default(false),
+  update_qualification: z.boolean().default(false),
   followup_automatico: followupAutomaticoConfigSchema.default({
     ativo: false,
     primeiro_followup_horas: 1,
@@ -31,6 +32,7 @@ export const createAgentSchema = z.object({
     search_faq: true,
     send_catalog_photo: false,
     create_task: false,
+    update_qualification: false,
   }),
 });
 

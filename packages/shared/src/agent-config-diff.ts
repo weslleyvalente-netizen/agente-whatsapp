@@ -1,15 +1,22 @@
 import type { AgentConfigSections } from "./types/agent-config.js";
+import type { ToolsConfig } from "./types/agent.js";
 import { SECTION_ITEMS, SECTION_LABELS, DRAFT_KEY_TO_SECTION, type SectionKey } from "./agent-config-sections.js";
 
-const SECTION_KEYS = ["identity", "personality", "rules", "knowledge", "playbook"] as const;
+const SECTION_KEYS = ["identity", "personality", "rules", "knowledge", "playbook", "tools_config"] as const;
+
+// tools_config lives outside AgentConfigSections (it's stored as a sibling
+// column, not nested in config_snapshot) — optional here so callers that
+// only care about the five prompt-affecting sections keep working, while
+// callers that also want tools_config in the diff can supply it.
+export type DiffableConfig = AgentConfigSections & { tools_config?: ToolsConfig };
 
 export function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function computeChangedSections(
-  draft: AgentConfigSections,
-  baseSnapshot: AgentConfigSections | null
+  draft: DiffableConfig,
+  baseSnapshot: DiffableConfig | null
 ): Array<(typeof SECTION_KEYS)[number]> {
   if (!baseSnapshot) return [...SECTION_KEYS];
   return SECTION_KEYS.filter((key) => !deepEqual(draft[key], baseSnapshot[key]));
@@ -54,8 +61,8 @@ export interface ChangedSectionDetail {
 }
 
 export function computeChangedSectionDetails(
-  draft: AgentConfigSections,
-  baseSnapshot: AgentConfigSections | null
+  draft: DiffableConfig,
+  baseSnapshot: DiffableConfig | null
 ): ChangedSectionDetail[] {
   const changedDraftKeys = computeChangedSections(draft, baseSnapshot);
 

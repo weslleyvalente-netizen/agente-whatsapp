@@ -1,7 +1,17 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
 
-const CATALOG_BASE_URL = "https://catalogomotoetrilha.manus.space";
+// The catalog moved from a manus.space tRPC backend to its own Supabase
+// project behind catalogo.motoetrilha.com.br. This is the same anon key the
+// site's own frontend embeds in its JS bundle — public by Supabase's design,
+// scoped by RLS, not a secret.
+const CATALOG_SUPABASE_URL = "https://orpyesziyiknpebsnhvp.supabase.co";
+const CATALOG_SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ycHllc3ppeWlrbnBlYnNuaHZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NjE4MzAsImV4cCI6MjEwMjEzNzgzMH0.PtubhSu11y3ez8anj3MX19sY3sHEjmnJMkj59vTy84k";
+// Used only to make a relative image path absolute — the Supabase API above
+// always returns fully-qualified storage URLs, but resolveImageUrl() stays
+// generic in case that ever changes.
+const CATALOG_BASE_URL = "https://catalogo.motoetrilha.com.br";
 
 export interface CatalogVehicle {
   id: number;
@@ -9,7 +19,8 @@ export interface CatalogVehicle {
   marca: string;
   ano: number;
   preco: number;
-  imageUrl: string;
+  imageUrl: string | null;
+  extraImages?: { url: string }[] | null;
   tipo?: "moto" | "carro" | "eletrico";
   cor?: string | null;
   quilometragem?: number | null;
@@ -55,6 +66,21 @@ function matchesAllWords(text: string, words: string[]): boolean {
   return words.every((word) => normalizedText.includes(word));
 }
 
+// Strips spaces and punctuation so "mt03" (typed as one token) can match a
+// catalog entry that splits letters and digits with a separator, like "MT 03
+// ABS". A real production case: the customer typed "mt03", the catalog has
+// "MT 03 ABS", and the plain substring check in matchesAllWords fails
+// because "mt03" never literally appears inside "mt 03 abs" — the model
+// then told the customer the bike wasn't in stock when it was.
+function collapse(s: string): string {
+  return normalize(s).replace(/[^a-z0-9]/g, "");
+}
+
+function matchesAllWordsCollapsed(text: string, words: string[]): boolean {
+  const collapsedText = collapse(text);
+  return words.every((word) => collapsedText.includes(collapse(word)));
+}
+
 function searchableText(v: CatalogVehicle): string {
   return [v.modelo, v.marca, v.cor, v.descricao].filter(Boolean).join(" ");
 }
@@ -73,7 +99,8 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
   }
 
   return vehicles.filter((v) => {
-    if (matchesAllWords(searchableText(v), words)) {
+    const text = searchableText(v);
+    if (matchesAllWords(text, words) || matchesAllWordsCollapsed(text, words)) {
       return true;
     }
     return v.tipo !== undefined && impliedTypes.has(v.tipo);
@@ -106,12 +133,24 @@ export function resolveImageUrl(imageUrl: string): string {
   return /^https?:\/\//.test(imageUrl) ? imageUrl : `${CATALOG_BASE_URL}${imageUrl}`;
 }
 
+// The catalog sometimes leaves a vehicle's main imageUrl null (e.g. a
+// just-added listing) while still carrying real photos in extraImages.
+// Feeding that null straight into resolveImageUrl produced a broken link
+// like ".../manus.spacenull" that WhatsApp/Evolution silently failed to
+// deliver — the tool still reported success. Falling back to the first
+// extraImages entry, and returning null only when there's truly no photo,
+// lets callers tell the truth instead of sending a dead link.
+export function getVehicleImageUrl(vehicle: CatalogVehicle): string | null {
+  const raw = vehicle.imageUrl || vehicle.extraImages?.[0]?.url;
+  return raw ? resolveImageUrl(raw) : null;
+}
+
 export function formatVehicleList(vehicles: CatalogVehicle[]): string {
   return vehicles
     .slice(0, 5)
     .map((v) => {
       const price = `R$ ${v.preco.toLocaleString("pt-BR")}`;
-      const imageUrl = resolveImageUrl(v.imageUrl);
+      const imageUrl = getVehicleImageUrl(v) ?? "sem foto disponível";
       const details = [v.cor, v.ano].filter(Boolean).join(", ");
       const km = v.quilometragem !== undefined && v.quilometragem !== null
         ? `${v.quilometragem.toLocaleString("pt-BR")} km`
@@ -123,24 +162,108 @@ export function formatVehicleList(vehicles: CatalogVehicle[]): string {
     .join("\n");
 }
 
+// How many of the query's words appear in this vehicle's searchable text.
+// Used only to rank the "nothing matched" fallback — a customer's wording
+// (often an official marketing name like "XTZ 250 Lander ABS Connected")
+// can include words the dealer's own inventory entry never used ("XTZ",
+// "Connected"), which fails the strict AND-match in filterVehicles even
+// though the bike itself ("LANDER 250 ABS") is in stock with a photo.
+function wordOverlapCount(v: CatalogVehicle, words: string[]): number {
+  const normalizedText = normalize(searchableText(v));
+  return words.filter((word) => normalizedText.includes(word)).length;
+}
+
+// When the query shares no vocabulary with anything in stock (e.g. a brand
+// the dealership doesn't carry, like "Volkswagen Polo" or "HB20"), every
+// vehicle ties at a word-overlap score of 0. A plain top-N-by-score sort
+// then falls back to insertion order, which — in a catalog that's mostly
+// motorcycles — can bury or fully exclude other vehicle types (cars,
+// electrics) from the suggestions. That starves the agent of evidence that
+// those types exist at all, which has produced false claims like "não
+// temos carros no catálogo" when cars were in stock the whole time.
+//
+// Picking underrepresented tipos first (smallest group first) rather than
+// just one-per-tipo matters in practice: with 3 cars among ~30 motorcycles,
+// a "one per tipo" guarantee still buried 2 of the 3 cars behind
+// motorcycles — the agent then undercounted real inventory ("temos só um
+// carro") instead of listing all three. Motorcycles being the majority
+// tipo are already well covered by the primary (non-fallback) search path
+// for the vast majority of real moto queries, so this fallback — reserved
+// for "nothing matched" — can afford to prioritize full coverage of the
+// rarer tipos.
+function diverseByType(ranked: CatalogVehicle[], limit: number): CatalogVehicle[] {
+  const byTipo = new Map<CatalogVehicle["tipo"], CatalogVehicle[]>();
+  for (const v of ranked) {
+    if (!byTipo.has(v.tipo)) byTipo.set(v.tipo, []);
+    byTipo.get(v.tipo)!.push(v);
+  }
+  const groupsSmallestFirst = [...byTipo.values()].sort((a, b) => a.length - b.length);
+
+  const result: CatalogVehicle[] = [];
+  for (const group of groupsSmallestFirst) {
+    for (const v of group) {
+      if (result.length >= limit) break;
+      result.push(v);
+    }
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: string): string {
   const matches = filterVehicles(vehicles, query);
   if (matches.length > 0) {
     return formatVehicleList(matches);
   }
-  const fallback = vehicles.slice(0, 5);
+  const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
+  const ranked = [...vehicles].sort((a, b) => wordOverlapCount(b, words) - wordOverlapCount(a, words));
+  const fallback =
+    ranked.length > 0 && wordOverlapCount(ranked[0], words) > 0 ? ranked.slice(0, 5) : diverseByType(ranked, 5);
   return `Nenhum veículo encontrado para "${query}". Aqui estão outras opções disponíveis no catálogo — se alguma for parecida com o que o cliente quer, sugira antes de dizer que não há disponibilidade:\n${formatVehicleList(fallback)}`;
 }
 
+interface CatalogVehicleRow {
+  id: number;
+  modelo: string;
+  marca: string;
+  ano: number;
+  preco: number;
+  quilometragem: number | null;
+  cor: string | null;
+  descricao: string | null;
+  tipo?: CatalogVehicle["tipo"];
+  status?: string;
+  image_url: string | null;
+  vehicle_images?: { url: string }[] | null;
+}
+
 export async function fetchCatalog(): Promise<CatalogVehicle[]> {
-  const input = encodeURIComponent(JSON.stringify({ "0": { json: { search: "" } } }));
-  const response = await fetch(`${CATALOG_BASE_URL}/api/trpc/vehicles.list?batch=1&input=${input}`);
+  const response = await fetch(`${CATALOG_SUPABASE_URL}/rest/v1/vehicles?select=*,vehicle_images(*)&status=eq.available&order=created_at.desc`, {
+    headers: {
+      apikey: CATALOG_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${CATALOG_SUPABASE_ANON_KEY}`,
+    },
+  });
   if (!response.ok) {
     throw new Error(`Catalog API error ${response.status}`);
   }
-  const data = await response.json();
-  const vehicles = data[0].result.data.json as CatalogVehicle[];
-  return vehicles.filter((v) => v.status === undefined || v.status === "available");
+  const rows = (await response.json()) as CatalogVehicleRow[];
+  return rows
+    .map((row) => ({
+      id: row.id,
+      modelo: row.modelo,
+      marca: row.marca,
+      ano: row.ano,
+      preco: row.preco,
+      imageUrl: row.image_url,
+      extraImages: row.vehicle_images,
+      tipo: row.tipo,
+      cor: row.cor,
+      quilometragem: row.quilometragem,
+      descricao: row.descricao,
+      status: row.status,
+    }))
+    .filter((v) => v.status === undefined || v.status === "available");
 }
 
 export function createSearchCatalogTool(): Tool {

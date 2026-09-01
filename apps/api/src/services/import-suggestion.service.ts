@@ -1,8 +1,8 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { SupabaseClient } from "@aula-agente/database";
-import { getAgentById } from "@aula-agente/database";
-import { createModel, resolveApiKey } from "@aula-agente/agent-runtime";
+import { getAgentById, recordAiUsageEvent } from "@aula-agente/database";
+import { createModel, resolveApiKey, extractTokenUsage } from "@aula-agente/agent-runtime";
 import type { AgentConfigSections, AgentIdentity, AgentPersonality, AgentRules, AgentKnowledgeConfig, AgentPlaybook } from "@aula-agente/shared";
 
 // The shared importSuggestionSchema (packages/shared) reuses the PATCH
@@ -116,12 +116,12 @@ export async function suggestConfigFromSystemPrompt(db: SupabaseClient, agentId:
   const apiKey = await resolveApiKey(agent.organization_id, agent.provider);
   const model = createModel(agent.provider, agent.model, apiKey);
 
-  const [identity, personality, rules, knowledge, playbook] = await Promise.all([
+  const [identityResult, personalityResult, rulesResult, knowledgeResult, playbookResult] = await Promise.all([
     generateObject({
       model,
       schema: identityGenSchema,
       prompt: buildPrompt(agent.name, agent.system_prompt, "Extraia: identity (nome, função, missão/instruções principais)."),
-    }).then((r) => r.object as AgentIdentity),
+    }),
     generateObject({
       model,
       schema: personalityGenSchema,
@@ -130,7 +130,7 @@ export async function suggestConfigFromSystemPrompt(db: SupabaseClient, agentId:
         agent.system_prompt,
         "Extraia: personality (tom de voz, tamanho das respostas, regras de emoji, máximo de perguntas por mensagem, postura comercial, gírias proibidas, regras de proatividade)."
       ),
-    }).then((r) => r.object as AgentPersonality),
+    }),
     generateObject({
       model,
       schema: rulesGenSchema,
@@ -139,12 +139,12 @@ export async function suggestConfigFromSystemPrompt(db: SupabaseClient, agentId:
         agent.system_prompt,
         "Extraia: rules (gatilhos de transferência para humano, promessas proibidas, regras por tipo de atendimento, política de preço e desconto, e objeções comuns já descritas no texto)."
       ),
-    }).then((r) => r.object as AgentRules),
+    }),
     generateObject({
       model,
       schema: knowledgeGenSchema,
       prompt: buildPrompt(agent.name, agent.system_prompt, "Extraia: knowledge (notas de preço e links úteis mencionados no texto — não invente links)."),
-    }).then((r) => r.object as AgentKnowledgeConfig),
+    }),
     generateObject({
       model,
       schema: playbookGenSchema,
@@ -153,8 +153,36 @@ export async function suggestConfigFromSystemPrompt(db: SupabaseClient, agentId:
         agent.system_prompt,
         "Extraia: playbook (o fluxo processual de atendimento — identificação, qualificação, direcionamento, próximo passo — se descrito)."
       ),
-    }).then((r) => r.object as AgentPlaybook),
+    }),
   ]);
 
-  return { identity, personality, rules, knowledge, playbook };
+  // Best-effort: five section calls' worth of cost, summed into one event,
+  // logged for the cost dashboard — a failure here must never break the
+  // suggestion the user is waiting on.
+  const totalUsage = [identityResult, personalityResult, rulesResult, knowledgeResult, playbookResult]
+    .map((r) => extractTokenUsage(r.usage))
+    .reduce((sum, u) => ({
+      inputTokens: sum.inputTokens + u.inputTokens,
+      outputTokens: sum.outputTokens + u.outputTokens,
+      cacheReadTokens: sum.cacheReadTokens + u.cacheReadTokens,
+      cacheWriteTokens: sum.cacheWriteTokens + u.cacheWriteTokens,
+    }));
+  recordAiUsageEvent(db, {
+    organizationId: agent.organization_id,
+    agentId: agent.id,
+    source: "import_suggestion",
+    model: agent.model,
+    inputTokens: totalUsage.inputTokens,
+    outputTokens: totalUsage.outputTokens,
+    cacheReadTokens: totalUsage.cacheReadTokens,
+    cacheWriteTokens: totalUsage.cacheWriteTokens,
+  }).catch((err) => console.error("[import-suggestion] failed to record ai_usage_event", err));
+
+  return {
+    identity: identityResult.object as AgentIdentity,
+    personality: personalityResult.object as AgentPersonality,
+    rules: rulesResult.object as AgentRules,
+    knowledge: knowledgeResult.object as AgentKnowledgeConfig,
+    playbook: playbookResult.object as AgentPlaybook,
+  };
 }

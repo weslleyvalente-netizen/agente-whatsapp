@@ -15,10 +15,32 @@ import { syncContactToCrm } from "../../integrations/crm-sync.js";
 // conversation (verified live against a real stuck conversation).
 const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
 
-export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null; durationSeconds?: number } {
-  const message = data.message as Record<string, unknown> | undefined;
-  const messageType = data.messageType as string;
+// Click-to-WhatsApp ads (Meta/Instagram) attach the ad's title and body as
+// data.contextInfo.externalAdReply — a sibling of data.message, not nested
+// inside it. WhatsApp's own pre-filled greeting for the customer ("Oi! Vim
+// do anúncio do Libera Cred!") lives here too, but the text the customer
+// actually sends is often a generic fallback like "Olá! Posso ter mais
+// informações sobre isso?" — "isso" meaning nothing without this context.
+// Verified against a real webhook delivery via Evolution's own
+// /chat/findMessages endpoint. Without this, the agent has no way to know
+// which product the customer is even asking about.
+function extractAdContextPrefix(data: Record<string, unknown>): string {
+  const contextInfo = data.contextInfo as Record<string, unknown> | undefined;
+  const externalAdReply = contextInfo?.externalAdReply as Record<string, unknown> | undefined;
+  if (!externalAdReply) return "";
 
+  const title = externalAdReply.title as string | undefined;
+  const body = externalAdReply.body as string | undefined;
+  if (!title && !body) return "";
+
+  const details = [title, body].filter(Boolean).join(" — ");
+  return `[Cliente veio de um anúncio: ${details}]\n`;
+}
+
+function extractByType(
+  message: Record<string, unknown> | undefined,
+  messageType: string
+): { content: string; mediaType: string | null; durationSeconds?: number } {
   if (!message) return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
 
   switch (messageType) {
@@ -56,6 +78,15 @@ export function extractMessageContent(data: Record<string, unknown>): { content:
     default:
       return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
   }
+}
+
+export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null; durationSeconds?: number } {
+  const message = data.message as Record<string, unknown> | undefined;
+  const messageType = data.messageType as string;
+
+  const extracted = extractByType(message, messageType);
+  const adPrefix = extractAdContextPrefix(data);
+  return adPrefix ? { ...extracted, content: `${adPrefix}${extracted.content}` } : extracted;
 }
 
 export default async function evolutionWebhookRoutes(app: FastifyInstance) {

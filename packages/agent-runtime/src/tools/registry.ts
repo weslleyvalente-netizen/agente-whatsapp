@@ -7,6 +7,7 @@ import { createSearchFaqTool } from "./search-faq.js";
 import { createSearchCatalogTool } from "./search-catalog.js";
 import { createSendVehiclePhotoTool } from "./send-vehicle-photo.js";
 import { createCreateTaskTool } from "./create-task.js";
+import { createUpdateConversationQualificationTool } from "./update-conversation-qualification.js";
 
 interface RegistryParams {
   organizationId: string;
@@ -33,6 +34,20 @@ function createMockCreateTaskTool() {
     }),
     execute: async ({ description, due_date }) => {
       return `[SIMULADO] Tarefa seria criada: "${description}" para ${due_date}.`;
+    },
+  });
+}
+
+function createMockUpdateConversationQualificationTool() {
+  return tool({
+    description:
+      "Simula a atualização de dados de qualificação comercial. Estamos no Playground de testes — nada é gravado de verdade.",
+    inputSchema: z.object({
+      attendance_type: z.enum(["financing", "consortium", "cash", "workshop"]).optional(),
+      summary: z.string().optional(),
+    }).passthrough(),
+    execute: async () => {
+      return "[SIMULADO] Dados de qualificação seriam atualizados agora.";
     },
   });
 }
@@ -71,6 +86,12 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
     tools.createTask = sandbox
       ? createMockCreateTaskTool()
       : createCreateTaskTool({ contactId, conversationId, organizationId });
+  }
+
+  if (toolsConfig.update_qualification) {
+    tools.updateQualification = sandbox
+      ? createMockUpdateConversationQualificationTool()
+      : createUpdateConversationQualificationTool({ contactId, conversationId, organizationId });
   }
 
   return markLastToolCacheable(tools);

@@ -9,7 +9,7 @@ import { RefreshCw } from "lucide-react";
 interface InstanceStatusProps {
   instanceId: string;
   initialStatus: string;
-  onStatusChange: (status: string) => void;
+  onStatusChange: (status: string, phoneNumber: string | null) => void;
 }
 
 export function InstanceStatus({ instanceId, initialStatus, onStatusChange }: InstanceStatusProps) {
@@ -21,7 +21,7 @@ export function InstanceStatus({ instanceId, initialStatus, onStatusChange }: In
     try {
       const data = await apiFetch(`/instances/${instanceId}/status`);
       setStatus(data.status);
-      onStatusChange(data.status);
+      onStatusChange(data.status, data.phone_number ?? null);
     } catch {
       // ignore
     }

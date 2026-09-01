@@ -19,6 +19,7 @@ const TOOL_ROWS: ToolRow[] = [
   { key: "search_faq", title: "Busca de FAQs", description: "Permite ao agente consultar perguntas frequentes" },
   { key: "send_catalog_photo", title: "Catálogo de Veículos", description: "Permite ao agente buscar veículos e enviar fotos pelo WhatsApp" },
   { key: "create_task", title: "Criar tarefas de follow-up", description: "Permite ao agente criar tarefas de acompanhamento comercial em Tarefas" },
+  { key: "update_qualification", title: "Atualizar dados de qualificação", description: "Permite ao agente registrar automaticamente produto de interesse, valores, CPF e outros dados comerciais durante a conversa" },
 ];
 
 interface FerramentasSectionProps {
@@ -50,7 +51,7 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
                 <p className="text-sm text-muted-foreground">{row.description}</p>
               </div>
               <Switch
-                checked={toolsConfig[row.key]}
+                checked={toolsConfig[row.key] ?? false}
                 onCheckedChange={(v) => {
                   const next = { ...toolsConfig, [row.key]: v };
                   setToolsConfig(next);

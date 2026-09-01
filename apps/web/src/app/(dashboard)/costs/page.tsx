@@ -22,6 +22,14 @@ interface ModelCost {
   priced: boolean;
 }
 
+interface SourceCost {
+  source: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  messageCount: number;
+}
+
 interface CostSummary {
   totalCostUsd: number;
   todayCostUsd: number;
@@ -33,7 +41,16 @@ interface CostSummary {
   legacyMessageCount: number;
   dailyCosts: DailyCost[];
   byModel: ModelCost[];
+  bySource: SourceCost[];
 }
+
+const SOURCE_LABELS: Record<string, string> = {
+  conversation: "Conversas com clientes",
+  playground: "Playground",
+  trainer: "Trainer",
+  image_description: "Descrição de imagens",
+  import_suggestion: "Importar configuração",
+};
 
 function formatUsd(value: number) {
   return `$${value.toFixed(4)}`;
@@ -136,6 +153,40 @@ export default function CostsPage() {
           )}
         </CardContent>
       </Card>
+
+      {summary.bySource.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Por origem</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Origem</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Chamadas</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Tokens (in/out)</th>
+                    <th className="label-eyebrow py-2 pr-4 font-normal">Custo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.bySource.map((s) => (
+                    <tr key={s.source} className="border-b border-border last:border-0">
+                      <td className="py-2 pr-4">{SOURCE_LABELS[s.source] ?? s.source}</td>
+                      <td className="tabular-data py-2 pr-4">{s.messageCount}</td>
+                      <td className="tabular-data py-2 pr-4">
+                        {s.inputTokens.toLocaleString("pt-BR")} / {s.outputTokens.toLocaleString("pt-BR")}
+                      </td>
+                      <td className="tabular-data py-2 pr-4 text-primary">{formatUsd(s.costUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {summary.byModel.length > 0 && (
         <Card>

@@ -1,5 +1,5 @@
 import { generateText } from "ai";
-import { createModel } from "@aula-agente/agent-runtime";
+import { createModel, extractTokenUsage, type TokenUsage } from "@aula-agente/agent-runtime";
 import type { LLMProvider } from "@aula-agente/shared";
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
@@ -50,7 +50,9 @@ export function buildImageDescriptionPrompt(caption?: string): string {
   return `${base}\n\nA pessoa que mandou a imagem escreveu junto: "${caption}"`;
 }
 
-export type ImageDescriptionResult = { ok: true; text: string } | { ok: false; reason: string };
+export type ImageDescriptionResult =
+  | { ok: true; text: string; usage: TokenUsage }
+  | { ok: false; reason: string; usage?: TokenUsage };
 
 export async function describeImageMessage(params: {
   instanceName: string;
@@ -84,15 +86,14 @@ export async function describeImageMessage(params: {
       abortSignal: AbortSignal.timeout(60_000),
     });
 
-    console.log(
-      `[image-description] inputTokens=${result.usage?.inputTokens || 0} outputTokens=${result.usage?.outputTokens || 0}`
-    );
+    const usage = extractTokenUsage(result.usage);
+    console.log(`[image-description] inputTokens=${usage.inputTokens} outputTokens=${usage.outputTokens}`);
 
     if (!result.text.trim()) {
-      return { ok: false, reason: "empty_description" };
+      return { ok: false, reason: "empty_description", usage };
     }
 
-    return { ok: true, text: result.text.trim() };
+    return { ok: true, text: result.text.trim(), usage };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : "unknown_error" };
   }

@@ -29,6 +29,16 @@ export const evolutionWebhookPayloadSchema = z.object({
         degreesLongitude: z.number().optional(),
       }).optional(),
     }).passthrough().optional(),
+    // Click-to-WhatsApp ads (Meta/Instagram) attach the ad's title/body here
+    // — a sibling of `message`, not nested inside it. See extractAdContextPrefix
+    // in apps/api/src/routes/webhooks/evolution.ts for how this gets surfaced
+    // to the agent.
+    contextInfo: z.object({
+      externalAdReply: z.object({
+        title: z.string().optional(),
+        body: z.string().optional(),
+      }).passthrough().optional(),
+    }).passthrough().optional(),
     messageType: z.string(),
     pushName: z.string().nullable().optional(),
     messageTimestamp: z.number().optional(),
