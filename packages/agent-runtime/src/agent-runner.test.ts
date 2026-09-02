@@ -68,10 +68,10 @@ describe("buildFinalTurnMessage", () => {
     });
   });
 
-  it("wraps a system-role trigger as a system turn, not a user turn", () => {
+  it("wraps a system-role trigger (the auto-followup nudge) as a user turn too — a trailing ModelMessage system role isn't portable across providers (breaks Google)", () => {
     expect(
       buildFinalTurnMessage({ role: "system", content: "cliente sem resposta há 1h" })
-    ).toEqual({ role: "system", content: "cliente sem resposta há 1h" });
+    ).toEqual({ role: "user", content: "cliente sem resposta há 1h" });
   });
 });
 

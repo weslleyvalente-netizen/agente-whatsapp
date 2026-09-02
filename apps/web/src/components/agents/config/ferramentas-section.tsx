@@ -37,6 +37,30 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
     onPatch({ tools_config: nextToolsConfig });
   };
 
+  // The two hour inputs below only touch local state on every keystroke
+  // (setLocalFollowup) — matching this codebase's convention for numeric
+  // fields elsewhere in agent config (see geral-section.tsx's max_tokens
+  // input) — and only call patchFollowup, which actually saves, on blur.
+  // Saving on every keystroke sent overlapping PATCH requests whose
+  // responses could race and revert each other's value, and
+  // Number(e.target.value) on a cleared or non-numeric field produced NaN
+  // sent straight to the API.
+  const setLocalFollowup = (next: FollowupAutomaticoConfig) => {
+    setToolsConfig({ ...toolsConfig, followup_automatico: next });
+  };
+
+  const commitFollowupHours = () => {
+    patchFollowup({
+      ...followup,
+      primeiro_followup_horas: Number.isFinite(followup.primeiro_followup_horas) && followup.primeiro_followup_horas >= 0.5
+        ? followup.primeiro_followup_horas
+        : DEFAULT_FOLLOWUP_AUTOMATICO.primeiro_followup_horas,
+      segundo_followup_horas: Number.isFinite(followup.segundo_followup_horas) && followup.segundo_followup_horas >= 0.5
+        ? followup.segundo_followup_horas
+        : DEFAULT_FOLLOWUP_AUTOMATICO.segundo_followup_horas,
+    });
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -89,11 +113,15 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
                 type="number"
                 min={0.5}
                 step={0.5}
-                value={followup.primeiro_followup_horas}
+                value={Number.isNaN(followup.primeiro_followup_horas) ? "" : followup.primeiro_followup_horas}
                 disabled={!followup.ativo}
                 onChange={(e) =>
-                  patchFollowup({ ...followup, primeiro_followup_horas: Number(e.target.value) })
+                  setLocalFollowup({
+                    ...followup,
+                    primeiro_followup_horas: e.target.value === "" ? NaN : Number(e.target.value),
+                  })
                 }
+                onBlur={commitFollowupHours}
               />
             </div>
             <div className="space-y-2">
@@ -102,11 +130,15 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
                 type="number"
                 min={0.5}
                 step={0.5}
-                value={followup.segundo_followup_horas}
+                value={Number.isNaN(followup.segundo_followup_horas) ? "" : followup.segundo_followup_horas}
                 disabled={!followup.ativo}
                 onChange={(e) =>
-                  patchFollowup({ ...followup, segundo_followup_horas: Number(e.target.value) })
+                  setLocalFollowup({
+                    ...followup,
+                    segundo_followup_horas: e.target.value === "" ? NaN : Number(e.target.value),
+                  })
                 }
+                onBlur={commitFollowupHours}
               />
             </div>
           </div>

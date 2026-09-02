@@ -164,16 +164,22 @@ export function formatHistoryForLLM(messages: Message[]) {
     }));
 }
 
-// The trigger for a normal reply is always a real customer message — always
-// a "user" turn. The stale-conversation follow-up worker (apps/worker) has
-// no real customer message to react to; it synthesizes one with
-// role: "system" so the model sees an operational instruction ("the
-// customer went quiet, decide whether to nudge them") instead of something
-// that looks like the customer speaking.
+// Every final turn is sent as "user", including the stale-conversation
+// follow-up worker's synthetic nudge (currentMessage.role === "system") —
+// NOT as an actual ModelMessage system role. An earlier version special-cased
+// role: "system" into a trailing {role: "system", ...} entry inside
+// `messages`, reasoning the model should see an operational instruction
+// rather than something that looks like the customer speaking. That broke
+// any Google/Gemini-provider agent: @ai-sdk/google's message conversion
+// stops allowing system messages once a user turn has been seen and throws
+// UnsupportedFunctionalityError for a trailing one, silently killing every
+// auto-followup send for those agents (swallowed by the worker's per-
+// conversation try/catch). "Not the customer speaking" is instead conveyed
+// by content alone — buildFollowupNudgeInstruction (apps/worker/src/lib/
+// followup-nudge.ts) already writes the nudge in the third person as an
+// instruction to Helena ("O cliente não respondeu..."), never as if the
+// customer were typing it.
 export function buildFinalTurnMessage(currentMessage: Pick<Message, "role" | "content">): ModelMessage {
-  if (currentMessage.role === "system") {
-    return { role: "system", content: currentMessage.content };
-  }
   return { role: "user", content: currentMessage.content };
 }
 

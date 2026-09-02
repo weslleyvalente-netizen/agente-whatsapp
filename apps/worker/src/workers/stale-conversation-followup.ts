@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import {
   QUEUE_NAMES,
   DEFAULT_FOLLOWUP_AUTOMATICO,
+  DEFAULT_TASK_RULES,
   decideFollowupStage,
   toISODateInTimeZone,
 } from "@aula-agente/shared";
@@ -16,13 +17,16 @@ import {
   getRecentMessages,
   getLastContactMessage,
   getOpenTaskByConversation,
+  getOpenTaskByContactAndType,
   getLatestTaskByConversationAndType,
   getTaskEvents,
   hasOpportunitySignalTask,
   createTaskWithDedup,
   updateTask,
+  updateConversation,
   addTaskEvent,
   createMessage,
+  OPEN_TASK_STATUSES,
 } from "@aula-agente/database";
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -30,10 +34,78 @@ import { buildFollowupNudgeMessage } from "../lib/followup-nudge.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
-// Mirrors the private OPEN_TASK_STATUSES constant in
-// packages/database/src/queries/tasks.ts (not exported, so duplicated here
-// as a literal array rather than imported).
-const OPEN_TASK_STATUSES = ["pending", "in_progress", "rescheduled"];
+// The worker's original behavior (before followup_automatico existed): no
+// AI messaging, just a customer_unresponsive task once the org's own
+// stale_conversation_hours elapses. Runs for any agent that hasn't opted
+// into the newer stage-based AI auto-followup below. Returns how many
+// tasks it created, for the tick's summary log.
+async function runBaselineTaskCheck(
+  db: ReturnType<typeof getAdminClient>,
+  org: { id: string; settings: unknown },
+  agentId: string
+): Promise<number> {
+  const staleHours =
+    (org.settings as { task_rules?: { stale_conversation_hours?: number } })?.task_rules
+      ?.stale_conversation_hours ?? DEFAULT_TASK_RULES.stale_conversation_hours;
+  const cutoffISO = new Date(Date.now() - staleHours * 60 * 60 * 1000).toISOString();
+
+  const staleConversations = await getStaleWaitingConversations(db, org.id, agentId, cutoffISO);
+  let created = 0;
+
+  for (const conversation of staleConversations) {
+    try {
+      const openTask = await getOpenTaskByConversation(db, org.id, conversation.id);
+      if (openTask) continue;
+
+      // Don't re-fire for the same stretch of silence: only create another
+      // customer_unresponsive task if the customer has spoken since the last one.
+      const priorAutoTask = await getLatestTaskByConversationAndType(
+        db,
+        org.id,
+        conversation.id,
+        "customer_unresponsive"
+      );
+      if (priorAutoTask && conversation.last_message_at <= priorAutoTask.created_at) continue;
+
+      const hasSignal = await hasOpportunitySignalTask(db, org.id, conversation.contact_id);
+      if (!hasSignal) continue;
+
+      // createTaskWithDedup keys off (contact_id, type), not conversation_id
+      // — if this same contact has an older open customer_unresponsive task
+      // tied to a DIFFERENT conversation, it would silently rewrite that
+      // other task's description/reason to describe *this* conversation's
+      // staleness instead. Skip rather than corrupt someone else's task.
+      const contactOpenTask = await getOpenTaskByContactAndType(
+        db,
+        org.id,
+        conversation.contact_id,
+        "customer_unresponsive"
+      );
+      if (contactOpenTask && contactOpenTask.conversation_id !== conversation.id) continue;
+
+      await createTaskWithDedup(db, {
+        organization_id: org.id,
+        contact_id: conversation.contact_id,
+        conversation_id: conversation.id,
+        type: "customer_unresponsive",
+        description: `Cliente parou de responder há mais de ${staleHours}h, com sinal de oportunidade em aberto.`,
+        reason: `Sem resposta há mais de ${staleHours}h`,
+        priority: "high",
+        due_date: toISODateInTimeZone(new Date()),
+        created_by_type: "ai",
+        created_by_id: null,
+      });
+      created++;
+    } catch (err) {
+      console.error(
+        `Stale-conversation-followup: error in baseline task check for conversation ${conversation.id}:`,
+        err
+      );
+    }
+  }
+
+  return created;
+}
 
 export function startStaleConversationFollowupWorker() {
   const worker = new Worker<StaleConversationFollowupJobData>(
@@ -42,6 +114,7 @@ export function startStaleConversationFollowupWorker() {
       const db = getAdminClient();
       const organizations = await getAllOrganizations(db);
       let sent = 0;
+      let created = 0;
 
       for (const org of organizations) {
         const agents = await getAgentsByOrganization(db, org.id);
@@ -50,7 +123,18 @@ export function startStaleConversationFollowupWorker() {
           if (!agent.is_active) continue;
 
           const followupConfig = agent.tools_config.followup_automatico ?? DEFAULT_FOLLOWUP_AUTOMATICO;
-          if (!followupConfig.ativo) continue;
+
+          // AI auto-messaging is off for this agent (the default — every
+          // existing org until it explicitly opts in). Fall back to this
+          // worker's pre-followup-automático behavior: just alert staff with
+          // a customer_unresponsive task once the conversation goes stale,
+          // per the org's own stale_conversation_hours. Without this branch,
+          // every org that never opted into AI auto-messaging would silently
+          // stop getting these staff alerts entirely on deploy.
+          if (!followupConfig.ativo) {
+            created += await runBaselineTaskCheck(db, org, agent.id);
+            continue;
+          }
 
           const cutoffISO = new Date(
             Date.now() - followupConfig.primeiro_followup_horas * 60 * 60 * 1000
@@ -199,7 +283,36 @@ export function startStaleConversationFollowupWorker() {
                     organizationId: org.id,
                   });
 
+                  // Every other send path in this codebase pairs createMessage
+                  // with a last_message_at bump (process-message.ts,
+                  // message.service.ts) — without it, this conversation never
+                  // moves in any inbox view sorted by last_message_at and stays
+                  // permanently inside getStaleWaitingConversations' cutoff
+                  // filter, getting re-scanned every 15-minute tick forever.
+                  await updateConversation(db, conversation.id, {
+                    last_message_at: new Date().toISOString(),
+                  });
+
                   sent++;
+                }
+
+                // createTaskWithDedup keys off (contact_id, type), not
+                // conversation_id — if this same contact has an older open
+                // customer_unresponsive task tied to a DIFFERENT conversation,
+                // proceeding here would silently rewrite that other task's
+                // description to describe *this* conversation instead. Skip
+                // rather than corrupt someone else's task; the automated
+                // message above was already sent (that decision is keyed by
+                // conversation, correctly), only the task bookkeeping is
+                // skipped.
+                const contactOpenTask = await getOpenTaskByContactAndType(
+                  db,
+                  org.id,
+                  conversation.contact_id,
+                  "customer_unresponsive"
+                );
+                if (contactOpenTask && contactOpenTask.conversation_id !== conversation.id) {
+                  continue;
                 }
 
                 const roundedHours = Math.round(hoursSilent);
@@ -249,6 +362,9 @@ export function startStaleConversationFollowupWorker() {
 
       if (sent > 0) {
         console.log(`Sent ${sent} automatic followup message(s)`);
+      }
+      if (created > 0) {
+        console.log(`Created ${created} customer_unresponsive task(s) (baseline, no auto-followup)`);
       }
     },
     {

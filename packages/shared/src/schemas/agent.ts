@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { DEFAULT_FOLLOWUP_AUTOMATICO } from "../constants.js";
 
 export const followupAutomaticoConfigSchema = z.object({
-  ativo: z.boolean().default(false),
-  primeiro_followup_horas: z.number().min(0.5).max(168).default(1),
-  segundo_followup_horas: z.number().min(0.5).max(168).default(23),
+  ativo: z.boolean().default(DEFAULT_FOLLOWUP_AUTOMATICO.ativo),
+  primeiro_followup_horas: z.number().min(0.5).max(168).default(DEFAULT_FOLLOWUP_AUTOMATICO.primeiro_followup_horas),
+  segundo_followup_horas: z.number().min(0.5).max(168).default(DEFAULT_FOLLOWUP_AUTOMATICO.segundo_followup_horas),
 });
 
 export const toolsConfigSchema = z.object({
@@ -12,11 +13,11 @@ export const toolsConfigSchema = z.object({
   send_catalog_photo: z.boolean().default(false),
   create_task: z.boolean().default(false),
   update_qualification: z.boolean().default(false),
-  followup_automatico: followupAutomaticoConfigSchema.default({
-    ativo: false,
-    primeiro_followup_horas: 1,
-    segundo_followup_horas: 23,
-  }),
+  // Reuses the same literal as followupAutomaticoConfigSchema's own
+  // per-field defaults above (both sourced from DEFAULT_FOLLOWUP_AUTOMATICO)
+  // so a future change to the windows can't update one and silently miss
+  // the other.
+  followup_automatico: followupAutomaticoConfigSchema.default(DEFAULT_FOLLOWUP_AUTOMATICO),
 });
 
 export const createAgentSchema = z.object({

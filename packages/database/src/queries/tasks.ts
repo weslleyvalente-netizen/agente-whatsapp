@@ -3,7 +3,10 @@ import type { Task, TaskEvent, TaskType, TaskCreatedByType, TaskAssigneeType } f
 import { TASK_TYPE_LABELS, OPPORTUNITY_SIGNAL_TASK_TYPES, resolveTaskDedupAction } from "@aula-agente/shared";
 import { getQualificationByConversationId } from "./conversation-qualification.js";
 
-const OPEN_TASK_STATUSES = ["pending", "in_progress", "rescheduled"];
+// Exported so callers that need to reason about "is this task still open"
+// outside a query (e.g. apps/worker/src/workers/stale-conversation-followup.ts)
+// can import the real list instead of keeping their own copy in sync by hand.
+export const OPEN_TASK_STATUSES = ["pending", "in_progress", "rescheduled"];
 
 export async function createTask(
   client: SupabaseClient,
