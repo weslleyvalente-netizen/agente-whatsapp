@@ -73,6 +73,10 @@ export function startProcessMessageWorker() {
           console.log(`Conversation ${conversationId} is in human takeover, skipping`);
           return;
         }
+        if (conversation.wa_contacts?.ai_disabled) {
+          console.log(`Conversation ${conversationId} contact has AI permanently disabled, skipping`);
+          return;
+        }
 
         // Load instance now — needed both by agent tools (to send a photo
         // mid-turn) and further down to send the text reply.

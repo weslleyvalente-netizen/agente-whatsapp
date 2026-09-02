@@ -207,6 +207,13 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         return reply.status(200).send({ ok: true, skipped: "human_takeover" });
       }
 
+      // Contact has AI permanently disabled ("Desativar IA permanentemente"
+      // in the inbox) — never enqueue for LLM processing, regardless of
+      // takeover state.
+      if (contact.ai_disabled) {
+        return reply.status(200).send({ ok: true, skipped: "ai_disabled" });
+      }
+
       // Enqueue for LLM processing
       await enqueueProcessMessage({
         conversationId: conversation.id,
