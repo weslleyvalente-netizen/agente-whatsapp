@@ -219,6 +219,14 @@ export function startStaleConversationFollowupWorker() {
                 const fullConversation = await getConversationById(db, conversation.id);
                 if (fullConversation.is_human_takeover) continue;
 
+                // "Desativar IA permanentemente" (wa_contacts.ai_disabled) is
+                // meant to stop every automated message to this contact, not
+                // just normal replies — process-message.ts and evolution.ts
+                // already gate on it, this worker never did. Without this,
+                // a contact staff explicitly disabled the AI for could still
+                // get an automatic re-engagement nudge from it.
+                if (fullConversation.wa_contacts?.ai_disabled) continue;
+
                 const latestMessages = await getRecentMessages(db, conversation.id, 1);
                 const latestMessage = latestMessages[0];
                 if (!latestMessage || latestMessage.role !== "agent") continue;
