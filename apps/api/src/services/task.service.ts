@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { updateTask, addTaskEvent } from "@aula-agente/database";
+import { updateTask, addTaskEvent, getOpenTaskByConversation } from "@aula-agente/database";
 import { TASK_TYPE_LABELS } from "@aula-agente/shared";
 import type { Task, TaskType, TaskPriority, TaskAssigneeType } from "@aula-agente/shared";
 
@@ -8,17 +8,41 @@ interface Actor {
   id: string | null;
 }
 
-export async function completeTask(db: SupabaseClient, taskId: string, actor: Actor): Promise<Task> {
+export async function completeTask(
+  db: SupabaseClient,
+  taskId: string,
+  actor: Actor,
+  note: string | null = null
+): Promise<Task> {
   const task = await updateTask(db, taskId, { status: "completed", completed_at: new Date().toISOString() });
   await addTaskEvent(db, {
     task_id: taskId,
     organization_id: task.organization_id,
     event_type: "completed",
-    note: null,
+    note,
     created_by_type: actor.type,
     created_by_id: actor.id,
   });
   return task;
+}
+
+// Fires when a human sends the first manual message in a conversation
+// (the takeover moment) — see messages/send.ts. Best-effort: the caller
+// swallows errors so a task lookup/write failure never blocks the message.
+export async function autoCompleteConversationTask(
+  db: SupabaseClient,
+  organizationId: string,
+  conversationId: string,
+  actorId: string
+): Promise<Task | null> {
+  const openTask = await getOpenTaskByConversation(db, organizationId, conversationId);
+  if (!openTask) return null;
+  return completeTask(
+    db,
+    openTask.id,
+    { type: "human", id: actorId },
+    "Concluída automaticamente — humano assumiu a conversa"
+  );
 }
 
 export async function cancelTask(

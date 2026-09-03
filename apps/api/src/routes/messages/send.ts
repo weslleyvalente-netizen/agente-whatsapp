@@ -4,6 +4,7 @@ import { getAdminClient, getConversationById, updateConversation } from "@aula-a
 import { getInstanceById } from "@aula-agente/database";
 import { authMiddleware, requireOrg } from "../../middleware/auth.js";
 import { saveMessage } from "../../services/message.service.js";
+import { autoCompleteConversationTask } from "../../services/task.service.js";
 import { enqueueSendMessage } from "../../lib/queue.js";
 
 export default async function messageSendRoutes(app: FastifyInstance) {
@@ -53,11 +54,25 @@ export default async function messageSendRoutes(app: FastifyInstance) {
       // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS). Leaving it frozen
       // at the first reply let the agent resume mid-conversation after 30
       // minutes even while a human was still actively replying.
+      const isFirstTakeover = !conversation.is_human_takeover;
+
       await updateConversation(db, conversation_id, {
         is_human_takeover: true,
         human_takeover_at: new Date().toISOString(),
-        ...(conversation.is_human_takeover ? {} : { assigned_to: request.user.id }),
+        ...(isFirstTakeover ? { assigned_to: request.user.id } : {}),
       });
+
+      // Best-effort: a human taking over means they're handling whatever
+      // this conversation's open task was tracking, so close it out. Only
+      // on the takeover itself, not every subsequent reply. Never blocks
+      // the message send.
+      if (isFirstTakeover) {
+        try {
+          await autoCompleteConversationTask(db, conversation.organization_id, conversation_id, request.user.id);
+        } catch (err) {
+          console.error(`Failed to auto-complete task for conversation ${conversation_id}:`, err);
+        }
+      }
 
       // Get instance for sending
       const instance = await getInstanceById(db, conversation.evolution_instance_id);
