@@ -62,6 +62,16 @@ export default function TasksPage() {
     fetchMembers();
   }, [fetchTasks, fetchMembers]);
 
+  useEffect(() => {
+    const interval = setInterval(fetchTasks, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchTasks]);
+
+  const handleTabChange = (nextTab: TaskBucket) => {
+    setTab(nextTab);
+    fetchTasks();
+  };
+
   const today = toISODateInTimeZone(new Date());
 
   const bucketed = useMemo(() => {
@@ -116,7 +126,7 @@ export default function TasksPage() {
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => handleTabChange(t.id)}
             className={cn(
               "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
               tab === t.id
