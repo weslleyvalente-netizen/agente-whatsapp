@@ -22,7 +22,6 @@ import {
   getTaskEvents,
   hasOpportunitySignalTask,
   createTaskWithDedup,
-  updateTask,
   updateConversation,
   addTaskEvent,
   createMessage,
@@ -33,6 +32,12 @@ import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js
 import { buildFollowupNudgeMessage } from "../lib/followup-nudge.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
+// A conversation silent for longer than this never enters the auto-followup
+// cycle — well clear of the 1h/23h stage windows, so it only excludes
+// conversations that were already stale before this tick (or this feature)
+// ever considered them.
+const MAX_STALENESS_HOURS = 72;
 
 // The worker's original behavior (before followup_automatico existed): no
 // AI messaging, just a customer_unresponsive task once the org's own
@@ -144,9 +149,6 @@ export function startStaleConversationFollowupWorker() {
 
           for (const conversation of staleConversations) {
             try {
-              const hasSignal = await hasOpportunitySignalTask(db, org.id, conversation.contact_id);
-              if (!hasSignal) continue;
-
               // Correction #1 (see plan's Global Constraints): only the real
               // last message tells us whether Helena is the one waiting.
               const lastMessages = await getRecentMessages(db, conversation.id, 1);
@@ -159,6 +161,13 @@ export function startStaleConversationFollowupWorker() {
               const lastContact = await getLastContactMessage(db, conversation.id);
               const anchorISO = lastContact?.created_at ?? conversation.created_at;
               const hoursSilent = (Date.now() - new Date(anchorISO).getTime()) / (1000 * 60 * 60);
+
+              // Don't reach back and surprise-message someone who's been
+              // silent for ages before this feature (or this conversation)
+              // ever considered them — only conversations that went quiet
+              // recently get auto-followed-up. Well clear of the 1h/23h
+              // cycle, so it never interrupts an in-flight stage 1 -> 2.
+              if (hoursSilent > MAX_STALENESS_HOURS) continue;
 
               const existingTask = await getLatestTaskByConversationAndType(
                 db,
@@ -189,10 +198,14 @@ export function startStaleConversationFollowupWorker() {
               // only before stage 1 has fired for THIS silence stretch (an old,
               // closed customer_unresponsive task from a previous stretch
               // shouldn't suppress this gate); stage 2 always continues the
-              // one stage 1 created for this stretch.
+              // one stage 1 created for this stretch. Exclude the conversation's
+              // own customer_unresponsive task (existingTask) from this check —
+              // it's this flow's own bookkeeping, not an unrelated task, and
+              // treating it as a blocker made every conversation permanently
+              // stop getting followups after its first tick.
               if (decision === "send_stage_1" && !stage1AlreadySent) {
                 const otherOpenTask = await getOpenTaskByConversation(db, org.id, conversation.id);
-                if (otherOpenTask) continue;
+                if (otherOpenTask && otherOpenTask.id !== existingTask?.id) continue;
               }
 
               // If a human already closed out the customer_unresponsive task
@@ -304,48 +317,54 @@ export function startStaleConversationFollowupWorker() {
                   sent++;
                 }
 
-                // createTaskWithDedup keys off (contact_id, type), not
-                // conversation_id — if this same contact has an older open
-                // customer_unresponsive task tied to a DIFFERENT conversation,
-                // proceeding here would silently rewrite that other task's
-                // description to describe *this* conversation instead. Skip
-                // rather than corrupt someone else's task; the automated
-                // message above was already sent (that decision is keyed by
-                // conversation, correctly), only the task bookkeeping is
-                // skipped.
-                const contactOpenTask = await getOpenTaskByContactAndType(
-                  db,
-                  org.id,
-                  conversation.contact_id,
-                  "customer_unresponsive"
-                );
-                if (contactOpenTask && contactOpenTask.conversation_id !== conversation.id) {
-                  continue;
-                }
+                let taskId: string;
 
-                const roundedHours = Math.round(hoursSilent);
-                const { task } = await createTaskWithDedup(db, {
-                  organization_id: org.id,
-                  contact_id: conversation.contact_id,
-                  conversation_id: conversation.id,
-                  type: "customer_unresponsive",
-                  description:
-                    stage === 1
-                      ? `Cliente parou de responder há mais de ${roundedHours}h — followup automático enviado.`
-                      : `Cliente não respondeu nem à 2ª tentativa automática de followup, após mais de ${roundedHours}h de silêncio.`,
-                  reason: `Sem resposta há mais de ${roundedHours}h`,
-                  priority: stage === 1 ? "high" : "urgent",
-                  due_date: toISODateInTimeZone(new Date()),
-                  created_by_type: "ai",
-                  created_by_id: null,
-                });
+                if (stage === 1) {
+                  // createTaskWithDedup keys off (contact_id, type), not
+                  // conversation_id — if this same contact has an older open
+                  // customer_unresponsive task tied to a DIFFERENT conversation,
+                  // proceeding here would silently rewrite that other task's
+                  // description to describe *this* conversation instead. Skip
+                  // rather than corrupt someone else's task; the automated
+                  // message above was already sent (that decision is keyed by
+                  // conversation, correctly), only the task bookkeeping is
+                  // skipped.
+                  const contactOpenTask = await getOpenTaskByContactAndType(
+                    db,
+                    org.id,
+                    conversation.contact_id,
+                    "customer_unresponsive"
+                  );
+                  if (contactOpenTask && contactOpenTask.conversation_id !== conversation.id) {
+                    continue;
+                  }
 
-                if (stage === 2) {
-                  await updateTask(db, task.id, { priority: "urgent" });
+                  const roundedHours = Math.round(hoursSilent);
+                  const { task } = await createTaskWithDedup(db, {
+                    organization_id: org.id,
+                    contact_id: conversation.contact_id,
+                    conversation_id: conversation.id,
+                    type: "customer_unresponsive",
+                    description: `Cliente parou de responder há mais de ${roundedHours}h — followup automático enviado.`,
+                    reason: `Sem resposta há mais de ${roundedHours}h`,
+                    priority: "high",
+                    due_date: toISODateInTimeZone(new Date()),
+                    created_by_type: "ai",
+                    created_by_id: null,
+                  });
+                  taskId = task.id;
+                } else {
+                  // Stage 2 firing means the customer stayed silent through
+                  // both nudges — likely a cold lead, not something to
+                  // escalate to staff. Leave the stage-1 task exactly as it
+                  // is (no urgent bump, no rewritten description); only log
+                  // the event below, which is what stops decideFollowupStage
+                  // from re-evaluating this conversation on every future tick.
+                  taskId = existingTask!.id;
                 }
 
                 await addTaskEvent(db, {
-                  task_id: task.id,
+                  task_id: taskId,
                   organization_id: org.id,
                   event_type: stage === 1 ? "auto_followup_stage_1" : "auto_followup_stage_2",
                   note: result.text.trim()
