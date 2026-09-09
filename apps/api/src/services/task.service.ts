@@ -27,13 +27,15 @@ export async function completeTask(
 }
 
 // Fires when a human sends the first manual message in a conversation
-// (the takeover moment) — see messages/send.ts. Best-effort: the caller
-// swallows errors so a task lookup/write failure never blocks the message.
+// (the takeover moment) — see messages/send.ts and webhooks/evolution.ts
+// (fromMe branch, where actorId is null: no dashboard session to attribute
+// it to). Best-effort: the caller swallows errors so a task lookup/write
+// failure never blocks the message.
 export async function autoCompleteConversationTask(
   db: SupabaseClient,
   organizationId: string,
   conversationId: string,
-  actorId: string
+  actorId: string | null
 ): Promise<Task | null> {
   const openTask = await getOpenTaskByConversation(db, organizationId, conversationId);
   if (!openTask) return null;

@@ -4,6 +4,7 @@ import { getAdminClient, getInstanceByInstanceId, updateConversation } from "@au
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
+import { autoCompleteConversationTask } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
@@ -169,6 +170,8 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           return reply.status(200).send({ ok: true, skipped: "duplicate" });
         }
 
+        const isFirstTakeover = !conversation.is_human_takeover;
+
         // Always refresh human_takeover_at, even if already in takeover —
         // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS) counts from this
         // timestamp, so leaving it frozen at the first reply let the agent
@@ -178,6 +181,18 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           is_human_takeover: true,
           human_takeover_at: new Date().toISOString(),
         });
+
+        // Same reasoning as messages/send.ts: a human replying (even
+        // directly from their phone) means they're handling whatever this
+        // conversation's open task was tracking. No dashboard user to
+        // attribute it to here, so actorId is null.
+        if (isFirstTakeover) {
+          try {
+            await autoCompleteConversationTask(getAdminClient(), organizationId, conversation.id, null);
+          } catch (err) {
+            request.log.error({ err, conversationId: conversation.id }, "Failed to auto-complete task on fromMe takeover");
+          }
+        }
 
         if (isNew) {
           await syncContactToCrm(contact);

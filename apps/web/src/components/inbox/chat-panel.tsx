@@ -101,18 +101,12 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
   };
 
   const handleTakeoverToggle = async () => {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
     const nextTakeover = !conversation?.is_human_takeover;
 
-    await supabase
-      .from("conversations")
-      .update({
-        is_human_takeover: nextTakeover,
-        human_takeover_at: nextTakeover ? new Date().toISOString() : null,
-        assigned_to: nextTakeover ? user?.id : null,
-      })
-      .eq("id", conversationId);
+    await apiFetch(`/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_human_takeover: nextTakeover }),
+    });
 
     fetchConversation();
   };
@@ -130,14 +124,10 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
       })
       .eq("id", conversation.wa_contacts.id);
 
-    await supabase
-      .from("conversations")
-      .update({
-        is_human_takeover: true,
-        human_takeover_at: new Date().toISOString(),
-        assigned_to: user?.id,
-      })
-      .eq("id", conversationId);
+    await apiFetch(`/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_human_takeover: true }),
+    });
 
     fetchConversation();
   };
