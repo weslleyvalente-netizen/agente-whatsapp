@@ -135,17 +135,24 @@ export async function getStaleWaitingConversations(
 }
 
 export async function getHumanTakeoverConversations(client: SupabaseClient, organizationId: string) {
+  // Marking a conversation resolved/closed is the explicit "I've handled
+  // this" signal — it should drop off the urgent list even if is_human_takeover
+  // or ai_disabled is still set (staff rarely undoes those after wrapping up).
+  const DONE_STATUSES = ["resolved", "closed"];
+
   const [takeoverResult, aiDisabledResult] = await Promise.all([
     client
       .from("conversations")
       .select("id, human_takeover_at, wa_contacts(name, phone)")
       .eq("organization_id", organizationId)
-      .eq("is_human_takeover", true),
+      .eq("is_human_takeover", true)
+      .not("status", "in", `(${DONE_STATUSES.join(",")})`),
     client
       .from("conversations")
       .select("id, human_takeover_at, wa_contacts!inner(name, phone, ai_disabled)")
       .eq("organization_id", organizationId)
-      .eq("wa_contacts.ai_disabled", true),
+      .eq("wa_contacts.ai_disabled", true)
+      .not("status", "in", `(${DONE_STATUSES.join(",")})`),
   ]);
   if (takeoverResult.error) throw takeoverResult.error;
   if (aiDisabledResult.error) throw aiDisabledResult.error;
