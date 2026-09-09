@@ -12,6 +12,7 @@ import {
   Settings,
   DollarSign,
   ListChecks,
+  ShoppingBag,
   PanelLeftClose,
   PanelLeft,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const navigation = [
   { name: "Início", href: "/", icon: Home },
   { name: "Conversas", href: "/inbox", icon: Inbox },
   { name: "Tarefas", href: "/tasks", icon: ListChecks },
+  { name: "Catálogo", href: "/catalog", icon: ShoppingBag },
   { name: "Agentes", href: "/agents", icon: Bot },
   { name: "Instancias", href: "/instances", icon: Radio },
   { name: "Custos", href: "/costs", icon: DollarSign },
