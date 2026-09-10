@@ -182,3 +182,41 @@ export async function upsertConversationQualification(
 
   return qualification;
 }
+
+export interface StalePricedConversation {
+  conversation_id: string;
+  contact_id: string;
+  sale_amount: number;
+  last_message_at: string;
+}
+
+// Priced negotiations (sale_amount set) with no message from either side
+// (customer or staff) since cutoffISO — the safety net for deals that went
+// cold after a human took over, which the AI's own stale-conversation
+// follow-up never sees (it only nudges when Helena herself sent the last
+// message). Excludes conversations already resolved/closed.
+export async function getStalePricedConversations(
+  client: SupabaseClient,
+  organizationId: string,
+  cutoffISO: string
+): Promise<StalePricedConversation[]> {
+  const { data, error } = await client
+    .from("conversation_qualifications")
+    .select("conversation_id, contact_id, sale_amount, conversations!inner(status, last_message_at)")
+    .eq("organization_id", organizationId)
+    .not("sale_amount", "is", null)
+    .lt("conversations.last_message_at", cutoffISO)
+    .in("conversations.status", ["waiting", "open"]);
+  if (error) throw error;
+  return (data as unknown as Array<{
+    conversation_id: string;
+    contact_id: string;
+    sale_amount: number;
+    conversations: { status: string; last_message_at: string };
+  }>).map((row) => ({
+    conversation_id: row.conversation_id,
+    contact_id: row.contact_id,
+    sale_amount: row.sale_amount,
+    last_message_at: row.conversations.last_message_at,
+  }));
+}

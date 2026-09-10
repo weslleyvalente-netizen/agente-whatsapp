@@ -13,6 +13,7 @@ import {
   getAllOrganizations,
   getAgentsByOrganization,
   getStaleWaitingConversations,
+  getStalePricedConversations,
   getConversationById,
   getRecentMessages,
   getLastContactMessage,
@@ -38,6 +39,63 @@ const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 // conversations that were already stale before this tick (or this feature)
 // ever considered them.
 const MAX_STALENESS_HOURS = 72;
+
+// A priced negotiation with no message from either side for this long gets
+// flagged regardless of who spoke last — the AI's own stale-conversation
+// follow-up above only nudges when Helena herself sent the last message, so
+// a negotiation that went cold right after a human took over (and then
+// stopped following up) would otherwise never surface anywhere.
+const STALLED_NEGOTIATION_DAYS = 3;
+
+// Once-per-stretch: creates a stalled_negotiation task for a priced deal
+// that's gone quiet, but only if one isn't already open for this
+// conversation — otherwise every 15-minute tick would re-fire on the same
+// stretch of silence. Returns how many tasks it created, for the tick's
+// summary log.
+async function runStalledNegotiationCheck(
+  db: ReturnType<typeof getAdminClient>,
+  org: { id: string }
+): Promise<number> {
+  const cutoffISO = new Date(Date.now() - STALLED_NEGOTIATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const stalePriced = await getStalePricedConversations(db, org.id, cutoffISO);
+  let created = 0;
+
+  for (const row of stalePriced) {
+    try {
+      const priorTask = await getLatestTaskByConversationAndType(
+        db,
+        org.id,
+        row.conversation_id,
+        "stalled_negotiation"
+      );
+      if (priorTask && OPEN_TASK_STATUSES.includes(priorTask.status)) continue;
+
+      const daysStale = Math.round((Date.now() - new Date(row.last_message_at).getTime()) / 86_400_000);
+      const formattedAmount = row.sale_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+
+      await createTaskWithDedup(db, {
+        organization_id: org.id,
+        contact_id: row.contact_id,
+        conversation_id: row.conversation_id,
+        type: "stalled_negotiation",
+        description: `Negociação de R$ ${formattedAmount} parada há ${daysStale} dias, sem mensagem de nenhum lado.`,
+        reason: `Sem atividade há ${daysStale} dias numa negociação já precificada.`,
+        priority: "urgent",
+        due_date: toISODateInTimeZone(new Date()),
+        created_by_type: "ai",
+        created_by_id: null,
+      });
+      created++;
+    } catch (err) {
+      console.error(
+        `Stale-conversation-followup: error in stalled-negotiation check for conversation ${row.conversation_id}:`,
+        err
+      );
+    }
+  }
+
+  return created;
+}
 
 // The worker's original behavior (before followup_automatico existed): no
 // AI messaging, just a customer_unresponsive task once the org's own
@@ -120,8 +178,11 @@ export function startStaleConversationFollowupWorker() {
       const organizations = await getAllOrganizations(db);
       let sent = 0;
       let created = 0;
+      let stalledFlagged = 0;
 
       for (const org of organizations) {
+        stalledFlagged += await runStalledNegotiationCheck(db, org);
+
         const agents = await getAgentsByOrganization(db, org.id);
 
         for (const agent of agents) {
@@ -392,6 +453,9 @@ export function startStaleConversationFollowupWorker() {
       }
       if (created > 0) {
         console.log(`Created ${created} customer_unresponsive task(s) (baseline, no auto-followup)`);
+      }
+      if (stalledFlagged > 0) {
+        console.log(`Flagged ${stalledFlagged} stalled_negotiation task(s) for priced deals gone quiet`);
       }
     },
     {
