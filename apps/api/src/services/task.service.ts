@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { updateTask, addTaskEvent, getOpenTaskByConversation } from "@aula-agente/database";
+import { updateTask, addTaskEvent, getOpenTasksByConversation } from "@aula-agente/database";
 import { TASK_TYPE_LABELS } from "@aula-agente/shared";
 import type { Task, TaskType, TaskPriority, TaskAssigneeType } from "@aula-agente/shared";
 
@@ -31,19 +31,27 @@ export async function completeTask(
 // (fromMe branch, where actorId is null: no dashboard session to attribute
 // it to). Best-effort: the caller swallows errors so a task lookup/write
 // failure never blocks the message.
+//
+// A conversation can have more than one open task at a time (different
+// task types created on different days) — the human taking over means
+// they're now handling all of them, not just the most recently created
+// one, so every open task gets completed.
 export async function autoCompleteConversationTask(
   db: SupabaseClient,
   organizationId: string,
   conversationId: string,
   actorId: string | null
-): Promise<Task | null> {
-  const openTask = await getOpenTaskByConversation(db, organizationId, conversationId);
-  if (!openTask) return null;
-  return completeTask(
-    db,
-    openTask.id,
-    { type: "human", id: actorId },
-    "Concluída automaticamente — humano assumiu a conversa"
+): Promise<Task[]> {
+  const openTasks = await getOpenTasksByConversation(db, organizationId, conversationId);
+  return Promise.all(
+    openTasks.map((task) =>
+      completeTask(
+        db,
+        task.id,
+        { type: "human", id: actorId },
+        "Concluída automaticamente — humano assumiu a conversa"
+      )
+    )
   );
 }
 

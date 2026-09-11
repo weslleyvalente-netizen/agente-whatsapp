@@ -67,6 +67,27 @@ export async function getOpenTaskByConversation(
   return data as Task | null;
 }
 
+// A conversation can have several open tasks at once (e.g. a
+// "financing_followup" and a "vehicle_followup" created on different days).
+// Unlike getOpenTaskByConversation, this returns every one of them — used
+// where "is there an open task" needs to become "every open task", such as
+// auto-completing on human takeover.
+export async function getOpenTasksByConversation(
+  client: SupabaseClient,
+  organizationId: string,
+  conversationId: string
+) {
+  const { data, error } = await client
+    .from("tasks")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("conversation_id", conversationId)
+    .in("status", OPEN_TASK_STATUSES)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data as Task[];
+}
+
 export async function getLatestTaskByConversationAndType(
   client: SupabaseClient,
   organizationId: string,
