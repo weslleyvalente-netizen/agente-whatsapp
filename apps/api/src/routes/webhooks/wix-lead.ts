@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { wixLeadWebhookSchema } from "@aula-agente/shared";
+import { normalizeWixLead, wixLeadWebhookSchema } from "@aula-agente/shared";
 import { getAdminClient } from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ingestWixLead } from "../../services/lead-intake.service.js";
@@ -15,7 +15,7 @@ export default async function wixLeadWebhookRoutes(app: FastifyInstance) {
       }
 
       const db = getAdminClient();
-      const result = await ingestWixLead(db, parseResult.data);
+      const result = await ingestWixLead(db, normalizeWixLead(parseResult.data));
       return reply.status(200).send(result);
     },
   });

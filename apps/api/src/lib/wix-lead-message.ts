@@ -1,6 +1,6 @@
-import type { Message, WixLeadWebhookPayload } from "@aula-agente/shared";
+import type { Message, NormalizedWixLead } from "@aula-agente/shared";
 
-export function buildWixLeadTriggerInstruction(lead: WixLeadWebhookPayload): string {
+export function buildWixLeadTriggerInstruction(lead: NormalizedWixLead): string {
   const lines = [
     `Novo lead do formulário do site (Form_01). Ele ainda não te mandou nenhuma mensagem — você está iniciando o contato.`,
     `Nome: ${lead.name}`,
@@ -22,7 +22,7 @@ export function buildWixLeadTriggerInstruction(lead: WixLeadWebhookPayload): str
 export function buildWixLeadTriggerMessage(params: {
   conversationId: string;
   organizationId: string;
-  lead: WixLeadWebhookPayload;
+  lead: NormalizedWixLead;
 }): Message {
   return {
     id: "",

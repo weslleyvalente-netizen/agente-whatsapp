@@ -7,7 +7,7 @@ import {
   updateConversation,
   upsertConversationQualification,
 } from "@aula-agente/database";
-import type { WixLeadWebhookPayload } from "@aula-agente/shared";
+import type { NormalizedWixLead } from "@aula-agente/shared";
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { ensureConversation } from "./conversation.service.js";
 import { buildWixLeadTriggerMessage } from "../lib/wix-lead-message.js";
@@ -27,13 +27,13 @@ const ATTENDANCE_TYPE_KEYWORDS: Array<{ match: RegExp; type: "consortium" | "fin
   { match: /[aà]\s*vista/i, type: "cash" },
 ];
 
-function inferAttendanceType(interest: string | null | undefined): "consortium" | "financing" | "cash" | null {
+function inferAttendanceType(interest: string | undefined): "consortium" | "financing" | "cash" | null {
   if (!interest) return null;
   const found = ATTENDANCE_TYPE_KEYWORDS.find((k) => k.match.test(interest));
   return found?.type ?? null;
 }
 
-function buildCommercialNotes(lead: WixLeadWebhookPayload): string | null {
+function buildCommercialNotes(lead: NormalizedWixLead): string | null {
   const parts: string[] = [];
   if (lead.budget) parts.push(`Orçamento informado: ${lead.budget}.`);
   if (lead.priorExperience) parts.push(`Já fez consórcio antes: ${lead.priorExperience}.`);
@@ -50,7 +50,7 @@ export interface IngestWixLeadResult {
 
 export async function ingestWixLead(
   db: SupabaseClient,
-  lead: WixLeadWebhookPayload
+  lead: NormalizedWixLead
 ): Promise<IngestWixLeadResult> {
   const organizations = await getAllOrganizations(db);
   const org = organizations[0];
