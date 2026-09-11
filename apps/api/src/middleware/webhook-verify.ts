@@ -10,7 +10,8 @@ export async function webhookVerifyMiddleware(request: FastifyRequest, reply: Fa
   }
 
   const apiKey = request.headers["apikey"] as string
-    || request.headers["x-api-key"] as string;
+    || request.headers["x-api-key"] as string
+    || (request.query as Record<string, string> | undefined)?.apikey;
 
   if (!apiKey || apiKey !== WEBHOOK_SECRET) {
     return reply.status(401).send({ error: "Invalid webhook secret" });
