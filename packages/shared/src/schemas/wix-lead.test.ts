@@ -31,4 +31,16 @@ describe("wixLeadWebhookSchema", () => {
     const result = wixLeadWebhookSchema.safeParse({ name: "Jenerson" });
     expect(result.success).toBe(false);
   });
+
+  it("accepts explicit null for optional fields the customer left blank on the form", () => {
+    const result = wixLeadWebhookSchema.safeParse({
+      name: "Douglas",
+      phone: "+55 62 99963-1527",
+      email: null,
+      interest: "Consórcio",
+      budget: null,
+      priorExperience: null,
+    });
+    expect(result.success).toBe(true);
+  });
 });

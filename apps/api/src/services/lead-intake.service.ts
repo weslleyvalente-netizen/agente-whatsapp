@@ -27,7 +27,7 @@ const ATTENDANCE_TYPE_KEYWORDS: Array<{ match: RegExp; type: "consortium" | "fin
   { match: /[aà]\s*vista/i, type: "cash" },
 ];
 
-function inferAttendanceType(interest: string | undefined): "consortium" | "financing" | "cash" | null {
+function inferAttendanceType(interest: string | null | undefined): "consortium" | "financing" | "cash" | null {
   if (!interest) return null;
   const found = ATTENDANCE_TYPE_KEYWORDS.find((k) => k.match.test(interest));
   return found?.type ?? null;

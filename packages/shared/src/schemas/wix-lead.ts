@@ -7,10 +7,10 @@ import { z } from "zod";
 export const wixLeadWebhookSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
-  email: z.string().optional(),
-  interest: z.string().optional(),
-  budget: z.string().optional(),
-  priorExperience: z.string().optional(),
+  email: z.string().nullable().optional(),
+  interest: z.string().nullable().optional(),
+  budget: z.string().nullable().optional(),
+  priorExperience: z.string().nullable().optional(),
 });
 
 export type WixLeadWebhookPayload = z.infer<typeof wixLeadWebhookSchema>;
