@@ -2,6 +2,7 @@ import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
+import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
 import messageSendRoutes from "./routes/messages/send.js";
 import instanceRoutes from "./routes/instances/index.js";
 import knowledgeDocumentRoutes from "./routes/knowledge/documents.js";
@@ -31,6 +32,7 @@ server.get("/health", async () => {
 
 // Routes
 server.register(evolutionWebhookRoutes);
+server.register(wixLeadWebhookRoutes);
 server.register(messageSendRoutes);
 server.register(instanceRoutes);
 server.register(knowledgeDocumentRoutes);
