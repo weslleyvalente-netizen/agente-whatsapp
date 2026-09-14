@@ -11,6 +11,7 @@ import { resolveApiKey } from "@aula-agente/agent-runtime";
 import { runAgent } from "@aula-agente/agent-runtime";
 import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 import { describeImageMessage } from "../lib/image-description.js";
+import { generateSpeech, isSimpleEnoughForAudio } from "../lib/audio-generation.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
 const AUDIO_FALLBACK_TEXT =
@@ -226,6 +227,30 @@ export function startProcessMessageWorker() {
         // complete reply (that tool already saved and enqueued its own
         // message independently of this one).
         if (result.text.trim()) {
+          // Mirror the customer's own modality: only even attempt audio when
+          // they sent audio, the agent has the toggle on, and the reply text
+          // itself is simple enough to be understood by ear (no link, no
+          // multi-item list). Any failure — toggle off, complex text, or the
+          // TTS call itself failing — falls through to the plain text send
+          // below exactly like it always has.
+          let audioBase64: string | undefined;
+          if (
+            agent.tools_config.audio_replies &&
+            currentMessage.media_type === "audio" &&
+            isSimpleEnoughForAudio(result.text)
+          ) {
+            const speech = await generateSpeech({
+              text: result.text,
+              voice: agent.tools_config.audio_voice,
+              organizationId,
+            });
+            if (speech.ok) {
+              audioBase64 = speech.audioBase64;
+            } else {
+              console.log(`Message ${messageId} audio generation failed, falling back to text: ${speech.reason}`);
+            }
+          }
+
           const responseMessage = await createMessage(db, {
             conversation_id: conversationId,
             organization_id: organizationId,
@@ -233,7 +258,7 @@ export function startProcessMessageWorker() {
             role: "agent",
             content: result.text,
             media_url: null,
-            media_type: null,
+            media_type: audioBase64 ? "audio" : null,
             metadata: {
               model: result.model,
               input_tokens: result.inputTokens,
@@ -254,6 +279,7 @@ export function startProcessMessageWorker() {
             phone,
             content: result.text,
             organizationId,
+            ...(audioBase64 ? { audioBase64 } : {}),
           });
 
           console.log(`Processed message ${messageId} -> response ${responseMessage.id}`);
