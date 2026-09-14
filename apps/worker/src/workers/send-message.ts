@@ -46,16 +46,39 @@ async function sendEvolutionMedia(instanceName: string, phone: string, mediaUrl:
   return response.json();
 }
 
+async function sendEvolutionAudio(instanceName: string, phone: string, audioBase64: string) {
+  const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
+  const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
+
+  const response = await fetch(`${EVOLUTION_API_URL}/message/sendWhatsAppAudio/${instanceName}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: EVOLUTION_API_KEY,
+    },
+    body: JSON.stringify({ number: phone, audio: audioBase64, encoding: true }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Evolution API audio send error ${response.status}: ${body}`);
+  }
+
+  return response.json();
+}
+
 export function startSendMessageWorker() {
   const worker = new Worker<SendMessageJobData>(
     QUEUE_NAMES.SEND_MESSAGE,
     async (job) => {
-      const { instanceId, phone, content, mediaUrl, caption } = job.data;
+      const { instanceId, phone, content, mediaUrl, audioBase64, caption } = job.data;
 
       const db = getAdminClient();
       const instance = await getInstanceById(db, instanceId);
 
-      if (mediaUrl) {
+      if (audioBase64) {
+        await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
+      } else if (mediaUrl) {
         await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
       } else {
         await sendEvolutionText(instance.instance_name, phone, content);
