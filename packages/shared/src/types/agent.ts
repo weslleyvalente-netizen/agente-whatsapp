@@ -31,4 +31,6 @@ export interface ToolsConfig {
   // Optional: rows written before this feature shipped don't have this key.
   // Every reader must fall back to DEFAULT_FOLLOWUP_AUTOMATICO.
   followup_automatico?: FollowupAutomaticoConfig;
+  audio_replies: boolean;
+  audio_voice: string;
 }

@@ -39,4 +39,15 @@ describe("toolsConfigSchema", () => {
       segundo_followup_horas: 23,
     });
   });
+
+  it("defaults audio_replies to false and audio_voice to alloy when absent", () => {
+    const result = toolsConfigSchema.parse({
+      search_knowledge: true,
+      search_faq: true,
+      send_catalog_photo: false,
+      create_task: false,
+    });
+    expect(result.audio_replies).toBe(false);
+    expect(result.audio_voice).toBe("alloy");
+  });
 });

@@ -15,7 +15,7 @@ function baseSections(): DiffableConfig {
     },
     knowledge: { precos_notas: "", links: [], documentos_ativos: true, faqs_ativas: true },
     playbook: { script_atendimento: "" },
-    tools_config: { search_faq: true, create_task: true, search_knowledge: true, send_catalog_photo: true, update_qualification: false },
+    tools_config: { search_faq: true, create_task: true, search_knowledge: true, send_catalog_photo: true, update_qualification: false, audio_replies: false, audio_voice: "alloy" },
   };
 }
 
