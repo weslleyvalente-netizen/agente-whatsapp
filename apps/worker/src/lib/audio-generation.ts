@@ -5,8 +5,12 @@ const OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
 // A link read aloud is useless (the customer can't tap it), and a list of
 // 2+ options/prices is hard to follow by ear — both fall back to text even
 // when the audio-replies toggle and the "customer sent audio" gate are
-// satisfied.
-const LIST_LINE_PATTERN = /^\s*(🔹|-|•|\d+[.)])/;
+// satisfied. Bullet markers vary by product category (🔹 for general lists,
+// 🏍️ for motorcycles, etc. — confirmed live: a real reply bulleted with 🏍️
+// slipped through the old fixed-emoji allowlist and went out as audio), so
+// this matches ANY leading emoji via \p{Extended_Pictographic} rather than
+// enumerating specific ones.
+const LIST_LINE_PATTERN = /^\s*(\p{Extended_Pictographic}|-|•|\d+[.)])/u;
 
 // ~40 seconds spoken — keeps voice replies conversational-length instead of
 // turning a long reply into a multi-minute voice note nobody wants to sit

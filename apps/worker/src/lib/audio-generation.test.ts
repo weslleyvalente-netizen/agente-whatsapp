@@ -32,6 +32,18 @@ describe("isSimpleEnoughForAudio", () => {
     expect(isSimpleEnoughForAudio(text)).toBe(true);
   });
 
+  // Regression: this exact reply went out as a voice note in production
+  // because the old fixed-emoji allowlist (🔹, -, •) didn't include 🏍️,
+  // which this agent uses as the bullet marker for motorcycle listings.
+  it("rejects a reply with a 🏍️-bulleted list of 2+ motorcycles", () => {
+    const text =
+      "Temos várias opções em estoque, Carla! Alguns exemplos:\n\n" +
+      "🏍️ AZ160 Xtreme (elétrica, 0km)\n" +
+      "🏍️ R15 ABS, R3 ABS Connected (preta ou azul) e Lander Connected — todas Yamaha 0km\n\n" +
+      "Isso é só uma parte do estoque — se você tiver uma moto específica em mente, me diz o modelo que eu confirmo disponibilidade certinha.";
+    expect(isSimpleEnoughForAudio(text)).toBe(false);
+  });
+
   it("rejects a reply longer than 600 characters", () => {
     const text = "a".repeat(601);
     expect(isSimpleEnoughForAudio(text)).toBe(false);
