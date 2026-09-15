@@ -16,6 +16,19 @@ import { syncContactToCrm } from "../../integrations/crm-sync.js";
 // conversation (verified live against a real stuck conversation).
 const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
 
+// Emoji reactions and message-deletion events aren't customer content — they
+// carry no text the agent should ever see. Left unfiltered, they'd fall
+// through extractByType's default case to UNSUPPORTED_MESSAGE_PLACEHOLDER
+// (a non-empty string, by design — see above) which the LLM then tries to
+// respond to (confirmed live: a customer reacting with an emoji got "não
+// consegui abrir esse arquivo" back). Checked before saving or enqueueing,
+// same as the group-message check.
+const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]);
+
+export function isNonContentMessageType(messageType: string): boolean {
+  return NON_CONTENT_MESSAGE_TYPES.has(messageType);
+}
+
 // Click-to-WhatsApp ads (Meta/Instagram) attach the ad's title and body as
 // data.contextInfo.externalAdReply — a sibling of data.message, not nested
 // inside it. WhatsApp's own pre-filled greeting for the customer ("Oi! Vim
@@ -106,6 +119,10 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // Ignore group messages — this agent only handles direct conversations
       if (payload.data.key.remoteJid.endsWith("@g.us")) {
         return reply.status(200).send({ ok: true, skipped: "group_message" });
+      }
+
+      if (isNonContentMessageType(payload.data.messageType)) {
+        return reply.status(200).send({ ok: true, skipped: "non_content_message_type" });
       }
 
       const instanceId = payload.instance;

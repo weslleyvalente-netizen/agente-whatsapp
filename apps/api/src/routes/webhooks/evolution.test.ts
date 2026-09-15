@@ -1,5 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { extractMessageContent } from "./evolution.js";
+import { extractMessageContent, isNonContentMessageType } from "./evolution.js";
+
+describe("isNonContentMessageType", () => {
+  // Real production case: a customer reacted to a message with an emoji.
+  // Evolution delivered it as messageType "reactionMessage" with no
+  // recognizable text content, and the agent replied "não consegui abrir
+  // esse arquivo" — the webhook must skip these before they ever reach the
+  // LLM, the same way it already skips group messages.
+  it("flags reactionMessage and protocolMessage as non-content", () => {
+    expect(isNonContentMessageType("reactionMessage")).toBe(true);
+    expect(isNonContentMessageType("protocolMessage")).toBe(true);
+  });
+
+  it("does not flag real content message types", () => {
+    expect(isNonContentMessageType("conversation")).toBe(false);
+    expect(isNonContentMessageType("audioMessage")).toBe(false);
+    expect(isNonContentMessageType("imageMessage")).toBe(false);
+  });
+});
 
 describe("extractMessageContent", () => {
   it("extracts plain text from a conversation message", () => {
