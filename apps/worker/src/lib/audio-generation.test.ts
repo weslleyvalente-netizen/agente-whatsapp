@@ -77,6 +77,26 @@ describe("generateSpeech", () => {
     });
   });
 
+  // Regression: ElevenLabs' Portuguese model read "Fazer" (the Yamaha
+  // model, spoken like "féizer") as the Portuguese verb "fazer" in a real
+  // audio reply about the Fazer 150/250.
+  it("respells known brand names phonetically for the TTS call only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "A Fazer 150 tá em R$ 25.900 no catálogo.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("A Féizer 150 tá em R$ 25.900 no catálogo.");
+  });
+
   it("returns ok:false (never throws) when the ElevenLabs response is not ok", async () => {
     vi.stubGlobal(
       "fetch",

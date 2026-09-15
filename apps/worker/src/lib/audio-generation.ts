@@ -25,6 +25,17 @@ export function isSimpleEnoughForAudio(text: string): boolean {
   return listLineCount < 2;
 }
 
+// ElevenLabs' Portuguese model reads "Fazer" — the Yamaha model, spoken
+// like "féizer" — as the Portuguese verb "fazer" ("to do"). Confirmed live
+// in a real audio reply about the Fazer 150/250. Respell known brand names
+// phonetically for the TTS call only; the customer-facing text saved to
+// messages.content is untouched by this.
+const TTS_PRONUNCIATION_FIXES: Array<[RegExp, string]> = [[/\bFazer\b/gi, "Féizer"]];
+
+function applyPronunciationFixes(text: string): string {
+  return TTS_PRONUNCIATION_FIXES.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);
+}
+
 async function requestSpeech(text: string, voiceId: string, apiKey: string): Promise<string> {
   const response = await fetch(`${ELEVENLABS_SPEECH_URL}/${voiceId}`, {
     method: "POST",
@@ -62,7 +73,7 @@ export async function generateSpeech(params: {
   }
 
   try {
-    const audioBase64 = await requestSpeech(params.text, params.voice, params.apiKey);
+    const audioBase64 = await requestSpeech(applyPronunciationFixes(params.text), params.voice, params.apiKey);
     return { ok: true, audioBase64 };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : "unknown_error" };
