@@ -94,7 +94,64 @@ describe("generateSpeech", () => {
     });
 
     const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("A Féizer 150 tá em R$ 25.900 no catálogo.");
+    expect(sentBody.text).toBe("A Fêizer 150 tá em R$ 25.900 no catálogo.");
+  });
+
+  // Regression: "Nesse plano, a Fazer 150 fica em 12x de R$ 698,99" made
+  // ElevenLabs stumble on "12x" — confirmed live, fixed by spelling out
+  // "vezes".
+  it("spells out installment shorthand (12x) for the TTS call only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "Nesse plano, a moto fica em 12x de R$ 500.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("Nesse plano, a moto fica em 12 vezes de R$ 500.");
+  });
+
+  // Regression: "12x de R$ 698,99" made ElevenLabs stumble around
+  // "centavos" — confirmed live, fixed by spelling it out. A ",00" cents
+  // part is dropped instead of saying "zero centavos".
+  it("spells out decimal currency (R$ X,YY) for the TTS call only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "Fica em 12 vezes de R$ 698,99.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("Fica em 12 vezes de 698 reais e 99 centavos.");
+  });
+
+  it("drops the cents part when it's ,00 instead of saying zero centavos", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "Fica em R$ 700,00.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("Fica em 700 reais.");
   });
 
   // Regression: a real audio reply said "no seu caso, de R$ 120 mil" and

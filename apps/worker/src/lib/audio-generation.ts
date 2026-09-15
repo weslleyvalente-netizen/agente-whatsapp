@@ -26,14 +26,21 @@ export function isSimpleEnoughForAudio(text: string): boolean {
 }
 
 // ElevenLabs' Portuguese model reads "Fazer" — the Yamaha model, spoken
-// like "féizer" — as the Portuguese verb "fazer" ("to do"). Confirmed live
+// like "fêizer" — as the Portuguese verb "fazer" ("to do"). Confirmed live
 // in a real audio reply about the Fazer 150/250. Respell known brand names
 // phonetically for the TTS call only; the customer-facing text saved to
 // messages.content is untouched by this.
-const TTS_PRONUNCIATION_FIXES: Array<[RegExp, string]> = [[/\bFazer\b/gi, "Féizer"]];
+const TTS_PRONUNCIATION_FIXES: Array<[RegExp, string]> = [[/\bFazer\b/gi, "Fêizer"]];
 
 function applyPronunciationFixes(text: string): string {
   return TTS_PRONUNCIATION_FIXES.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);
+}
+
+// "12x" (shorthand for "12 vezes", i.e. installments) made ElevenLabs
+// stumble on the number that followed — confirmed live. Spelling out
+// "vezes" reads cleanly.
+function spellOutInstallments(text: string): string {
+  return text.replace(/\b(\d+)x\b/gi, "$1 vezes");
 }
 
 // "R$ 120 mil" mixes the currency symbol with a rounded word ("mil"/
@@ -46,6 +53,16 @@ function spellOutRoundedCurrency(text: string): string {
     .replace(/R\$\s*([\d.,]+)\s*milhões\b/gi, "$1 milhões de reais")
     .replace(/R\$\s*([\d.,]+)\s*milhão\b/gi, "$1 milhão de reais")
     .replace(/R\$\s*([\d.,]+)\s*mil\b/gi, "$1 mil reais");
+}
+
+// "R$ 698,99" (reais + centavos as a decimal) made ElevenLabs stumble
+// around "centavos" — confirmed live, fixed by spelling it out. A ",00"
+// cents part is dropped instead of saying "zero centavos".
+function spellOutDecimalCurrency(text: string): string {
+  return text.replace(/R\$\s*([\d.]+),(\d{2})\b/g, (_match, reaisPart: string, centavos: string) => {
+    const reais = reaisPart.replace(/\./g, "");
+    return centavos === "00" ? `${reais} reais` : `${reais} reais e ${centavos} centavos`;
+  });
 }
 
 async function requestSpeech(text: string, voiceId: string, apiKey: string): Promise<string> {
@@ -85,7 +102,9 @@ export async function generateSpeech(params: {
   }
 
   try {
-    const ttsText = spellOutRoundedCurrency(applyPronunciationFixes(params.text));
+    const ttsText = spellOutDecimalCurrency(
+      spellOutRoundedCurrency(spellOutInstallments(applyPronunciationFixes(params.text)))
+    );
     const audioBase64 = await requestSpeech(ttsText, params.voice, params.apiKey);
     return { ok: true, audioBase64 };
   } catch (error) {
