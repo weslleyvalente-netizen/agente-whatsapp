@@ -31,7 +31,7 @@ async function requestSpeech(text: string, voice: string, apiKey: string): Promi
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ model: "tts-1", voice, input: text }),
+    body: JSON.stringify({ model: "gpt-4o-mini-tts", voice, input: text }),
     signal: AbortSignal.timeout(30_000),
   });
 

@@ -29,10 +29,13 @@ const TOOL_ROWS: ToolRow[] = [
 // needed anywhere else.
 const AUDIO_VOICE_OPTIONS = [
   { value: "alloy", label: "Alloy" },
+  { value: "ash", label: "Ash" },
+  { value: "coral", label: "Coral" },
   { value: "echo", label: "Echo" },
   { value: "fable", label: "Fable" },
   { value: "onyx", label: "Onyx" },
   { value: "nova", label: "Nova" },
+  { value: "sage", label: "Sage" },
   { value: "shimmer", label: "Shimmer" },
 ];
 
