@@ -8,7 +8,13 @@ const OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
 // satisfied.
 const LIST_LINE_PATTERN = /^\s*(🔹|-|•|\d+[.)])/;
 
+// ~40 seconds spoken — keeps voice replies conversational-length instead of
+// turning a long reply into a multi-minute voice note nobody wants to sit
+// through; also stays safely under OpenAI's 4096-char /v1/audio/speech cap.
+const MAX_AUDIO_TEXT_LENGTH = 600;
+
 export function isSimpleEnoughForAudio(text: string): boolean {
+  if (text.length > MAX_AUDIO_TEXT_LENGTH) return false;
   if (/https?:\/\//i.test(text)) return false;
   const listLineCount = text.split("\n").filter((line) => LIST_LINE_PATTERN.test(line)).length;
   return listLineCount < 2;

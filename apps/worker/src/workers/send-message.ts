@@ -77,7 +77,17 @@ export function startSendMessageWorker() {
       const instance = await getInstanceById(db, instanceId);
 
       if (audioBase64) {
-        await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
+        try {
+          await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
+        } catch (error) {
+          // Never let a TTS/audio-send failure block the customer from getting a reply:
+          // fall back to the same text already generated for this message. Note the
+          // message row's stored media_type: "audio" becomes inaccurate when this fires
+          // (not corrected retroactively — accepted tradeoff).
+          const message = error instanceof Error ? error.message : "unknown_error";
+          console.warn(`Audio send to ${phone} failed, falling back to text: ${message}`);
+          await sendEvolutionText(instance.instance_name, phone, content);
+        }
       } else if (mediaUrl) {
         await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
       } else {
