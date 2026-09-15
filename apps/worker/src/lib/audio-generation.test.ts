@@ -97,6 +97,43 @@ describe("generateSpeech", () => {
     expect(sentBody.text).toBe("A Féizer 150 tá em R$ 25.900 no catálogo.");
   });
 
+  // Regression: a real audio reply said "no seu caso, de R$ 120 mil" and
+  // ElevenLabs stumbled around "reais" — confirmed live, and confirmed
+  // fixed by spelling it out without the symbol.
+  it("spells out rounded currency amounts (R$ X mil/milhão) for the TTS call only", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "Forma um crédito — no seu caso, de R$ 120 mil.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("Forma um crédito — no seu caso, de 120 mil reais.");
+  });
+
+  it("leaves pure-digit currency amounts (R$ 25.900) untouched", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateSpeech({
+      text: "A moto tá em R$ 25.900 no catálogo.",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
+    });
+
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sentBody.text).toBe("A moto tá em R$ 25.900 no catálogo.");
+  });
+
   it("returns ok:false (never throws) when the ElevenLabs response is not ok", async () => {
     vi.stubGlobal(
       "fetch",

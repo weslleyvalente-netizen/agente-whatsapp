@@ -36,6 +36,18 @@ function applyPronunciationFixes(text: string): string {
   return TTS_PRONUNCIATION_FIXES.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);
 }
 
+// "R$ 120 mil" mixes the currency symbol with a rounded word ("mil"/
+// "milhão"/"milhões") instead of pure digits, which ElevenLabs' Portuguese
+// model stumbles on around "reais" — confirmed live. Spelling it out
+// ("120 mil reais", "1 milhão de reais") reads cleanly. Pure-digit amounts
+// like "R$ 25.900" already read fine and are left untouched.
+function spellOutRoundedCurrency(text: string): string {
+  return text
+    .replace(/R\$\s*([\d.,]+)\s*milhões\b/gi, "$1 milhões de reais")
+    .replace(/R\$\s*([\d.,]+)\s*milhão\b/gi, "$1 milhão de reais")
+    .replace(/R\$\s*([\d.,]+)\s*mil\b/gi, "$1 mil reais");
+}
+
 async function requestSpeech(text: string, voiceId: string, apiKey: string): Promise<string> {
   const response = await fetch(`${ELEVENLABS_SPEECH_URL}/${voiceId}`, {
     method: "POST",
@@ -73,7 +85,8 @@ export async function generateSpeech(params: {
   }
 
   try {
-    const audioBase64 = await requestSpeech(applyPronunciationFixes(params.text), params.voice, params.apiKey);
+    const ttsText = spellOutRoundedCurrency(applyPronunciationFixes(params.text));
+    const audioBase64 = await requestSpeech(ttsText, params.voice, params.apiKey);
     return { ok: true, audioBase64 };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : "unknown_error" };
