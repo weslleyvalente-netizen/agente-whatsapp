@@ -5,11 +5,12 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AgentConfigDraft, ToolsConfig, FollowupAutomaticoConfig } from "@aula-agente/shared";
 import { DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 
 interface ToolRow {
-  key: Exclude<keyof ToolsConfig, "followup_automatico">;
+  key: "search_knowledge" | "search_faq" | "send_catalog_photo" | "create_task" | "update_qualification";
   title: string;
   description: string;
 }
@@ -20,6 +21,19 @@ const TOOL_ROWS: ToolRow[] = [
   { key: "send_catalog_photo", title: "Catálogo de Veículos", description: "Permite ao agente buscar veículos e enviar fotos pelo WhatsApp" },
   { key: "create_task", title: "Criar tarefas de follow-up", description: "Permite ao agente criar tarefas de acompanhamento comercial em Tarefas" },
   { key: "update_qualification", title: "Atualizar dados de qualificação", description: "Permite ao agente registrar automaticamente produto de interesse, valores, CPF e outros dados comerciais durante a conversa" },
+];
+
+// Named voices exposed by OpenAI's text-to-speech API at the time this was
+// built. If OpenAI renames or retires one, update this list — the schema
+// field itself (`audio_voice`) is a plain string, so no code change is
+// needed anywhere else.
+const AUDIO_VOICE_OPTIONS = [
+  { value: "alloy", label: "Alloy" },
+  { value: "echo", label: "Echo" },
+  { value: "fable", label: "Fable" },
+  { value: "onyx", label: "Onyx" },
+  { value: "nova", label: "Nova" },
+  { value: "shimmer", label: "Shimmer" },
 ];
 
 interface FerramentasSectionProps {
@@ -142,6 +156,57 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Resposta em áudio</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">Responder com áudio</p>
+              <p className="text-sm text-muted-foreground">
+                Quando o cliente manda áudio, a Helena responde com uma nota de voz em vez
+                de texto (a menos que a resposta tenha link ou lista de opções, caso em que
+                ela sempre usa texto).
+              </p>
+            </div>
+            <Switch
+              checked={toolsConfig.audio_replies ?? false}
+              onCheckedChange={(v) => {
+                const next = { ...toolsConfig, audio_replies: v };
+                setToolsConfig(next);
+                onPatch({ tools_config: next });
+              }}
+            />
+          </div>
+
+          {toolsConfig.audio_replies && (
+            <div className="space-y-2">
+              <Label>Voz</Label>
+              <Select
+                value={toolsConfig.audio_voice ?? "alloy"}
+                onValueChange={(v) => {
+                  const next: ToolsConfig = { ...toolsConfig, audio_voice: v as string };
+                  setToolsConfig(next);
+                  onPatch({ tools_config: next });
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUDIO_VOICE_OPTIONS.map((voice) => (
+                    <SelectItem key={voice.value} value={voice.value}>
+                      {voice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

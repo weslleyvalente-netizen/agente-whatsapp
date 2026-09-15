@@ -18,6 +18,8 @@ export const toolsConfigSchema = z.object({
   // so a future change to the windows can't update one and silently miss
   // the other.
   followup_automatico: followupAutomaticoConfigSchema.default(DEFAULT_FOLLOWUP_AUTOMATICO),
+  audio_replies: z.boolean().default(false),
+  audio_voice: z.string().default("alloy"),
 });
 
 export const createAgentSchema = z.object({

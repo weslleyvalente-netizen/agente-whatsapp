@@ -15,6 +15,7 @@ export interface SendMessageJobData {
   mediaUrl?: string;
   mediaType?: "image";
   caption?: string;
+  audioBase64?: string;
 }
 
 export interface ProcessDocumentJobData {
