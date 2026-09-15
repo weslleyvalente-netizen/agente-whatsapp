@@ -12,7 +12,7 @@ interface CreateTaskToolContext {
 export function createCreateTaskTool(context: CreateTaskToolContext): Tool {
   return tool({
     description:
-      "Cria uma tarefa de follow-up comercial para lembrar alguém (você mesma ou um humano) de retomar contato com o cliente. Use quando o cliente disser que vai enviar algo depois (CPF, dados, decisão), pedir para ser contatado numa data específica, ou quando uma proposta/simulação for enviada e a conversa ainda não tiver se resolvido. Se já existir uma tarefa aberta parecida para este cliente, ela é atualizada em vez de duplicada — não avise o cliente de que criou uma tarefa, isso é interno.",
+      "Cria uma tarefa de follow-up comercial para lembrar alguém (você mesma ou um humano) de retomar contato com o cliente. Use quando o cliente disser que vai enviar algo depois (CPF, dados, decisão), pedir para ser contatado numa data específica, ou quando uma proposta/simulação for enviada e a conversa ainda não tiver se resolvido. Se já existir uma tarefa aberta parecida para este cliente, ela é atualizada em vez de duplicada — não avise o cliente de que criou uma tarefa, isso é interno. Chame esta ferramenta no máximo uma vez por resposta: se mais de uma pendência precisar de acompanhamento, junte todas em uma única chamada (descrição e motivo cobrindo tudo) em vez de chamar de novo na mesma resposta.",
     inputSchema: z.object({
       type: z.enum(TASK_TYPES).describe("Tipo da tarefa, o que melhor descreve a situação"),
       description: z.string().describe("Descrição curta e específica do que aconteceu e o que fazer"),
