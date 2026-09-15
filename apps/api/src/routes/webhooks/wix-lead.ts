@@ -10,7 +10,15 @@ export default async function wixLeadWebhookRoutes(app: FastifyInstance) {
     handler: async (request, reply) => {
       const parseResult = wixLeadWebhookSchema.safeParse(request.body);
       if (!parseResult.success) {
-        request.log.warn({ errors: parseResult.error.issues }, "Invalid wix-lead payload");
+        // Temporary: log the raw body too, not just the zod issues — the
+        // Wix Automations activity log doesn't expose the actual resolved
+        // request body anywhere in its UI, so this is the only way to see
+        // what Wix is really sending when the real form payload diverges
+        // from what we tested manually.
+        request.log.warn(
+          { errors: parseResult.error.issues, body: request.body },
+          "Invalid wix-lead payload"
+        );
         return reply.status(400).send({ error: "Invalid payload" });
       }
 
