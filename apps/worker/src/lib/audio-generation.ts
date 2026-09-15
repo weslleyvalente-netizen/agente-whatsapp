@@ -25,12 +25,7 @@ export function isSimpleEnoughForAudio(text: string): boolean {
   return listLineCount < 2;
 }
 
-async function requestSpeech(text: string, voiceId: string): Promise<string> {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) {
-    throw new Error("ELEVENLABS_API_KEY is not set");
-  }
-
+async function requestSpeech(text: string, voiceId: string, apiKey: string): Promise<string> {
   const response = await fetch(`${ELEVENLABS_SPEECH_URL}/${voiceId}`, {
     method: "POST",
     headers: {
@@ -54,10 +49,20 @@ export type SpeechResult = { ok: true; audioBase64: string } | { ok: false; reas
 
 // `voice` here is an ElevenLabs voice_id (a library hash, e.g. copied from
 // the "Copiar ID de voz" menu in the Voice Library UI) — not a named preset
-// like OpenAI's "alloy".
-export async function generateSpeech(params: { text: string; voice: string }): Promise<SpeechResult> {
+// like OpenAI's "alloy". `apiKey` is resolved by the caller via
+// resolveElevenLabsApiKey (organization_secrets vault, falling back to the
+// ELEVENLABS_API_KEY env var) — this module has no env/DB access of its own.
+export async function generateSpeech(params: {
+  text: string;
+  voice: string;
+  apiKey: string | null;
+}): Promise<SpeechResult> {
+  if (!params.apiKey) {
+    return { ok: false, reason: "ELEVENLABS_API_KEY is not set" };
+  }
+
   try {
-    const audioBase64 = await requestSpeech(params.text, params.voice);
+    const audioBase64 = await requestSpeech(params.text, params.voice, params.apiKey);
     return { ok: true, audioBase64 };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : "unknown_error" };

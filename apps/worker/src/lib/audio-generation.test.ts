@@ -50,20 +50,12 @@ describe("isSimpleEnoughForAudio", () => {
 });
 
 describe("generateSpeech", () => {
-  const originalKey = process.env.ELEVENLABS_API_KEY;
-
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetAllMocks();
-    if (originalKey === undefined) {
-      delete process.env.ELEVENLABS_API_KEY;
-    } else {
-      process.env.ELEVENLABS_API_KEY = originalKey;
-    }
   });
 
   it("returns ok:true with the base64-encoded audio on success", async () => {
-    process.env.ELEVENLABS_API_KEY = "sk-test-key";
     const fakeAudioBytes = new TextEncoder().encode("fake-audio-bytes");
     vi.stubGlobal(
       "fetch",
@@ -76,6 +68,7 @@ describe("generateSpeech", () => {
     const result = await generateSpeech({
       text: "Oi! Vou te ajudar com isso.",
       voice: "GDzHdQOi6jjf8zaXhCYD",
+      apiKey: "sk-test-key",
     });
 
     expect(result).toEqual({
@@ -85,7 +78,6 @@ describe("generateSpeech", () => {
   });
 
   it("returns ok:false (never throws) when the ElevenLabs response is not ok", async () => {
-    process.env.ELEVENLABS_API_KEY = "sk-test-key";
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -96,17 +88,15 @@ describe("generateSpeech", () => {
     );
 
     await expect(
-      generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD" })
+      generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD", apiKey: "sk-test-key" })
     ).resolves.toEqual({
       ok: false,
       reason: expect.stringContaining("500"),
     });
   });
 
-  it("returns ok:false (never throws) when ELEVENLABS_API_KEY is not set", async () => {
-    delete process.env.ELEVENLABS_API_KEY;
-
-    const result = await generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD" });
+  it("returns ok:false (never throws) when no API key is resolved", async () => {
+    const result = await generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD", apiKey: null });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

@@ -50,3 +50,34 @@ export async function resolveApiKey(
 
   return envKey;
 }
+
+// Separate from resolveApiKey (LLMProvider-only) since ElevenLabs is a TTS
+// provider, not an LLM provider — same organization_secrets vault and env
+// fallback pattern, but never throws: audio replies are a best-effort
+// fallback-to-text feature, not a hard dependency like the LLM call.
+export async function resolveElevenLabsApiKey(organizationId: string): Promise<string | null> {
+  const cacheKey = `${organizationId}:elevenlabs`;
+
+  const cached = keyCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.key;
+  }
+
+  const db = getAdminClient();
+  const { data, error } = await db
+    .from("organization_secrets")
+    .select("encrypted_key")
+    .eq("organization_id", organizationId)
+    .eq("provider", "elevenlabs")
+    .maybeSingle();
+
+  if (!error && data?.encrypted_key) {
+    keyCache.set(cacheKey, {
+      key: data.encrypted_key,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+    return data.encrypted_key;
+  }
+
+  return process.env.ELEVENLABS_API_KEY ?? null;
+}

@@ -7,7 +7,7 @@ import { getAdminClient, getAgentById, getRecentMessages, getConversationById } 
 import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
-import { resolveApiKey } from "@aula-agente/agent-runtime";
+import { resolveApiKey, resolveElevenLabsApiKey } from "@aula-agente/agent-runtime";
 import { runAgent } from "@aula-agente/agent-runtime";
 import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 import { describeImageMessage } from "../lib/image-description.js";
@@ -239,9 +239,11 @@ export function startProcessMessageWorker() {
             currentMessage.media_type === "audio" &&
             isSimpleEnoughForAudio(result.text)
           ) {
+            const elevenLabsApiKey = await resolveElevenLabsApiKey(organizationId);
             const speech = await generateSpeech({
               text: result.text,
               voice: agent.tools_config.audio_voice,
+              apiKey: elevenLabsApiKey,
             });
             if (speech.ok) {
               audioBase64 = speech.audioBase64;
