@@ -242,7 +242,6 @@ export function startProcessMessageWorker() {
             const speech = await generateSpeech({
               text: result.text,
               voice: agent.tools_config.audio_voice,
-              organizationId,
             });
             if (speech.ok) {
               audioBase64 = speech.audioBase64;

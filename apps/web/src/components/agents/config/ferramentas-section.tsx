@@ -5,7 +5,6 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AgentConfigDraft, ToolsConfig, FollowupAutomaticoConfig } from "@aula-agente/shared";
 import { DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 
@@ -21,22 +20,6 @@ const TOOL_ROWS: ToolRow[] = [
   { key: "send_catalog_photo", title: "Catálogo de Veículos", description: "Permite ao agente buscar veículos e enviar fotos pelo WhatsApp" },
   { key: "create_task", title: "Criar tarefas de follow-up", description: "Permite ao agente criar tarefas de acompanhamento comercial em Tarefas" },
   { key: "update_qualification", title: "Atualizar dados de qualificação", description: "Permite ao agente registrar automaticamente produto de interesse, valores, CPF e outros dados comerciais durante a conversa" },
-];
-
-// Named voices exposed by OpenAI's text-to-speech API at the time this was
-// built. If OpenAI renames or retires one, update this list — the schema
-// field itself (`audio_voice`) is a plain string, so no code change is
-// needed anywhere else.
-const AUDIO_VOICE_OPTIONS = [
-  { value: "alloy", label: "Alloy" },
-  { value: "ash", label: "Ash" },
-  { value: "coral", label: "Coral" },
-  { value: "echo", label: "Echo" },
-  { value: "fable", label: "Fable" },
-  { value: "onyx", label: "Onyx" },
-  { value: "nova", label: "Nova" },
-  { value: "sage", label: "Sage" },
-  { value: "shimmer", label: "Shimmer" },
 ];
 
 interface FerramentasSectionProps {
@@ -188,26 +171,17 @@ export function FerramentasSection({ draft, onPatch }: FerramentasSectionProps) 
 
           {toolsConfig.audio_replies && (
             <div className="space-y-2">
-              <Label>Voz</Label>
-              <Select
-                value={toolsConfig.audio_voice ?? "alloy"}
-                onValueChange={(v) => {
-                  const next: ToolsConfig = { ...toolsConfig, audio_voice: v as string };
-                  setToolsConfig(next);
-                  onPatch({ tools_config: next });
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {AUDIO_VOICE_OPTIONS.map((voice) => (
-                    <SelectItem key={voice.value} value={voice.value}>
-                      {voice.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Voice ID da ElevenLabs</Label>
+              <Input
+                value={toolsConfig.audio_voice ?? ""}
+                placeholder="Cole aqui o ID copiado na Biblioteca de Vozes da ElevenLabs"
+                onChange={(e) => setToolsConfig({ ...toolsConfig, audio_voice: e.target.value })}
+                onBlur={() => onPatch({ tools_config: toolsConfig })}
+              />
+              <p className="text-sm text-muted-foreground">
+                Na ElevenLabs, vá em Vozes → Explorar, escolha uma voz e use o menu &quot;⋮&quot; →
+                &quot;Copiar ID de voz&quot;.
+              </p>
             </div>
           )}
         </CardContent>

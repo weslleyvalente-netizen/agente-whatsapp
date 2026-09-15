@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-const { resolveApiKey } = vi.hoisted(() => ({ resolveApiKey: vi.fn() }));
-vi.mock("@aula-agente/agent-runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@aula-agente/agent-runtime")>();
-  return { ...actual, resolveApiKey };
-});
-
 import { isSimpleEnoughForAudio, generateSpeech } from "./audio-generation.js";
 
 describe("isSimpleEnoughForAudio", () => {
@@ -56,13 +50,20 @@ describe("isSimpleEnoughForAudio", () => {
 });
 
 describe("generateSpeech", () => {
+  const originalKey = process.env.ELEVENLABS_API_KEY;
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetAllMocks();
+    if (originalKey === undefined) {
+      delete process.env.ELEVENLABS_API_KEY;
+    } else {
+      process.env.ELEVENLABS_API_KEY = originalKey;
+    }
   });
 
   it("returns ok:true with the base64-encoded audio on success", async () => {
-    resolveApiKey.mockResolvedValue("sk-test-key");
+    process.env.ELEVENLABS_API_KEY = "sk-test-key";
     const fakeAudioBytes = new TextEncoder().encode("fake-audio-bytes");
     vi.stubGlobal(
       "fetch",
@@ -74,8 +75,7 @@ describe("generateSpeech", () => {
 
     const result = await generateSpeech({
       text: "Oi! Vou te ajudar com isso.",
-      voice: "alloy",
-      organizationId: "org-1",
+      voice: "GDzHdQOi6jjf8zaXhCYD",
     });
 
     expect(result).toEqual({
@@ -84,8 +84,8 @@ describe("generateSpeech", () => {
     });
   });
 
-  it("returns ok:false (never throws) when the OpenAI response is not ok", async () => {
-    resolveApiKey.mockResolvedValue("sk-test-key");
+  it("returns ok:false (never throws) when the ElevenLabs response is not ok", async () => {
+    process.env.ELEVENLABS_API_KEY = "sk-test-key";
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -96,21 +96,21 @@ describe("generateSpeech", () => {
     );
 
     await expect(
-      generateSpeech({ text: "Oi!", voice: "alloy", organizationId: "org-1" })
+      generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD" })
     ).resolves.toEqual({
       ok: false,
       reason: expect.stringContaining("500"),
     });
   });
 
-  it("returns ok:false (never throws) when resolveApiKey rejects", async () => {
-    resolveApiKey.mockRejectedValue(new Error("No API key found for provider"));
+  it("returns ok:false (never throws) when ELEVENLABS_API_KEY is not set", async () => {
+    delete process.env.ELEVENLABS_API_KEY;
 
-    const result = await generateSpeech({ text: "Oi!", voice: "alloy", organizationId: "org-1" });
+    const result = await generateSpeech({ text: "Oi!", voice: "GDzHdQOi6jjf8zaXhCYD" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain("No API key found for provider");
+      expect(result.reason).toContain("ELEVENLABS_API_KEY");
     }
   });
 });
