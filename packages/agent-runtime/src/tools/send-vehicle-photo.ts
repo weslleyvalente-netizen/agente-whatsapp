@@ -18,11 +18,15 @@ export function formatVehicleCaption(modelo: string, preco: number): string {
 export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): Tool {
   return tool({
     description:
-      "Send the customer a real WhatsApp photo of a specific vehicle. Only call this after searchCatalog, using the exact modelo it returned for the vehicle the customer wants to see. This tool looks the vehicle up fresh in the catalog itself — it does not trust a remembered price or photo URL from earlier in the conversation.",
+      "Send the customer a real WhatsApp photo of a specific vehicle. Only call this after searchCatalog, using the exact modelo it returned for the vehicle the customer wants to see. This tool looks the vehicle up fresh in the catalog itself — it does not trust a remembered price or photo URL from earlier in the conversation. If searchCatalog returned more than one vehicle with this same modelo (e.g. the same bike in two colors), pass cor to say which one — otherwise you risk sending the same photo twice for what the customer thinks are two different options.",
     inputSchema: z.object({
       modelo: z.string().describe("Exact vehicle model name from a prior searchCatalog result"),
+      cor: z
+        .string()
+        .optional()
+        .describe("The vehicle's color, only needed when searchCatalog returned more than one vehicle with this modelo"),
     }),
-    execute: async ({ modelo }) => {
+    execute: async ({ modelo, cor }) => {
       // Conversation history only ever stores the human-readable caption
       // (never a raw tool result), so on a later turn the model has no
       // reliable way to recall an exact price or image URL — it can only
@@ -30,7 +34,7 @@ export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): To
       // that guesswork instead of trusting a value the model might
       // misremember or fabricate.
       const vehicles = await fetchCatalog();
-      const vehicle = findVehicleByModel(vehicles, modelo);
+      const vehicle = findVehicleByModel(vehicles, modelo, cor);
       if (!vehicle) {
         return `Veículo "${modelo}" não encontrado no catálogo. Confira o nome exato com searchCatalog antes de tentar de novo.`;
       }

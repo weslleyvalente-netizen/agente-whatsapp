@@ -63,4 +63,31 @@ describe("createSendVehiclePhotoTool", () => {
       expect.objectContaining({ mediaUrl: "https://catalogo.motoetrilha.com.br/manus-storage/vehicles/1786450742608_f55c92e6.png" })
     );
   });
+
+  // Real production case: the catalog has "BROS 160 CBS" twice (Preta
+  // R$27.900, Azul R$28.970). The agent called this tool twice meaning to
+  // send one photo of each, but without a way to say which color, both
+  // calls resolved to the same row — the customer got the blue photo
+  // twice and never saw the black one.
+  it("sends the correct photo when two vehicles share the same modelo but differ by cor", async () => {
+    vi.spyOn(searchCatalog, "fetchCatalog").mockResolvedValue([
+      { id: 57, modelo: "BROS 160 CBS", marca: "HONDA", ano: 2026, preco: 28970, cor: "Azul", imageUrl: "/vehicles/azul.png" },
+      { id: 49, modelo: "BROS 160 CBS", marca: "HONDA", ano: 2026, preco: 27900, cor: "Preta", imageUrl: "/vehicles/preta.png" },
+    ]);
+
+    const toolDef = createSendVehiclePhotoTool(context);
+    await toolDef.execute!({ modelo: "BROS 160 CBS", cor: "Azul" }, {} as never);
+    await toolDef.execute!({ modelo: "BROS 160 CBS", cor: "Preta" }, {} as never);
+
+    expect(addToQueue).toHaveBeenNthCalledWith(
+      1,
+      "send-message",
+      expect.objectContaining({ mediaUrl: "https://catalogo.motoetrilha.com.br/vehicles/azul.png" })
+    );
+    expect(addToQueue).toHaveBeenNthCalledWith(
+      2,
+      "send-message",
+      expect.objectContaining({ mediaUrl: "https://catalogo.motoetrilha.com.br/vehicles/preta.png" })
+    );
+  });
 });

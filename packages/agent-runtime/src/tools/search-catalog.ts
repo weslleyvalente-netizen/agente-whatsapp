@@ -115,13 +115,35 @@ export function filterVehicles(vehicles: CatalogVehicle[], query: string): Catal
 // conversation history only stores the human-readable caption, never the
 // raw URL, so on a later turn the model had nothing to recall it from and
 // fabricated a plausible-looking but fake URL.
-export function findVehicleByModel(vehicles: CatalogVehicle[], modelo: string): CatalogVehicle | undefined {
+//
+// The catalog can carry more than one row with the identical modelo string
+// — two colors of the same bike, for instance — so a modelo-only lookup is
+// ambiguous by design. Real production case: the catalog has "BROS 160
+// CBS" twice (Preta R$27.900, Azul R$28.970); the agent called this twice
+// meaning to send one photo of each, but both calls silently resolved to
+// the same row (whichever sorts first), so the customer got the same blue
+// photo twice and never saw the black one. `cor` disambiguates when given;
+// when omitted, or when no row in the modelo match matches that color, this
+// keeps the old single-result behavior instead of returning nothing.
+export function findVehicleByModel(
+  vehicles: CatalogVehicle[],
+  modelo: string,
+  cor?: string
+): CatalogVehicle | undefined {
   const q = normalize(modelo.trim());
   if (!q) return undefined;
-  return (
-    vehicles.find((v) => normalize(v.modelo) === q) ??
-    vehicles.find((v) => normalize(v.modelo).includes(q) || q.includes(normalize(v.modelo)))
-  );
+
+  const exactMatches = vehicles.filter((v) => normalize(v.modelo) === q);
+  const modelMatches =
+    exactMatches.length > 0
+      ? exactMatches
+      : vehicles.filter((v) => normalize(v.modelo).includes(q) || q.includes(normalize(v.modelo)));
+
+  if (modelMatches.length === 0) return undefined;
+  if (!cor) return modelMatches[0];
+
+  const normalizedCor = normalize(cor.trim());
+  return modelMatches.find((v) => v.cor && normalize(v.cor) === normalizedCor) ?? modelMatches[0];
 }
 
 // Most catalog entries store a relative path ("/manus-storage/..."), but some

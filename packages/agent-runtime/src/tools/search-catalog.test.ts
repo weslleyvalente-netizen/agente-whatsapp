@@ -102,6 +102,35 @@ describe("findVehicleByModel", () => {
   it("returns undefined when nothing matches", () => {
     expect(findVehicleByModel(vehicles, "CB500")).toBeUndefined();
   });
+
+  // Real production case: catalog has "BROS 160 CBS" twice — Preta
+  // (R$27.900) and Azul (R$28.970). Without a cor argument, a modelo-only
+  // lookup can't tell them apart; two sendVehiclePhoto calls meaning "one
+  // of each" silently resolved to the same row, and the customer got the
+  // same blue photo twice.
+  describe("disambiguating same-modelo vehicles by cor", () => {
+    const twoColors = [
+      { id: 10, modelo: "BROS 160 CBS", marca: "HONDA", ano: 2026, preco: 28970, imageUrl: "/vehicles/azul.png", tipo: "moto" as const, cor: "Azul" },
+      { id: 11, modelo: "BROS 160 CBS", marca: "HONDA", ano: 2026, preco: 27900, imageUrl: "/vehicles/preta.png", tipo: "moto" as const, cor: "Preta" },
+    ];
+
+    it("returns the vehicle matching the given cor", () => {
+      expect(findVehicleByModel(twoColors, "BROS 160 CBS", "Azul")).toBe(twoColors[0]);
+      expect(findVehicleByModel(twoColors, "BROS 160 CBS", "Preta")).toBe(twoColors[1]);
+    });
+
+    it("matches cor case- and accent-insensitively", () => {
+      expect(findVehicleByModel(twoColors, "BROS 160 CBS", "azul")).toBe(twoColors[0]);
+    });
+
+    it("falls back to the first match when no cor is given (old behavior)", () => {
+      expect(findVehicleByModel(twoColors, "BROS 160 CBS")).toBe(twoColors[0]);
+    });
+
+    it("falls back to the first match when the given cor matches none of them", () => {
+      expect(findVehicleByModel(twoColors, "BROS 160 CBS", "Verde")).toBe(twoColors[0]);
+    });
+  });
 });
 
 describe("getVehicleImageUrl", () => {
