@@ -77,118 +77,32 @@ describe("generateSpeech", () => {
     });
   });
 
-  // Regression: ElevenLabs' Portuguese model read "Fazer" (the Yamaha
-  // model, spoken like "féizer") as the Portuguese verb "fazer" in a real
-  // audio reply about the Fazer 150/250.
-  it("respells known brand names phonetically for the TTS call only", async () => {
+  // The actual pt-BR normalization rules (currency, installments,
+  // percentages, pronunciation dictionary, etc.) are unit-tested directly
+  // in tts-normalization.test.ts. This just proves generateSpeech actually
+  // routes text through that layer before calling ElevenLabs, and that the
+  // customer-facing `params.text` passed in is never itself mutated.
+  it("normalizes text for TTS before sending it to ElevenLabs, without mutating the input", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await generateSpeech({
-      text: "A Fazer 150 tá em R$ 25.900 no catálogo.",
+    const originalText = "A Yamaha Fazer está disponível em 80x de R$ 371,83.";
+    const result = await generateSpeech({
+      text: originalText,
       voice: "GDzHdQOi6jjf8zaXhCYD",
       apiKey: "sk-test-key",
     });
 
     const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("A Fêizer 150 tá em R$ 25.900 no catálogo.");
-  });
-
-  // Regression: "Nesse plano, a Fazer 150 fica em 12x de R$ 698,99" made
-  // ElevenLabs stumble on "12x" — confirmed live, fixed by spelling out
-  // "vezes".
-  it("spells out installment shorthand (12x) for the TTS call only", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await generateSpeech({
-      text: "Nesse plano, a moto fica em 12x de R$ 500.",
-      voice: "GDzHdQOi6jjf8zaXhCYD",
-      apiKey: "sk-test-key",
-    });
-
-    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("Nesse plano, a moto fica em 12 vezes de R$ 500.");
-  });
-
-  // Regression: "12x de R$ 698,99" made ElevenLabs stumble around
-  // "centavos" — confirmed live, fixed by spelling it out. A ",00" cents
-  // part is dropped instead of saying "zero centavos".
-  it("spells out decimal currency (R$ X,YY) for the TTS call only", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await generateSpeech({
-      text: "Fica em 12 vezes de R$ 698,99.",
-      voice: "GDzHdQOi6jjf8zaXhCYD",
-      apiKey: "sk-test-key",
-    });
-
-    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("Fica em 12 vezes de 698 reais e 99 centavos.");
-  });
-
-  it("drops the cents part when it's ,00 instead of saying zero centavos", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await generateSpeech({
-      text: "Fica em R$ 700,00.",
-      voice: "GDzHdQOi6jjf8zaXhCYD",
-      apiKey: "sk-test-key",
-    });
-
-    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("Fica em 700 reais.");
-  });
-
-  // Regression: a real audio reply said "no seu caso, de R$ 120 mil" and
-  // ElevenLabs stumbled around "reais" — confirmed live, and confirmed
-  // fixed by spelling it out without the symbol.
-  it("spells out rounded currency amounts (R$ X mil/milhão) for the TTS call only", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await generateSpeech({
-      text: "Forma um crédito — no seu caso, de R$ 120 mil.",
-      voice: "GDzHdQOi6jjf8zaXhCYD",
-      apiKey: "sk-test-key",
-    });
-
-    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("Forma um crédito — no seu caso, de 120 mil reais.");
-  });
-
-  it("leaves pure-digit currency amounts (R$ 25.900) untouched", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => new TextEncoder().encode("audio").buffer,
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await generateSpeech({
-      text: "A moto tá em R$ 25.900 no catálogo.",
-      voice: "GDzHdQOi6jjf8zaXhCYD",
-      apiKey: "sk-test-key",
-    });
-
-    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sentBody.text).toBe("A moto tá em R$ 25.900 no catálogo.");
+    expect(sentBody.text).toBe(
+      "A Yamaha Fêizer está disponível em oitenta parcelas de trezentos e setenta e um reais e oitenta e três centavos."
+    );
+    expect(result).toEqual({ ok: true, audioBase64: expect.any(String) });
+    // The string passed in is untouched — confirms no shared-reference mutation.
+    expect(originalText).toBe("A Yamaha Fazer está disponível em 80x de R$ 371,83.");
   });
 
   it("returns ok:false (never throws) when the ElevenLabs response is not ok", async () => {

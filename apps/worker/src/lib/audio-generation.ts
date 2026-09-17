@@ -1,3 +1,5 @@
+import { normalizeTextForTts } from "./tts-normalization.js";
+
 const ELEVENLABS_SPEECH_URL = "https://api.elevenlabs.io/v1/text-to-speech";
 
 // Multilingual model — needed since replies are in Portuguese, not English.
@@ -23,46 +25,6 @@ export function isSimpleEnoughForAudio(text: string): boolean {
   if (/https?:\/\//i.test(text)) return false;
   const listLineCount = text.split("\n").filter((line) => LIST_LINE_PATTERN.test(line)).length;
   return listLineCount < 2;
-}
-
-// ElevenLabs' Portuguese model reads "Fazer" — the Yamaha model, spoken
-// like "fêizer" — as the Portuguese verb "fazer" ("to do"). Confirmed live
-// in a real audio reply about the Fazer 150/250. Respell known brand names
-// phonetically for the TTS call only; the customer-facing text saved to
-// messages.content is untouched by this.
-const TTS_PRONUNCIATION_FIXES: Array<[RegExp, string]> = [[/\bFazer\b/gi, "Fêizer"]];
-
-function applyPronunciationFixes(text: string): string {
-  return TTS_PRONUNCIATION_FIXES.reduce((acc, [pattern, replacement]) => acc.replace(pattern, replacement), text);
-}
-
-// "12x" (shorthand for "12 vezes", i.e. installments) made ElevenLabs
-// stumble on the number that followed — confirmed live. Spelling out
-// "vezes" reads cleanly.
-function spellOutInstallments(text: string): string {
-  return text.replace(/\b(\d+)x\b/gi, "$1 vezes");
-}
-
-// "R$ 120 mil" mixes the currency symbol with a rounded word ("mil"/
-// "milhão"/"milhões") instead of pure digits, which ElevenLabs' Portuguese
-// model stumbles on around "reais" — confirmed live. Spelling it out
-// ("120 mil reais", "1 milhão de reais") reads cleanly. Pure-digit amounts
-// like "R$ 25.900" already read fine and are left untouched.
-function spellOutRoundedCurrency(text: string): string {
-  return text
-    .replace(/R\$\s*([\d.,]+)\s*milhões\b/gi, "$1 milhões de reais")
-    .replace(/R\$\s*([\d.,]+)\s*milhão\b/gi, "$1 milhão de reais")
-    .replace(/R\$\s*([\d.,]+)\s*mil\b/gi, "$1 mil reais");
-}
-
-// "R$ 698,99" (reais + centavos as a decimal) made ElevenLabs stumble
-// around "centavos" — confirmed live, fixed by spelling it out. A ",00"
-// cents part is dropped instead of saying "zero centavos".
-function spellOutDecimalCurrency(text: string): string {
-  return text.replace(/R\$\s*([\d.]+),(\d{2})\b/g, (_match, reaisPart: string, centavos: string) => {
-    const reais = reaisPart.replace(/\./g, "");
-    return centavos === "00" ? `${reais} reais` : `${reais} reais e ${centavos} centavos`;
-  });
 }
 
 async function requestSpeech(text: string, voiceId: string, apiKey: string): Promise<string> {
@@ -92,6 +54,10 @@ export type SpeechResult = { ok: true; audioBase64: string } | { ok: false; reas
 // like OpenAI's "alloy". `apiKey` is resolved by the caller via
 // resolveElevenLabsApiKey (organization_secrets vault, falling back to the
 // ELEVENLABS_API_KEY env var) — this module has no env/DB access of its own.
+//
+// `params.text` (the customer-facing text, already saved to messages.content
+// by the caller) is never modified here — normalizeTextForTts returns a
+// separate string used only for this ElevenLabs call.
 export async function generateSpeech(params: {
   text: string;
   voice: string;
@@ -102,9 +68,7 @@ export async function generateSpeech(params: {
   }
 
   try {
-    const ttsText = spellOutDecimalCurrency(
-      spellOutRoundedCurrency(spellOutInstallments(applyPronunciationFixes(params.text)))
-    );
+    const ttsText = normalizeTextForTts(params.text);
     const audioBase64 = await requestSpeech(ttsText, params.voice, params.apiKey);
     return { ok: true, audioBase64 };
   } catch (error) {
