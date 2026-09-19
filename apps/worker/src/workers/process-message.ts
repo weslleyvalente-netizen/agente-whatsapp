@@ -12,6 +12,7 @@ import { runAgent } from "@aula-agente/agent-runtime";
 import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 import { describeImageMessage } from "../lib/image-description.js";
 import { generateSpeech, isSimpleEnoughForAudio } from "../lib/audio-generation.js";
+import { isNoOpReply } from "../lib/no-op-reply.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
 const AUDIO_FALLBACK_TEXT =
@@ -225,8 +226,11 @@ export function startProcessMessageWorker() {
         // final text is empty, which now legitimately happens when it only
         // called sendVehiclePhoto and considered the photo itself the
         // complete reply (that tool already saved and enqueued its own
-        // message independently of this one).
-        if (result.text.trim()) {
+        // message independently of this one). Also skipped when the model
+        // wrote a meta-comment like "(sem resposta necessária)" instead of
+        // truly empty text — confirmed in production, that placeholder was
+        // getting sent straight to the customer.
+        if (result.text.trim() && !isNoOpReply(result.text)) {
           // Mirror the customer's own modality: only even attempt audio when
           // they sent audio, the agent has the toggle on, and the reply text
           // itself is simple enough to be understood by ear (no link, no
@@ -285,7 +289,11 @@ export function startProcessMessageWorker() {
 
           console.log(`Processed message ${messageId} -> response ${responseMessage.id}`);
         } else {
-          console.log(`Processed message ${messageId} -> no text reply (tool-only response)`);
+          if (result.text.trim()) {
+            console.log(`Processed message ${messageId} -> suppressed no-op placeholder reply: "${result.text}"`);
+          } else {
+            console.log(`Processed message ${messageId} -> no text reply (tool-only response)`);
+          }
         }
 
         // Update conversation
