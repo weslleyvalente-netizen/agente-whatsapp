@@ -10,3 +10,4 @@ export * from "./knowledge.js";
 export * from "./task.js";
 export * from "./agent-trainer.js";
 export * from "./conversation-qualification.js";
+export * from "./opportunity.js";

@@ -119,3 +119,88 @@ export const QUEUE_NAMES = {
   TAKEOVER_TIMEOUT: "takeover-timeout",
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
 } as const;
+
+export const OPERATIONS = [
+  "vehicle_sale",
+  "consortium",
+  "financing",
+  "libera_cred",
+  "contemplated_letter",
+] as const;
+
+export const OPERATION_LABELS: Record<(typeof OPERATIONS)[number], string> = {
+  vehicle_sale: "Venda de veículos e elétricos",
+  consortium: "Consórcio",
+  financing: "Financiamento",
+  libera_cred: "Libera Cred",
+  contemplated_letter: "Carta contemplada",
+};
+
+export const FUNNEL_STAGES: Record<(typeof OPERATIONS)[number], readonly string[]> = {
+  vehicle_sale: ["interest_received", "qualification", "proposal_sent", "negotiation", "formalization"],
+  consortium: ["interest_received", "qualification", "simulation_sent", "decision_negotiation", "membership"],
+  financing: [
+    "interest_received",
+    "qualification",
+    "documentation",
+    "bank_analysis",
+    "conditions_approved_negotiation",
+    "formalization",
+  ],
+  libera_cred: ["interest_received", "qualification", "plan_term_presented", "decision_objections", "membership"],
+  contemplated_letter: [
+    "interest_received",
+    "qualification",
+    "compatible_letter_search",
+    "proposal_sent",
+    "analysis_transfer",
+  ],
+};
+
+export const FUNNEL_STAGE_LABELS: Record<string, string> = {
+  interest_received: "Interesse recebido",
+  qualification: "Qualificação",
+  proposal_sent: "Proposta enviada",
+  negotiation: "Negociação",
+  formalization: "Formalização",
+  simulation_sent: "Simulação enviada",
+  decision_negotiation: "Decisão/negociação",
+  membership: "Adesão",
+  documentation: "Documentação",
+  bank_analysis: "Análise bancária",
+  conditions_approved_negotiation: "Condições aprovadas em negociação",
+  plan_term_presented: "Plano e prazo apresentados",
+  decision_objections: "Decisão/objeções",
+  compatible_letter_search: "Busca de carta compatível",
+  analysis_transfer: "Análise/transferência",
+};
+
+export const OPPORTUNITY_STATUSES = ["open", "won", "lost"] as const;
+
+export const OPPORTUNITY_STATUS_LABELS: Record<(typeof OPPORTUNITY_STATUSES)[number], string> = {
+  open: "Aberto",
+  won: "Ganho",
+  lost: "Perdido",
+};
+
+export const WAITING_ON_OPTIONS = ["customer", "team", "bank_or_admin", "scheduled_date"] as const;
+
+export const WAITING_ON_LABELS: Record<(typeof WAITING_ON_OPTIONS)[number], string> = {
+  customer: "Cliente",
+  team: "Equipe",
+  bank_or_admin: "Banco/administradora",
+  scheduled_date: "Data combinada",
+};
+
+export const PRODUCTS = ["car", "motorcycle", "real_estate", "e_bike"] as const;
+
+export const PRODUCT_LABELS: Record<(typeof PRODUCTS)[number], string> = {
+  car: "Carro",
+  motorcycle: "Moto",
+  real_estate: "Imóvel",
+  e_bike: "Bike elétrica",
+};
+
+export function isValidStage(operation: (typeof OPERATIONS)[number], stage: string): boolean {
+  return (FUNNEL_STAGES[operation] as readonly string[]).includes(stage);
+}
