@@ -1,7 +1,11 @@
 # Integração do CRM (assistente-mt) dentro do apps/web — Design
 
 **Data:** 2026-09-22 (revisado no mesmo dia após achar o `crm-sync.ts`)
-**Status:** Aprovado, seguindo para o plano de implementação
+**Status:** Parcialmente superado — ver `specs/2026-09-22-oportunidades-comerciais-design.md`.
+A seção "Funil de vendas" deste spec não deve ser implementada como está: a
+Oportunidade nasce nativa no `aula-agente`, não aponta para o `deals` do CRM
+standalone. A seção "Contatos" continua válida (ver nota no plano
+correspondente, `plans/2026-09-22-crm-contacts-deals-port.md`).
 
 ## Contexto
 
