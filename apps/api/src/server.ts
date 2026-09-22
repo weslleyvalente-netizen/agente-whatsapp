@@ -12,6 +12,7 @@ import dashboardRoutes from "./routes/dashboard/index.js";
 import taskRoutes from "./routes/tasks/index.js";
 import agentConfigRoutes from "./routes/agent-config/index.js";
 import conversationRoutes from "./routes/conversations/index.js";
+import opportunityRoutes from "./routes/opportunities/index.js";
 
 const server = Fastify({ logger: true });
 
@@ -42,6 +43,7 @@ server.register(dashboardRoutes);
 server.register(taskRoutes);
 server.register(agentConfigRoutes);
 server.register(conversationRoutes);
+server.register(opportunityRoutes);
 
 // Start
 const start = async () => {
