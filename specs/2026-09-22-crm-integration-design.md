@@ -1,7 +1,7 @@
 # Integração do CRM (assistente-mt) dentro do apps/web — Design
 
-**Data:** 2026-09-22
-**Status:** Desenhado, aguardando revisão do usuário antes de virar plano de implementação
+**Data:** 2026-09-22 (revisado no mesmo dia após achar o `crm-sync.ts`)
+**Status:** Aprovado, seguindo para o plano de implementação
 
 ## Contexto
 
@@ -37,77 +37,63 @@ integrada estiver validada.
   `organization_members`, `OrganizationProvider`) — não é estrutura não
   usada. O usuário confirmou: hoje é uma organização só (o próprio
   negócio), mas pretende replicar o produto para vender a outras empresas
-  depois. Por isso, toda tabela nova leva `organization_id` desde já,
-  mesmo optando por não fazer o CRM completo já herdar todo o
-  fluxo de convite/troca de organização usado no resto do produto.
+  depois.
 - `apps/web` já tem rotas `/tasks` e `/team` com **conceitos diferentes**
   dos do CRM (tarefas operacionais da equipe vs. lembretes automáticos de
   "novo contato"; membros da organização vs. lista simples de perfis
   ativos). Decisão do usuário: usar os sistemas que já existem no agente
   para tarefas e equipe, e **descartar** os equivalentes do CRM — sem
   acumular menus/conceitos duplicados.
-- `apps/web` já tem uma tabela `wa_contacts` (telefone, nome, foto,
-  `organization_id`), já usada pela tabela `tasks` (`contact_id`) e pelo
-  Inbox. É o mesmo tipo de dado que o `contacts` do CRM guarda — evita
-  criar uma segunda lista de contatos desconectada da primeira.
-- O bug do UUID cru aparecendo no card do Kanban (visto ao vivo no CRM
-  standalone) vem do `AssigneeSelect`, que só busca `profiles` com
-  `is_active = true`; quando o `owner_id` de um negócio não bate com
-  nenhum perfil ativo carregado, o componente de seleção cai no
-  fallback de mostrar o valor bruto. Resolvido ao trocar a fonte de dados
-  para a lista de membros da organização (o mesmo mecanismo que a página
-  de Tarefas já usa para resolver nomes de responsável).
+- **Correção importante, achada só depois da primeira versão deste spec:**
+  `wa_contacts` (tabela do agente) e `contacts` (tabela do CRM) **não são
+  o mesmo conceito nem devem virar um só**. Existe desde 17/jul um spec e
+  implementação aprovados (`specs/2026-07-17-crm-whatsapp-integration-design.md`,
+  código em `apps/api/src/integrations/crm-sync.ts`) que já resolveram
+  exatamente essa colisão: a tabela do agente foi renomeada de `contacts`
+  para `wa_contacts` de propósito, e existe uma sincronização **unidirecional
+  já rodando em produção** — toda vez que chega a primeira mensagem de um
+  contato novo no WhatsApp, `syncContactToCrm()` cria (ou reaproveita, por
+  telefone) uma linha em `contacts` (CRM) e uma `activities` com título
+  "Novo contato via WhatsApp". É esse mecanismo que gerou os 929 contatos e
+  a lista de tarefas "Novo contato via WhatsApp" vistos ao vivo no CRM
+  standalone. Fundir as duas tabelas (como a primeira versão deste spec
+  propunha) quebraria esse pipeline e exigiria migrar dados sem
+  necessidade nenhuma. **Decisão corrigida: as páginas portadas continuam
+  lendo as tabelas do CRM (`contacts`, `deals`, `profiles`) como estão —
+  zero migração, zero tabela nova.** Não existe hoje um link explícito
+  (FK) entre um `contacts.id` do CRM e o `wa_contacts.id` de origem — só o
+  telefone em comum usado no sync. Isso é uma limitação conhecida, fora de
+  escopo aqui (nenhuma funcionalidade pedida depende desse link).
+- Login único já existe de graça: os dois apps usam o mesmo projeto
+  Supabase Auth (mesma tabela `auth.users`). O usuário logado no
+  `apps/web` é o mesmo `auth.uid()` que a RLS do CRM (`is_active_profile`)
+  já reconhece — confirmado ao ver os dados reais do CRM standalone
+  carregarem com a sessão salva no navegador.
+- O bug do UUID cru aparecendo no card do Kanban vem do `AssigneeSelect`,
+  que busca só `profiles` com `is_active = true`; quando o `owner_id` de
+  um negócio não bate com nenhum perfil ativo carregado, o componente de
+  seleção cai no fallback de mostrar o valor bruto. Como `deals.owner_id`
+  continua apontando para `profiles` (schema do CRM, sem mudança), o
+  conserto fica contido nesse componente: garantir que o responsável
+  atual do negócio apareça na lista mesmo se estiver inativo, em vez de
+  trocar a fonte de dados para outro conceito.
 
 ## Modelo de dados
 
-**`wa_contacts`** (já existe) — duas colunas novas, nullable, sem impacto
-no que já usa a tabela:
+**Nenhuma migração. Nenhuma tabela nova.** As páginas portadas leem e
+escrevem diretamente nas tabelas que já existem no mesmo projeto Supabase
+e já são usadas pelo CRM standalone: `contacts`, `deals`, `profiles`
+(schema definido em `assistente-mt/supabase/migrations/0001_profiles.sql`
+e `0003_crm_tables.sql`). RLS dessas tabelas continua exatamente como
+está (`is_active_profile(auth.uid())`) — já testada e funcionando com o
+login do usuário.
 
-```sql
-alter table wa_contacts
-  add column email text,
-  add column company text;
-```
-
-**`deals`** (nova tabela, em `apps/web`'s aula-agente
-`supabase/migrations`, não no repo do CRM):
-
-```sql
-create table deals (
-  id uuid primary key default extensions.uuid_generate_v4(),
-  organization_id uuid not null references organizations(id) on delete cascade,
-  contact_id uuid not null references wa_contacts(id) on delete cascade,
-  title text not null,
-  value numeric,
-  stage text not null default 'novo'
-    check (stage in ('novo', 'em_contato', 'negociacao', 'fechado_ganho', 'fechado_perdido')),
-  owner_id uuid references auth.users(id),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index idx_deals_org_stage on deals(organization_id, stage);
-create index idx_deals_contact on deals(contact_id);
-
-create trigger trg_deals_updated_at
-  before update on deals
-  for each row execute function update_updated_at();
-```
-
-Diferenças deliberadas em relação ao `deals` do CRM standalone:
-`contact_id` aponta para `wa_contacts` (não uma tabela `contacts`
-separada); `owner_id` aponta para `auth.users` (mesmo padrão que
-`tasks.assignee_id`, não `profiles`); `organization_id` obrigatório desde
-o início.
-
-**RLS**: segue o padrão de organização já usado no resto do banco
-(policy baseada em `organization_members`, não o helper
-`is_active_profile` do CRM standalone — esse conceito de "perfil ativo"
-não é portado).
-
-A tabela `activities` (as "tarefas" do CRM) e a tabela `profiles`/conceito
-de "perfil ativo" do CRM **não são portadas** — substituídas pelo que já
-existe (`tasks`, `organization_members`).
+A tabela `activities` (as "tarefas" do CRM) **não é portada** — descartada
+em favor da `tasks` que já existe em `apps/web`, por decisão do usuário.
+O `crm-sync.ts` (`apps/api`) continua escrevendo em `activities` sem
+mudança nenhuma (é dele que vêm os itens "Novo contato via WhatsApp" que
+o usuário já usa) — só não é mais assim que a UI de tarefas do produto
+integrado é exibida.
 
 ## Rotas e menu
 
@@ -132,32 +118,35 @@ imports (ambos os apps usam o mesmo kit de UI — `@base-ui/react`,
 mesmos componentes `components/ui/*` — então o visual sai idêntico ao
 que já existe, sem retrabalho de design agora):
 
-- `DealKanban` / `DealCard` — troca a query de `deals` (nova tabela,
-  já com `contact_id` → `wa_contacts`).
-- `DealForm` (criação de negócio) — sem mudanças de lógica, só o alvo
-  da tabela.
-- `AssigneeSelect` → adaptado para buscar `organization_members` (com
-  nome resolvido do mesmo jeito que a página de Tarefas já resolve nomes
-  de responsável) em vez de `profiles.is_active`. Corrige o bug do UUID
-  na raiz, não só neste componente novo.
-- Lista de Contatos — tabela nome/telefone/e-mail/empresa/ações, lendo
-  `wa_contacts` em vez de `contacts`.
+- `DealKanban` / `DealCard` — copiado praticamente sem mudança (mesma
+  tabela `deals`, mesmas colunas).
+- `DealForm` (criação de negócio) — sem mudanças.
+- `AssigneeSelect` → corrigido para não perder o responsável atual do
+  card quando ele não está mais entre os perfis ativos: busca os perfis
+  ativos normalmente para a lista de opções, e adicionalmente busca por
+  `id` o perfil do `value` atual caso ele não esteja nessa lista,
+  incluindo-o como opção extra (com indicação de inativo). Resolve o bug
+  do UUID cru sem mudar de onde vem o dado.
+- Lista de Contatos — copiada da `assistente-mt`, mesma tabela
+  `contacts`.
 
 ## Erros e permissões
 
-Segue o padrão já existente em `apps/web`: RLS nega acesso fora da
-organização; erros de mutação (drag-and-drop de estágio, troca de
+Segue o padrão já existente no CRM standalone (mantido, sem mudança): RLS
+nega qualquer acesso a `contacts`/`deals` se `is_active_profile(auth.uid())`
+for falso; erros de mutação (drag-and-drop de estágio, troca de
 responsável) mostrados via `alert()`, igual ao `DealKanban` original já
 faz hoje.
 
 ## Teste
 
 Rodar local (`pnpm dev --filter=@aula-agente/web`) contra o Supabase real
-do projeto (mesmo banco, mesmos dados de `wa_contacts` já existentes)
-antes de qualquer deploy. Deploy para
+do projeto (mesmo banco, mesmos `contacts`/`deals` já existentes,
+incluindo o negócio "INSS" real) antes de qualquer deploy. Deploy para
 `https://agente-whatsapp-web.qinw5t.easypanel.host` só depois de validado
 localmente e aprovado pelo usuário. O CRM standalone continua no ar
-durante esse período, sem alterações.
+durante esse período, sem alterações — e o `crm-sync.ts` continua
+escrevendo normalmente em `contacts`/`activities`, sem impacto.
 
 ## Fora de escopo (sub-projetos futuros, desenhados separadamente depois)
 
