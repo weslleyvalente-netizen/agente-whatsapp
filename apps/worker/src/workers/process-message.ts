@@ -20,6 +20,7 @@ import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 import { describeImageMessage } from "../lib/image-description.js";
 import { generateSpeech, isSimpleEnoughForAudio } from "../lib/audio-generation.js";
 import { isNoOpReply } from "../lib/no-op-reply.js";
+import { stripLeakedMetaNarration } from "../lib/meta-narration-leak.js";
 import { collectPendingContactMessages, isReplyStillFresh } from "../lib/message-grouping.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
@@ -288,6 +289,13 @@ export function startProcessMessageWorker() {
           return;
         }
 
+        // The model occasionally narrates its own message lifecycle instead
+        // of just replying (e.g. "A resposta já foi enviada", confirmed in
+        // production) — strip that leaked fragment before anything else
+        // touches result.text, so it never reaches the customer but a
+        // legitimate answer sitting next to it isn't thrown away.
+        const cleanedText = stripLeakedMetaNarration(result.text);
+
         // Save and send the agent's text reply — skipped if the agent's
         // final text is empty, which now legitimately happens when it only
         // called sendVehiclePhoto and considered the photo itself the
@@ -296,7 +304,7 @@ export function startProcessMessageWorker() {
         // wrote a meta-comment like "(sem resposta necessária)" instead of
         // truly empty text — confirmed in production, that placeholder was
         // getting sent straight to the customer.
-        if (result.text.trim() && !isNoOpReply(result.text)) {
+        if (cleanedText.trim() && !isNoOpReply(cleanedText)) {
           // Mirror the customer's own modality: only even attempt audio when
           // they sent audio, the agent has the toggle on, and the reply text
           // itself is simple enough to be understood by ear (no link, no
@@ -307,11 +315,11 @@ export function startProcessMessageWorker() {
           if (
             agent.tools_config.audio_replies &&
             lastPendingMessage.media_type === "audio" &&
-            isSimpleEnoughForAudio(result.text)
+            isSimpleEnoughForAudio(cleanedText)
           ) {
             const elevenLabsApiKey = await resolveElevenLabsApiKey(organizationId);
             const speech = await generateSpeech({
-              text: result.text,
+              text: cleanedText,
               voice: agent.tools_config.audio_voice,
               apiKey: elevenLabsApiKey,
             });
@@ -327,7 +335,7 @@ export function startProcessMessageWorker() {
             organization_id: organizationId,
             evolution_message_id: null,
             role: "agent",
-            content: result.text,
+            content: cleanedText,
             media_url: null,
             media_type: audioBase64 ? "audio" : null,
             metadata: {
@@ -348,15 +356,17 @@ export function startProcessMessageWorker() {
             messageId: responseMessage.id,
             instanceId: instance.id,
             phone,
-            content: result.text,
+            content: cleanedText,
             organizationId,
             ...(audioBase64 ? { audioBase64 } : {}),
           });
 
           console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> response ${responseMessage.id}`);
         } else {
-          if (result.text.trim()) {
-            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> suppressed no-op placeholder reply: "${result.text}"`);
+          if (cleanedText.trim()) {
+            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> suppressed no-op placeholder reply: "${cleanedText}"`);
+          } else if (result.text.trim()) {
+            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> suppressed meta-narration-only reply: "${result.text}"`);
           } else {
             console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> no text reply (tool-only response)`);
           }
