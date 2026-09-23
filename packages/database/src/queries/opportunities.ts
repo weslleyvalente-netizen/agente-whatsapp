@@ -27,12 +27,18 @@ export async function getOpportunitiesByOrganization(
   organizationId: string,
   filters: { operation?: string; status?: string } = {}
 ) {
-  let query = client.from("opportunities").select("*").eq("organization_id", organizationId);
+  // Embeds the contact's name/phone so the Kanban card can identify the
+  // deal without a second round-trip — the board is unusable without it,
+  // since most opportunities won't have product_model set.
+  let query = client
+    .from("opportunities")
+    .select("*, wa_contacts(name, phone)")
+    .eq("organization_id", organizationId);
   if (filters.operation) query = query.eq("operation", filters.operation);
   if (filters.status) query = query.eq("status", filters.status);
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
-  return data as Opportunity[];
+  return data as (Opportunity & { wa_contacts: { name: string | null; phone: string } | null })[];
 }
 
 export async function addOpportunityEvent(
