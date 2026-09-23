@@ -72,6 +72,7 @@ export function TaskDialog({
         ? "ai"
         : "none"
   );
+  const [opportunityId, setOpportunityId] = useState(task?.opportunity_id ?? "");
 
   useEffect(() => {
     if (!open) return;
@@ -127,6 +128,7 @@ export function TaskDialog({
             due_time: dueTime || null,
             assignee_type: assigneeType,
             assignee_id: assigneeId,
+            opportunity_id: opportunityId || null,
           }),
         });
       } else {
@@ -142,6 +144,7 @@ export function TaskDialog({
             due_time: dueTime || null,
             assignee_type: assigneeType,
             assignee_id: assigneeId,
+            opportunity_id: opportunityId || null,
           }),
         });
       }
@@ -155,6 +158,7 @@ export function TaskDialog({
         setDueDate(toISODateInTimeZone(new Date()));
         setDueTime("");
         setAssigneeValue("none");
+        setOpportunityId("");
       }
       setOpen(false);
       onSaved();
@@ -289,6 +293,16 @@ export function TaskDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="opportunity_id">ID da oportunidade (opcional)</Label>
+            <Input
+              id="opportunity_id"
+              value={opportunityId}
+              onChange={(e) => setOpportunityId(e.target.value)}
+              placeholder="Vincular esta tarefa a uma oportunidade"
+            />
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}

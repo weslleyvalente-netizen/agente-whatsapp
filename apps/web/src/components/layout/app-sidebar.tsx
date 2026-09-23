@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Home,
   Inbox,
+  Kanban,
   Bot,
   Radio,
   Users,
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 const navigation = [
   { name: "Início", href: "/", icon: Home },
   { name: "Conversas", href: "/inbox", icon: Inbox },
+  { name: "Funil de vendas", href: "/opportunities", icon: Kanban },
   { name: "Tarefas", href: "/tasks", icon: ListChecks },
   { name: "Catálogo", href: "/catalog", icon: ShoppingBag },
   { name: "Agentes", href: "/agents", icon: Bot },
