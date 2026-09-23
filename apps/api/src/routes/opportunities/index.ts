@@ -86,10 +86,11 @@ export default async function opportunityRoutes(app: FastifyInstance) {
         next_action_due_date: parseResult.data.next_action_due_date,
         waiting_on: null,
         waiting_on_until: null,
-        last_interaction_at: null,
+        last_interaction_at: parseResult.data.last_interaction_at ?? null,
         last_progress_at: new Date().toISOString(),
         lost_reason: null,
         resume_date: null,
+        ...(parseResult.data.created_at ? { created_at: parseResult.data.created_at } : {}),
       });
 
       await addOpportunityEvent(db, {
@@ -98,7 +99,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
         event_type: "created",
         previous_value: null,
         new_value: { operation: opportunity.operation, stage: opportunity.stage },
-        evidence: "Oportunidade criada manualmente",
+        evidence: parseResult.data.evidence ?? "Oportunidade criada manualmente",
         changed_by_type: "human",
         changed_by_id: request.user.id,
       });

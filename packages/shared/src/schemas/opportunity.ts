@@ -3,6 +3,7 @@ import { OPERATIONS, WAITING_ON_OPTIONS, PRODUCTS, isValidStage } from "../const
 
 const evidenceSchema = z.string().trim().min(1, "Evidência é obrigatória");
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato YYYY-MM-DD");
+const datetimeSchema = z.string().datetime({ offset: true });
 
 export const createOpportunitySchema = z
   .object({
@@ -24,6 +25,13 @@ export const createOpportunitySchema = z
     urgency: z.string().max(200).nullable().optional(),
     main_objection: z.string().max(1000).nullable().optional(),
     commercial_notes: z.string().max(5000).nullable().optional(),
+    // Only meaningful for backfilling historical leads: lets the creation
+    // event carry the real classification rationale and lets the record's
+    // timestamps reflect when the negotiation actually happened, instead of
+    // the moment it was imported. Omitted on every normal UI creation.
+    evidence: evidenceSchema.optional(),
+    created_at: datetimeSchema.optional(),
+    last_interaction_at: datetimeSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (!isValidStage(data.operation, data.stage)) {

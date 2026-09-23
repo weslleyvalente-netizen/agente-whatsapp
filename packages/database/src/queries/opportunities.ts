@@ -3,7 +3,7 @@ import type { Opportunity, OpportunityEvent } from "@aula-agente/shared";
 
 export async function createOpportunity(
   client: SupabaseClient,
-  opportunity: Omit<Opportunity, "id" | "created_at" | "updated_at">
+  opportunity: Omit<Opportunity, "id" | "created_at" | "updated_at"> & { created_at?: string }
 ) {
   const { data, error } = await client.from("opportunities").insert(opportunity).select().single();
   if (error) throw error;
