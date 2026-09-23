@@ -62,9 +62,13 @@ export function OpportunityEditDialog({
   const [termMonths, setTermMonths] = useState(toAmountInput(opportunity.term_months));
   const [commercialNotes, setCommercialNotes] = useState(opportunity.commercial_notes ?? "");
 
-  // Re-seed every field whenever a different opportunity is opened for
-  // editing — without this, opening card A then card B (same dialog
-  // instance) would show A's stale values.
+  // Belt-and-suspenders re-seed: the parent (OpportunityKanban) currently
+  // conditionally mounts this dialog (`{editing && <OpportunityEditDialog
+  // .../>}`), so a fresh instance with fresh useState initializers already
+  // covers "open card A, close, open card B." This effect only matters if
+  // that mounting pattern ever changes to keep one persistent instance
+  // around across different opportunities — kept intentionally rather than
+  // relying on the parent never changing.
   useEffect(() => {
     if (!open) return;
     setOwnerId(opportunity.owner_id ?? "");

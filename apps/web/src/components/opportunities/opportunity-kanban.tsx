@@ -58,12 +58,19 @@ function OpportunityCard({
                     precision loss, despite the TS type saying `number` — wrap in
                     Number() so .toLocaleString() never crashes on a string value. */}
                 Crédito: R${" "}
-                {Number(opportunity.credit_amount).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                {Number(opportunity.credit_amount).toLocaleString("pt-BR", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
               </p>
             )}
             {opportunity.sale_amount != null && (
               <p className="text-muted-foreground">
-                Preço: R$ {Number(opportunity.sale_amount).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                Preço: R${" "}
+                {Number(opportunity.sale_amount).toLocaleString("pt-BR", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
               </p>
             )}
             {opportunity.next_action && (
