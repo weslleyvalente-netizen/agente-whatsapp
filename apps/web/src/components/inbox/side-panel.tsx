@@ -2,6 +2,7 @@
 
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
+import { QualificationPanel } from "./qualification-panel";
 import { TaskHistoryPanel } from "@/components/tasks/task-history-panel";
 import { Separator } from "@/components/ui/separator";
 import { formatPhone } from "@/lib/utils";
@@ -24,6 +25,15 @@ export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
         <h3 className="text-sm font-semibold">Contato</h3>
         <p className="text-sm">{conversation.wa_contacts.name || "Sem nome"}</p>
         <p className="text-xs text-muted-foreground">{formatPhone(conversation.wa_contacts.phone)}</p>
+      </div>
+
+      <Separator />
+
+      {/* Qualification — same context the AI already gathered, so a human
+          taking over doesn't have to re-ask or re-read the whole thread */}
+      <div>
+        <h3 className="mb-2 text-sm font-semibold">Qualificação</h3>
+        <QualificationPanel conversationId={conversation.id} />
       </div>
 
       <Separator />

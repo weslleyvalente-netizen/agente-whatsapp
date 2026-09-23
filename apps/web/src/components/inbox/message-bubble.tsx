@@ -1,9 +1,21 @@
+import { Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@aula-agente/shared";
 
 interface MessageBubbleProps {
   message: Message;
 }
+
+// The webhook saves every incoming voice note with this exact placeholder
+// (apps/api/src/routes/webhooks/evolution.ts) before the worker attempts
+// transcription. If transcription succeeds, the worker overwrites content
+// with "🎤 <transcript>" (apps/worker/src/workers/process-message.ts); if
+// it fails, content is left exactly as this placeholder. So an incoming
+// audio message still showing it means the AI never actually "heard" what
+// the customer said — showing that literal bracket text as if it were
+// real content would be misleading, and silently showing nothing would
+// hide that a reply might be missing context.
+const UNTRANSCRIBED_AUDIO_PLACEHOLDER = "[audio]";
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isContact = message.role === "contact";
@@ -43,7 +55,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             className="mb-1 max-w-full rounded-md"
           />
         )}
-        <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+        {message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (
+          <p className="flex items-center gap-1.5 text-sm italic text-muted-foreground">
+            <Mic className="h-3.5 w-3.5 shrink-0" />
+            Áudio sem transcrição — conteúdo não verificado
+          </p>
+        ) : (
+          <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+        )}
         <p className={cn(
           "tabular-data mt-1 text-right text-[10px]",
           isContact ? "text-muted-foreground" : "opacity-70"
