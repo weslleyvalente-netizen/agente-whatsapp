@@ -13,6 +13,7 @@ export const createTaskSchema = z
   .object({
     contact_id: z.string().uuid(),
     conversation_id: z.string().uuid().nullable().optional(),
+    opportunity_id: z.string().uuid().nullable().optional(),
     assignee_type: z.enum(["human", "ai"]).nullable().optional(),
     assignee_id: z.string().uuid().nullable().optional(),
     type: z.enum(TASK_TYPES),
@@ -32,6 +33,7 @@ export const updateTaskSchema = z
     type: z.enum(TASK_TYPES).optional(),
     description: z.string().max(5000).optional(),
     reason: z.string().max(2000).nullable().optional(),
+    opportunity_id: z.string().uuid().nullable().optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
     due_date: dateSchema.optional(),
     due_time: timeSchema.nullable().optional(),

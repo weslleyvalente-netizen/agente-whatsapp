@@ -11,6 +11,7 @@ export interface Task {
   organization_id: string;
   contact_id: string;
   conversation_id: string | null;
+  opportunity_id: string | null;
   assignee_type: TaskAssigneeType | null;
   assignee_id: string | null;
   type: TaskType;

@@ -96,6 +96,7 @@ export interface UpdateTaskFieldsInput {
   type?: TaskType;
   description?: string;
   reason?: string | null;
+  opportunity_id?: string | null;
   priority?: TaskPriority;
   due_date?: string;
   due_time?: string | null;

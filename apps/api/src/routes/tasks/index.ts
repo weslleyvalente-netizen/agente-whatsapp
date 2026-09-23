@@ -128,10 +128,23 @@ export default async function taskRoutes(app: FastifyInstance) {
         }
       }
 
+      if (parseResult.data.opportunity_id) {
+        const { data: opp } = await db
+          .from("opportunities")
+          .select("id")
+          .eq("id", parseResult.data.opportunity_id)
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        if (!opp) {
+          return reply.status(403).send({ error: "Opportunity does not belong to this organization" });
+        }
+      }
+
       const { task, wasUpdated } = await createTaskWithDedup(db, {
         organization_id: organizationId,
         contact_id: parseResult.data.contact_id,
         conversation_id: parseResult.data.conversation_id ?? null,
+        opportunity_id: parseResult.data.opportunity_id ?? null,
         type: parseResult.data.type,
         description: parseResult.data.description,
         reason: parseResult.data.reason ?? null,

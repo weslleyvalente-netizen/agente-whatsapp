@@ -49,6 +49,26 @@ export async function getOpenTaskByContactAndType(
   return data as Task | null;
 }
 
+export async function getOpenTaskByOpportunityAndType(
+  client: SupabaseClient,
+  organizationId: string,
+  opportunityId: string,
+  type: TaskType
+) {
+  const { data, error } = await client
+    .from("tasks")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("opportunity_id", opportunityId)
+    .eq("type", type)
+    .in("status", OPEN_TASK_STATUSES)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data as Task | null;
+}
+
 export async function getOpenTaskByConversation(
   client: SupabaseClient,
   organizationId: string,
@@ -154,6 +174,7 @@ export interface CreateTaskWithDedupInput {
   organization_id: string;
   contact_id: string;
   conversation_id: string | null;
+  opportunity_id?: string | null;
   type: TaskType;
   description: string;
   reason: string | null;
@@ -170,12 +191,9 @@ export async function createTaskWithDedup(
   client: SupabaseClient,
   input: CreateTaskWithDedupInput
 ): Promise<{ task: Task; wasUpdated: boolean }> {
-  const existing = await getOpenTaskByContactAndType(
-    client,
-    input.organization_id,
-    input.contact_id,
-    input.type
-  );
+  const existing = input.opportunity_id
+    ? await getOpenTaskByOpportunityAndType(client, input.organization_id, input.opportunity_id, input.type)
+    : await getOpenTaskByContactAndType(client, input.organization_id, input.contact_id, input.type);
   const decision = resolveTaskDedupAction(existing, {
     due_date: input.due_date,
     description: input.description,
@@ -218,6 +236,7 @@ export async function createTaskWithDedup(
     organization_id: input.organization_id,
     contact_id: input.contact_id,
     conversation_id: input.conversation_id,
+    opportunity_id: input.opportunity_id ?? null,
     assignee_type: assigneeType,
     assignee_id: assigneeId,
     type: input.type,
