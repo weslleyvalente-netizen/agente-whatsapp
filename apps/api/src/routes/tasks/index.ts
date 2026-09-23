@@ -6,6 +6,7 @@ import {
   cancelTaskSchema,
   updateConversationQualificationSchema,
 } from "@aula-agente/shared";
+import type { SupabaseClient } from "@aula-agente/database";
 import {
   getAdminClient,
   createTaskWithDedup,
@@ -23,6 +24,22 @@ import {
   getOrganizationMembersDisplay,
 } from "../../services/task.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
+
+// Confirms a row referenced by id in `table` belongs to `organizationId`,
+// so a request in one organization can't attach a task to another
+// organization's contact/conversation/opportunity. Used for every
+// foreign-key-ish field accepted from the request body — those tables
+// aren't otherwise organization-scoped at the DB level, and these routes
+// use the RLS-bypassing admin client, so this check is the only guard.
+async function belongsToOrganization(
+  db: SupabaseClient,
+  table: string,
+  id: string,
+  organizationId: string
+): Promise<boolean> {
+  const { data } = await db.from(table).select("id").eq("id", id).eq("organization_id", organizationId).maybeSingle();
+  return data !== null;
+}
 
 export default async function taskRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -106,38 +123,22 @@ export default async function taskRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
 
-      const { data: contact } = await db
-        .from("wa_contacts")
-        .select("id")
-        .eq("id", parseResult.data.contact_id)
-        .eq("organization_id", organizationId)
-        .maybeSingle();
-      if (!contact) {
+      if (!(await belongsToOrganization(db, "wa_contacts", parseResult.data.contact_id, organizationId))) {
         return reply.status(403).send({ error: "Contact does not belong to this organization" });
       }
 
-      if (parseResult.data.conversation_id) {
-        const { data: conv } = await db
-          .from("conversations")
-          .select("id")
-          .eq("id", parseResult.data.conversation_id)
-          .eq("organization_id", organizationId)
-          .maybeSingle();
-        if (!conv) {
-          return reply.status(403).send({ error: "Conversation does not belong to this organization" });
-        }
+      if (
+        parseResult.data.conversation_id &&
+        !(await belongsToOrganization(db, "conversations", parseResult.data.conversation_id, organizationId))
+      ) {
+        return reply.status(403).send({ error: "Conversation does not belong to this organization" });
       }
 
-      if (parseResult.data.opportunity_id) {
-        const { data: opp } = await db
-          .from("opportunities")
-          .select("id")
-          .eq("id", parseResult.data.opportunity_id)
-          .eq("organization_id", organizationId)
-          .maybeSingle();
-        if (!opp) {
-          return reply.status(403).send({ error: "Opportunity does not belong to this organization" });
-        }
+      if (
+        parseResult.data.opportunity_id &&
+        !(await belongsToOrganization(db, "opportunities", parseResult.data.opportunity_id, organizationId))
+      ) {
+        return reply.status(403).send({ error: "Opportunity does not belong to this organization" });
       }
 
       const { task, wasUpdated } = await createTaskWithDedup(db, {
@@ -173,6 +174,13 @@ export default async function taskRoutes(app: FastifyInstance) {
       (m) => m.organization_id === existing.organization_id
     );
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    if (
+      parseResult.data.opportunity_id &&
+      !(await belongsToOrganization(db, "opportunities", parseResult.data.opportunity_id, existing.organization_id))
+    ) {
+      return reply.status(403).send({ error: "Opportunity does not belong to this organization" });
+    }
 
     const task = await updateTaskFields(db, request.params.taskId, parseResult.data, request.user.id);
     return task;
