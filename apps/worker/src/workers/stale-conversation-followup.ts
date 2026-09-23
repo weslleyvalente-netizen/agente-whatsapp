@@ -4,6 +4,8 @@ import {
   DEFAULT_FOLLOWUP_AUTOMATICO,
   DEFAULT_TASK_RULES,
   decideFollowupStage,
+  decideFollowupGate,
+  isWithinBusinessHours,
   toISODateInTimeZone,
 } from "@aula-agente/shared";
 import type { StaleConversationFollowupJobData } from "@aula-agente/queue";
@@ -22,6 +24,7 @@ import {
   getLatestTaskByConversationAndType,
   getTaskEvents,
   hasOpportunitySignalTask,
+  getOpenOpportunitiesByContact,
   createTaskWithDedup,
   updateConversation,
   addTaskEvent,
@@ -254,6 +257,14 @@ export function startStaleConversationFollowupWorker() {
 
               if (decision === "none") continue;
 
+              // Business-hours window — a due follow-up outside it isn't
+              // lost, just skipped for this tick: decideFollowupStage has
+              // no time decay, so it re-evaluates to the same decision on
+              // the next 15-minute tick until it's actually sent.
+              const windowStartHour = followupConfig.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora;
+              const windowEndHour = followupConfig.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora;
+              if (!isWithinBusinessHours(new Date(), windowStartHour, windowEndHour)) continue;
+
               // Don't pile a followup message on top of an unrelated open task
               // that's already tracking next steps for this conversation — but
               // only before stage 1 has fired for THIS silence stretch (an old,
@@ -300,6 +311,39 @@ export function startStaleConversationFollowupWorker() {
                 // a contact staff explicitly disabled the AI for could still
                 // get an automatic re-engagement nudge from it.
                 if (fullConversation.wa_contacts?.ai_disabled) continue;
+
+                // Only act when there's exactly one open opportunity for
+                // this contact — with more than one, which one applies to
+                // this conversation is ambiguous, so fall back to today's
+                // behavior rather than guessing (same principle as task
+                // linking in Priority 5).
+                const openOpportunities = await getOpenOpportunitiesByContact(db, org.id, conversation.contact_id);
+                if (openOpportunities.length === 1) {
+                  const gate = decideFollowupGate(openOpportunities[0], toISODateInTimeZone(new Date()));
+                  if (gate === "skip_scheduled_callback") continue;
+                  if (gate === "skip_pending_on_us") {
+                    // The pendency is ours (team) or the bank's, not the
+                    // customer's — an automatic nudge would wrongly cobrar
+                    // them for something we haven't finished. Flag it
+                    // internally instead of messaging the customer, reusing
+                    // the same dedup pattern as runStalledNegotiationCheck
+                    // above so a 15-minute re-tick doesn't spam duplicates.
+                    const pendingOn = openOpportunities[0].waiting_on === "team" ? "nossa equipe" : "o banco/administradora";
+                    await createTaskWithDedup(db, {
+                      organization_id: org.id,
+                      contact_id: conversation.contact_id,
+                      conversation_id: conversation.id,
+                      type: "stalled_negotiation",
+                      description: `Follow-up automático pausado: oportunidade aguardando ${pendingOn}, não o cliente.`,
+                      reason: "opportunities.waiting_on aponta pendência interna — não notificar o cliente automaticamente.",
+                      priority: "high",
+                      due_date: toISODateInTimeZone(new Date()),
+                      created_by_type: "ai",
+                      created_by_id: null,
+                    });
+                    continue;
+                  }
+                }
 
                 const latestMessages = await getRecentMessages(db, conversation.id, 1);
                 const latestMessage = latestMessages[0];

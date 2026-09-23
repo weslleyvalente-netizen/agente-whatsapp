@@ -93,6 +93,8 @@ export const DEFAULT_FOLLOWUP_AUTOMATICO = {
   ativo: false,
   primeiro_followup_horas: 1,
   segundo_followup_horas: 23,
+  janela_inicio_hora: 8,
+  janela_fim_hora: 18,
 };
 
 export const INSTANCE_STATUSES = ["connected", "disconnected", "connecting"] as const;

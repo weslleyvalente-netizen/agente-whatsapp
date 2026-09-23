@@ -111,6 +111,40 @@ export interface DecideFollowupStageParams {
   stage2AlreadySent: boolean;
 }
 
+export type FollowupGateDecision = "send" | "skip_scheduled_callback" | "skip_pending_on_us";
+
+// Whether an automatic follow-up should actually message the customer,
+// based on the contact's open opportunity (if any and unambiguous — the
+// caller should only pass one when there's exactly one open opportunity
+// for the contact, never guess among several). Reuses the existing
+// opportunities.waiting_on field (already shown on the Kanban) instead of
+// inventing new state:
+// - waiting_on = 'scheduled_date': the customer already agreed to a date
+//   ("retorno combinado") — don't reabordar before it arrives.
+// - waiting_on = 'team' or 'bank_or_admin': the pendency is OURS, not the
+//   customer's — an automatic nudge would wrongly cobrar the customer for
+//   something we (or the bank) haven't finished. The caller should flag
+//   this internally instead of sending.
+export function decideFollowupGate(
+  opportunity: { waiting_on: string | null; waiting_on_until: string | null } | null,
+  todayISODate: string
+): FollowupGateDecision {
+  if (!opportunity) return "send";
+
+  if (opportunity.waiting_on === "scheduled_date") {
+    if (opportunity.waiting_on_until && opportunity.waiting_on_until > todayISODate) {
+      return "skip_scheduled_callback";
+    }
+    return "send";
+  }
+
+  if (opportunity.waiting_on === "team" || opportunity.waiting_on === "bank_or_admin") {
+    return "skip_pending_on_us";
+  }
+
+  return "send";
+}
+
 export function decideFollowupStage(params: DecideFollowupStageParams): FollowupStageAction {
   const {
     hoursSinceCustomerReply,
