@@ -31,7 +31,7 @@ export default function OpportunitiesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Funil de vendas</h1>
-        <OpportunityForm operation={operation} onSaved={fetchOpportunities} />
+        <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
       </div>
       <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
         <TabsList>
