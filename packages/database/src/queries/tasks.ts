@@ -41,6 +41,7 @@ export async function getOpenTaskByContactAndType(
     .eq("organization_id", organizationId)
     .eq("contact_id", contactId)
     .eq("type", type)
+    .is("opportunity_id", null)
     .in("status", OPEN_TASK_STATUSES)
     .order("created_at", { ascending: false })
     .limit(1)

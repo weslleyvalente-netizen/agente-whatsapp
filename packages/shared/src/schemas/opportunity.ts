@@ -1,29 +1,39 @@
 import { z } from "zod";
-import { OPERATIONS, WAITING_ON_OPTIONS, PRODUCTS } from "../constants.js";
+import { OPERATIONS, WAITING_ON_OPTIONS, PRODUCTS, isValidStage } from "../constants.js";
 
 const evidenceSchema = z.string().trim().min(1, "Evidência é obrigatória");
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato YYYY-MM-DD");
 
-export const createOpportunitySchema = z.object({
-  contact_id: z.string().uuid(),
-  operation: z.enum(OPERATIONS),
-  stage: z.string().min(1),
-  product: z.enum(PRODUCTS).nullable().optional(),
-  product_model: z.string().max(200).nullable().optional(),
-  owner_id: z.string().uuid(),
-  next_action: z.string().min(1, "Próxima ação é obrigatória"),
-  next_action_due_date: dateSchema,
-  sale_amount: z.coerce.number().nonnegative().nullable().optional(),
-  credit_amount: z.coerce.number().nonnegative().nullable().optional(),
-  down_payment_amount: z.coerce.number().nonnegative().nullable().optional(),
-  bid_amount: z.coerce.number().nonnegative().nullable().optional(),
-  target_installment_amount: z.coerce.number().nonnegative().nullable().optional(),
-  term_months: z.coerce.number().int().positive().nullable().optional(),
-  usage_purpose: z.string().max(500).nullable().optional(),
-  urgency: z.string().max(200).nullable().optional(),
-  main_objection: z.string().max(1000).nullable().optional(),
-  commercial_notes: z.string().max(5000).nullable().optional(),
-});
+export const createOpportunitySchema = z
+  .object({
+    contact_id: z.string().uuid(),
+    operation: z.enum(OPERATIONS),
+    stage: z.string().min(1),
+    product: z.enum(PRODUCTS).nullable().optional(),
+    product_model: z.string().max(200).nullable().optional(),
+    owner_id: z.string().uuid(),
+    next_action: z.string().min(1, "Próxima ação é obrigatória"),
+    next_action_due_date: dateSchema,
+    sale_amount: z.coerce.number().nonnegative().nullable().optional(),
+    credit_amount: z.coerce.number().nonnegative().nullable().optional(),
+    down_payment_amount: z.coerce.number().nonnegative().nullable().optional(),
+    bid_amount: z.coerce.number().nonnegative().nullable().optional(),
+    target_installment_amount: z.coerce.number().nonnegative().nullable().optional(),
+    term_months: z.coerce.number().int().positive().nullable().optional(),
+    usage_purpose: z.string().max(500).nullable().optional(),
+    urgency: z.string().max(200).nullable().optional(),
+    main_objection: z.string().max(1000).nullable().optional(),
+    commercial_notes: z.string().max(5000).nullable().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!isValidStage(data.operation, data.stage)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Estágio "${data.stage}" não existe no funil "${data.operation}"`,
+        path: ["stage"],
+      });
+    }
+  });
 
 export const updateOpportunitySchema = z.object({
   owner_id: z.string().uuid().nullable().optional(),
