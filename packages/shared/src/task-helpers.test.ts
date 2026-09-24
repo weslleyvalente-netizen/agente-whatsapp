@@ -7,6 +7,7 @@ import {
   sortTasksForToday,
   computeTaskSummary,
   decideFollowupStage,
+  decideFollowupGate,
   type SortableTask,
 } from "./task-helpers.js";
 
@@ -201,5 +202,55 @@ describe("decideFollowupStage", () => {
         stage2AlreadySent: false,
       })
     ).toBe("send_stage_2");
+  });
+});
+
+describe("decideFollowupGate", () => {
+  const today = "2026-09-23";
+
+  it("sends when the contact has no open opportunity to check", () => {
+    expect(decideFollowupGate(null, today)).toBe("send");
+  });
+
+  it("sends when the opportunity isn't waiting on anything in particular", () => {
+    expect(decideFollowupGate({ waiting_on: null, waiting_on_until: null }, today)).toBe("send");
+  });
+
+  it("sends when the opportunity is waiting on the customer themselves", () => {
+    expect(decideFollowupGate({ waiting_on: "customer", waiting_on_until: null }, today)).toBe("send");
+  });
+
+  it("skips (respects the agreed date) when waiting_on is scheduled_date and that date hasn't arrived yet", () => {
+    expect(decideFollowupGate({ waiting_on: "scheduled_date", waiting_on_until: "2026-09-25" }, today)).toBe(
+      "skip_scheduled_callback"
+    );
+  });
+
+  it("sends once the agreed date has arrived", () => {
+    expect(decideFollowupGate({ waiting_on: "scheduled_date", waiting_on_until: "2026-09-23" }, today)).toBe(
+      "send"
+    );
+  });
+
+  it("sends once the agreed date is in the past", () => {
+    expect(decideFollowupGate({ waiting_on: "scheduled_date", waiting_on_until: "2026-09-01" }, today)).toBe(
+      "send"
+    );
+  });
+
+  it("sends (defensively) when waiting_on is scheduled_date but no date was actually recorded", () => {
+    expect(decideFollowupGate({ waiting_on: "scheduled_date", waiting_on_until: null }, today)).toBe("send");
+  });
+
+  it("skips as pending-on-us when waiting on the team, not the customer", () => {
+    expect(decideFollowupGate({ waiting_on: "team", waiting_on_until: null }, today)).toBe(
+      "skip_pending_on_us"
+    );
+  });
+
+  it("skips as pending-on-us when waiting on the bank/administradora", () => {
+    expect(decideFollowupGate({ waiting_on: "bank_or_admin", waiting_on_until: null }, today)).toBe(
+      "skip_pending_on_us"
+    );
   });
 });

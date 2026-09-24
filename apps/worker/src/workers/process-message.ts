@@ -3,7 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { ProcessMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection, getSendMessageQueue } from "@aula-agente/queue";
-import { getAdminClient, getAgentById, getRecentMessages, getConversationById } from "@aula-agente/database";
+import type { Message } from "@aula-agente/shared";
+import {
+  getAdminClient,
+  getAgentById,
+  getRecentMessages,
+  getConversationById,
+  getLastContactMessage,
+} from "@aula-agente/database";
 import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -13,6 +20,8 @@ import { transcribeAudioMessage } from "../lib/audio-transcription.js";
 import { describeImageMessage } from "../lib/image-description.js";
 import { generateSpeech, isSimpleEnoughForAudio } from "../lib/audio-generation.js";
 import { isNoOpReply } from "../lib/no-op-reply.js";
+import { stripLeakedMetaNarration } from "../lib/meta-narration-leak.js";
+import { collectPendingContactMessages, isReplyStillFresh } from "../lib/message-grouping.js";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
 const AUDIO_FALLBACK_TEXT =
@@ -51,7 +60,13 @@ export function startProcessMessageWorker() {
   const worker = new Worker<ProcessMessageJobData>(
     QUEUE_NAMES.PROCESS_MESSAGE,
     async (job) => {
-      const { conversationId, messageId, agentId, organizationId } = job.data;
+      // messageId in job.data is only the message that triggered this
+      // particular enqueue call — with deduplication+replace (see
+      // apps/api/src/lib/queue.ts) it's whichever message was most recent
+      // when the debounced job was scheduled, not necessarily everything
+      // that ends up in the batch. The batch itself is always re-derived
+      // from the DB below (collectPendingContactMessages), never from this.
+      const { conversationId, agentId, organizationId } = job.data;
 
       // Acquire conversation lock
       const lockValue = await acquireConversationLock(conversationId);
@@ -91,128 +106,157 @@ export function startProcessMessageWorker() {
         // Load recent message history
         const recentMessages = await getRecentMessages(db, conversationId, 20);
 
-        // Find the current message
-        const currentMessage = recentMessages.find((m) => m.id === messageId);
-        if (!currentMessage) {
-          throw new Error(`Message ${messageId} not found`);
-        }
-
-        // Unsupported WhatsApp message types (reactions, protocol messages, etc.)
-        // are saved with empty content — the LLM can't process those, skip them.
-        if (!currentMessage.content.trim()) {
-          console.log(`Message ${messageId} has empty content, skipping`);
+        // Every contact message since our last reply is one turn — the
+        // upstream debounce (apps/api/src/lib/queue.ts, ~6s after the
+        // customer's last message) means there may be several by the time
+        // this job runs. An empty batch means a stray/duplicate run found
+        // nothing left to answer (see collectPendingContactMessages'
+        // idempotency note in apps/worker/src/lib/message-grouping.ts) —
+        // safe to just stop, this is not an error.
+        const pendingMessages = collectPendingContactMessages(recentMessages);
+        if (pendingMessages.length === 0) {
+          console.log(`No pending contact messages for conversation ${conversationId}, skipping`);
           return;
         }
 
-        // Voice notes arrive with a "[audio]" placeholder — transcribe it to
-        // real text before the agent ever sees it. This runs here (not in
-        // the webhook) so the webhook keeps acking Evolution fast regardless
-        // of transcription latency. Any failure (missing key, fetch error,
-        // transcription error, empty transcript, or too-long audio) sends a
-        // fixed "please type instead" reply and skips the LLM entirely.
-        let effectiveMessage = currentMessage;
+        // Voice notes and photos need per-message preprocessing
+        // (transcription / image description) before anything gets combined
+        // into one turn — same logic as before, now looped over the batch.
+        // A single failure aborts the whole batch with a fallback text, same
+        // as the old single-message behavior; a partial-batch continuation
+        // isn't worth the complexity for what's a rare failure path.
+        const effectiveMessages: Message[] = [];
+        for (const message of pendingMessages) {
+          let effectiveContent = message.content;
 
-        if (currentMessage.media_type === "audio") {
-          const durationSeconds = currentMessage.metadata?.duration_seconds;
+          // Voice notes arrive with a "[audio]" placeholder — transcribe it
+          // to real text before the agent ever sees it. This runs here (not
+          // in the webhook) so the webhook keeps acking Evolution fast
+          // regardless of transcription latency. Any failure (missing key,
+          // fetch error, transcription error, empty transcript, or too-long
+          // audio) sends a fixed "please type instead" reply and skips the
+          // LLM entirely.
+          if (message.media_type === "audio") {
+            const durationSeconds = message.metadata?.duration_seconds;
 
-          if (typeof durationSeconds === "number" && durationSeconds > AUDIO_DURATION_CAP_SECONDS) {
-            console.log(`Message ${messageId} audio exceeds ${AUDIO_DURATION_CAP_SECONDS}s cap, skipping transcription`);
-            await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
-              conversationId,
+            if (typeof durationSeconds === "number" && durationSeconds > AUDIO_DURATION_CAP_SECONDS) {
+              console.log(`Message ${message.id} audio exceeds ${AUDIO_DURATION_CAP_SECONDS}s cap, skipping transcription`);
+              await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
+                conversationId,
+                organizationId,
+                instanceId: instance.id,
+                phone,
+              });
+              return;
+            }
+
+            const transcription = await transcribeAudioMessage({
+              instanceName: instance.instance_name,
+              evolutionMessageId: message.evolution_message_id!,
               organizationId,
-              instanceId: instance.id,
-              phone,
             });
-            return;
+
+            if (!transcription.ok) {
+              console.log(`Message ${message.id} transcription failed: ${transcription.reason}`);
+              await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
+                conversationId,
+                organizationId,
+                instanceId: instance.id,
+                phone,
+              });
+              return;
+            }
+
+            effectiveContent = `🎤 ${transcription.text}`;
+            await updateMessageContent(db, message.id, effectiveContent);
           }
 
-          const transcription = await transcribeAudioMessage({
-            instanceName: instance.instance_name,
-            evolutionMessageId: currentMessage.evolution_message_id!,
-            organizationId,
-          });
+          // Photos arrive with a "[imagem]" placeholder (or just the
+          // caption, if the customer wrote one) — describe the actual image
+          // content before the agent ever sees it, same reasoning as audio
+          // above. Guarded with the "📷 " prefix check so a BullMQ retry
+          // (attempts: 3 on this queue — see packages/queue/src/queues.ts)
+          // doesn't re-run the vision call against the already-described
+          // content.
+          if (message.media_type === "image" && !message.content.startsWith("📷 ")) {
+            const caption = message.content === "[imagem]" ? undefined : message.content;
 
-          if (!transcription.ok) {
-            console.log(`Message ${messageId} transcription failed: ${transcription.reason}`);
-            await sendFallbackText(db, AUDIO_FALLBACK_TEXT, {
-              conversationId,
-              organizationId,
-              instanceId: instance.id,
-              phone,
-            });
-            return;
-          }
-
-          const transcribedContent = `🎤 ${transcription.text}`;
-          await updateMessageContent(db, currentMessage.id, transcribedContent);
-          effectiveMessage = { ...currentMessage, content: transcribedContent };
-        }
-
-        // Photos arrive with a "[imagem]" placeholder (or just the caption,
-        // if the customer wrote one) — describe the actual image content
-        // before the agent ever sees it, same reasoning as the audio branch
-        // above: it's a pipeline step that runs here in the worker, not the
-        // webhook, so the webhook keeps acking Evolution fast regardless of
-        // how long the vision call takes.
-        // Guarded with the "📷 " prefix check so a BullMQ retry (attempts: 3
-        // on this queue — see packages/queue/src/queues.ts) doesn't re-run
-        // the vision call against the already-described content. Without
-        // this, a retry would treat the first attempt's own description
-        // (now sitting in currentMessage.content) as if it were the
-        // customer's caption and feed it back into the prompt.
-        if (currentMessage.media_type === "image" && !currentMessage.content.startsWith("📷 ")) {
-          const caption = currentMessage.content === "[imagem]" ? undefined : currentMessage.content;
-
-          const description = await describeImageMessage({
-            instanceName: instance.instance_name,
-            evolutionMessageId: currentMessage.evolution_message_id!,
-            caption,
-            provider: agent.provider,
-            model: agent.model,
-            apiKey,
-          });
-
-          // Best-effort: a vision call happened (and cost money) whenever
-          // `usage` is present, even on the "empty_description" failure
-          // path — only the "image_too_large" and fetch/timeout paths skip
-          // the LLM entirely and have no usage to log.
-          if (description.usage) {
-            recordAiUsageEvent(db, {
-              organizationId,
-              agentId: agent.id,
-              source: "image_description",
+            const description = await describeImageMessage({
+              instanceName: instance.instance_name,
+              evolutionMessageId: message.evolution_message_id!,
+              caption,
+              provider: agent.provider,
               model: agent.model,
-              inputTokens: description.usage.inputTokens,
-              outputTokens: description.usage.outputTokens,
-              cacheReadTokens: description.usage.cacheReadTokens,
-              cacheWriteTokens: description.usage.cacheWriteTokens,
-            }).catch((err) => console.error("[process-message] failed to record ai_usage_event", err));
-          }
-
-          if (!description.ok) {
-            console.log(`Message ${messageId} image description failed: ${description.reason}`);
-            await sendFallbackText(db, IMAGE_FALLBACK_TEXT, {
-              conversationId,
-              organizationId,
-              instanceId: instance.id,
-              phone,
+              apiKey,
             });
-            return;
+
+            // Best-effort: a vision call happened (and cost money) whenever
+            // `usage` is present, even on the "empty_description" failure
+            // path — only the "image_too_large" and fetch/timeout paths
+            // skip the LLM entirely and have no usage to log.
+            if (description.usage) {
+              recordAiUsageEvent(db, {
+                organizationId,
+                agentId: agent.id,
+                source: "image_description",
+                model: agent.model,
+                inputTokens: description.usage.inputTokens,
+                outputTokens: description.usage.outputTokens,
+                cacheReadTokens: description.usage.cacheReadTokens,
+                cacheWriteTokens: description.usage.cacheWriteTokens,
+              }).catch((err) => console.error("[process-message] failed to record ai_usage_event", err));
+            }
+
+            if (!description.ok) {
+              console.log(`Message ${message.id} image description failed: ${description.reason}`);
+              await sendFallbackText(db, IMAGE_FALLBACK_TEXT, {
+                conversationId,
+                organizationId,
+                instanceId: instance.id,
+                phone,
+              });
+              return;
+            }
+
+            effectiveContent = caption ? `📷 ${description.text}\n\n${caption}` : `📷 ${description.text}`;
+            await updateMessageContent(db, message.id, effectiveContent);
           }
 
-          const describedContent = caption ? `📷 ${description.text}\n\n${caption}` : `📷 ${description.text}`;
-          await updateMessageContent(db, currentMessage.id, describedContent);
-          effectiveMessage = { ...currentMessage, content: describedContent };
+          // Unsupported WhatsApp message types (reactions, protocol
+          // messages, etc.) are saved with empty content — the LLM can't
+          // process those, exclude them from the batch.
+          if (effectiveContent.trim()) {
+            effectiveMessages.push({ ...message, content: effectiveContent });
+          } else {
+            console.log(`Message ${message.id} has empty content, excluding from batch`);
+          }
         }
 
-        // Remove current message from history
-        const history = recentMessages.filter((m) => m.id !== messageId);
+        if (effectiveMessages.length === 0) {
+          console.log(`Batch for conversation ${conversationId} had no processable content, skipping`);
+          return;
+        }
+
+        // The synthetic turn the agent responds to: every bubble folded
+        // into one message, oldest first, so order is preserved exactly as
+        // the customer sent it. Only role/content reach the LLM
+        // (buildFinalTurnMessage in agent-runtime) — the last real
+        // message's media_type is read further below to decide whether an
+        // audio reply makes sense (mirroring the customer's own modality).
+        const lastPendingMessage = pendingMessages[pendingMessages.length - 1];
+        const batchMessage: Message = {
+          ...lastPendingMessage,
+          content: effectiveMessages.map((m) => m.content).join("\n"),
+        };
+
+        const pendingIds = new Set(pendingMessages.map((m) => m.id));
+        const history = recentMessages.filter((m) => !pendingIds.has(m.id));
 
         // Run the agent
         const result = await runAgent({
           agent,
           messages: history,
-          currentMessage: effectiveMessage,
+          currentMessage: batchMessage,
           apiKey,
           organizationId,
           conversationId,
@@ -222,6 +266,36 @@ export function startProcessMessageWorker() {
           contactName: conversation.wa_contacts?.name ?? null,
         });
 
+        // Generation can take a while (LLM latency, tool calls). Before
+        // acting on the result, re-check reality: a human may have taken
+        // over, AI may have been disabled, or the customer may have sent
+        // something new that this reply never saw. Sending it now would be
+        // wrong in any of those cases — drop it. Nothing is lost: a newer
+        // message triggered its own debounced job, which will recompute the
+        // full pending batch (collectPendingContactMessages) including
+        // whatever this drops.
+        const freshConversation = await getConversationById(db, conversationId);
+        if (freshConversation.is_human_takeover) {
+          console.log(`Conversation ${conversationId} was taken over by a human during generation, dropping reply`);
+          return;
+        }
+        if (freshConversation.wa_contacts?.ai_disabled) {
+          console.log(`Conversation ${conversationId} contact had AI disabled during generation, dropping reply`);
+          return;
+        }
+        const latestContact = await getLastContactMessage(db, conversationId);
+        if (!isReplyStillFresh(lastPendingMessage.created_at, latestContact?.created_at ?? null)) {
+          console.log(`Conversation ${conversationId} has a newer customer message, dropping stale reply`);
+          return;
+        }
+
+        // The model occasionally narrates its own message lifecycle instead
+        // of just replying (e.g. "A resposta já foi enviada", confirmed in
+        // production) — strip that leaked fragment before anything else
+        // touches result.text, so it never reaches the customer but a
+        // legitimate answer sitting next to it isn't thrown away.
+        const cleanedText = stripLeakedMetaNarration(result.text);
+
         // Save and send the agent's text reply — skipped if the agent's
         // final text is empty, which now legitimately happens when it only
         // called sendVehiclePhoto and considered the photo itself the
@@ -230,7 +304,7 @@ export function startProcessMessageWorker() {
         // wrote a meta-comment like "(sem resposta necessária)" instead of
         // truly empty text — confirmed in production, that placeholder was
         // getting sent straight to the customer.
-        if (result.text.trim() && !isNoOpReply(result.text)) {
+        if (cleanedText.trim() && !isNoOpReply(cleanedText)) {
           // Mirror the customer's own modality: only even attempt audio when
           // they sent audio, the agent has the toggle on, and the reply text
           // itself is simple enough to be understood by ear (no link, no
@@ -240,19 +314,19 @@ export function startProcessMessageWorker() {
           let audioBase64: string | undefined;
           if (
             agent.tools_config.audio_replies &&
-            currentMessage.media_type === "audio" &&
-            isSimpleEnoughForAudio(result.text)
+            lastPendingMessage.media_type === "audio" &&
+            isSimpleEnoughForAudio(cleanedText)
           ) {
             const elevenLabsApiKey = await resolveElevenLabsApiKey(organizationId);
             const speech = await generateSpeech({
-              text: result.text,
+              text: cleanedText,
               voice: agent.tools_config.audio_voice,
               apiKey: elevenLabsApiKey,
             });
             if (speech.ok) {
               audioBase64 = speech.audioBase64;
             } else {
-              console.log(`Message ${messageId} audio generation failed, falling back to text: ${speech.reason}`);
+              console.log(`Batch ending in message ${lastPendingMessage.id} audio generation failed, falling back to text: ${speech.reason}`);
             }
           }
 
@@ -261,7 +335,7 @@ export function startProcessMessageWorker() {
             organization_id: organizationId,
             evolution_message_id: null,
             role: "agent",
-            content: result.text,
+            content: cleanedText,
             media_url: null,
             media_type: audioBase64 ? "audio" : null,
             metadata: {
@@ -282,17 +356,19 @@ export function startProcessMessageWorker() {
             messageId: responseMessage.id,
             instanceId: instance.id,
             phone,
-            content: result.text,
+            content: cleanedText,
             organizationId,
             ...(audioBase64 ? { audioBase64 } : {}),
           });
 
-          console.log(`Processed message ${messageId} -> response ${responseMessage.id}`);
+          console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> response ${responseMessage.id}`);
         } else {
-          if (result.text.trim()) {
-            console.log(`Processed message ${messageId} -> suppressed no-op placeholder reply: "${result.text}"`);
+          if (cleanedText.trim()) {
+            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> suppressed no-op placeholder reply: "${cleanedText}"`);
+          } else if (result.text.trim()) {
+            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> suppressed meta-narration-only reply: "${result.text}"`);
           } else {
-            console.log(`Processed message ${messageId} -> no text reply (tool-only response)`);
+            console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> no text reply (tool-only response)`);
           }
         }
 

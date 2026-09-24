@@ -20,6 +20,14 @@ export interface FollowupAutomaticoConfig {
   ativo: boolean;
   primeiro_followup_horas: number;
   segundo_followup_horas: number;
+  // Business-hours window for sending automatic follow-ups, in the
+  // America/Sao_Paulo time zone. Optional: rows written before this existed
+  // fall back to DEFAULT_FOLLOWUP_AUTOMATICO's 8-18 default. Outside the
+  // window a due follow-up is skipped for that tick, not lost — it fires on
+  // the next in-window tick (stale-conversation-followup.ts runs every 15
+  // min and re-evaluates from scratch each time).
+  janela_inicio_hora?: number;
+  janela_fim_hora?: number;
 }
 
 export interface ToolsConfig {

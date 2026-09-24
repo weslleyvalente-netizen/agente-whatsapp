@@ -1,6 +1,6 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
-import { getAdminClient, createTaskWithDedup } from "@aula-agente/database";
+import { getAdminClient, createTaskWithDedup, getOpenOpportunitiesByContact } from "@aula-agente/database";
 import { TASK_TYPES, TASK_PRIORITIES } from "@aula-agente/shared";
 
 interface CreateTaskToolContext {
@@ -29,10 +29,28 @@ export function createCreateTaskTool(context: CreateTaskToolContext): Tool {
       // string it can react to instead.
       try {
         const db = getAdminClient();
+
+        // Scope dedup to the right deal when it's unambiguous: with exactly
+        // one open opportunity for this contact, this task belongs to it.
+        // With zero or several, don't guess which one — opportunity_id
+        // stays null and createTaskWithDedup falls back to its
+        // (contact_id, type) dedup, same as before this existed. A lookup
+        // failure must never block task creation itself.
+        let opportunityId: string | null = null;
+        try {
+          const openOpportunities = await getOpenOpportunitiesByContact(db, context.organizationId, context.contactId);
+          if (openOpportunities.length === 1) {
+            opportunityId = openOpportunities[0].id;
+          }
+        } catch (err) {
+          console.error("createTask tool: failed to resolve contact's open opportunity:", err);
+        }
+
         const { task, wasUpdated } = await createTaskWithDedup(db, {
           organization_id: context.organizationId,
           contact_id: context.contactId,
           conversation_id: context.conversationId,
+          opportunity_id: opportunityId,
           type,
           description,
           reason,

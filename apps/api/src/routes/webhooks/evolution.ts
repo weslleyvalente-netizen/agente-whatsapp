@@ -4,7 +4,7 @@ import { getAdminClient, getInstanceByInstanceId, updateConversation } from "@au
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
-import { autoCompleteConversationTask } from "../../services/task.service.js";
+import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
@@ -200,14 +200,15 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         });
 
         // Same reasoning as messages/send.ts: a human replying (even
-        // directly from their phone) means they're handling whatever this
-        // conversation's open task was tracking. No dashboard user to
-        // attribute it to here, so actorId is null.
+        // directly from their phone) means they're now handling whatever
+        // this conversation's open task was tracking — reassign it, don't
+        // close it out. No dashboard user to attribute it to here, so
+        // actorId is null.
         if (isFirstTakeover) {
           try {
-            await autoCompleteConversationTask(getAdminClient(), organizationId, conversation.id, null);
+            await handleConversationTakeover(getAdminClient(), organizationId, conversation.id, null);
           } catch (err) {
-            request.log.error({ err, conversationId: conversation.id }, "Failed to auto-complete task on fromMe takeover");
+            request.log.error({ err, conversationId: conversation.id }, "Failed to reassign task on fromMe takeover");
           }
         }
 

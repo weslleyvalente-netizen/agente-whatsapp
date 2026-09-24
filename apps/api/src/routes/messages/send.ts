@@ -4,7 +4,7 @@ import { getAdminClient, getConversationById, updateConversation } from "@aula-a
 import { getInstanceById } from "@aula-agente/database";
 import { authMiddleware, requireOrg } from "../../middleware/auth.js";
 import { saveMessage } from "../../services/message.service.js";
-import { autoCompleteConversationTask } from "../../services/task.service.js";
+import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueSendMessage } from "../../lib/queue.js";
 
 export default async function messageSendRoutes(app: FastifyInstance) {
@@ -62,15 +62,15 @@ export default async function messageSendRoutes(app: FastifyInstance) {
         ...(isFirstTakeover ? { assigned_to: request.user.id } : {}),
       });
 
-      // Best-effort: a human taking over means they're handling whatever
-      // this conversation's open task was tracking, so close it out. Only
-      // on the takeover itself, not every subsequent reply. Never blocks
-      // the message send.
+      // Best-effort: a human taking over means they're now handling
+      // whatever this conversation's open task was tracking — reassign it
+      // to them, don't close it out. Only on the takeover itself, not
+      // every subsequent reply. Never blocks the message send.
       if (isFirstTakeover) {
         try {
-          await autoCompleteConversationTask(db, conversation.organization_id, conversation_id, request.user.id);
+          await handleConversationTakeover(db, conversation.organization_id, conversation_id, request.user.id);
         } catch (err) {
-          console.error(`Failed to auto-complete task for conversation ${conversation_id}:`, err);
+          console.error(`Failed to reassign task on takeover for conversation ${conversation_id}:`, err);
         }
       }
 

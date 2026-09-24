@@ -32,11 +32,21 @@ export async function completeTask(
 // it to). Best-effort: the caller swallows errors so a task lookup/write
 // failure never blocks the message.
 //
-// A conversation can have more than one open task at a time (different
-// task types created on different days) — the human taking over means
-// they're now handling all of them, not just the most recently created
-// one, so every open task gets completed.
-export async function autoCompleteConversationTask(
+// Taking over means the human is now the one handling these tasks — it
+// does NOT mean they're resolved. A "Bom dia" doesn't close a pending
+// simulation, a pending bank analysis, or an unanswered question. Every
+// open task gets reassigned to the human and moved to in_progress (if
+// still pending); completion stays an explicit action via the existing
+// /tasks/:taskId/complete flow. A conversation can have more than one
+// open task at a time (different task types created on different days) —
+// each is reassigned independently, not merged into one action.
+//
+// actorId is null on the fromMe path (human replied from their own phone,
+// no dashboard session). tasks.assignee has a DB check requiring
+// assignee_id whenever assignee_type='human', so assignee fields are
+// omitted entirely when actorId is null rather than sent as a doomed
+// human/null pair.
+export async function handleConversationTakeover(
   db: SupabaseClient,
   organizationId: string,
   conversationId: string,
@@ -44,14 +54,21 @@ export async function autoCompleteConversationTask(
 ): Promise<Task[]> {
   const openTasks = await getOpenTasksByConversation(db, organizationId, conversationId);
   return Promise.all(
-    openTasks.map((task) =>
-      completeTask(
-        db,
-        task.id,
-        { type: "human", id: actorId },
-        "Concluída automaticamente — humano assumiu a conversa"
-      )
-    )
+    openTasks.map(async (task) => {
+      const updated = await updateTask(db, task.id, {
+        ...(actorId ? { assignee_type: "human" as const, assignee_id: actorId } : {}),
+        status: task.status === "pending" ? "in_progress" : task.status,
+      });
+      await addTaskEvent(db, {
+        task_id: task.id,
+        organization_id: task.organization_id,
+        event_type: "assigned",
+        note: "Humano assumiu a conversa — tarefa permanece aberta até conclusão explícita",
+        created_by_type: "human",
+        created_by_id: actorId,
+      });
+      return updated;
+    })
   );
 }
 

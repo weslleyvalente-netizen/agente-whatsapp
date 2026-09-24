@@ -3,7 +3,7 @@ import { updateConversationSchema } from "@aula-agente/shared";
 import type { Conversation } from "@aula-agente/shared";
 import { getAdminClient, getConversationById, updateConversation } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
-import { autoCompleteConversationTask } from "../../services/task.service.js";
+import { handleConversationTakeover } from "../../services/task.service.js";
 
 export default async function conversationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -21,9 +21,9 @@ export default async function conversationRoutes(app: FastifyInstance) {
 
     // Same reasoning as messages/send.ts and the evolution webhook: taking
     // the conversation over (via this toggle, independent of sending a
-    // message) means the human is handling whatever the conversation's
-    // open task was tracking, so close it out. Only on the transition into
-    // takeover, not on every subsequent update.
+    // message) means the human is now handling whatever the conversation's
+    // open task was tracking, so it gets reassigned to them. Only on the
+    // transition into takeover, not on every subsequent update.
     const isNewTakeover = parseResult.data.is_human_takeover === true && !existing.is_human_takeover;
 
     const updates: Partial<Conversation> = { ...parseResult.data };
@@ -41,11 +41,11 @@ export default async function conversationRoutes(app: FastifyInstance) {
 
     if (isNewTakeover) {
       try {
-        await autoCompleteConversationTask(db, existing.organization_id, request.params.conversationId, request.user.id);
+        await handleConversationTakeover(db, existing.organization_id, request.params.conversationId, request.user.id);
       } catch (err) {
         request.log.error(
           { err, conversationId: request.params.conversationId },
-          "Failed to auto-complete task on takeover toggle"
+          "Failed to reassign task on takeover toggle"
         );
       }
     }

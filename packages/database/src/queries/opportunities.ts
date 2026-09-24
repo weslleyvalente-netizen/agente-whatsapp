@@ -41,6 +41,27 @@ export async function getOpportunitiesByOrganization(
   return data as (Opportunity & { wa_contacts: { name: string | null; phone: string } | null })[];
 }
 
+// Used by stale-conversation-followup.ts to decide whether an automatic
+// nudge should actually message the customer (see decideFollowupGate in
+// @aula-agente/shared) — the caller only acts on this when it returns
+// exactly one row; several open opportunities for the same contact means
+// which one applies to a given conversation is ambiguous, so the caller
+// falls back to today's behavior rather than guessing.
+export async function getOpenOpportunitiesByContact(
+  client: SupabaseClient,
+  organizationId: string,
+  contactId: string
+) {
+  const { data, error } = await client
+    .from("opportunities")
+    .select("id, waiting_on, waiting_on_until")
+    .eq("organization_id", organizationId)
+    .eq("contact_id", contactId)
+    .eq("status", "open");
+  if (error) throw error;
+  return data as Array<{ id: string; waiting_on: string | null; waiting_on_until: string | null }>;
+}
+
 export async function addOpportunityEvent(
   client: SupabaseClient,
   event: Omit<OpportunityEvent, "id" | "created_at">
