@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { apiFetch } from "@/lib/api";
 import { OPERATIONS, OPERATION_LABELS } from "@aula-agente/shared";
 import type { Operation } from "@aula-agente/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { OpportunityKanban, type OpportunityWithContact } from "@/components/opportunities/opportunity-kanban";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 
@@ -17,19 +18,35 @@ export default function OpportunitiesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetched once across all funnels (not per-tab) so every tab's badge count
+  // is known without refetching on every switch; the Kanban below filters
+  // this same list down to the selected operation.
   const fetchOpportunities = useCallback(async () => {
     if (!currentOrg) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities?operation=${operation}`);
+      const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities`);
       setOpportunities(data);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [currentOrg, operation]);
+  }, [currentOrg]);
+
+  const countsByOperation = useMemo(() => {
+    const counts = new Map<Operation, number>();
+    for (const o of opportunities) {
+      counts.set(o.operation, (counts.get(o.operation) ?? 0) + 1);
+    }
+    return counts;
+  }, [opportunities]);
+
+  const opportunitiesForTab = useMemo(
+    () => opportunities.filter((o) => o.operation === operation),
+    [opportunities, operation]
+  );
 
   useEffect(() => {
     fetchOpportunities();
@@ -44,8 +61,9 @@ export default function OpportunitiesPage() {
       <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
         <TabsList>
           {OPERATIONS.map((op) => (
-            <TabsTrigger key={op} value={op}>
+            <TabsTrigger key={op} value={op} className="gap-1.5">
               {OPERATION_LABELS[op]}
+              <Badge variant={op === operation ? "default" : "secondary"}>{countsByOperation.get(op) ?? 0}</Badge>
             </TabsTrigger>
           ))}
         </TabsList>
@@ -60,7 +78,7 @@ export default function OpportunitiesPage() {
         </div>
       )}
       {!loading && !error && (
-        <OpportunityKanban operation={operation} opportunities={opportunities} onChanged={fetchOpportunities} />
+        <OpportunityKanban operation={operation} opportunities={opportunitiesForTab} onChanged={fetchOpportunities} />
       )}
     </div>
   );
