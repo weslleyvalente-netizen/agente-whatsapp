@@ -5,6 +5,7 @@ import {
   DEFAULT_TASK_RULES,
   decideFollowupStage,
   decideFollowupGate,
+  shouldFlagStalledNegotiation,
   isWithinBusinessHours,
   toISODateInTimeZone,
 } from "@aula-agente/shared";
@@ -71,7 +72,14 @@ async function runStalledNegotiationCheck(
         row.conversation_id,
         "stalled_negotiation"
       );
-      if (priorTask && OPEN_TASK_STATUSES.includes(priorTask.status)) continue;
+      // Anchored to last_message_at, not "is there currently an open
+      // task": a human cancelling or completing this alert to correctly
+      // dismiss a dead negotiation (no new message sent) must not bring
+      // it right back on the next 15-minute tick. Real bug, present since
+      // at least 2026-09-10: the old open-task-only check recreated this
+      // task every ~15-30 min forever for the same still-stale
+      // conversation the instant a human dismissed it.
+      if (!shouldFlagStalledNegotiation(priorTask?.created_at ?? null, row.last_message_at)) continue;
 
       const daysStale = Math.round((Date.now() - new Date(row.last_message_at).getTime()) / 86_400_000);
       const formattedAmount = row.sale_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 });

@@ -111,6 +111,23 @@ export interface DecideFollowupStageParams {
   stage2AlreadySent: boolean;
 }
 
+// Whether a NEW stalled_negotiation alert task should be created for this
+// stretch of silence. "Stretch" is anchored to the conversation's last
+// message, same principle as decideFollowupStage's anchorISO: once a task
+// already exists that was created after that last message, this exact
+// stretch of staleness has already been flagged — don't create another one
+// no matter what happened to that task since (a human cancelling or
+// completing it to dismiss a dead negotiation must not bring it right back
+// on the next check). A new alert is only warranted once the conversation
+// gets a newer message and then goes stale again.
+export function shouldFlagStalledNegotiation(
+  latestTaskCreatedAt: string | null,
+  lastMessageAt: string
+): boolean {
+  if (!latestTaskCreatedAt) return true;
+  return new Date(latestTaskCreatedAt).getTime() < new Date(lastMessageAt).getTime();
+}
+
 export type FollowupGateDecision = "send" | "skip_scheduled_callback" | "skip_pending_on_us";
 
 // Whether an automatic follow-up should actually message the customer,

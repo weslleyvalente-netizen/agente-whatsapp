@@ -8,6 +8,7 @@ import {
   computeTaskSummary,
   decideFollowupStage,
   decideFollowupGate,
+  shouldFlagStalledNegotiation,
   type SortableTask,
 } from "./task-helpers.js";
 
@@ -252,5 +253,40 @@ describe("decideFollowupGate", () => {
     expect(decideFollowupGate({ waiting_on: "bank_or_admin", waiting_on_until: null }, today)).toBe(
       "skip_pending_on_us"
     );
+  });
+});
+
+describe("shouldFlagStalledNegotiation", () => {
+  // Real production bug (found 2026-09-26, present since at least
+  // 2026-09-10): runStalledNegotiationCheck used to only check "is there
+  // currently an OPEN stalled_negotiation task", so the moment a human
+  // cancelled or completed one (correctly dismissing a dead negotiation,
+  // with NO new message sent), the very next 15-minute tick saw no open
+  // task, found the conversation still exactly as stale as before, and
+  // created a brand new one — forever, for a negotiation nothing about
+  // had changed. Same anchoring principle as decideFollowupStage: once a
+  // task exists for THIS stretch of silence (created after the
+  // conversation's last message), never create another one for that same
+  // stretch, no matter what happens to its status.
+  it("flags when no task has ever been created for this conversation", () => {
+    expect(shouldFlagStalledNegotiation(null, "2026-09-20T10:00:00Z")).toBe(true);
+  });
+
+  it("does not re-flag when a task already exists for this stretch of silence, even if it was cancelled", () => {
+    expect(shouldFlagStalledNegotiation("2026-09-24T20:18:23Z", "2026-09-20T10:00:00Z")).toBe(false);
+  });
+
+  it("does not re-flag when the existing task was completed", () => {
+    expect(shouldFlagStalledNegotiation("2026-09-24T20:18:23Z", "2026-09-20T10:00:00Z")).toBe(false);
+  });
+
+  it("flags again once the conversation has a newer message than the last task (a fresh stretch of silence)", () => {
+    // A message arrived after the old task was created — the negotiation
+    // resumed and then went quiet again, which does deserve a new alert.
+    expect(shouldFlagStalledNegotiation("2026-09-20T10:00:00Z", "2026-09-24T09:00:00Z")).toBe(true);
+  });
+
+  it("does not re-flag at the exact same instant (boundary case)", () => {
+    expect(shouldFlagStalledNegotiation("2026-09-20T10:00:00Z", "2026-09-20T10:00:00Z")).toBe(false);
   });
 });
