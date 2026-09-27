@@ -9,9 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentUpload } from "@/components/agents/document-upload";
 import { FaqManager } from "@/components/agents/faq-manager";
 import { ListEditor } from "./list-editor";
+import { ImagensEditor } from "./imagens-editor";
 import type { AgentConfigDraft, AgentKnowledgeConfig, KnowledgeDocument, KnowledgeFaq } from "@aula-agente/shared";
 
-export type ConhecimentoItemKey = "documentos" | "faq" | "precos" | "links";
+export type ConhecimentoItemKey = "documentos" | "faq" | "precos" | "links" | "imagens";
 
 interface ConhecimentoSectionProps {
   agentId: string;
@@ -89,6 +90,21 @@ export function ConhecimentoSection({ agentId, draft, onPatch, item }: Conhecime
             placeholder="Notas de preço sempre visíveis para o agente (faixas de referência, condições gerais)."
             onChange={(e) => setKnowledge({ ...knowledge, precos_notas: e.target.value })}
             onBlur={() => save(knowledge)}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (item === "imagens") {
+    return (
+      <Card>
+        <CardHeader><CardTitle>Imagens</CardTitle></CardHeader>
+        <CardContent>
+          <ImagensEditor
+            agentId={agentId}
+            imagens={knowledge.imagens ?? []}
+            onChange={(items) => save({ ...knowledge, imagens: items })}
           />
         </CardContent>
       </Card>
