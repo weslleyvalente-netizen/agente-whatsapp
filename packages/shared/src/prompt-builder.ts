@@ -1,3 +1,4 @@
+import type { ToolsConfig } from "./types/agent.js";
 import type {
   AgentConfigSections,
   AgentIdentity,
@@ -115,7 +116,7 @@ function compileRulesSection(rules: AgentRules): string {
   return ["# Regras", ...blocks].join("\n\n");
 }
 
-function compileKnowledgeSection(knowledge: AgentKnowledgeConfig): string {
+function compileKnowledgeSection(knowledge: AgentKnowledgeConfig, sendRegisteredImage: boolean): string {
   const blocks: string[] = [];
   if (knowledge.precos_notas) {
     blocks.push(["# Preços", knowledge.precos_notas].join("\n"));
@@ -125,8 +126,9 @@ function compileKnowledgeSection(knowledge: AgentKnowledgeConfig): string {
     blocks.push(["# Links úteis", ...activeLinks.map((l) => `- ${l.titulo}: ${l.url}`)].join("\n"));
   }
   // The URL is deliberately left out: the model only ever refers to an image
-  // by id, and sendRegisteredImage resolves the file itself.
-  const activeImages = (knowledge.imagens ?? []).filter((i) => i.ativo);
+  // by id, and sendRegisteredImage resolves the file itself. Without that tool
+  // the list would invite the agent to claim a send it can't make.
+  const activeImages = sendRegisteredImage ? (knowledge.imagens ?? []).filter((i) => i.ativo) : [];
   if (activeImages.length > 0) {
     blocks.push(
       [
@@ -144,12 +146,15 @@ function compilePlaybookSection(playbook: AgentPlaybook): string {
   return ["# Playbook: Script de atendimento", playbook.script_atendimento].join("\n");
 }
 
-export function compileSystemPrompt(config: AgentConfigSections): string {
+export function compileSystemPrompt(
+  config: AgentConfigSections,
+  tools: Pick<ToolsConfig, "send_registered_image"> = {}
+): string {
   const sections = [
     compileIdentitySection(config.identity),
     compilePersonalitySection(config.personality),
     compileRulesSection(config.rules),
-    compileKnowledgeSection(config.knowledge),
+    compileKnowledgeSection(config.knowledge, tools.send_registered_image ?? false),
     compilePlaybookSection(config.playbook),
   ].filter((section) => section.trim().length > 0);
 

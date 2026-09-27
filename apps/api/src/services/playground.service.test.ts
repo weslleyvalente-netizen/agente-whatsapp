@@ -76,6 +76,19 @@ describe("sendPlaygroundMessage", () => {
     expect(callArg.agent.system_prompt).not.toBe("publicado");
   });
 
+  it("lists the draft's registered images in the playground prompt when the draft's tool is on", async () => {
+    const imagem = { id: "img-1", titulo: "Catálogo Libera Cred", quando_enviar: "cliente pede o catálogo", legenda: "L", url: "https://x.test/a.png", storage_path: "org-1/agent-1/a.png", ativo: true };
+    getOrCreateAgentConfig.mockResolvedValue({
+      ...baseDraft,
+      knowledge: { ...baseDraft.knowledge, imagens: [imagem] },
+      tools_config: { ...baseDraft.tools_config, send_registered_image: true },
+    });
+
+    await sendPlaygroundMessage({} as any, { agentId: "agent-1", organizationId: "org-1", sessionId: "session-1", content: "manda o catálogo" });
+
+    expect(runAgent.mock.calls[0][0].agent.system_prompt).toContain("- id: img-1 | Catálogo Libera Cred");
+  });
+
   it("saves both the user message and the assistant reply, with the tool trace on the assistant message", async () => {
     runAgent.mockResolvedValue({
       text: "Resposta", model: "gpt-4o-mini", inputTokens: 1, outputTokens: 1, latencyMs: 1,

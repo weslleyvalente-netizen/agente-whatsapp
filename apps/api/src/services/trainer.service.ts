@@ -237,6 +237,19 @@ export async function proposeConfigChange(
 
 const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
+// Stage-2 schemas only cover what the model may edit. Anything else in the
+// section (registered images, newer tool flags) must be carried over from the
+// draft, or zod defaults would silently wipe it when the proposal is applied.
+function keepFieldsModelDoesNotOwn(draftKey: string, before: unknown, after: any): any {
+  if (draftKey === "knowledge") {
+    return { ...after, imagens: (before as { imagens?: unknown[] }).imagens ?? [] };
+  }
+  if (draftKey === "tools_config") {
+    return { ...(before as object), ...after };
+  }
+  return after;
+}
+
 async function buildProposalForCandidate(
   model: ReturnType<typeof createModel>,
   draft: AgentConfigDraft,
@@ -269,7 +282,7 @@ async function buildProposalForCandidate(
       schema: SECTION_GEN_SCHEMA[candidate.section],
       prompt: buildStageTwoPrompt(candidate.section, before, userMessage, candidate.summary),
     });
-    const after = stageTwo.object;
+    const after = keepFieldsModelDoesNotOwn(draftKey, before, stageTwo.object);
     const patch = updateAgentConfigSchema.parse({ [draftKey]: after });
 
     return {

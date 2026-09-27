@@ -44,8 +44,14 @@ export function ImagensEditor({ agentId, imagens, onChange }: ImagensEditorProps
   const [busy, setBusy] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceTarget = useRef<string | null>(null);
+  // An upload can take a while; edits made meanwhile (toggle, blur-saved
+  // text) must survive it, so the upload result is applied to the latest
+  // list rather than the one captured when the file was picked.
+  const latestItems = useRef(items);
+  latestItems.current = items;
 
   const commit = (next: AgentImageItem[]) => {
+    latestItems.current = next;
     setItems(next);
     onChange(next);
   };
@@ -63,9 +69,9 @@ export function ImagensEditor({ agentId, imagens, onChange }: ImagensEditorProps
       if (target) {
         // Keep the item's id (it's what the prompt and the model refer to);
         // only the file behind it changes.
-        commit(items.map((i) => (i.id === target ? { ...i, url: stored.url, storage_path: stored.storage_path } : i)));
+        commit(latestItems.current.map((i) => (i.id === target ? { ...i, url: stored.url, storage_path: stored.storage_path } : i)));
       } else {
-        commit([...items, { id: stored.id, titulo: file.name, quando_enviar: "", legenda: "", url: stored.url, storage_path: stored.storage_path, ativo: false }]);
+        commit([...latestItems.current, { id: stored.id, titulo: file.name, quando_enviar: "", legenda: "", url: stored.url, storage_path: stored.storage_path, ativo: false }]);
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro no upload");

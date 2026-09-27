@@ -106,6 +106,40 @@ describe("proposeConfigChange", () => {
     expect(result.proposals[0].diff).toEqual([{ field_path: "emojis.maximo", before: 1, after: 3 }]);
   });
 
+  it("a conhecimento proposal keeps the draft's registered images — the model never sees or returns them", async () => {
+    const imagem = { id: "img-1", titulo: "Catálogo Libera Cred", quando_enviar: "cliente pede o catálogo", legenda: "L", url: "https://x.test/a.png", storage_path: "org-1/agent-1/a.png", ativo: true };
+    getAgentConfigIfExists.mockResolvedValue({ ...baseDraft, knowledge: { ...baseDraft.knowledge, imagens: [imagem] } });
+    generateObject
+      .mockResolvedValueOnce({
+        object: {
+          content: "Vou atualizar a nota de preços.",
+          candidates: [{ section: "conhecimento", item: "precos", summary: "Atualizar preços", rationale: "Pedido", conflicts: [] }],
+        },
+      })
+      .mockResolvedValueOnce({ object: { precos_notas: "nova nota", links: [], documentos_ativos: true, faqs_ativas: true } });
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "atualiza a nota de preços");
+
+    expect(result.proposals[0].patch).toEqual({ knowledge: { precos_notas: "nova nota", links: [], documentos_ativos: true, faqs_ativas: true, imagens: [imagem] } });
+  });
+
+  it("a ferramentas proposal keeps tool flags the model doesn't control (e.g. send_registered_image)", async () => {
+    getAgentConfigIfExists.mockResolvedValue({ ...baseDraft, tools_config: { ...baseDraft.tools_config, send_registered_image: true } });
+    generateObject
+      .mockResolvedValueOnce({
+        object: {
+          content: "Vou desligar a busca de FAQ.",
+          candidates: [{ section: "ferramentas", item: null, summary: "Desligar FAQ", rationale: "Pedido", conflicts: [] }],
+        },
+      })
+      .mockResolvedValueOnce({ object: { search_knowledge: true, search_faq: false, send_catalog_photo: true, create_task: true } });
+
+    const result = await proposeConfigChange({} as any, "agent-1", "session-1", "desliga o FAQ");
+
+    expect(result.proposals[0].patch?.tools_config?.send_registered_image).toBe(true);
+    expect(result.proposals[0].patch?.tools_config?.search_faq).toBe(false);
+  });
+
   it("conflict scenario (perguntas_por_vez=1 + pedido de 3 juntas): stops after stage 1, patch is null, no stage-2 call", async () => {
     generateObject.mockResolvedValueOnce({
       object: {

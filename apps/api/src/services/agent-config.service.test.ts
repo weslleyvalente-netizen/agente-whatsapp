@@ -88,6 +88,19 @@ describe("publishDraft", () => {
     });
   });
 
+  it("lists registered images in the published prompt only when the draft's sendRegisteredImage tool is on", async () => {
+    const imagem = { id: "img-1", titulo: "Catálogo Libera Cred", quando_enviar: "cliente pede o catálogo", legenda: "L", url: "https://x.test/a.png", storage_path: "org-1/agent-1/a.png", ativo: true };
+    const withImage = { ...baseDraft, knowledge: { ...baseDraft.knowledge, imagens: [imagem] } };
+
+    getOrCreateAgentConfig.mockResolvedValue(withImage);
+    await publishDraft({} as any, "agent-1", "sem ferramenta", "user-1");
+    expect(publishAgentConfig.mock.calls[0][1].compiledSystemPrompt).not.toContain("Imagens cadastradas");
+
+    getOrCreateAgentConfig.mockResolvedValue({ ...withImage, tools_config: { ...withImage.tools_config, send_registered_image: true } });
+    await publishDraft({} as any, "agent-1", "com ferramenta", "user-1");
+    expect(publishAgentConfig.mock.calls[1][1].compiledSystemPrompt).toContain("- id: img-1 | Catálogo Libera Cred");
+  });
+
   it("returns whatever publishAgentConfig returns", async () => {
     const result = await publishDraft({} as any, "agent-1", "changelog", "user-1");
     expect(result).toEqual({ id: "version-1", version: 1 });

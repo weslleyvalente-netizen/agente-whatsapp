@@ -154,13 +154,25 @@ describe("compileSystemPrompt", () => {
             { id: "img-2", titulo: "Folder antigo", quando_enviar: "nunca", legenda: "L", url: "https://x.test/b.png", storage_path: "o/a/b.png", ativo: false },
           ],
         },
-      })
+      }),
+      { send_registered_image: true }
     );
     expect(result).toContain("# Imagens cadastradas");
     expect(result).toContain("sendRegisteredImage");
     expect(result).toContain("- id: img-1 | Catálogo Libera Cred | Quando enviar: cliente pede o catálogo");
     expect(result).not.toContain("img-2");
     expect(result).not.toContain("https://x.test");
+  });
+
+  it("omits the images section when the sendRegisteredImage tool is off, so the agent can't claim a send that can't happen", () => {
+    const config = baseConfig({
+      knowledge: {
+        precos_notas: "", links: [], documentos_ativos: true, faqs_ativas: true,
+        imagens: [{ id: "img-1", titulo: "Catálogo", quando_enviar: "sempre", legenda: "L", url: "https://x.test/a.png", storage_path: "o/a/a.png", ativo: true }],
+      },
+    });
+    expect(compileSystemPrompt(config, { send_registered_image: false })).not.toContain("Imagens cadastradas");
+    expect(compileSystemPrompt(config)).not.toContain("Imagens cadastradas");
   });
 
   it("omits the images section when there are no active images or the field is missing", () => {

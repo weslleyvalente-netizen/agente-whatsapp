@@ -47,7 +47,7 @@ export async function sendPlaygroundMessage(
     rules: draft.rules,
     knowledge: draft.knowledge,
     playbook: draft.playbook,
-  });
+  }, draft.tools_config);
 
   const apiKey = await resolveApiKey(params.organizationId, draft.model_settings.provider);
 

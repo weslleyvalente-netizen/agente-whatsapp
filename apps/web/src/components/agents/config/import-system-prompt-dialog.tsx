@@ -9,14 +9,17 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose,
 } from "@/components/ui/dialog";
-import type { AgentConfigSections } from "@aula-agente/shared";
+import type { AgentConfigSections, AgentImageItem } from "@aula-agente/shared";
 
 interface ImportSystemPromptDialogProps {
   agentId: string;
+  // Registered images never exist in a legacy prompt, so importing one must
+  // not wipe the ones already uploaded for this agent.
+  currentImagens: AgentImageItem[];
   onApplied: () => Promise<void>;
 }
 
-export function ImportSystemPromptDialog({ agentId, onApplied }: ImportSystemPromptDialogProps) {
+export function ImportSystemPromptDialog({ agentId, currentImagens, onApplied }: ImportSystemPromptDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentSystemPrompt, setCurrentSystemPrompt] = useState("");
@@ -54,7 +57,7 @@ export function ImportSystemPromptDialog({ agentId, onApplied }: ImportSystemPro
           identity: suggestion.identity,
           personality: suggestion.personality,
           rules: suggestion.rules,
-          knowledge: suggestion.knowledge,
+          knowledge: { ...suggestion.knowledge, imagens: currentImagens },
           playbook: suggestion.playbook,
         }),
       });

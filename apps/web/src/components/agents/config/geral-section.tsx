@@ -61,7 +61,7 @@ export function GeralSection({ draft, onPatch, agentId, onImported }: GeralSecti
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
-        <ImportSystemPromptDialog agentId={agentId} onApplied={onImported} />
+        <ImportSystemPromptDialog agentId={agentId} currentImagens={draft.knowledge.imagens ?? []} onApplied={onImported} />
       </div>
       <Card>
         <CardHeader>

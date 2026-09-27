@@ -23,7 +23,7 @@ export async function publishDraft(
   return publishAgentConfig(db, {
     agentId,
     changelog,
-    compiledSystemPrompt: compileSystemPrompt(configSnapshot),
+    compiledSystemPrompt: compileSystemPrompt(configSnapshot, draft.tools_config),
     configSnapshot,
     modelSettings: draft.model_settings,
     toolsConfig: draft.tools_config,
