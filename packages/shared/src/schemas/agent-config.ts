@@ -81,11 +81,22 @@ export const agentLinkItemSchema = z.object({
   ativo: z.boolean().default(true),
 });
 
+export const agentImageItemSchema = z.object({
+  id: z.string().min(1),
+  titulo: z.string().max(150),
+  quando_enviar: z.string().max(500),
+  legenda: z.string().max(1000),
+  url: z.string().url(),
+  storage_path: z.string().min(1).max(500),
+  ativo: z.boolean().default(true),
+});
+
 export const agentKnowledgeConfigSchema = z.object({
   precos_notas: z.string().max(4000).default(""),
   links: z.array(agentLinkItemSchema).default([]),
   documentos_ativos: z.boolean().default(true),
   faqs_ativas: z.boolean().default(true),
+  imagens: z.array(agentImageItemSchema).max(20).default([]),
 });
 
 export const agentPlaybookSchema = z.object({

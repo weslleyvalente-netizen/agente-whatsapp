@@ -23,6 +23,7 @@ export const SECTION_ITEMS: Record<SectionKey, Record<string, string> | null> = 
     faq: "FAQ",
     precos: "Preços",
     links: "Links",
+    imagens: "Imagens",
   },
   playbooks: null,
   ferramentas: null,

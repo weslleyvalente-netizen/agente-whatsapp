@@ -36,6 +36,9 @@ export interface ToolsConfig {
   send_catalog_photo: boolean;
   create_task: boolean;
   update_qualification: boolean;
+  // Optional: rows written before this feature shipped don't have this key;
+  // missing means off.
+  send_registered_image?: boolean;
   // Optional: rows written before this feature shipped don't have this key.
   // Every reader must fall back to DEFAULT_FOLLOWUP_AUTOMATICO.
   followup_automatico?: FollowupAutomaticoConfig;

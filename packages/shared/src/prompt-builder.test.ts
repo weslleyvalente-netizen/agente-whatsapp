@@ -144,6 +144,29 @@ describe("compileSystemPrompt", () => {
     expect(result).not.toContain("Antigo");
   });
 
+  it("lists only active registered images, by id and when-to-send, never the URL", () => {
+    const result = compileSystemPrompt(
+      baseConfig({
+        knowledge: {
+          precos_notas: "", links: [], documentos_ativos: true, faqs_ativas: true,
+          imagens: [
+            { id: "img-1", titulo: "Catálogo Libera Cred", quando_enviar: "cliente pede o catálogo", legenda: "L", url: "https://x.test/a.png", storage_path: "o/a/a.png", ativo: true },
+            { id: "img-2", titulo: "Folder antigo", quando_enviar: "nunca", legenda: "L", url: "https://x.test/b.png", storage_path: "o/a/b.png", ativo: false },
+          ],
+        },
+      })
+    );
+    expect(result).toContain("# Imagens cadastradas");
+    expect(result).toContain("sendRegisteredImage");
+    expect(result).toContain("- id: img-1 | Catálogo Libera Cred | Quando enviar: cliente pede o catálogo");
+    expect(result).not.toContain("img-2");
+    expect(result).not.toContain("https://x.test");
+  });
+
+  it("omits the images section when there are no active images or the field is missing", () => {
+    expect(compileSystemPrompt(baseConfig())).not.toContain("Imagens cadastradas");
+  });
+
   it("includes the playbook script when present, omits the section when empty", () => {
     const withScript = compileSystemPrompt(baseConfig({ playbook: { script_atendimento: "1. Identificar necessidade" } }));
     expect(withScript).toContain("Script de atendimento");

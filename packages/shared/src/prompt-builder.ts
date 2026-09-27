@@ -124,6 +124,18 @@ function compileKnowledgeSection(knowledge: AgentKnowledgeConfig): string {
   if (activeLinks.length > 0) {
     blocks.push(["# Links úteis", ...activeLinks.map((l) => `- ${l.titulo}: ${l.url}`)].join("\n"));
   }
+  // The URL is deliberately left out: the model only ever refers to an image
+  // by id, and sendRegisteredImage resolves the file itself.
+  const activeImages = (knowledge.imagens ?? []).filter((i) => i.ativo);
+  if (activeImages.length > 0) {
+    blocks.push(
+      [
+        "# Imagens cadastradas",
+        "Envie com a ferramenta sendRegisteredImage usando o id. Envie cada imagem no máximo uma vez por conversa, salvo se o cliente pedir de novo.",
+        ...activeImages.map((i) => `- id: ${i.id} | ${i.titulo} | Quando enviar: ${i.quando_enviar}`),
+      ].join("\n")
+    );
+  }
   return blocks.join("\n\n");
 }
 

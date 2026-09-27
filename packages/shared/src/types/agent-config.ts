@@ -82,11 +82,24 @@ export interface AgentLinkItem {
   ativo: boolean;
 }
 
+export interface AgentImageItem {
+  id: string;
+  titulo: string;
+  quando_enviar: string;
+  legenda: string;
+  url: string;
+  storage_path: string;
+  ativo: boolean;
+}
+
 export interface AgentKnowledgeConfig {
   precos_notas: string;
   links: AgentLinkItem[];
   documentos_ativos: boolean;
   faqs_ativas: boolean;
+  // Optional: drafts/versions saved before this feature have no key.
+  // Every reader must treat a missing list as [].
+  imagens?: AgentImageItem[];
 }
 
 export interface AgentPlaybook {
