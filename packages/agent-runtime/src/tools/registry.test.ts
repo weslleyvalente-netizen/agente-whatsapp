@@ -39,6 +39,17 @@ describe("buildToolsForAgent sandbox mode", () => {
 });
 
 describe("buildToolsForAgent prompt caching", () => {
+  it("registers sendRegisteredImage only when send_registered_image is on", () => {
+    const off = buildToolsForAgent(baseParams);
+    expect(off.sendRegisteredImage).toBeUndefined();
+
+    const on = buildToolsForAgent({ ...baseParams, toolsConfig: { ...baseParams.toolsConfig, send_registered_image: true } });
+    expect(on.sendRegisteredImage).toBeDefined();
+
+    const sandboxed = buildToolsForAgent({ ...baseParams, sandbox: true, toolsConfig: { ...baseParams.toolsConfig, send_registered_image: true } });
+    expect(Object.keys(sandboxed).sort()).toEqual(Object.keys(on).sort());
+  });
+
   it("marks only the last registered tool as cacheable, caching every tool before it too", () => {
     const tools = buildToolsForAgent(baseParams);
     expect(Object.keys(tools)).toEqual(["searchKnowledge", "searchFaq", "searchCatalog", "sendVehiclePhoto", "createTask"]);

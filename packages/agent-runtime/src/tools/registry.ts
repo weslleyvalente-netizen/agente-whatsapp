@@ -7,6 +7,12 @@ import { createSearchFaqTool } from "./search-faq.js";
 import { createSearchCatalogTool } from "./search-catalog.js";
 import { createSendVehiclePhotoTool } from "./send-vehicle-photo.js";
 import { createCreateTaskTool } from "./create-task.js";
+import {
+  createSendRegisteredImageTool,
+  createMockSendRegisteredImageTool,
+  loadDraftImages,
+  loadPublishedImages,
+} from "./send-registered-image.js";
 import { createUpdateConversationQualificationTool } from "./update-conversation-qualification.js";
 
 interface RegistryParams {
@@ -80,6 +86,12 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
     tools.sendVehiclePhoto = sandbox
       ? createMockSendVehiclePhotoTool()
       : createSendVehiclePhotoTool({ conversationId, organizationId, instanceId, phone });
+  }
+
+  if (toolsConfig.send_registered_image) {
+    tools.sendRegisteredImage = sandbox
+      ? createMockSendRegisteredImageTool(() => loadDraftImages(agentId))
+      : createSendRegisteredImageTool({ conversationId, organizationId, instanceId, phone }, () => loadPublishedImages(agentId));
   }
 
   if (toolsConfig.create_task) {
