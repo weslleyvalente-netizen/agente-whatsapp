@@ -64,6 +64,34 @@ describe("createSendVehiclePhotoTool", () => {
     );
   });
 
+  // Real production case (26/09): in a Libera Cred conversation the photo
+  // arrived captioned "ZR HYBRID CONNECTED — R$ 17.900" (catalog price) right
+  // next to the Libera Cred installment, so the customer saw two conflicting
+  // prices for the same bike.
+  it("omits the catalog price from the caption when sem_preco is set", async () => {
+    vi.spyOn(searchCatalog, "fetchCatalog").mockResolvedValue([
+      { id: 3, modelo: "ZR HYBRID CONNECTED", marca: "YAMAHA", ano: 2026, preco: 17900, imageUrl: "/vehicles/zr.png" },
+    ]);
+
+    const toolDef = createSendVehiclePhotoTool(context);
+    const result = await toolDef.execute!({ modelo: "ZR HYBRID CONNECTED", sem_preco: true }, {} as never);
+
+    expect(result).toContain("Foto enviada");
+    expect(createMessage).toHaveBeenCalledWith({}, expect.objectContaining({ content: "ZR HYBRID CONNECTED" }));
+    expect(addToQueue).toHaveBeenCalledWith("send-message", expect.objectContaining({ caption: "ZR HYBRID CONNECTED", content: "ZR HYBRID CONNECTED" }));
+  });
+
+  it("keeps the catalog price in the caption by default", async () => {
+    vi.spyOn(searchCatalog, "fetchCatalog").mockResolvedValue([
+      { id: 3, modelo: "ZR HYBRID CONNECTED", marca: "YAMAHA", ano: 2026, preco: 17900, imageUrl: "/vehicles/zr.png" },
+    ]);
+
+    const toolDef = createSendVehiclePhotoTool(context);
+    await toolDef.execute!({ modelo: "ZR HYBRID CONNECTED" }, {} as never);
+
+    expect(addToQueue).toHaveBeenCalledWith("send-message", expect.objectContaining({ caption: expect.stringContaining("R$") }));
+  });
+
   // Real production case: the catalog has "BROS 160 CBS" twice (Preta
   // R$27.900, Azul R$28.970). The agent called this tool twice meaning to
   // send one photo of each, but without a way to say which color, both

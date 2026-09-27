@@ -62,9 +62,12 @@ function createMockSendVehiclePhotoTool() {
   return tool({
     description:
       "Simula o envio de uma foto de veículo pelo WhatsApp. Estamos no Playground de testes — nenhuma mensagem real é enviada.",
-    inputSchema: z.object({ model: z.string() }),
-    execute: async ({ model }) => {
-      return `[SIMULADO] Foto de "${model}" seria enviada pelo WhatsApp agora.`;
+    // Same input as the real tool, so playground runs exercise the same
+    // arguments (a divergent schema here hid whether sem_preco was used).
+    inputSchema: z.object({ modelo: z.string(), cor: z.string().optional(), sem_preco: z.boolean().optional() }),
+    execute: async ({ modelo, sem_preco }) => {
+      const legenda = sem_preco ? "legenda sem preço" : "legenda com preço de catálogo";
+      return `[SIMULADO] Foto de "${modelo}" seria enviada pelo WhatsApp agora (${legenda}).`;
     },
   });
 }

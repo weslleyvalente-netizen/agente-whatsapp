@@ -31,7 +31,7 @@ describe("buildToolsForAgent sandbox mode", () => {
   it("sendVehiclePhoto in sandbox mode does not enqueue a real WhatsApp send", async () => {
     const sandboxed = buildToolsForAgent({ ...baseParams, sandbox: true });
     const result = await sandboxed.sendVehiclePhoto.execute!(
-      { model: "Factor 150" },
+      { modelo: "Factor 150" },
       { toolCallId: "call-2", messages: [], context: undefined }
     );
     expect(result).toContain("[SIMULADO]");
@@ -48,6 +48,14 @@ describe("buildToolsForAgent prompt caching", () => {
 
     const sandboxed = buildToolsForAgent({ ...baseParams, sandbox: true, toolsConfig: { ...baseParams.toolsConfig, send_registered_image: true } });
     expect(Object.keys(sandboxed).sort()).toEqual(Object.keys(on).sort());
+  });
+
+  it("the playground photo tool takes the same input as the real one, including sem_preco", async () => {
+    const sandboxed = buildToolsForAgent({ ...baseParams, sandbox: true });
+    const result = await sandboxed.sendVehiclePhoto.execute!({ modelo: "ZR HYBRID CONNECTED", sem_preco: true }, {} as never);
+    expect(result).toContain("[SIMULADO]");
+    expect(result).toContain("ZR HYBRID CONNECTED");
+    expect(result).toContain("sem preço");
   });
 
   it("marks only the last registered tool as cacheable, caching every tool before it too", () => {

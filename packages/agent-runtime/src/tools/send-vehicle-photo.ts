@@ -25,8 +25,12 @@ export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): To
         .string()
         .optional()
         .describe("The vehicle's color, only needed when searchCatalog returned more than one vehicle with this modelo"),
+      sem_preco: z
+        .boolean()
+        .optional()
+        .describe("true para enviar a legenda só com o nome do modelo, sem o preço de catálogo — obrigatório em conversa de LiberaCred, onde o preço que vale é o de referência do plano"),
     }),
-    execute: async ({ modelo, cor }) => {
+    execute: async ({ modelo, cor, sem_preco }) => {
       // Conversation history only ever stores the human-readable caption
       // (never a raw tool result), so on a later turn the model has no
       // reliable way to recall an exact price or image URL — it can only
@@ -44,7 +48,7 @@ export function createSendVehiclePhotoTool(context: SendVehiclePhotoContext): To
         return `O veículo "${vehicle.modelo}" ainda não tem foto cadastrada no catálogo. Avise o cliente que a foto será enviada em breve por um consultor — não diga que a foto foi enviada.`;
       }
 
-      const caption = formatVehicleCaption(vehicle.modelo, vehicle.preco);
+      const caption = sem_preco ? vehicle.modelo : formatVehicleCaption(vehicle.modelo, vehicle.preco);
       const db = getAdminClient();
 
       const message = await createMessage(db, {
