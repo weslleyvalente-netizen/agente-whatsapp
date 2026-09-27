@@ -11,6 +11,7 @@ import costRoutes from "./routes/costs/index.js";
 import dashboardRoutes from "./routes/dashboard/index.js";
 import taskRoutes from "./routes/tasks/index.js";
 import agentConfigRoutes from "./routes/agent-config/index.js";
+import agentImageRoutes from "./routes/agent-config/images.js";
 import conversationRoutes from "./routes/conversations/index.js";
 import opportunityRoutes from "./routes/opportunities/index.js";
 
@@ -42,6 +43,7 @@ server.register(costRoutes);
 server.register(dashboardRoutes);
 server.register(taskRoutes);
 server.register(agentConfigRoutes);
+server.register(agentImageRoutes);
 server.register(conversationRoutes);
 server.register(opportunityRoutes);
 
