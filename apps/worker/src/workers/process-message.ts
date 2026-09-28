@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { QUEUE_NAMES } from "@aula-agente/shared";
+import { QUEUE_NAMES, shouldDropReplyForTakeover } from "@aula-agente/shared";
 import type { ProcessMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection, getSendMessageQueue } from "@aula-agente/queue";
 import type { Message } from "@aula-agente/shared";
@@ -275,7 +275,14 @@ export function startProcessMessageWorker() {
         // full pending batch (collectPendingContactMessages) including
         // whatever this drops.
         const freshConversation = await getConversationById(db, conversationId);
-        if (freshConversation.is_human_takeover) {
+        // requestHuman itself sets is_human_takeover=true as part of THIS
+        // run — dropping its own reply here would silently discard the
+        // "um consultor vai continuar..." notice the tool asks the model to
+        // send on every single handoff (production bug, 2026-09-28: see
+        // shouldDropReplyForTakeover in @aula-agente/shared). A real human
+        // jumping in mid-generation still drops normally.
+        const calledRequestHuman = result.toolCalls.includes("requestHuman");
+        if (shouldDropReplyForTakeover(freshConversation.is_human_takeover, calledRequestHuman)) {
           console.log(`Conversation ${conversationId} was taken over by a human during generation, dropping reply`);
           return;
         }
