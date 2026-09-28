@@ -27,3 +27,14 @@ export function isUnread(lastMessageAt: string, lastReadAt: string | undefined):
   if (!lastReadAt) return true;
   return new Date(lastMessageAt).getTime() > new Date(lastReadAt).getTime();
 }
+
+// process-message.ts re-reads the conversation after generation and drops
+// the reply if a human took over in the meantime — necessary when a REAL
+// human jumped in while the model was still thinking, but requestHuman
+// itself flips is_human_takeover=true as part of the very run whose reply
+// is being checked. Without this exception, that reply (the "um consultor
+// vai continuar..." notice the tool's own description asks the model to
+// send) is always dropped — the customer never learns a human is coming.
+export function shouldDropReplyForTakeover(isHumanTakeover: boolean, calledRequestHuman: boolean): boolean {
+  return isHumanTakeover && !calledRequestHuman;
+}

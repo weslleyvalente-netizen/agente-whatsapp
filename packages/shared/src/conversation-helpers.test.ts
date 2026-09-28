@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isHumanTakeoverExpired, isUnread } from "./conversation-helpers.js";
+import { isHumanTakeoverExpired, isUnread, shouldDropReplyForTakeover } from "./conversation-helpers.js";
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -49,5 +49,28 @@ describe("isUnread", () => {
 
   it("is false when read exactly at the last message timestamp", () => {
     expect(isUnread("2026-08-03T12:00:00Z", "2026-08-03T12:00:00Z")).toBe(false);
+  });
+});
+
+// Regression for a production bug found 2026-09-28 (conversation
+// 008df306-8b1e-4ff4-8e6d-b8a92fab6288): requestHuman itself sets
+// is_human_takeover=true DURING generation, so process-message.ts's own
+// "a human took over while we were generating, drop this reply" safety net
+// was dropping the agent's own handoff notice to the customer on every
+// single requestHuman call — the customer never found out a human was
+// coming. A real human taking over mid-generation must still drop the
+// reply; only the run's OWN requestHuman call should not.
+describe("shouldDropReplyForTakeover", () => {
+  it("does not drop the reply when this run itself called requestHuman", () => {
+    expect(shouldDropReplyForTakeover(true, true)).toBe(false);
+  });
+
+  it("still drops the reply when a human took over and this run did not call requestHuman", () => {
+    expect(shouldDropReplyForTakeover(true, false)).toBe(true);
+  });
+
+  it("never drops for takeover when there is no takeover in progress", () => {
+    expect(shouldDropReplyForTakeover(false, false)).toBe(false);
+    expect(shouldDropReplyForTakeover(false, true)).toBe(false);
   });
 });
