@@ -159,3 +159,30 @@ alterações, na branch base).
 4. **Pendência registrada, não corrigida agora:** falha pré-existente e não
    relacionada em `apps/api/src/routes/costs/index.test.ts` — mantida como
    está, a corrigir depois, fora do escopo da Fase 1.
+
+## Deploy e ativação em produção (2026-09-28) — concluído
+
+- Migrations aplicadas via `supabase db push` (00026 pendente antiga + 00027 +
+  00028). Merge `feat/handoff-e-fechamento-funil` → `main` fast-forward, sem
+  conflito, push feito por você. Deploy automático no EasyPanel confirmado
+  saudável: `/health` OK, container reiniciado (hostname novo), webhook
+  `/webhooks/evolution` processando mensagens reais com `200` nos logs.
+- Ativação gradual, na ordem do runbook:
+  - **Filtro de saudação:** ligado (`organizations.settings.
+    takeover_greeting_filter_enabled = true`). **Validado com dado real de
+    produção**, sem precisar de teste manual: às 15:56:28 um humano mandou
+    "Boa tarde" numa conversa que não estava em takeover → filtrado
+    corretamente (`handoff_events.trigger_type = fromMe_greeting_filtered`,
+    sem ativar takeover); 18s depois o mesmo humano mandou uma mensagem com
+    conteúdo real → aí sim ativou takeover (`fromMe_real`). Confirma o
+    comportamento desenhado ponta a ponta.
+  - **`requestHuman`:** ligada e publicada — confirmado em
+    `agents.tools_config.request_human = true` na config ao vivo da Helena
+    (não só no rascunho).
+  - Alerta de handoff sem resposta e card "Handoffs aguardando": ativos
+    automaticamente a partir de agora, já que `requestHuman` está ligada.
+    **Ainda não testados manualmente** — combinado pular o teste por ora.
+  - Contatos ignorados: já tinha o Yamaha cadastrado desde o passo 1.
+- **Tudo que foi pedido nesta rodada está em produção e ativo.** Falta só,
+  quando você quiser, gerar um handoff de teste via `requestHuman` pra ver o
+  card do Início e o painel lateral da conversa na prática.
