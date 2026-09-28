@@ -22,13 +22,20 @@ Pare aqui e me mostre o resultado. Os ajustes das fases seguintes podem mudar co
 FASE 1 — HANDOFF EXPLÍCITO
 1. Nova ferramenta do agente: requestHuman(motivo, resumo, urgencia).
    - motivo: enum (cliente_pediu, negociacao_valor, proposta_pronta, documentos, reclamacao, fora_do_escopo, ia_sem_resposta).
-   - Ativa is_human_takeover, define assigned_to com o responsável padrão da organização e grava um evento de handoff (nova tabela handoff_events com conversation_id, motivo, resumo, urgência, criado_por = ia|humano, handed_at, first_human_reply_at).
+   - Ativa is_human_takeover, define assigned_to com o responsável padrão da organização e grava um evento de handoff (nova tabela handoff_events com conversation_id, trigger_type, motivo, resumo, urgência, criado_por = ia|humano|sistema, handed_at, first_human_reply_at — trigger_type generalizado no item 6 abaixo).
    - Avisa a responsável: notificação no painel via Realtime e, opcionalmente, mensagem para um número interno configurável com nome do cliente, motivo, resumo de 3 linhas e link da conversa.
    - A IA avisa o cliente com naturalidade que um consultor vai continuar o atendimento. Fora do horário comercial, informa quando ele será atendido.
    - Atualize o prompt/regras de "Transferência para humano" para usar essa ferramenta em vez de createTask.
-2. Takeover por mensagem fromMe: não ativar takeover para mensagens curtas de confirmação (a lista e o limite ficam configuráveis por organização). Ajuste conforme o resultado da Fase 0.
-3. Timeout de takeover: quando o handoff vier de requestHuman, a IA NÃO retoma sozinha após 30 min. Em vez disso, se não houver resposta humana em X min (configurável) dentro do horário comercial, gere um alerta de "handoff sem resposta" no painel.
-4. Painel Início: um card "Handoffs aguardando" com o tempo de espera de cada um e, na conversa, um resumo do handoff no topo do painel lateral.
+2. Contatos ignorados (novo, a partir do achado do bot da Yamaha na Fase 0): lista configurável por organização (tela Configurações) de números que o webhook ignora antes de criar conversa, chamar a IA ou gerar tarefa.
+   - Nova tabela organization_ignored_contacts (organization_id, phone, label, retention_mode, created_by, created_at).
+   - retention_mode tem 2 opções por entrada: "no_store" (não grava nada — nem contato, nem conversa, nem mensagem; resposta 200 imediata no webhook) ou "minimal_record" (grava conversa+mensagem, mas com conteúdo substituído por um placeholder fixo, sem IA, sem tarefa, sem takeover).
+   - Verificação entra em apps/api/src/routes/webhooks/evolution.ts logo após identificar a organização (via instance), antes de ensureConversation — vale para mensagens normais e para fromMe.
+   - Inclui, como primeira entrada a ser cadastrada após o deploy (não via migration): o contato do bot "Yamaha Serviços Financeiros" identificado na Fase 0.
+   - Limpeza do histórico já gravado desse contato (CPFs em texto puro): ação de dados única, fora do código da feature — ver decisão em aberto A abaixo.
+3. Saudação não é takeover: mensagens fromMe que forem só saudação ou confirmação curta (lista configurável por organização + limite de caracteres, mais checagem fixa de "só emoji") NÃO ativam is_human_takeover. A mensagem continua sendo salva (role=human_agent, aparece no painel normalmente) e enviada no histórico para a IA, mas o prompt passa a ter uma instrução fixa (nova seção "Notas operacionais", sempre incluída, não editável pelo painel) dizendo à Helena para não repetir a saudação nem tratar isso como novo pedido — só continuar o atendimento de onde parou. Configuração ligada por padrão, desligável por organização.
+4. Timeout de takeover: quando o handoff vier de requestHuman, a IA NÃO retoma sozinha após 30 min. Em vez disso, se não houver resposta humana em X min (configurável) dentro do horário comercial, gere um alerta de "handoff sem resposta" no painel.
+5. Painel Início: um card "Handoffs aguardando" com o tempo de espera de cada um e, na conversa, um resumo do handoff no topo do painel lateral.
+6. Métrica de gatilho (para medir antes/depois): handoff_events (item 1) passa a ser gravado em TODA ativação de takeover, não só via requestHuman — trigger_type = request_human | painel_manual | fromMe_real. Toda vez que uma mensagem fromMe é filtrada pelo item 3 (uma saudação que NÃO virou takeover), grava também um handoff_events com trigger_type = fromMe_greeting_filtered, só quando a conversa não estava em takeover ainda (não registra a cada "Bom dia" de uma conversa já assumida). Isso permite comparar, antes e depois do item 3 entrar no ar, quanto do que hoje aparece como "751 conversas com intervenção humana" era saudação evitável.
 
 FASE 2 — TRIAGEM DE TAREFAS
 1. Consolidação: no máximo 1 tarefa aberta de acompanhamento por oportunidade. Novas pendências da mesma oportunidade atualizam a tarefa existente (com evento em task_events) em vez de criar outra.
