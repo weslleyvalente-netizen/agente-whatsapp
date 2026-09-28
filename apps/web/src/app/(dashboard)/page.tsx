@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { StatusLamp } from "@/components/ui/status-lamp";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { TASK_TYPE_LABELS } from "@aula-agente/shared";
 
 interface UrgentConversation {
   conversationId: string;
@@ -36,6 +38,21 @@ interface DashboardSummary {
   needsAttention: number;
   urgentConversations: UrgentConversation[];
   pendingHandoffs: PendingHandoff[];
+}
+
+interface TodayItem {
+  taskId: string;
+  type: string;
+  title: string;
+  description: string;
+  reason: string | null;
+  priority: string;
+  dueDate: string;
+  contactName: string | null;
+  contactPhone: string;
+  conversationId: string | null;
+  opportunityId: string | null;
+  score: number;
 }
 
 function formatWaitMinutes(minutes: number) {
@@ -85,13 +102,55 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Fase 2, item 4 — visão "Hoje": top-10 por score, à parte do resumo
+  // acima (endpoints diferentes, não precisa bloquear um no outro).
+  const [today, setToday] = useState<TodayItem[] | null>(null);
+  const [actingTaskId, setActingTaskId] = useState<string | null>(null);
+
+  const fetchToday = () => {
+    if (!currentOrg) return;
+    apiFetch(`/organizations/${currentOrg.id}/dashboard/today`)
+      .then((data) => setToday(data.items))
+      .catch(() => setToday([]));
+  };
+
   useEffect(() => {
     if (!currentOrg) return;
     apiFetch(`/organizations/${currentOrg.id}/dashboard/summary`)
       .then(setSummary)
       .catch(() => setError("Não foi possível carregar o resumo."))
       .finally(() => setLoading(false));
+    fetchToday();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrg]);
+
+  const handleCompleteToday = async (taskId: string) => {
+    setActingTaskId(taskId);
+    try {
+      await apiFetch(`/tasks/${taskId}/complete`, { method: "POST" });
+      setToday((prev) => prev?.filter((t) => t.taskId !== taskId) ?? prev);
+    } catch {
+      // best-effort UI action — nothing else to show, item just stays put
+    } finally {
+      setActingTaskId(null);
+    }
+  };
+
+  const handlePostponeToday = async (taskId: string, days: number) => {
+    setActingTaskId(taskId);
+    try {
+      const dueDate = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+      await apiFetch(`/tasks/${taskId}/reschedule`, {
+        method: "POST",
+        body: JSON.stringify({ due_date: dueDate }),
+      });
+      setToday((prev) => prev?.filter((t) => t.taskId !== taskId) ?? prev);
+    } catch {
+      // best-effort UI action
+    } finally {
+      setActingTaskId(null);
+    }
+  };
 
   if (loading) return <div>Carregando...</div>;
   if (error || !summary) return <div>Nao foi possivel carregar o resumo.</div>;
@@ -176,6 +235,68 @@ export default function HomePage() {
                     )}
                   </div>
                 </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Hoje</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {today === null ? (
+            <p className="text-sm text-muted-foreground">Carregando...</p>
+          ) : today.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhuma tarefa em aberto priorizada por hoje.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {today.map((item) => (
+                <div key={item.taskId} className="flex items-center gap-3 py-3">
+                  <Avatar>
+                    <AvatarFallback>
+                      {(item.contactName || item.contactPhone || "?")[0].toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {item.contactName || item.contactPhone || "?"}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        {TASK_TYPE_LABELS[item.type as keyof typeof TASK_TYPE_LABELS] ?? item.type}
+                      </span>
+                    </p>
+                    <p className="truncate text-sm text-muted-foreground">{item.description}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge variant="outline" className="tabular-data">
+                      score {Math.round(item.score)}
+                    </Badge>
+                    {item.conversationId && (
+                      <Link
+                        href={`/inbox?id=${item.conversationId}`}
+                        className={buttonVariants({ size: "sm", variant: "outline" })}
+                      >
+                        Abrir
+                      </Link>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={actingTaskId === item.taskId}
+                      onClick={() => handlePostponeToday(item.taskId, 1)}
+                    >
+                      Adiar
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={actingTaskId === item.taskId}
+                      onClick={() => handleCompleteToday(item.taskId)}
+                    >
+                      Concluir
+                    </Button>
+                  </div>
+                </div>
               ))}
             </div>
           )}
