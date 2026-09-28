@@ -186,3 +186,127 @@ alterações, na branch base).
 - **Tudo que foi pedido nesta rodada está em produção e ativo.** Falta só,
   quando você quiser, gerar um handoff de teste via `requestHuman` pra ver o
   card do Início e o painel lateral da conversa na prática.
+
+## Incidente de produção — requestHuman sem resposta (2026-09-28)
+
+Cliente real (conversa `008df306-8b1e-4ff4-8e6d-b8a92fab6288`) perguntou
+sobre documentos do consórcio, `requestHuman` foi chamado, e o cliente nunca
+recebeu resposta nem a equipe foi avisada. Três correções, branch
+`fix/request-human-drops-reply-during-handoff` (a partir da `main`, PR aberto,
+aguardando seu merge):
+
+1. **Bug corrigido:** `process-message.ts` descartava a própria resposta do
+   `requestHuman` — a checagem de "humano assumiu durante a geração" não
+   distinguia o takeover que o próprio `requestHuman` tinha acabado de
+   ativar. Nova função pura `shouldDropReplyForTakeover`
+   (`packages/shared/src/conversation-helpers.ts`), TDD. Isso afetava **todo**
+   handoff via `requestHuman`, não só este caso.
+2. **Lacuna fechada:** sem `default_handoff_assignee_id` nem
+   `handoff_notification_phone` configurados (caso da organização
+   `cf01d00d`), `requestHuman` agora cria uma tarefa de fallback (vinculada à
+   oportunidade, igual ao `createTask`) em vez de o handoff ficar invisível.
+3. **Descrição do tool ajustada:** removido "coletar/confirmar documentos" —
+   isso empurrava a Helena a chamar handoff numa pergunta informativa simples.
+   Perguntas informativas agora vão para o FAQ; `requestHuman` fica para
+   quando o cliente já quer negociar/aderir/fechar. **Precisa de validação
+   sua no Playground antes de confiar em produção** (3x a pergunta de
+   documentos, 3x "quero aderir").
+4. **FAQ criada em produção, efeito imediato:** `knowledge_faqs`
+   (id `77630127-1671-41d9-9b0d-c518c1146269`), agente `3ada5b0a`, pergunta
+   "Quais documentos preciso para fazer o consórcio?", exatamente o texto que
+   você forneceu.
+
+**Runbook — hotfix:**
+1. Revisar e mergear o PR de `fix/request-human-drops-reply-during-handoff`
+   na `main` (sem migration nova — só código).
+2. "Implantar" o serviço `worker` no EasyPanel (o `api` também carrega
+   `packages/agent-runtime`, então se o deploy automático não cobrir os dois,
+   implantar ambos).
+3. Validar no Playground a regra do item 3 acima antes de confiar nela.
+4. Depois do merge: atualizar `feat/fase2-triagem-tarefas` com a `main` (a
+   branch da Fase 2 já tinha uma cópia independente do fix do item 1 — é
+   esperado o merge reconhecer como já aplicado; o mais provável é precisar
+   resolver algo em `apps/worker/src/workers/process-message.ts` ou
+   `packages/shared/src/conversation-helpers.ts`, não em `request-human.ts`,
+   que a Fase 2 nunca tocou) e rodar a suíte completa de novo antes do merge
+   da Fase 2.
+
+## Fase 2 — Triagem de tarefas (2026-09-28) — implementada, aguardando o passo 4 acima
+
+Plano completo, decisões e fórmula do score em
+`docs/plano-fase2-triagem-tarefas.md`. Branch `feat/fase2-triagem-tarefas`.
+
+**O que foi feito:**
+1. **Vínculo automático + backfill (item 1):** `createTaskWithDedup` vincula
+   `opportunity_id` automaticamente quando o contato tem exatamente 1
+   oportunidade aberta (flag `task_auto_link_opportunity_enabled`, desligada
+   por padrão). Backfill rodado nas tarefas abertas na hora: **60 de 218
+   vinculadas** (as outras 158 não tinham oportunidade aberta para vincular),
+   evento `opportunity_auto_linked` gravado em cada uma
+   (`packages/database/scripts/backfill-task-opportunity-links.ts`).
+2. **Consolidação por oportunidade (item 2):** tarefa guarda uma lista de
+   pendências (`tasks.consolidated_pendencies`, migration `00029`) — o tipo
+   visível é sempre o de maior prioridade da lista, não o mais recente; uma
+   pendência resolvida sai da lista sem fechar a tarefa se sobrar outra.
+   Flag `task_consolidation_by_opportunity_enabled`, desligada por padrão.
+3. **Encerramento automático (item 3):** `awaiting_customer_cpf`/
+   `awaiting_customer_data` fecham (ou saem da lista de pendências) só quando
+   o campo mudou nesta chamada **e** existe mensagem do cliente depois da
+   criação da tarefa. `awaiting_customer_decision` fica de fora (sem sinal
+   estrutural). Flag `task_auto_close_awaiting_customer_enabled`, desligada
+   por padrão.
+4. **Score de prioridade + visão "Hoje" (item 4):** `computeTaskPriorityScore`
+   (pesos em `DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS`, ajustável via
+   `organizations.settings.task_priority_score_weights`), endpoint
+   `GET /organizations/:id/dashboard/today`, card "Hoje" no Início com abrir
+   conversa / concluir / adiar. Sem flag — só leitura.
+5. **Retomada do LiberaCred (item 5, opção B):** tarefas de retomada para
+   oportunidades paradas em `plan_term_presented` — dia 2 cria, dia 7 escala,
+   depois sugere marcar como perdida (nunca automaticamente). Mensagem
+   sugerida usa só valores da base de conhecimento, nunca estimados; avisa
+   quando a tabela está desatualizada/não encontrada. Limite diário de
+   criação (padrão 10), priorizado pelo score. Flag
+   `libera_cred_resumption_enabled`, desligada por padrão.
+6. **Tudo desligado por padrão**, mesmo padrão da Fase 1 — toggles em
+   Configurações → "Fase 2 — Triagem de tarefas".
+
+**Testes:** TDD em toda a lógica pura nova
+(`task-consolidation`, `task-priority-score`, `libera-cred-resumption-helpers`,
+`task-helpers`), testes de integração no `createTaskWithDedup` (auto-link e
+consolidação, com e sem flag), no hook de encerramento automático, no worker
+de retomada do LiberaCred e no endpoint `/dashboard/today`. Suíte completa do
+monorepo verde (só a falha pré-existente e não relacionada de
+`costs/index.test.ts`). `next build` do `apps/web` verificado sem erros —
+não validei visualmente no navegador (precisa de login real no Supabase de
+produção, que não tenho aqui).
+
+## Deploy e ativação — Fase 2 (pendente)
+
+1. **Pré-requisito:** mergear e implantar o hotfix
+   (`fix/request-human-drops-reply-during-handoff`) primeiro — ver runbook
+   acima. Depois, atualizar `feat/fase2-triagem-tarefas` com a `main` e rodar
+   a suíte completa de novo.
+2. **Migration:** `supabase db push` para aplicar `00029` (só adiciona
+   `tasks.consolidated_pendencies jsonb DEFAULT '[]'`, reversível).
+3. **Merge** `feat/fase2-triagem-tarefas` → `main`, push seu (nunca dou push
+   na main). Deploy automático no EasyPanel dos serviços `api` e `worker`.
+4. **Confirmar saudável:** `/health` OK, worker processando o tick de 15 min
+   sem erro nos logs (`stale-conversation-followup`, que agora também roda a
+   checagem do LiberaCred).
+5. **Ativação gradual, uma flag por vez, cada uma em Configurações → "Fase 2 —
+   Triagem de tarefas":**
+   - A visão "Hoje" no Início já está ativa (sem flag) — dá pra conferir
+     antes de ligar qualquer automação.
+   - `task_auto_link_opportunity_enabled` — baixo risco, só popula um campo.
+   - `task_auto_close_awaiting_customer_enabled` — testar com um cliente que
+     já tenha task `awaiting_customer_cpf`/`awaiting_customer_data` aberta.
+   - `task_consolidation_by_opportunity_enabled` — muda o comportamento de
+     dedup existente; acompanhar as primeiras consolidações antes de deixar
+     ligado por padrão em todo lugar.
+   - `libera_cred_resumption_enabled` — o mais sensível (mensagens sugeridas
+     para clientes de verdade). Sugiro ligar por último, com o limite diário
+     baixo (ex. 3-5) na primeira semana, e conferir as primeiras tarefas
+     criadas antes de subir o limite para o padrão (10).
+6. **Backfill:** já rodado (60/60) antes do merge — não precisa rodar de novo
+   a menos que você queira revisitar tarefas que ganharam oportunidade aberta
+   depois desta data.
