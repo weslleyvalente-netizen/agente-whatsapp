@@ -6,7 +6,11 @@ export interface GreetingFilterConfig {
   maxLength: number;
 }
 
-export const DEFAULT_GREETING_FILTER_ENABLED = true;
+// Off by default: a fresh org (or an org that hasn't visited Configurações
+// yet) must see zero behavior change from this feature until they opt in —
+// deploy-safety requirement so Fase 1 can merge with everything inert and
+// be turned on one org/feature at a time.
+export const DEFAULT_GREETING_FILTER_ENABLED = false;
 
 export const DEFAULT_GREETING_WORDS = [
   "bom dia",
@@ -21,9 +25,18 @@ export const DEFAULT_GREETING_WORDS = [
   "blz",
   "beleza",
   "opa",
+  "bom dia tudo bem",
+  "boa tarde tudo bem",
+  "boa noite tudo bem",
+  "oi tudo bem",
+  "olá tudo bem",
 ];
 
-export const DEFAULT_GREETING_MAX_LENGTH = 15;
+// Must cover the longest default word above ("boa tarde tudo bem" / "boa
+// noite tudo bem", 18 chars) with a little headroom for org-configured
+// variants. Checked against the NORMALIZED message (punctuation/emoji
+// already stripped), not the raw content — see isGreetingOrShortConfirmation.
+export const DEFAULT_GREETING_MAX_LENGTH = 22;
 
 export const DEFAULT_GREETING_FILTER_CONFIG: GreetingFilterConfig = {
   enabled: DEFAULT_GREETING_FILTER_ENABLED,
@@ -46,18 +59,27 @@ export function resolveGreetingFilterConfig(
   };
 }
 
-function normalize(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
-}
-
 // Emoji ranges + variation selector/ZWJ, same set used across the codebase
 // for "is this message just an emoji" checks.
+const EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}️‍]/gu;
+
+// Punctuation a human commonly types around/inside a short greeting
+// ("Bom dia!", "Oi, tudo bem?") — stripped anywhere in the string, not just
+// at the edges, since removing it never changes which word was meant.
+const PUNCTUATION_PATTERN = /[.,!?;:()"'`\-–—~*_]/g;
+
+// Case, accents, punctuation and emoji all collapse away before comparison —
+// "Bom dia!", "bom dia 😊" and "bom dia" must all normalize to the exact
+// same string as the configured word "bom dia".
+function normalize(text: string): string {
+  const noEmoji = text.replace(EMOJI_PATTERN, "");
+  const deaccented = noEmoji.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const noPunctuation = deaccented.replace(PUNCTUATION_PATTERN, "");
+  return noPunctuation.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function isOnlyEmoji(text: string): boolean {
-  const stripped = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}️‍\s]/gu, "");
+  const stripped = text.replace(EMOJI_PATTERN, "").replace(/\s/g, "");
   return stripped.length === 0 && text.trim().length > 0;
 }
 
@@ -67,7 +89,9 @@ function isOnlyEmoji(text: string): boolean {
 // attendant's own name) that are not greetings at all; matching by length
 // alone would silently swallow those, plus genuine short replies like "sim"
 // or "manda", along with real greetings. maxLength is an extra sanity cap on
-// the matched word, not an independent trigger.
+// the matched word (checked on the NORMALIZED string, so decorative
+// punctuation/emoji around a short greeting never inflates it past the
+// cap), not an independent trigger.
 export function isGreetingOrShortConfirmation(content: string, config: GreetingFilterConfig): boolean {
   if (!config.enabled) return false;
 
@@ -76,8 +100,8 @@ export function isGreetingOrShortConfirmation(content: string, config: GreetingF
 
   if (isOnlyEmoji(trimmed)) return true;
 
-  if (trimmed.length > config.maxLength) return false;
-
   const normalized = normalize(trimmed);
+  if (normalized.length === 0 || normalized.length > config.maxLength) return false;
+
   return config.words.some((word) => normalize(word) === normalized);
 }

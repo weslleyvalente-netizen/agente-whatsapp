@@ -73,7 +73,11 @@ beforeEach(() => {
   getIgnoredContact.mockResolvedValue(null);
   ensureConversation.mockResolvedValue({ conversation: openConversation, contact, isNew: false });
   saveMessage.mockResolvedValue({ id: "msg-1" });
-  getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+  // Fase 1's greeting filter ships OFF by default (safe rollout) — these
+  // tests are specifically about the filter's own behavior, so the org
+  // fixture opts in explicitly, the same way a real org would from
+  // Configurações. A separate test below covers the off-by-default case.
+  getOrganizationById.mockResolvedValue({ id: "org-1", settings: { takeover_greeting_filter_enabled: true } });
   createHandoffEvent.mockResolvedValue({ id: "handoff-1" });
 });
 
@@ -121,6 +125,60 @@ describe("evolution webhook — fromMe greeting filter (Fase 1)", () => {
     // fromMe never enqueues the AI regardless of content — the branch
     // returns before ever reaching that code path.
     expect(enqueueProcessMessage).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  // Deploy safety (explicitly requested): the migrations for
+  // organization_ignored_contacts / handoff_events might not be applied yet
+  // when this code first deploys — a lookup failure on either must never
+  // take down message processing for every other contact.
+  it("still processes a normal fromMe message when the ignored-contacts lookup fails (missing table, etc.)", async () => {
+    getIgnoredContact.mockRejectedValue(new Error('relation "organization_ignored_contacts" does not exist'));
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/evolution",
+      payload: fromMePayload("vamos prosseguir com a compra da Bros"),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(updateConversation).toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ is_human_takeover: true }));
+
+    await app.close();
+  });
+
+  it("still activates takeover for a filtered greeting even when recording the handoff_events row fails", async () => {
+    createHandoffEvent.mockRejectedValue(new Error('relation "handoff_events" does not exist'));
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/evolution",
+      payload: fromMePayload("Bom dia"),
+    });
+
+    expect(response.statusCode).toBe(200);
+    // The greeting filter itself still works — takeover stays skipped —
+    // even though logging the metric failed.
+    expect(updateConversation).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  // Deploy-safety requirement: the greeting filter ships disabled by
+  // default (DEFAULT_GREETING_FILTER_ENABLED = false) — an org that never
+  // visits Configurações must see the exact same behavior as before Fase 1.
+  it("activates takeover for a bare greeting when the org hasn't opted into the greeting filter (default off)", async () => {
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: fromMePayload("Bom dia") });
+
+    expect(response.statusCode).toBe(200);
+    expect(updateConversation).toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ is_human_takeover: true }));
+    expect(handleConversationTakeover).toHaveBeenCalled();
 
     await app.close();
   });

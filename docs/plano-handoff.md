@@ -111,18 +111,51 @@ rodadas — tudo verde, exceto uma falha pré-existente e não relacionada em
 `apps/api/src/routes/costs/index.test.ts` (confirmada antes das minhas
 alterações, na branch base).
 
-**Pendente — decisão/ação sua antes de testar no painel:**
-- As migrations 00027/00028 ainda não foram aplicadas no Supabase (não tenho
-  as credenciais do `supabase login`/senha do banco para rodar
-  `supabase db push` a partir daqui). Rode isso você antes de testar
-  localmente — são aditivas e não afetam o app hoje em produção (que não
-  conhece essas tabelas).
-- Contato "Yamaha Serviços Financeiros" ainda NÃO foi cadastrado na lista de
-  ignorados nem os dados históricos foram apagados — aguardando sua
-  confirmação (contagens levantadas: 1 wa_contacts, 6 conversations, 5.731
-  messages, 7 tasks, 1 conversation_qualifications, 0 opportunities).
-- Prompt de "Transferência para humano" de cada agente continua com o texto
-  antigo mencionando createTask — a ferramenta requestHuman já existe e o
-  modelo deve adotá-la ao ativá-la (a própria descrição da tool já orienta
-  isso), mas vale revisar manualmente o texto da regra em Agentes → Regras
-  se quiser deixar explícito.
+## Ajustes pós-aprovação (2026-09-28)
+
+1. **Limpeza do contato Yamaha — concluída.** Apaguei `wa_contacts` (o delete
+   fez cascade em `conversations`, `messages`, `tasks` e
+   `conversation_qualifications` — as FKs já são `ON DELETE CASCADE`).
+   Contagens confirmadas em zero para as 5 tabelas depois do delete.
+   **Pendente:** cadastrar o contato na lista de ignorados via SQL depende de
+   (a) a migration 00027 estar aplicada e (b) eu ter o telefone completo — eu
+   só exibi ele mascarado (`5511****00`) nos relatórios anteriores e nunca
+   salvei o valor completo em lugar nenhum, e a linha original já foi
+   apagada. Preciso que você me passe o número (ou eu não consigo recriá-lo).
+2. **Filtro de saudação — normalização reforçada.** Agora ignora
+   maiúsculas/minúsculas, acentos, pontuação e emoji nas bordas (início e
+   fim) da mensagem antes de comparar — "Bom dia!", "bom dia 😊", "Boa
+   tarde." casam normalmente. Lista padrão ganhou "bom dia tudo bem", "boa
+   tarde tudo bem", "boa noite tudo bem", "oi tudo bem", "olá tudo bem" (com
+   ou sem vírgula/pontuação, ex. "Bom dia, tudo bem?" também casa). Limite de
+   caracteres padrão subiu de 15 para 22 (cobre a frase mais longa da lista)
+   e agora é medido no texto já normalizado, não no texto bruto.
+3. **Rollout seguro — defaults de cada funcionalidade nova:**
+   - Filtro de saudação: `takeover_greeting_filter_enabled` — **desligado por
+     padrão** (`DEFAULT_GREETING_FILTER_ENABLED = false`). Sem isso, órgão
+     nenhum muda de comportamento até ativar em Configurações.
+   - Ferramenta `requestHuman`: `tools_config.request_human` — **desligada
+     por padrão** (já seguia o mesmo padrão de `create_task`), por agente, em
+     Agentes → Ferramentas.
+   - Timeout diferenciado + card "Handoffs aguardando" + alerta de handoff
+     sem resposta: não têm chave própria — ficam automaticamente inertes
+     enquanto `requestHuman` estiver desligada (não existe handoff
+     `request_human` para excluir do timeout ou alertar). Uma vez a
+     ferramenta ligada, o alerta usa `handoff_unanswered_alert_minutes`
+     (padrão 15 min).
+   - Contatos ignorados: tabela vazia por padrão — zero efeito até alguém
+     cadastrar um número em Configurações.
+   - Métrica `handoff_events` para `painel_manual`/`fromMe_real`: **essa
+     parte grava desde o merge**, sem chave — é só leitura/registro (não
+     muda nenhum comportamento visível, protegida por try/catch), e é
+     proposital: dá a linha de base "antes" para comparar depois de ativar
+     as outras.
+   - Todos os 3 pontos novos de escrita que dependem das tabelas novas
+     (`getIgnoredContact`, o `createHandoffEvent` do filtro de saudação, e
+     `getPendingHandoffs` no dashboard) têm fallback: se a tabela não existir
+     ainda, o webhook e o painel continuam funcionando normalmente (testado
+     com teste dedicado, inclusive fazendo falhar de propósito antes do
+     fix).
+4. **Pendência registrada, não corrigida agora:** falha pré-existente e não
+   relacionada em `apps/api/src/routes/costs/index.test.ts` — mantida como
+   está, a corrigir depois, fora do escopo da Fase 1.

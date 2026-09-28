@@ -187,7 +187,15 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // that ended up being messaged from the connected number and got
       // mistaken for a lead (see docs/diagnostico-fase0.md, seção 1.1).
       // Checked before anything is written, for both directions of traffic.
-      const ignoredContact = await getIgnoredContact(getAdminClient(), organizationId, phone);
+      // Fails open (treated as "not ignored") on any lookup error — e.g. the
+      // migration for organization_ignored_contacts not deployed yet must
+      // never take down message processing for every other contact.
+      let ignoredContact: Awaited<ReturnType<typeof getIgnoredContact>> = null;
+      try {
+        ignoredContact = await getIgnoredContact(getAdminClient(), organizationId, phone);
+      } catch (err) {
+        request.log.error({ err, organizationId }, "Failed to check ignored contacts — processing normally");
+      }
       if (ignoredContact && ignoredContact.retention_mode === "no_store") {
         return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
       }
@@ -253,12 +261,16 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         const skipTakeover = shouldSkipTakeoverForGreeting(content, isFirstTakeover, greetingFilterConfig);
 
         if (skipTakeover) {
-          await createHandoffEvent(db, {
-            organization_id: organizationId,
-            conversation_id: conversation.id,
-            trigger_type: "fromMe_greeting_filtered",
-            criado_por: "humano",
-          });
+          try {
+            await createHandoffEvent(db, {
+              organization_id: organizationId,
+              conversation_id: conversation.id,
+              trigger_type: "fromMe_greeting_filtered",
+              criado_por: "humano",
+            });
+          } catch (err) {
+            request.log.error({ err, conversationId: conversation.id }, "Failed to record fromMe_greeting_filtered handoff event");
+          }
         } else {
           // Always refresh human_takeover_at, even if already in takeover —
           // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS) counts from this

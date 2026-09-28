@@ -2,14 +2,20 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_GREETING_FILTER_CONFIG } from "@aula-agente/shared";
 import { extractMessageContent, isNonContentMessageType, shouldSkipTakeoverForGreeting } from "./evolution.js";
 
+// DEFAULT_GREETING_FILTER_CONFIG ships with enabled=false (safe rollout —
+// see greeting-filter.test.ts) — these tests are about the decision logic
+// itself, so they opt the filter in explicitly, same as an org would from
+// Configurações.
+const ENABLED_CONFIG = { ...DEFAULT_GREETING_FILTER_CONFIG, enabled: true };
+
 describe("shouldSkipTakeoverForGreeting", () => {
   it("skips takeover for a greeting that starts a new episode", () => {
-    expect(shouldSkipTakeoverForGreeting("Bom dia", true, DEFAULT_GREETING_FILTER_CONFIG)).toBe(true);
+    expect(shouldSkipTakeoverForGreeting("Bom dia", true, ENABLED_CONFIG)).toBe(true);
   });
 
   it("does not skip for real content, even at the start of a new episode", () => {
     expect(
-      shouldSkipTakeoverForGreeting("vamos prosseguir com a compra da Bros", true, DEFAULT_GREETING_FILTER_CONFIG)
+      shouldSkipTakeoverForGreeting("vamos prosseguir com a compra da Bros", true, ENABLED_CONFIG)
     ).toBe(false);
   });
 
@@ -18,7 +24,11 @@ describe("shouldSkipTakeoverForGreeting", () => {
   // takeover timeout, regardless of content — a "Bom dia" sent 20 messages
   // into an already-active takeover must not silently release it.
   it("does not skip when the conversation is already in takeover, even for a bare greeting", () => {
-    expect(shouldSkipTakeoverForGreeting("Bom dia", false, DEFAULT_GREETING_FILTER_CONFIG)).toBe(false);
+    expect(shouldSkipTakeoverForGreeting("Bom dia", false, ENABLED_CONFIG)).toBe(false);
+  });
+
+  it("never skips when the org hasn't opted into the greeting filter (default off)", () => {
+    expect(shouldSkipTakeoverForGreeting("Bom dia", true, DEFAULT_GREETING_FILTER_CONFIG)).toBe(false);
   });
 });
 

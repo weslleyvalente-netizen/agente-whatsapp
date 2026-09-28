@@ -146,13 +146,22 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const db = getAdminClient();
       const sinceISO = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      const [conversations, windowMessages, takeoverConversations, org, pendingHandoffRows] = await Promise.all([
+      const [conversations, windowMessages, takeoverConversations, org] = await Promise.all([
         getConversationStatusesByOrganization(db, organizationId),
         getMessagesForDashboard(db, organizationId, sinceISO),
         getHumanTakeoverConversations(db, organizationId),
         getOrganizationById(db, organizationId),
-        getPendingHandoffs(db, organizationId),
       ]);
+
+      // Separate from the Promise.all above: a missing handoff_events table
+      // (migration not deployed yet) must not take down the rest of the
+      // dashboard summary — it degrades to an empty "Handoffs aguardando".
+      let pendingHandoffRows: Awaited<ReturnType<typeof getPendingHandoffs>> = [];
+      try {
+        pendingHandoffRows = await getPendingHandoffs(db, organizationId);
+      } catch (err) {
+        request.log.error({ err, organizationId }, "Failed to load pending handoffs");
+      }
 
       const lastMessages = await Promise.all(
         takeoverConversations.map((c) => getRecentMessages(db, c.id, 1))
