@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Opportunity, OpportunityEvent } from "@aula-agente/shared";
+import type { Opportunity, OpportunityEvent, WaitingOn } from "@aula-agente/shared";
 
 export async function createOpportunity(
   client: SupabaseClient,
@@ -60,6 +60,40 @@ export async function getOpenOpportunitiesByContact(
     .eq("status", "open");
   if (error) throw error;
   return data as Array<{ id: string; waiting_on: string | null; waiting_on_until: string | null }>;
+}
+
+// Fase 2, item 5: candidates for the LiberaCred resumption cadence — open
+// opportunities stuck at the exact stage the diagnosis flagged as the
+// biggest, cheapest-to-unblock bottleneck (137 stalled at the time of
+// docs/diagnostico-fase0.md).
+export interface LiberaCredPlanPresentedOpportunity {
+  id: string;
+  contact_id: string;
+  credit_amount: number | null;
+  sale_amount: number | null;
+  bid_amount: number | null;
+  waiting_on: WaitingOn | null;
+  waiting_on_until: string | null;
+  last_progress_at: string | null;
+  last_interaction_at: string | null;
+  created_at: string;
+}
+
+export async function getOpenLiberaCredPlanPresentedOpportunities(
+  client: SupabaseClient,
+  organizationId: string
+): Promise<LiberaCredPlanPresentedOpportunity[]> {
+  const { data, error } = await client
+    .from("opportunities")
+    .select(
+      "id, contact_id, credit_amount, sale_amount, bid_amount, waiting_on, waiting_on_until, last_progress_at, last_interaction_at, created_at"
+    )
+    .eq("organization_id", organizationId)
+    .eq("operation", "libera_cred")
+    .eq("stage", "plan_term_presented")
+    .eq("status", "open");
+  if (error) throw error;
+  return data as LiberaCredPlanPresentedOpportunity[];
 }
 
 export async function addOpportunityEvent(

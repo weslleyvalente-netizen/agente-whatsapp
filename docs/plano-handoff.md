@@ -207,10 +207,12 @@ recebeu resposta nem a equipe foi avisada. Três correções, branch
 3. **Descrição do tool ajustada:** removido "coletar/confirmar documentos" —
    isso empurrava a Helena a chamar handoff numa pergunta informativa simples.
    Perguntas informativas agora vão para o FAQ; `requestHuman` fica para
-   quando o cliente já quer negociar/aderir/fechar.
+   quando o cliente já quer negociar/aderir/fechar. Validado no Playground
+   (pergunta de documentos → FAQ, sem handoff).
 4. **FAQ criada em produção, efeito imediato:** `knowledge_faqs`
    (id `77630127-1671-41d9-9b0d-c518c1146269`), agente `3ada5b0a`, pergunta
-   "Quais documentos preciso para fazer o consórcio?".
+   "Quais documentos preciso para fazer o consórcio?", exatamente o texto que
+   você forneceu.
 
 ### Etapa 1 — Deploy do hotfix (2026-09-28) — concluída
 
@@ -227,6 +229,119 @@ recebeu resposta nem a equipe foi avisada. Três correções, branch
 - Confirmado no banco: nem `default_handoff_assignee_id` nem
   `handoff_notification_phone` configurados na organização `cf01d00d` — só
   reportado, nada preenchido (o usuário configura pelo painel).
-- **Pendente:** validação no Playground da descrição ajustada do
-  `requestHuman` (item 3 acima) — nota importante: a descrição do tool é
-  código, não passa por draft/publish, então já está valendo desde o deploy.
+
+### Investigação — Teste 2 do Playground falhou (2026-09-28) — corrigida, publicada
+
+Depois do hotfix, validação no Playground: Teste 1 (pergunta de documentos)
+OK. **Teste 2 falhou** — "Quero fechar o plano de 12x da Factor 150, como
+faço?" gerou `updateQualification` + `createTask`, sem chamar `requestHuman`;
+a Helena disse ao cliente que a equipe entraria em contato, sem handoff real.
+
+Investigação (sem publicar nada, a pedido):
+1. `request_human` confirmado `true` tanto no rascunho (`agent_configs`)
+   quanto no publicado (`agents`), mesmo `updated_at` — não era problema de
+   habilitação.
+2. Causa raiz: o rascunho do prompt nunca menciona `requestHuman` pelo nome —
+   três trechos mandavam "criar a tarefa"/"encaminhar (tarefa)" para fechar
+   negócio, competindo com (e vencendo) a descrição da ferramenta: a seção
+   "MÉTODO COMERCIAL" (vale para todos os produtos), a subseção "Encaminhar
+   para a equipe" do playbook LiberaCred, e o playbook de Consórcio (mais
+   vago, sem citar nenhuma ferramenta).
+3. Reescritos os três trechos no **rascunho apenas** (`agent_configs`, sem
+   tocar `agents`) para chamar `requestHuman` (com resumo: modelo, plano,
+   valores da tabela, urgência, entrada, parcela confortável, restrição,
+   pedido concreto) quando o cliente quer fechar/aderir/negociar ou pedir um
+   consultor; `createTask` passou a ficar reservado só para pendências
+   futuras (cliente vai mandar algo depois, ou retorno combinado numa data).
+4. `updateQualification` no Playground **não grava em tabela real** —
+   `playground.service.ts` sempre roda com `sandbox: true`, e
+   `registry.ts` troca `updateQualification`/`createTask`/`requestHuman` por
+   versões mockadas nesse modo. O badge "REAL" que apareceu era um bug de
+   rótulo: `SANDBOXED_TOOL_NAMES` em `agent-runner.ts` só listava
+   `createTask`/`sendVehiclePhoto`. Corrigido (branch
+   `fix/playground-simulated-tool-label`, PR aberto, TDD) para incluir
+   `updateQualification`, `requestHuman` e `sendRegisteredImage`.
+
+Validação: re-testado no Playground (fechar 12x Factor 150 → `requestHuman`;
+"quero aderir" → `requestHuman`; FAQ de documentos e pergunta de parcela →
+sem handoff). **Rascunho publicado pelo usuário.**
+
+## Fase 2 — Triagem de tarefas (2026-09-28) — implementada, aguardando o passo 4 acima
+
+Plano completo, decisões e fórmula do score em
+`docs/plano-fase2-triagem-tarefas.md`. Branch `feat/fase2-triagem-tarefas`.
+
+**O que foi feito:**
+1. **Vínculo automático + backfill (item 1):** `createTaskWithDedup` vincula
+   `opportunity_id` automaticamente quando o contato tem exatamente 1
+   oportunidade aberta (flag `task_auto_link_opportunity_enabled`, desligada
+   por padrão). Backfill rodado nas tarefas abertas na hora: **60 de 218
+   vinculadas** (as outras 158 não tinham oportunidade aberta para vincular),
+   evento `opportunity_auto_linked` gravado em cada uma
+   (`packages/database/scripts/backfill-task-opportunity-links.ts`).
+2. **Consolidação por oportunidade (item 2):** tarefa guarda uma lista de
+   pendências (`tasks.consolidated_pendencies`, migration `00029`) — o tipo
+   visível é sempre o de maior prioridade da lista, não o mais recente; uma
+   pendência resolvida sai da lista sem fechar a tarefa se sobrar outra.
+   Flag `task_consolidation_by_opportunity_enabled`, desligada por padrão.
+3. **Encerramento automático (item 3):** `awaiting_customer_cpf`/
+   `awaiting_customer_data` fecham (ou saem da lista de pendências) só quando
+   o campo mudou nesta chamada **e** existe mensagem do cliente depois da
+   criação da tarefa. `awaiting_customer_decision` fica de fora (sem sinal
+   estrutural). Flag `task_auto_close_awaiting_customer_enabled`, desligada
+   por padrão.
+4. **Score de prioridade + visão "Hoje" (item 4):** `computeTaskPriorityScore`
+   (pesos em `DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS`, ajustável via
+   `organizations.settings.task_priority_score_weights`), endpoint
+   `GET /organizations/:id/dashboard/today`, card "Hoje" no Início com abrir
+   conversa / concluir / adiar. Sem flag — só leitura.
+5. **Retomada do LiberaCred (item 5, opção B):** tarefas de retomada para
+   oportunidades paradas em `plan_term_presented` — dia 2 cria, dia 7 escala,
+   depois sugere marcar como perdida (nunca automaticamente). Mensagem
+   sugerida usa só valores da base de conhecimento, nunca estimados; avisa
+   quando a tabela está desatualizada/não encontrada. Limite diário de
+   criação (padrão 10), priorizado pelo score. Flag
+   `libera_cred_resumption_enabled`, desligada por padrão.
+6. **Tudo desligado por padrão**, mesmo padrão da Fase 1 — toggles em
+   Configurações → "Fase 2 — Triagem de tarefas".
+
+**Testes:** TDD em toda a lógica pura nova
+(`task-consolidation`, `task-priority-score`, `libera-cred-resumption-helpers`,
+`task-helpers`), testes de integração no `createTaskWithDedup` (auto-link e
+consolidação, com e sem flag), no hook de encerramento automático, no worker
+de retomada do LiberaCred e no endpoint `/dashboard/today`. Suíte completa do
+monorepo verde (só a falha pré-existente e não relacionada de
+`costs/index.test.ts`). `next build` do `apps/web` verificado sem erros —
+não validei visualmente no navegador (precisa de login real no Supabase de
+produção, que não tenho aqui).
+
+## Deploy e ativação — Fase 2 (pendente)
+
+1. **Pré-requisito (concluído):** hotfix mergeado e implantado (Etapa 1
+   acima), correção do prompt validada e publicada (investigação acima).
+   `feat/fase2-triagem-tarefas` atualizada com a `main` (Etapa 2) e suíte
+   completa rodada de novo.
+2. **Migration:** `supabase db push` para aplicar `00029` (só adiciona
+   `tasks.consolidated_pendencies jsonb DEFAULT '[]'`, reversível).
+3. **Merge** `feat/fase2-triagem-tarefas` → `main`, push seu (nunca dou push
+   na main). Deploy automático no EasyPanel dos serviços `api` e `worker`.
+4. **Confirmar saudável:** `/health` OK, worker processando o tick de 15 min
+   sem erro nos logs (`stale-conversation-followup`, que agora também roda a
+   checagem do LiberaCred).
+5. **Ativação gradual, uma flag por vez, cada uma em Configurações → "Fase 2 —
+   Triagem de tarefas":**
+   - A visão "Hoje" no Início já está ativa (sem flag) — dá pra conferir
+     antes de ligar qualquer automação.
+   - `task_auto_link_opportunity_enabled` — baixo risco, só popula um campo.
+   - `task_auto_close_awaiting_customer_enabled` — testar com um cliente que
+     já tenha task `awaiting_customer_cpf`/`awaiting_customer_data` aberta.
+   - `task_consolidation_by_opportunity_enabled` — muda o comportamento de
+     dedup existente; acompanhar as primeiras consolidações antes de deixar
+     ligado por padrão em todo lugar.
+   - `libera_cred_resumption_enabled` — o mais sensível (mensagens sugeridas
+     para clientes de verdade). Sugiro ligar por último, com o limite diário
+     baixo (ex. 3-5) na primeira semana, e conferir as primeiras tarefas
+     criadas antes de subir o limite para o padrão (10).
+6. **Backfill:** já rodado (60/60) antes do merge — não precisa rodar de novo
+   a menos que você queira revisitar tarefas que ganharam oportunidade aberta
+   depois desta data.

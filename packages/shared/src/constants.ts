@@ -33,6 +33,7 @@ export const TASK_TYPES = [
   "vehicle_followup",
   "customer_unresponsive",
   "stalled_negotiation",
+  "libera_cred_resumption",
   "other",
 ] as const;
 
@@ -51,6 +52,7 @@ export const TASK_TYPE_LABELS: Record<(typeof TASK_TYPES)[number], string> = {
   vehicle_followup: "Follow-up de veículo",
   customer_unresponsive: "Cliente parou de responder",
   stalled_negotiation: "Negociação sem conclusão",
+  libera_cred_resumption: "Retomada LiberaCred",
   other: "Outro",
 };
 
@@ -110,6 +112,18 @@ export const HUMAN_TAKEOVER_TIMEOUT_MS = DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES 
 // (business hours), a "handoff sem resposta" alert is raised in the panel.
 // Orgs that haven't configured handoff_unanswered_alert_minutes fall back here.
 export const DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES = 15;
+
+// Fase 2, item 5 — used whenever an org hasn't configured its own
+// libera_cred_resumption_window_days / libera_cred_table_max_age_days /
+// libera_cred_resumption_daily_limit (see OrganizationSettings).
+export const DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG = {
+  window_days: 15,
+  table_max_age_days: 30,
+  daily_limit: 10,
+  // Days stalled in plan_term_presented before each cadence step (item 5b).
+  create_after_days: 2,
+  escalate_after_days: 7,
+};
 
 export const HANDOFF_TRIGGER_TYPES = [
   "request_human",

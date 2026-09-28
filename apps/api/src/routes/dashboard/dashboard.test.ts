@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildDashboardSummary, buildPendingHandoffs } from "./index.js";
+import { buildDashboardSummary, buildPendingHandoffs, buildTodayPriorityList } from "./index.js";
+import { DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS } from "@aula-agente/shared";
+import type { OpenTaskWithScoreInputs } from "@aula-agente/database";
 
 describe("buildDashboardSummary", () => {
   const conversations = [
@@ -137,5 +139,113 @@ describe("buildPendingHandoffs (card \"Handoffs aguardando\" — Fase 1)", () =>
     const result = buildPendingHandoffs([rowMinutesAgo(10, { conversations: null })], now, 15);
     expect(result[0].contactName).toBeNull();
     expect(result[0].contactPhone).toBe("");
+  });
+});
+
+describe("buildTodayPriorityList (visão \"Hoje\" — Fase 2, item 4)", () => {
+  const today = "2026-09-28";
+
+  function row(overrides: Partial<OpenTaskWithScoreInputs> = {}): OpenTaskWithScoreInputs {
+    return {
+      task: {
+        id: "task-1",
+        organization_id: "org-1",
+        contact_id: "contact-1",
+        conversation_id: "conv-1",
+        opportunity_id: null,
+        assignee_type: null,
+        assignee_id: null,
+        type: "run_quote",
+        title: "Fazer simulação",
+        description: "desc",
+        ai_summary: null,
+        reason: null,
+        priority: "normal",
+        status: "pending",
+        due_date: "2026-09-28",
+        due_time: null,
+        created_by_type: "ai",
+        created_by_id: null,
+        completed_at: null,
+        created_at: "2026-09-20T00:00:00Z",
+        updated_at: "2026-09-20T00:00:00Z",
+        consolidated_pendencies: [],
+      },
+      contactName: "Ana",
+      contactPhone: "5511999990000",
+      opportunity: null,
+      qualificationUrgency: null,
+      ...overrides,
+    };
+  }
+
+  it("scores a plain task with no opportunity using only priority/due-date/waiting_on-null", () => {
+    const result = buildTodayPriorityList([row()], new Set(), today, DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, 10);
+    // normal(0) + today(8) + waiting_on-null baseline(5) = 13
+    expect(result[0].score).toBe(13);
+  });
+
+  it("ranks an urgent, unanswered-handoff task above a routine one", () => {
+    const routine = row({ task: { ...row().task, id: "task-routine", priority: "low" } });
+    const hot = row({
+      task: { ...row().task, id: "task-hot", conversation_id: "conv-hot", priority: "urgent" },
+    });
+    const result = buildTodayPriorityList(
+      [routine, hot],
+      new Set(["conv-hot"]),
+      today,
+      DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS,
+      10
+    );
+    expect(result[0].taskId).toBe("task-hot");
+  });
+
+  it("factors in the linked opportunity's value, stage, and staleness", () => {
+    const withOpp = row({
+      task: { ...row().task, id: "task-opp", opportunity_id: "opp-1" },
+      opportunity: {
+        operation: "libera_cred",
+        stage: "plan_term_presented",
+        credit_amount: 50_000,
+        sale_amount: null,
+        bid_amount: null,
+        waiting_on: null,
+        waiting_on_until: null,
+        last_progress_at: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+        last_interaction_at: null,
+        created_at: "2026-09-01T00:00:00Z",
+      },
+    });
+    const withoutOpp = row({ task: { ...row().task, id: "task-bare" } });
+
+    const result = buildTodayPriorityList(
+      [withoutOpp, withOpp],
+      new Set(),
+      today,
+      DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS,
+      10
+    );
+    expect(result[0].taskId).toBe("task-opp");
+  });
+
+  it("respects an organization's custom score weights", () => {
+    const customWeights = { ...DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, priority: { ...DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS.priority, low: 1000 } };
+    const result = buildTodayPriorityList(
+      [row({ task: { ...row().task, priority: "low" } })],
+      new Set(),
+      today,
+      customWeights,
+      10
+    );
+    expect(result[0].score).toBeGreaterThan(1000);
+  });
+
+  it("limits the result to the requested count, highest score first", () => {
+    const rows = Array.from({ length: 15 }, (_, i) =>
+      row({ task: { ...row().task, id: `task-${i}`, priority: i === 7 ? "urgent" : "low" } })
+    );
+    const result = buildTodayPriorityList(rows, new Set(), today, DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, 10);
+    expect(result).toHaveLength(10);
+    expect(result[0].taskId).toBe("task-7");
   });
 });

@@ -35,6 +35,7 @@ import {
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 import { buildFollowupNudgeMessage } from "../lib/followup-nudge.js";
+import { runLiberaCredResumptionCheck } from "./libera-cred-resumption.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -190,6 +191,9 @@ export function startStaleConversationFollowupWorker() {
       let sent = 0;
       let created = 0;
       let stalledFlagged = 0;
+      let liberaCredCreated = 0;
+      let liberaCredEscalated = 0;
+      let liberaCredSuggestedLost = 0;
 
       for (const org of organizations) {
         stalledFlagged += await runStalledNegotiationCheck(db, org);
@@ -198,6 +202,19 @@ export function startStaleConversationFollowupWorker() {
 
         for (const agent of agents) {
           if (!agent.is_active) continue;
+
+          // Independent of followup_automatico below — the LiberaCred
+          // resumption cadence (Fase 2, item 5) has its own flag
+          // (libera_cred_resumption_enabled) and returns immediately when
+          // it's off, same as every other check in this tick.
+          try {
+            const liberaCredResult = await runLiberaCredResumptionCheck(db, org, agent);
+            liberaCredCreated += liberaCredResult.created;
+            liberaCredEscalated += liberaCredResult.escalated;
+            liberaCredSuggestedLost += liberaCredResult.suggestedLost;
+          } catch (err) {
+            console.error(`Stale-conversation-followup: error in LiberaCred resumption check for org ${org.id}:`, err);
+          }
 
           const followupConfig = agent.tools_config.followup_automatico ?? DEFAULT_FOLLOWUP_AUTOMATICO;
 
@@ -508,6 +525,11 @@ export function startStaleConversationFollowupWorker() {
       }
       if (stalledFlagged > 0) {
         console.log(`Flagged ${stalledFlagged} stalled_negotiation task(s) for priced deals gone quiet`);
+      }
+      if (liberaCredCreated > 0 || liberaCredEscalated > 0 || liberaCredSuggestedLost > 0) {
+        console.log(
+          `LiberaCred resumption: created ${liberaCredCreated}, escalated ${liberaCredEscalated}, suggested-lost ${liberaCredSuggestedLost}`
+        );
       }
     },
     {

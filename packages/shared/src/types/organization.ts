@@ -1,3 +1,5 @@
+import type { TaskPriorityScoreWeights } from "../task-priority-score.js";
+
 export type OrganizationPlan = "free" | "pro" | "enterprise";
 
 export type MemberRole = "owner" | "admin" | "agent";
@@ -43,6 +45,29 @@ export interface OrganizationSettings {
   takeover_greeting_filter_enabled?: boolean;
   takeover_greeting_words?: string[];
   takeover_greeting_max_length?: number;
+  // Fase 2 (triagem de tarefas) — todas `undefined`/`false` por padrão, sem
+  // efeito até a organização ligar explicitamente em Configurações.
+  // item 1(a): liga o vínculo automático de opportunity_id em tarefas novas.
+  task_auto_link_opportunity_enabled?: boolean;
+  // item 2: liga a consolidação por oportunidade (lista de pendências) em
+  // vez da dedup por tipo de hoje.
+  task_consolidation_by_opportunity_enabled?: boolean;
+  // item 3: liga o encerramento automático de awaiting_customer_cpf/data.
+  task_auto_close_awaiting_customer_enabled?: boolean;
+  // item 4: override opcional dos pesos do score — ausente usa
+  // DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS.
+  task_priority_score_weights?: Partial<TaskPriorityScoreWeights>;
+  // item 5: liga a checagem/criação de tarefas de retomada do LiberaCred.
+  libera_cred_resumption_enabled?: boolean;
+  // item 5(a): só considera oportunidades cujo contato interagiu nos
+  // últimos N dias. Ausente usa DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.
+  libera_cred_resumption_window_days?: number;
+  // item 5(a): idade máxima (dias) da tabela de planos antes de ser
+  // considerada desatualizada.
+  libera_cred_table_max_age_days?: number;
+  // item 5(c): máximo de tarefas de retomada NOVAS criadas por dia (não
+  // conta escalonamentos de tarefas já existentes).
+  libera_cred_resumption_daily_limit?: number;
 }
 
 export interface OrganizationMember {

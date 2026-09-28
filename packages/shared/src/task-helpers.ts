@@ -162,6 +162,41 @@ export function decideFollowupGate(
   return "send";
 }
 
+// Fields whose change on conversation_qualifications counts as "the
+// customer just answered" for an open awaiting_customer_data task (Fase 2,
+// item 3) — deliberately excludes fields the AI can also write on its own
+// inference (summary, next_action, commercial_notes): those don't mean the
+// customer just sent new information.
+const AWAITING_CUSTOMER_DATA_FIELDS = [
+  "birth_date",
+  "has_driver_license",
+  "driver_license_category",
+  "product_model",
+  "down_payment_amount",
+  "term_months",
+];
+
+// Whether a just-changed set of conversation_qualifications fields resolves
+// an open awaiting_customer_cpf/awaiting_customer_data task. Structural
+// only — awaiting_customer_decision has no equivalent data field, so it's
+// deliberately never auto-resolved here (closes manually, as before Fase 2).
+// The caller is responsible for the other half of D3's criterion (a
+// customer message after the task was created) — this function only knows
+// about field changes, not conversation timing.
+export function isAwaitingCustomerResolved(type: TaskType, changedFields: string[]): boolean {
+  if (type === "awaiting_customer_cpf") return changedFields.includes("cpf_hash");
+  if (type === "awaiting_customer_data") return changedFields.some((f) => AWAITING_CUSTOMER_DATA_FIELDS.includes(f));
+  return false;
+}
+
+// Fase 2, item 1(a)/(b): a new (or backfilled) task auto-links to the
+// contact's open opportunity only when there's exactly one — 0 or 2+ is
+// ambiguous, same "don't guess" principle already used by
+// decideFollowupGate/getOpenOpportunitiesByContact.
+export function resolveOpportunityAutoLink(openOpportunityIds: string[]): string | null {
+  return openOpportunityIds.length === 1 ? openOpportunityIds[0] : null;
+}
+
 export function decideFollowupStage(params: DecideFollowupStageParams): FollowupStageAction {
   const {
     hoursSinceCustomerReply,

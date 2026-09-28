@@ -20,6 +20,7 @@ import {
   DEFAULT_GREETING_FILTER_ENABLED,
   DEFAULT_GREETING_WORDS,
   DEFAULT_GREETING_MAX_LENGTH,
+  DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG,
 } from "@aula-agente/shared";
 
 interface MemberOption {
@@ -58,6 +59,22 @@ export default function SettingsPage() {
   const [greetingMaxLength, setGreetingMaxLength] = useState(String(DEFAULT_GREETING_MAX_LENGTH));
   const [savingGreeting, setSavingGreeting] = useState(false);
 
+  // Fase 2 — triagem de tarefas
+  const [taskAutoLinkEnabled, setTaskAutoLinkEnabled] = useState(false);
+  const [taskConsolidationEnabled, setTaskConsolidationEnabled] = useState(false);
+  const [taskAutoCloseEnabled, setTaskAutoCloseEnabled] = useState(false);
+  const [liberaCredEnabled, setLiberaCredEnabled] = useState(false);
+  const [liberaCredWindowDays, setLiberaCredWindowDays] = useState(
+    String(DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.window_days)
+  );
+  const [liberaCredTableMaxAgeDays, setLiberaCredTableMaxAgeDays] = useState(
+    String(DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.table_max_age_days)
+  );
+  const [liberaCredDailyLimit, setLiberaCredDailyLimit] = useState(
+    String(DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit)
+  );
+  const [savingFase2, setSavingFase2] = useState(false);
+
   // Fase 1 — contatos ignorados
   const [ignoredContacts, setIgnoredContacts] = useState<OrganizationIgnoredContact[]>([]);
   const [newIgnoredPhone, setNewIgnoredPhone] = useState("");
@@ -93,6 +110,20 @@ export default function SettingsPage() {
     setGreetingEnabled(currentOrg.settings.takeover_greeting_filter_enabled ?? DEFAULT_GREETING_FILTER_ENABLED);
     setGreetingWords((currentOrg.settings.takeover_greeting_words ?? DEFAULT_GREETING_WORDS).join(", "));
     setGreetingMaxLength(String(currentOrg.settings.takeover_greeting_max_length ?? DEFAULT_GREETING_MAX_LENGTH));
+
+    setTaskAutoLinkEnabled(currentOrg.settings.task_auto_link_opportunity_enabled ?? false);
+    setTaskConsolidationEnabled(currentOrg.settings.task_consolidation_by_opportunity_enabled ?? false);
+    setTaskAutoCloseEnabled(currentOrg.settings.task_auto_close_awaiting_customer_enabled ?? false);
+    setLiberaCredEnabled(currentOrg.settings.libera_cred_resumption_enabled ?? false);
+    setLiberaCredWindowDays(
+      String(currentOrg.settings.libera_cred_resumption_window_days ?? DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.window_days)
+    );
+    setLiberaCredTableMaxAgeDays(
+      String(currentOrg.settings.libera_cred_table_max_age_days ?? DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.table_max_age_days)
+    );
+    setLiberaCredDailyLimit(
+      String(currentOrg.settings.libera_cred_resumption_daily_limit ?? DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit)
+    );
 
     apiFetch(`/organizations/${currentOrg.id}/members/display`)
       .then(setMembers)
@@ -193,6 +224,40 @@ export default function SettingsPage() {
 
     await refetch();
     setSavingHandoff(false);
+  };
+
+  const handleSaveFase2Settings = async () => {
+    if (!currentOrg) return;
+    setSavingFase2(true);
+
+    const supabase = createClient();
+    await supabase
+      .from("organizations")
+      .update({
+        settings: {
+          ...currentOrg.settings,
+          task_auto_link_opportunity_enabled: taskAutoLinkEnabled,
+          task_consolidation_by_opportunity_enabled: taskConsolidationEnabled,
+          task_auto_close_awaiting_customer_enabled: taskAutoCloseEnabled,
+          libera_cred_resumption_enabled: liberaCredEnabled,
+          libera_cred_resumption_window_days: Math.max(
+            1,
+            Number(liberaCredWindowDays) || DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.window_days
+          ),
+          libera_cred_table_max_age_days: Math.max(
+            1,
+            Number(liberaCredTableMaxAgeDays) || DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.table_max_age_days
+          ),
+          libera_cred_resumption_daily_limit: Math.max(
+            1,
+            Number(liberaCredDailyLimit) || DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit
+          ),
+        },
+      })
+      .eq("id", currentOrg.id);
+
+    await refetch();
+    setSavingFase2(false);
   };
 
   const handleSaveGreetingSettings = async () => {
@@ -471,6 +536,99 @@ export default function SettingsPage() {
           <Button onClick={handleSaveGreetingSettings} disabled={savingGreeting}>
             <Save className="mr-2 h-4 w-4" />
             {savingGreeting ? "Salvando..." : "Salvar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Fase 2 — Triagem de tarefas</CardTitle>
+          <CardDescription>
+            Automações da triagem de tarefas — todas desligadas até você ativar. A visão "Hoje" no
+            Início já funciona independente destas chaves.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="task-auto-link">Vincular tarefas novas à oportunidade automaticamente</Label>
+              <p className="text-sm text-muted-foreground">
+                Só quando o contato tem exatamente 1 oportunidade aberta.
+              </p>
+            </div>
+            <Switch id="task-auto-link" checked={taskAutoLinkEnabled} onCheckedChange={setTaskAutoLinkEnabled} />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="task-consolidation">Consolidar em 1 tarefa por oportunidade</Label>
+              <p className="text-sm text-muted-foreground">
+                Novas pendências da mesma oportunidade entram na tarefa já aberta em vez de criar outra.
+              </p>
+            </div>
+            <Switch
+              id="task-consolidation"
+              checked={taskConsolidationEnabled}
+              onCheckedChange={setTaskConsolidationEnabled}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="task-auto-close">Encerrar automaticamente "aguardando cliente"</Label>
+              <p className="text-sm text-muted-foreground">
+                Só CPF e dados do cliente — fecha quando o campo é preenchido depois de uma nova mensagem dele.
+              </p>
+            </div>
+            <Switch id="task-auto-close" checked={taskAutoCloseEnabled} onCheckedChange={setTaskAutoCloseEnabled} />
+          </div>
+
+          <div className="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label htmlFor="libera-cred-resumption">Retomada de LiberaCred parado (plano apresentado)</Label>
+              <p className="text-sm text-muted-foreground">
+                Cria e escalona tarefas de retomada para oportunidades paradas em "plano e prazo
+                apresentados".
+              </p>
+            </div>
+            <Switch id="libera-cred-resumption" checked={liberaCredEnabled} onCheckedChange={setLiberaCredEnabled} />
+          </div>
+
+          {liberaCredEnabled && (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Janela de interação (dias)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={liberaCredWindowDays}
+                  onChange={(e) => setLiberaCredWindowDays(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Idade máx. da tabela (dias)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={liberaCredTableMaxAgeDays}
+                  onChange={(e) => setLiberaCredTableMaxAgeDays(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Limite diário de tarefas novas</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={liberaCredDailyLimit}
+                  onChange={(e) => setLiberaCredDailyLimit(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          <Button onClick={handleSaveFase2Settings} disabled={savingFase2}>
+            <Save className="mr-2 h-4 w-4" />
+            {savingFase2 ? "Salvando..." : "Salvar"}
           </Button>
         </CardContent>
       </Card>
