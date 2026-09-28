@@ -85,3 +85,35 @@ describe("buildToolsForAgent prompt caching", () => {
     expect(tools).toEqual({});
   });
 });
+
+describe("buildToolsForAgent requestHuman (Fase 1 handoff explícito)", () => {
+  it("does not register requestHuman when the flag is off or absent (unchanged default)", () => {
+    const tools = buildToolsForAgent(baseParams);
+    expect(tools.requestHuman).toBeUndefined();
+  });
+
+  it("registers requestHuman when the flag is on", () => {
+    const tools = buildToolsForAgent({ ...baseParams, toolsConfig: { ...baseParams.toolsConfig, request_human: true } });
+    expect(tools.requestHuman).toBeDefined();
+  });
+
+  it("builds the same tool names in sandbox mode as in real mode with requestHuman enabled", () => {
+    const params = { ...baseParams, toolsConfig: { ...baseParams.toolsConfig, request_human: true } };
+    const real = buildToolsForAgent(params);
+    const sandboxed = buildToolsForAgent({ ...params, sandbox: true });
+    expect(Object.keys(sandboxed).sort()).toEqual(Object.keys(real).sort());
+  });
+
+  it("requestHuman in sandbox mode never activates a real takeover", async () => {
+    const sandboxed = buildToolsForAgent({
+      ...baseParams,
+      sandbox: true,
+      toolsConfig: { ...baseParams.toolsConfig, request_human: true },
+    });
+    const result = await sandboxed.requestHuman.execute!(
+      { motivo: "cliente_pediu", resumo: "teste", urgencia: "normal" },
+      {} as never
+    );
+    expect(result).toContain("[SIMULADO]");
+  });
+});

@@ -1,7 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { sendMessageSchema } from "@aula-agente/shared";
-import { getAdminClient, getConversationById, updateConversation } from "@aula-agente/database";
-import { getInstanceById } from "@aula-agente/database";
+import {
+  getAdminClient,
+  getConversationById,
+  updateConversation,
+  getInstanceById,
+  createHandoffEvent,
+  getOpenHandoffEvent,
+  markFirstHumanReply,
+} from "@aula-agente/database";
 import { authMiddleware, requireOrg } from "../../middleware/auth.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
@@ -72,6 +79,28 @@ export default async function messageSendRoutes(app: FastifyInstance) {
         } catch (err) {
           console.error(`Failed to reassign task on takeover for conversation ${conversation_id}:`, err);
         }
+        try {
+          await createHandoffEvent(db, {
+            organization_id: conversation.organization_id,
+            conversation_id,
+            trigger_type: "painel_manual",
+            criado_por: "humano",
+          });
+        } catch (err) {
+          console.error(`Failed to record painel_manual handoff event for conversation ${conversation_id}:`, err);
+        }
+      }
+
+      // If this reply answers an AI-initiated handoff (requestHuman) that's
+      // still waiting, close the loop for the "tempo até a primeira
+      // resposta" metric (Fase 4) — best-effort, never blocks the send.
+      try {
+        const openHandoff = await getOpenHandoffEvent(db, conversation_id);
+        if (openHandoff) {
+          await markFirstHumanReply(db, openHandoff.id, new Date().toISOString());
+        }
+      } catch (err) {
+        console.error(`Failed to mark first human reply for conversation ${conversation_id}:`, err);
       }
 
       // Get instance for sending

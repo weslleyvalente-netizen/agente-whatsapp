@@ -198,4 +198,20 @@ describe("compileSystemPrompt", () => {
     expect(result).not.toContain("# Playbook");
     expect(result).toContain("# Personalidade");
   });
+
+  // Fase 1 (handoff explícito): mensagens fromMe de saudação curta ("Bom
+  // dia") ficam no histórico com role de atendente humano mas NÃO ativam
+  // takeover — sem essa instrução fixa, o modelo vê um turno "assistant"
+  // anterior contendo só "Bom dia" (evolution.ts mapeia human_agent para
+  // assistant) e tende a repetir a saudação ou tratar como um novo pedido.
+  it("always includes a fixed operational note about not repeating a filtered human greeting, regardless of org config", () => {
+    const result = compileSystemPrompt(baseConfig());
+    expect(result).toContain("# Notas operacionais");
+    expect(result.toLowerCase()).toContain("não repita a saudação");
+  });
+
+  it("appends the operational notes section after every configured section", () => {
+    const result = compileSystemPrompt(baseConfig({ playbook: { script_atendimento: "1. Identificar necessidade" } }));
+    expect(result.indexOf("# Notas operacionais")).toBeGreaterThan(result.indexOf("Script de atendimento"));
+  });
 });

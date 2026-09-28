@@ -146,6 +146,24 @@ function compilePlaybookSection(playbook: AgentPlaybook): string {
   return ["# Playbook: Script de atendimento", playbook.script_atendimento].join("\n");
 }
 
+// Fixed, always-on section — not editable per organization. It exists to
+// explain a mechanic of how the model reads its own history, not a business
+// rule, so it doesn't belong in the user-editable config sections above.
+//
+// Context: a fromMe message that's only a short greeting/confirmation
+// ("Bom dia") is saved with role=human_agent but deliberately does NOT
+// activate is_human_takeover (see isGreetingOrShortConfirmation) — it still
+// shows up in the history sent to the model, mapped to an "assistant" turn
+// (see agent-runner.ts), so without this note the model sees what looks
+// like its own prior reply of just "Bom dia" and tends to greet again or
+// treat it as a new request instead of continuing the conversation.
+function compileOperationalNotesSection(): string {
+  return [
+    "# Notas operacionais",
+    'Se o histórico tiver uma mensagem de atendente humano que é só uma saudação ou confirmação curta (ex.: "Bom dia", "Oi", "Ok"), sem pedido novo, isso não é uma instrução para você nem um novo atendimento — não repita a saudação nem reinicie o diagnóstico. Continue o atendimento normalmente a partir de onde a conversa parou.',
+  ].join("\n");
+}
+
 export function compileSystemPrompt(
   config: AgentConfigSections,
   tools: Pick<ToolsConfig, "send_registered_image"> = {}
@@ -156,6 +174,7 @@ export function compileSystemPrompt(
     compileRulesSection(config.rules),
     compileKnowledgeSection(config.knowledge, tools.send_registered_image ?? false),
     compilePlaybookSection(config.playbook),
+    compileOperationalNotesSection(),
   ].filter((section) => section.trim().length > 0);
 
   return sections.join("\n\n");

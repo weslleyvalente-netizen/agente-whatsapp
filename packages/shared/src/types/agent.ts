@@ -37,6 +37,9 @@ export interface ToolsConfig {
   create_task: boolean;
   update_qualification: boolean;
   // Optional: rows written before this feature shipped don't have this key;
+  // missing means off (agent keeps using create_task for handoff, as today).
+  request_human?: boolean;
+  // Optional: rows written before this feature shipped don't have this key;
   // missing means off.
   send_registered_image?: boolean;
   // Optional: rows written before this feature shipped don't have this key.

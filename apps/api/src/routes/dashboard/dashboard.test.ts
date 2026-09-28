@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDashboardSummary } from "./index.js";
+import { buildDashboardSummary, buildPendingHandoffs } from "./index.js";
 
 describe("buildDashboardSummary", () => {
   const conversations = [
@@ -89,5 +89,53 @@ describe("buildDashboardSummary", () => {
         lastMessageAt: "2026-07-20T12:00:00.000Z",
       },
     ]);
+  });
+});
+
+describe("buildPendingHandoffs (card \"Handoffs aguardando\" — Fase 1)", () => {
+  const now = new Date("2026-09-28T12:00:00.000Z").getTime();
+
+  const rowMinutesAgo = (minutesAgo: number, overrides: Record<string, unknown> = {}) => ({
+    id: `handoff-${minutesAgo}`,
+    conversation_id: `conv-${minutesAgo}`,
+    handed_at: new Date(now - minutesAgo * 60_000).toISOString(),
+    motivo: "cliente_pediu",
+    resumo: "Cliente quer negociar",
+    urgencia: "normal",
+    conversations: { wa_contacts: { name: "Ana", phone: "5511999990000" } },
+    ...overrides,
+  });
+
+  it("computes minutes waited for each pending handoff", () => {
+    const result = buildPendingHandoffs([rowMinutesAgo(10)], now, 15);
+    expect(result[0].waitMinutes).toBe(10);
+  });
+
+  it("flags a handoff as unanswered once it crosses the configured alert threshold", () => {
+    const result = buildPendingHandoffs([rowMinutesAgo(20), rowMinutesAgo(5)], now, 15);
+    expect(result.find((r) => r.waitMinutes === 20)?.unanswered).toBe(true);
+    expect(result.find((r) => r.waitMinutes === 5)?.unanswered).toBe(false);
+  });
+
+  it("sorts by longest wait first", () => {
+    const result = buildPendingHandoffs([rowMinutesAgo(5), rowMinutesAgo(30), rowMinutesAgo(15)], now, 15);
+    expect(result.map((r) => r.waitMinutes)).toEqual([30, 15, 5]);
+  });
+
+  it("carries the contact name/phone and the handoff's own fields through", () => {
+    const result = buildPendingHandoffs([rowMinutesAgo(10)], now, 15);
+    expect(result[0]).toMatchObject({
+      contactName: "Ana",
+      contactPhone: "5511999990000",
+      motivo: "cliente_pediu",
+      resumo: "Cliente quer negociar",
+      urgencia: "normal",
+    });
+  });
+
+  it("falls back to null/empty contact fields when wa_contacts is missing", () => {
+    const result = buildPendingHandoffs([rowMinutesAgo(10, { conversations: null })], now, 15);
+    expect(result[0].contactName).toBeNull();
+    expect(result[0].contactPhone).toBe("");
   });
 });

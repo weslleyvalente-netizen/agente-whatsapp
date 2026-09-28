@@ -105,6 +105,41 @@ export const INSTANCE_STATUSES = ["connected", "disconnected", "connecting"] as 
 export const DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES = 30;
 export const HUMAN_TAKEOVER_TIMEOUT_MS = DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES * 60 * 1000;
 
+// requestHuman-originated handoffs never auto-resume on the normal takeover
+// timeout above — instead, if no human replies within this many minutes
+// (business hours), a "handoff sem resposta" alert is raised in the panel.
+// Orgs that haven't configured handoff_unanswered_alert_minutes fall back here.
+export const DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES = 15;
+
+export const HANDOFF_TRIGGER_TYPES = [
+  "request_human",
+  "painel_manual",
+  "fromMe_real",
+  "fromMe_greeting_filtered",
+] as const;
+
+export const HANDOFF_MOTIVOS = [
+  "cliente_pediu",
+  "negociacao_valor",
+  "proposta_pronta",
+  "documentos",
+  "reclamacao",
+  "fora_do_escopo",
+  "ia_sem_resposta",
+] as const;
+
+export const HANDOFF_MOTIVO_LABELS: Record<(typeof HANDOFF_MOTIVOS)[number], string> = {
+  cliente_pediu: "Cliente pediu atendimento humano",
+  negociacao_valor: "Negociação de valor",
+  proposta_pronta: "Proposta pronta",
+  documentos: "Documentos",
+  reclamacao: "Reclamação",
+  fora_do_escopo: "Fora do escopo",
+  ia_sem_resposta: "IA sem resposta",
+};
+
+export const HANDOFF_URGENCIAS = ["baixa", "normal", "alta"] as const;
+
 export const EMBEDDING_DIMENSION = 1536;
 
 export const DEFAULT_AGENT_SETTINGS = {

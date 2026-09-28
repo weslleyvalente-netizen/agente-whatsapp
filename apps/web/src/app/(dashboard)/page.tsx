@@ -17,12 +17,32 @@ interface UrgentConversation {
   lastMessageAt: string;
 }
 
+interface PendingHandoff {
+  conversationId: string;
+  contactName: string | null;
+  contactPhone: string;
+  motivo: string | null;
+  resumo: string | null;
+  urgencia: string | null;
+  handedAt: string;
+  waitMinutes: number;
+  unanswered: boolean;
+}
+
 interface DashboardSummary {
   conversationsLast7d: number;
   inProgress: number;
   avgResponseSeconds: number | null;
   needsAttention: number;
   urgentConversations: UrgentConversation[];
+  pendingHandoffs: PendingHandoff[];
+}
+
+function formatWaitMinutes(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h${rest}min`;
 }
 
 function greeting() {
@@ -122,6 +142,45 @@ export default function HomePage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Handoffs aguardando</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {summary.pendingHandoffs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhum handoff aguardando resposta.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {summary.pendingHandoffs.map((h) => (
+                <Link
+                  key={h.conversationId}
+                  href={`/inbox?id=${h.conversationId}`}
+                  className="flex items-center gap-3 py-3 transition-colors hover:bg-accent/50"
+                >
+                  <Avatar>
+                    <AvatarFallback>{(h.contactName || h.contactPhone || "?")[0].toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{h.contactName || h.contactPhone || "?"}</p>
+                    <p className="truncate text-sm text-muted-foreground">{h.resumo || h.motivo || "—"}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="tabular-data text-xs text-muted-foreground">
+                      esperando há {formatWaitMinutes(h.waitMinutes)}
+                    </span>
+                    {h.unanswered && (
+                      <Badge variant="destructive" className="flex items-center gap-1">
+                        <StatusLamp tone="rust" pulse /> Sem resposta
+                      </Badge>
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

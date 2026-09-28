@@ -1,17 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Eye, EyeOff, Save } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Eye, EyeOff, Save, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import type { LLMProvider } from "@aula-agente/shared";
-import { DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES } from "@aula-agente/shared";
+import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact } from "@aula-agente/shared";
+import {
+  DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
+  DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES,
+  DEFAULT_GREETING_FILTER_ENABLED,
+  DEFAULT_GREETING_WORDS,
+  DEFAULT_GREETING_MAX_LENGTH,
+} from "@aula-agente/shared";
+
+interface MemberOption {
+  user_id: string;
+  email: string;
+  role: string;
+}
 
 const PROVIDERS: { id: LLMProvider; name: string; placeholder: string }[] = [
   { id: "openai", name: "OpenAI", placeholder: "sk-..." },
@@ -30,15 +45,59 @@ export default function SettingsPage() {
   const [takeoverMinutes, setTakeoverMinutes] = useState(String(DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES));
   const [savingTakeover, setSavingTakeover] = useState(false);
 
+  // Fase 1 — handoff explícito
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [defaultAssigneeId, setDefaultAssigneeId] = useState<string>("none");
+  const [notificationPhone, setNotificationPhone] = useState("");
+  const [alertMinutes, setAlertMinutes] = useState(String(DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES));
+  const [savingHandoff, setSavingHandoff] = useState(false);
+
+  // Fase 1 — saudação não é takeover
+  const [greetingEnabled, setGreetingEnabled] = useState(DEFAULT_GREETING_FILTER_ENABLED);
+  const [greetingWords, setGreetingWords] = useState(DEFAULT_GREETING_WORDS.join(", "));
+  const [greetingMaxLength, setGreetingMaxLength] = useState(String(DEFAULT_GREETING_MAX_LENGTH));
+  const [savingGreeting, setSavingGreeting] = useState(false);
+
+  // Fase 1 — contatos ignorados
+  const [ignoredContacts, setIgnoredContacts] = useState<OrganizationIgnoredContact[]>([]);
+  const [newIgnoredPhone, setNewIgnoredPhone] = useState("");
+  const [newIgnoredLabel, setNewIgnoredLabel] = useState("");
+  const [newIgnoredMode, setNewIgnoredMode] = useState<IgnoredContactRetentionMode>("no_store");
+  const [savingIgnored, setSavingIgnored] = useState(false);
+
+  const fetchIgnoredContacts = useCallback(async () => {
+    if (!currentOrg) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("organization_ignored_contacts")
+      .select("*")
+      .eq("organization_id", currentOrg.id)
+      .order("created_at", { ascending: false });
+    setIgnoredContacts((data as OrganizationIgnoredContact[] | null) || []);
+  }, [currentOrg]);
+
   useEffect(() => {
     if (!currentOrg) return;
     setName(currentOrg.name);
     fetchApiKeys();
+    fetchIgnoredContacts();
 
     const configured = currentOrg.settings.human_takeover_timeout_minutes;
     setTakeoverEnabled(configured !== null);
     setTakeoverMinutes(String(configured ?? DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES));
-  }, [currentOrg]);
+
+    setDefaultAssigneeId(currentOrg.settings.default_handoff_assignee_id ?? "none");
+    setNotificationPhone(currentOrg.settings.handoff_notification_phone ?? "");
+    setAlertMinutes(String(currentOrg.settings.handoff_unanswered_alert_minutes ?? DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES));
+
+    setGreetingEnabled(currentOrg.settings.takeover_greeting_filter_enabled ?? DEFAULT_GREETING_FILTER_ENABLED);
+    setGreetingWords((currentOrg.settings.takeover_greeting_words ?? DEFAULT_GREETING_WORDS).join(", "));
+    setGreetingMaxLength(String(currentOrg.settings.takeover_greeting_max_length ?? DEFAULT_GREETING_MAX_LENGTH));
+
+    apiFetch(`/organizations/${currentOrg.id}/members/display`)
+      .then(setMembers)
+      .catch(() => setMembers([]));
+  }, [currentOrg, fetchIgnoredContacts]);
 
   const fetchApiKeys = async () => {
     if (!currentOrg) return;
@@ -113,6 +172,80 @@ export default function SettingsPage() {
 
     await refetch();
     setSavingTakeover(false);
+  };
+
+  const handleSaveHandoffSettings = async () => {
+    if (!currentOrg) return;
+    setSavingHandoff(true);
+
+    const supabase = createClient();
+    await supabase
+      .from("organizations")
+      .update({
+        settings: {
+          ...currentOrg.settings,
+          default_handoff_assignee_id: defaultAssigneeId === "none" ? null : defaultAssigneeId,
+          handoff_notification_phone: notificationPhone.trim() || null,
+          handoff_unanswered_alert_minutes: Math.max(1, Number(alertMinutes) || DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES),
+        },
+      })
+      .eq("id", currentOrg.id);
+
+    await refetch();
+    setSavingHandoff(false);
+  };
+
+  const handleSaveGreetingSettings = async () => {
+    if (!currentOrg) return;
+    setSavingGreeting(true);
+
+    const supabase = createClient();
+    const words = greetingWords
+      .split(",")
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+
+    await supabase
+      .from("organizations")
+      .update({
+        settings: {
+          ...currentOrg.settings,
+          takeover_greeting_filter_enabled: greetingEnabled,
+          takeover_greeting_words: words.length > 0 ? words : DEFAULT_GREETING_WORDS,
+          takeover_greeting_max_length: Math.max(1, Number(greetingMaxLength) || DEFAULT_GREETING_MAX_LENGTH),
+        },
+      })
+      .eq("id", currentOrg.id);
+
+    await refetch();
+    setSavingGreeting(false);
+  };
+
+  const handleAddIgnoredContact = async () => {
+    if (!currentOrg || !newIgnoredPhone.trim()) return;
+    setSavingIgnored(true);
+
+    const supabase = createClient();
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from("organization_ignored_contacts").insert({
+      organization_id: currentOrg.id,
+      phone: newIgnoredPhone.replace(/\D/g, ""),
+      label: newIgnoredLabel.trim() || null,
+      retention_mode: newIgnoredMode,
+      created_by: userData.user?.id ?? null,
+    });
+
+    setNewIgnoredPhone("");
+    setNewIgnoredLabel("");
+    setNewIgnoredMode("no_store");
+    await fetchIgnoredContacts();
+    setSavingIgnored(false);
+  };
+
+  const handleDeleteIgnoredContact = async (id: string) => {
+    const supabase = createClient();
+    await supabase.from("organization_ignored_contacts").delete().eq("id", id);
+    await fetchIgnoredContacts();
   };
 
   if (!currentOrg) return <div>Carregando...</div>;
@@ -235,6 +368,173 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Handoff explícito</CardTitle>
+          <CardDescription>
+            Quando a Helena aciona a ferramenta "requestHuman" (Fase 1), a conversa é
+            atribuída à responsável padrão abaixo e, opcionalmente, um número interno é
+            avisado por WhatsApp. Diferente da retomada automática, esse tipo de handoff não
+            volta sozinho para a IA — se ninguém responder dentro do prazo configurado, um
+            alerta de "handoff sem resposta" aparece no card da tela Início.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Responsável padrão pelo handoff</Label>
+            <Select value={defaultAssigneeId} onValueChange={(v) => setDefaultAssigneeId(v ?? "none")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Nenhuma (atribuir manualmente depois)</SelectItem>
+                {members.map((m) => (
+                  <SelectItem key={m.user_id} value={m.user_id}>
+                    {m.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Número interno para notificação (opcional)</Label>
+            <Input
+              value={notificationPhone}
+              onChange={(e) => setNotificationPhone(e.target.value)}
+              placeholder="Ex.: 5511999998888"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Alerta de "handoff sem resposta" após (minutos)</Label>
+            <Input
+              type="number"
+              min={1}
+              value={alertMinutes}
+              onChange={(e) => setAlertMinutes(e.target.value)}
+            />
+          </div>
+
+          <Button onClick={handleSaveHandoffSettings} disabled={savingHandoff}>
+            <Save className="mr-2 h-4 w-4" />
+            {savingHandoff ? "Salvando..." : "Salvar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Saudação não ativa takeover</CardTitle>
+          <CardDescription>
+            Uma mensagem curta mandada direto do celular conectado (ex.: "Bom dia") não
+            assume a conversa sozinha — ela fica registrada e visível no histórico, mas a IA
+            continua respondendo o cliente normalmente. Só uma mensagem com conteúdo real
+            ativa o handoff.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="greeting-enabled">Filtro de saudação ativado</Label>
+            <Switch id="greeting-enabled" checked={greetingEnabled} onCheckedChange={setGreetingEnabled} />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Palavras consideradas saudação/confirmação (separadas por vírgula)</Label>
+            <Textarea
+              value={greetingWords}
+              onChange={(e) => setGreetingWords(e.target.value)}
+              disabled={!greetingEnabled}
+              rows={3}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Limite de caracteres</Label>
+            <Input
+              type="number"
+              min={1}
+              value={greetingMaxLength}
+              onChange={(e) => setGreetingMaxLength(e.target.value)}
+              disabled={!greetingEnabled}
+            />
+            <p className="text-sm text-muted-foreground">
+              Só conta como saudação uma palavra da lista acima dentro desse limite (ou uma
+              mensagem só com emoji) — uma frase real nunca é filtrada, mesmo que comece com
+              "Bom dia".
+            </p>
+          </div>
+
+          <Button onClick={handleSaveGreetingSettings} disabled={savingGreeting}>
+            <Save className="mr-2 h-4 w-4" />
+            {savingGreeting ? "Salvando..." : "Salvar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Contatos ignorados</CardTitle>
+          <CardDescription>
+            Números que o sistema ignora completamente no webhook — nunca criam conversa,
+            nunca acionam a IA e nunca geram tarefa. Use para números que não são clientes de
+            verdade (ex.: o bot de atendimento de um banco/administradora consultado pela
+            própria loja).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {ignoredContacts.length > 0 && (
+            <div className="space-y-2">
+              {ignoredContacts.map((c) => (
+                <div key={c.id} className="flex items-center justify-between rounded-md border p-2">
+                  <div>
+                    <p className="font-medium">{c.label || c.phone}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {c.phone} · {c.retention_mode === "no_store" ? "não grava nada" : "grava registro mínimo"}
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => handleDeleteIgnoredContact(c.id)}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <Input
+                value={newIgnoredPhone}
+                onChange={(e) => setNewIgnoredPhone(e.target.value)}
+                placeholder="Só números, com DDI (ex.: 5511999998888)"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Nome/etiqueta (opcional)</Label>
+              <Input value={newIgnoredLabel} onChange={(e) => setNewIgnoredLabel(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>O que fazer com as mensagens desse número</Label>
+            <Select value={newIgnoredMode} onValueChange={(v) => setNewIgnoredMode(v as IgnoredContactRetentionMode)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="no_store">Não gravar nada (recomendado)</SelectItem>
+                <SelectItem value="minimal_record">Gravar um registro mínimo, sem o conteúdo real</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Button onClick={handleAddIgnoredContact} disabled={savingIgnored || !newIgnoredPhone.trim()}>
+            {savingIgnored ? "Adicionando..." : "Adicionar"}
+          </Button>
         </CardContent>
       </Card>
     </div>

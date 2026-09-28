@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { extractMessageContent, isNonContentMessageType } from "./evolution.js";
+import { DEFAULT_GREETING_FILTER_CONFIG } from "@aula-agente/shared";
+import { extractMessageContent, isNonContentMessageType, shouldSkipTakeoverForGreeting } from "./evolution.js";
+
+describe("shouldSkipTakeoverForGreeting", () => {
+  it("skips takeover for a greeting that starts a new episode", () => {
+    expect(shouldSkipTakeoverForGreeting("Bom dia", true, DEFAULT_GREETING_FILTER_CONFIG)).toBe(true);
+  });
+
+  it("does not skip for real content, even at the start of a new episode", () => {
+    expect(
+      shouldSkipTakeoverForGreeting("vamos prosseguir com a compra da Bros", true, DEFAULT_GREETING_FILTER_CONFIG)
+    ).toBe(false);
+  });
+
+  // The case the diagnostic (Fase 0) called out explicitly: once a human is
+  // already mid-conversation, every fromMe message keeps refreshing the
+  // takeover timeout, regardless of content — a "Bom dia" sent 20 messages
+  // into an already-active takeover must not silently release it.
+  it("does not skip when the conversation is already in takeover, even for a bare greeting", () => {
+    expect(shouldSkipTakeoverForGreeting("Bom dia", false, DEFAULT_GREETING_FILTER_CONFIG)).toBe(false);
+  });
+});
 
 describe("isNonContentMessageType", () => {
   // Real production case: a customer reacted to a message with an emoji.

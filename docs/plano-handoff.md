@@ -57,4 +57,72 @@ Um relatório simples (tela ou seção no Início) com: handoffs por motivo e te
 Ao final de cada fase: rode os testes, faça commit na branch e me mande um resumo do que mudou e do que devo testar no painel.
 
 PROGRESSO
-(vazio — preencher ao fim de cada fase)
+
+## Fase 0 — Diagnóstico (concluída em 2026-09-28)
+Ver docs/diagnostico-fase0.md. Achados principais: 92,7% dos takeovers do mês
+começaram por mensagem fromMe curta (majoritariamente saudação avulsa, não o
+padrão "8121" — esse é um caso isolado de 1 contato, o bot da Yamaha Serviços
+Financeiros, tratado como lead por engano); só 2,2% das tarefas têm
+opportunity_id; libera_cred/plan_term_presented concentra 137 oportunidades
+paradas.
+
+## Fase 1 — Handoff explícito (concluída em 2026-09-28)
+
+**O que foi feito:**
+1. Ferramenta `requestHuman` (packages/agent-runtime/src/tools/request-human.ts):
+   ativa is_human_takeover, atribui ao responsável padrão da organização
+   (`organizations.settings.default_handoff_assignee_id`), reassina tarefas
+   abertas, grava `handoff_events` e opcionalmente notifica um número interno
+   (`handoff_notification_phone`) via fila de envio existente. Toggle em
+   Agentes → Ferramentas.
+2. Contatos ignorados: tabela `organization_ignored_contacts`
+   (retention_mode `no_store`/`minimal_record`, padrão `no_store`), checada no
+   webhook antes de criar conversa — vale para mensagens do cliente E fromMe
+   (a loja consultando o bot). UI em Configurações.
+3. Saudação não ativa takeover: `isGreetingOrShortConfirmation`
+   (packages/shared) — só filtra combinação exata de palavra configurada (ou
+   emoji puro) dentro do limite de caracteres, nunca por tamanho isolado. A
+   mensagem continua no histórico; uma seção fixa "Notas operacionais" no
+   prompt compilado instrui a Helena a não repetir a saudação. Configurável
+   por organização (liga/desliga, lista de palavras, limite), ligado por
+   padrão.
+4. Timeout diferenciado: `getExpiredTakeovers` agora exclui conversas com
+   handoff `request_human` ainda sem resposta — só encerram via resposta
+   humana real (`markFirstHumanReply`) ou ficam visíveis como "sem resposta"
+   no card do Início após `handoff_unanswered_alert_minutes`.
+5. Card "Handoffs aguardando" na tela Início + resumo do handoff no topo do
+   painel lateral da conversa.
+6. Métrica: `handoff_events.trigger_type` (`request_human`, `painel_manual`,
+   `fromMe_real`, `fromMe_greeting_filtered`) gravado nos 3 pontos reais de
+   handoff mais no filtro de saudação (só quando evitou um takeover novo).
+
+**Decisões tomadas (conforme aprovado):** retention_mode padrão `no_store`,
+válido para fromMe também; instrução de "não repetir saudação" fixa no
+código, não configurável; `fromMe_greeting_filtered` só registrado quando
+evitou um takeover novo.
+
+**Testes:** TDD nas partes com lógica pura/orquestração — `greeting-filter.ts`,
+`prompt-builder.ts` (seção fixa), `request-human.ts`, `registry.ts`,
+`getExpiredTakeovers`, `buildPendingHandoffs`, e um teste de integração
+dedicado provando que uma saudação filtrada NÃO enfileira `process-message`
+nem ativa takeover (verificado also fazendo o teste falhar de propósito antes
+de reverter). Suítes completas de shared/database/agent-runtime/api/worker
+rodadas — tudo verde, exceto uma falha pré-existente e não relacionada em
+`apps/api/src/routes/costs/index.test.ts` (confirmada antes das minhas
+alterações, na branch base).
+
+**Pendente — decisão/ação sua antes de testar no painel:**
+- As migrations 00027/00028 ainda não foram aplicadas no Supabase (não tenho
+  as credenciais do `supabase login`/senha do banco para rodar
+  `supabase db push` a partir daqui). Rode isso você antes de testar
+  localmente — são aditivas e não afetam o app hoje em produção (que não
+  conhece essas tabelas).
+- Contato "Yamaha Serviços Financeiros" ainda NÃO foi cadastrado na lista de
+  ignorados nem os dados históricos foram apagados — aguardando sua
+  confirmação (contagens levantadas: 1 wa_contacts, 6 conversations, 5.731
+  messages, 7 tasks, 1 conversation_qualifications, 0 opportunities).
+- Prompt de "Transferência para humano" de cada agente continua com o texto
+  antigo mencionando createTask — a ferramenta requestHuman já existe e o
+  modelo deve adotá-la ao ativá-la (a própria descrição da tool já orienta
+  isso), mas vale revisar manualmente o texto da regra em Agentes → Regras
+  se quiser deixar explícito.

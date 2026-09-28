@@ -24,6 +24,25 @@ export interface OrganizationSettings {
   // `undefined` (orgs that haven't configured this yet) falls back to
   // DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES.
   human_takeover_timeout_minutes?: number | null;
+  // Minutes to wait for a human reply after a requestHuman-originated
+  // handoff before raising a "handoff sem resposta" alert in the panel.
+  // `undefined` falls back to DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES.
+  handoff_unanswered_alert_minutes?: number;
+  // user_id assigned to a conversation when requestHuman activates takeover
+  // and no one is assigned yet. No hardcoded person — each org configures
+  // its own default in Configurações. `null`/`undefined` means the handoff
+  // still activates takeover but leaves assigned_to unset.
+  default_handoff_assignee_id?: string | null;
+  // Digits-only WhatsApp number (Evolution format) notified on every
+  // requestHuman handoff. Optional — omitted/null disables the notification.
+  handoff_notification_phone?: string | null;
+  // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
+  // that haven't configured this yet fall back to
+  // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /
+  // DEFAULT_GREETING_MAX_LENGTH.
+  takeover_greeting_filter_enabled?: boolean;
+  takeover_greeting_words?: string[];
+  takeover_greeting_max_length?: number;
 }
 
 export interface OrganizationMember {
@@ -43,6 +62,18 @@ export interface OrganizationInvitation {
   invited_by: string;
   status: InvitationStatus;
   expires_at: string;
+  created_at: string;
+}
+
+export type IgnoredContactRetentionMode = "no_store" | "minimal_record";
+
+export interface OrganizationIgnoredContact {
+  id: string;
+  organization_id: string;
+  phone: string;
+  label: string | null;
+  retention_mode: IgnoredContactRetentionMode;
+  created_by: string | null;
   created_at: string;
 }
 

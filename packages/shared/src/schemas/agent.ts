@@ -13,6 +13,7 @@ export const toolsConfigSchema = z.object({
   send_catalog_photo: z.boolean().default(false),
   create_task: z.boolean().default(false),
   update_qualification: z.boolean().default(false),
+  request_human: z.boolean().default(false),
   send_registered_image: z.boolean().default(false),
   // Reuses the same literal as followupAutomaticoConfigSchema's own
   // per-field defaults above (both sourced from DEFAULT_FOLLOWUP_AUTOMATICO)

@@ -1,12 +1,40 @@
 import type { FastifyInstance } from "fastify";
-import { evolutionWebhookPayloadSchema } from "@aula-agente/shared";
-import { getAdminClient, getInstanceByInstanceId, updateConversation } from "@aula-agente/database";
+import { evolutionWebhookPayloadSchema, resolveGreetingFilterConfig, isGreetingOrShortConfirmation } from "@aula-agente/shared";
+import type { GreetingFilterConfig } from "@aula-agente/shared";
+import {
+  getAdminClient,
+  getInstanceByInstanceId,
+  updateConversation,
+  getIgnoredContact,
+  createHandoffEvent,
+  getOrganizationById,
+  getOpenHandoffEvent,
+  markFirstHumanReply,
+} from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
+
+// A placeholder saved instead of real content for an ignored contact's
+// message under retention_mode "minimal_record" — proves traffic still
+// arrives without storing anything the contact actually said.
+const IGNORED_CONTACT_PLACEHOLDER = "[mensagem de contato ignorado]";
+
+// Pure decision extracted for testing (see evolution.test.ts): a fromMe
+// message only skips activating takeover when it's both the start of a new
+// episode (isFirstTakeover) AND a configured greeting/short confirmation —
+// a human already mid-conversation always keeps refreshing the timeout,
+// regardless of what they type.
+export function shouldSkipTakeoverForGreeting(
+  content: string,
+  isFirstTakeover: boolean,
+  config: GreetingFilterConfig
+): boolean {
+  return isFirstTakeover && isGreetingOrShortConfirmation(content, config);
+}
 
 // Every path through this function must return non-empty content: it's
 // stored as message text and later replayed verbatim into the Anthropic
@@ -154,6 +182,16 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       const organizationId = instance.organization_id;
       const agentId = instance.active_agent_id;
 
+      // Contatos ignorados (Fase 1): a number the organization explicitly
+      // told the system to ignore — e.g. a third party's own WhatsApp bot
+      // that ended up being messaged from the connected number and got
+      // mistaken for a lead (see docs/diagnostico-fase0.md, seção 1.1).
+      // Checked before anything is written, for both directions of traffic.
+      const ignoredContact = await getIgnoredContact(getAdminClient(), organizationId, phone);
+      if (ignoredContact && ignoredContact.retention_mode === "no_store") {
+        return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
+      }
+
       // Ensure conversation exists
       const { conversation, contact, isNew } = await ensureConversation({
         organizationId,
@@ -165,7 +203,13 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       });
 
       // Extract message content
-      const { content, mediaType, durationSeconds } = extractMessageContent(payload.data as Record<string, unknown>);
+      const extracted = extractMessageContent(payload.data as Record<string, unknown>);
+      // retention_mode "minimal_record": keep a row proving traffic arrived,
+      // but never the real content, and never touch takeover/tasks/AI below.
+      const isIgnoredMinimalRecord = ignoredContact?.retention_mode === "minimal_record";
+      const content = isIgnoredMinimalRecord ? IGNORED_CONTACT_PLACEHOLDER : extracted.content;
+      const mediaType = isIgnoredMinimalRecord ? null : extracted.mediaType;
+      const durationSeconds = isIgnoredMinimalRecord ? undefined : extracted.durationSeconds;
 
       if (payload.data.key.fromMe) {
         // A human replied directly from the connected phone or WhatsApp Web
@@ -188,27 +232,79 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         }
 
         const isFirstTakeover = !conversation.is_human_takeover;
+        const db = getAdminClient();
 
-        // Always refresh human_takeover_at, even if already in takeover —
-        // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS) counts from this
-        // timestamp, so leaving it frozen at the first reply let the agent
-        // resume mid-conversation after 30 minutes even while the human was
-        // still actively replying every few minutes.
-        await updateConversation(getAdminClient(), conversation.id, {
-          is_human_takeover: true,
-          human_takeover_at: new Date().toISOString(),
-        });
+        // A message to/from an ignored contact never activates takeover or
+        // touches tasks, regardless of content — same reasoning as no_store,
+        // just with the row kept for retention_mode "minimal_record".
+        if (isIgnoredMinimalRecord) {
+          return reply.status(200).send({ ok: true, messageId: humanMessage.id, source: "fromMe" });
+        }
 
-        // Same reasoning as messages/send.ts: a human replying (even
-        // directly from their phone) means they're now handling whatever
-        // this conversation's open task was tracking — reassign it, don't
-        // close it out. No dashboard user to attribute it to here, so
-        // actorId is null.
-        if (isFirstTakeover) {
+        // Fase 1 (handoff explícito): a short greeting/confirmation
+        // ("Bom dia") that starts a NEW episode does not activate takeover —
+        // it's saved and sent to the model like any human_agent message
+        // (see the "Notas operacionais" section of the compiled prompt),
+        // but doesn't silence the AI for the rest of the conversation. Once
+        // a real takeover is already active, any fromMe message keeps
+        // refreshing the timeout as before, regardless of content.
+        const org = await getOrganizationById(db, organizationId);
+        const greetingFilterConfig = resolveGreetingFilterConfig(org.settings);
+        const skipTakeover = shouldSkipTakeoverForGreeting(content, isFirstTakeover, greetingFilterConfig);
+
+        if (skipTakeover) {
+          await createHandoffEvent(db, {
+            organization_id: organizationId,
+            conversation_id: conversation.id,
+            trigger_type: "fromMe_greeting_filtered",
+            criado_por: "humano",
+          });
+        } else {
+          // Always refresh human_takeover_at, even if already in takeover —
+          // the auto-expiry timer (HUMAN_TAKEOVER_TIMEOUT_MS) counts from this
+          // timestamp, so leaving it frozen at the first reply let the agent
+          // resume mid-conversation after 30 minutes even while the human was
+          // still actively replying every few minutes.
+          await updateConversation(db, conversation.id, {
+            is_human_takeover: true,
+            human_takeover_at: new Date().toISOString(),
+          });
+
+          // Same reasoning as messages/send.ts: a human replying (even
+          // directly from their phone) means they're now handling whatever
+          // this conversation's open task was tracking — reassign it, don't
+          // close it out. No dashboard user to attribute it to here, so
+          // actorId is null.
+          if (isFirstTakeover) {
+            try {
+              await handleConversationTakeover(db, organizationId, conversation.id, null);
+            } catch (err) {
+              request.log.error({ err, conversationId: conversation.id }, "Failed to reassign task on fromMe takeover");
+            }
+            try {
+              await createHandoffEvent(db, {
+                organization_id: organizationId,
+                conversation_id: conversation.id,
+                trigger_type: "fromMe_real",
+                criado_por: "humano",
+              });
+            } catch (err) {
+              request.log.error({ err, conversationId: conversation.id }, "Failed to record fromMe_real handoff event");
+            }
+          }
+
+          // If this reply answers an AI-initiated handoff (requestHuman)
+          // still waiting, close the loop for the "tempo até a primeira
+          // resposta" metric (Fase 4) — regardless of isFirstTakeover, since
+          // requestHuman already set is_human_takeover=true before the
+          // human's own first reply arrives here.
           try {
-            await handleConversationTakeover(getAdminClient(), organizationId, conversation.id, null);
+            const openHandoff = await getOpenHandoffEvent(db, conversation.id);
+            if (openHandoff) {
+              await markFirstHumanReply(db, openHandoff.id, new Date().toISOString());
+            }
           } catch (err) {
-            request.log.error({ err, conversationId: conversation.id }, "Failed to reassign task on fromMe takeover");
+            request.log.error({ err, conversationId: conversation.id }, "Failed to mark first human reply");
           }
         }
 
@@ -233,6 +329,12 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // If message was already processed (duplicate webhook), skip
       if (!message) {
         return reply.status(200).send({ ok: true, skipped: "duplicate" });
+      }
+
+      // Ignored contact (retention_mode "minimal_record"): row kept, but
+      // never enqueued for the AI and never synced to the CRM.
+      if (isIgnoredMinimalRecord) {
+        return reply.status(200).send({ ok: true, messageId: message.id, skipped: "ignored_contact" });
       }
 
       // If human takeover is active, don't enqueue for LLM processing

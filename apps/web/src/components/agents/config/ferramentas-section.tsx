@@ -9,7 +9,7 @@ import type { AgentConfigDraft, ToolsConfig, FollowupAutomaticoConfig } from "@a
 import { DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 
 interface ToolRow {
-  key: "search_knowledge" | "search_faq" | "send_catalog_photo" | "send_registered_image" | "create_task" | "update_qualification";
+  key: "search_knowledge" | "search_faq" | "send_catalog_photo" | "send_registered_image" | "create_task" | "update_qualification" | "request_human";
   title: string;
   description: string;
 }
@@ -21,6 +21,7 @@ const TOOL_ROWS: ToolRow[] = [
   { key: "send_registered_image", title: "Enviar imagens cadastradas", description: "Permite ao agente enviar as imagens cadastradas em Conhecimento → Imagens pelo WhatsApp" },
   { key: "create_task", title: "Criar tarefas de follow-up", description: "Permite ao agente criar tarefas de acompanhamento comercial em Tarefas" },
   { key: "update_qualification", title: "Atualizar dados de qualificação", description: "Permite ao agente registrar automaticamente produto de interesse, valores, CPF e outros dados comerciais durante a conversa" },
+  { key: "request_human", title: "Acionar consultor humano (handoff explícito)", description: "Permite ao agente assumir a conversa para um humano de forma explícita e mensurável, em vez de só criar uma tarefa — use nas regras de \"Transferência para humano\"" },
 ];
 
 interface FerramentasSectionProps {

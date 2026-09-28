@@ -5,7 +5,10 @@ import {
   getMessagesForDashboard,
   getHumanTakeoverConversations,
   getRecentMessages,
+  getPendingHandoffs,
+  getOrganizationById,
 } from "@aula-agente/database";
+import { DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES } from "@aula-agente/shared";
 import { authMiddleware } from "../../middleware/auth.js";
 
 const WINDOW_DAYS = 7;
@@ -95,6 +98,39 @@ export function buildDashboardSummary(
   };
 }
 
+interface PendingHandoffRow {
+  id: string;
+  conversation_id: string;
+  handed_at: string;
+  motivo: string | null;
+  resumo: string | null;
+  urgencia: string | null;
+  conversations: { wa_contacts: { name: string | null; phone: string } | null } | null;
+}
+
+// Feeds the painel "Handoffs aguardando" card (Fase 1, itens 3-4): every
+// open requestHuman handoff, with how long it's been waiting. `unanswered`
+// crossing true is the "alerta de handoff sem resposta" — computed live,
+// same as every other dashboard metric here, not a separately stored alert.
+export function buildPendingHandoffs(rows: PendingHandoffRow[], nowMs: number, alertThresholdMinutes: number) {
+  return rows
+    .map((row) => {
+      const waitMinutes = Math.round((nowMs - new Date(row.handed_at).getTime()) / 60_000);
+      return {
+        conversationId: row.conversation_id,
+        contactName: row.conversations?.wa_contacts?.name ?? null,
+        contactPhone: row.conversations?.wa_contacts?.phone ?? "",
+        motivo: row.motivo,
+        resumo: row.resumo,
+        urgencia: row.urgencia,
+        handedAt: row.handed_at,
+        waitMinutes,
+        unanswered: waitMinutes >= alertThresholdMinutes,
+      };
+    })
+    .sort((a, b) => b.waitMinutes - a.waitMinutes);
+}
+
 export default async function dashboardRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
 
@@ -110,10 +146,12 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const db = getAdminClient();
       const sinceISO = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      const [conversations, windowMessages, takeoverConversations] = await Promise.all([
+      const [conversations, windowMessages, takeoverConversations, org, pendingHandoffRows] = await Promise.all([
         getConversationStatusesByOrganization(db, organizationId),
         getMessagesForDashboard(db, organizationId, sinceISO),
         getHumanTakeoverConversations(db, organizationId),
+        getOrganizationById(db, organizationId),
+        getPendingHandoffs(db, organizationId),
       ]);
 
       const lastMessages = await Promise.all(
@@ -124,12 +162,17 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         lastMessageByConversationId[c.id] = lastMessages[i][0];
       });
 
-      return buildDashboardSummary(
-        conversations,
-        windowMessages,
-        takeoverConversations,
-        lastMessageByConversationId
-      );
+      const alertThresholdMinutes =
+        org.settings.handoff_unanswered_alert_minutes ?? DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES;
+
+      return {
+        ...buildDashboardSummary(conversations, windowMessages, takeoverConversations, lastMessageByConversationId),
+        pendingHandoffs: buildPendingHandoffs(
+          pendingHandoffRows as PendingHandoffRow[],
+          Date.now(),
+          alertThresholdMinutes
+        ),
+      };
     }
   );
 }

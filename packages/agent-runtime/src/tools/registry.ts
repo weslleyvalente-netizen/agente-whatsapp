@@ -1,12 +1,13 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { ToolsConfig } from "@aula-agente/shared";
-import { TASK_TYPES, TASK_PRIORITIES } from "@aula-agente/shared";
+import { TASK_TYPES, TASK_PRIORITIES, HANDOFF_MOTIVOS, HANDOFF_URGENCIAS, DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 import { createSearchKnowledgeTool } from "./search-knowledge.js";
 import { createSearchFaqTool } from "./search-faq.js";
 import { createSearchCatalogTool } from "./search-catalog.js";
 import { createSendVehiclePhotoTool } from "./send-vehicle-photo.js";
 import { createCreateTaskTool } from "./create-task.js";
+import { createRequestHumanTool } from "./request-human.js";
 import {
   createSendRegisteredImageTool,
   createMockSendRegisteredImageTool,
@@ -24,6 +25,8 @@ interface RegistryParams {
   instanceId: string;
   phone: string;
   contactId: string;
+  businessHoursStartHour?: number;
+  businessHoursEndHour?: number;
   sandbox?: boolean;
 }
 
@@ -40,6 +43,21 @@ function createMockCreateTaskTool() {
     }),
     execute: async ({ description, due_date }) => {
       return `[SIMULADO] Tarefa seria criada: "${description}" para ${due_date}.`;
+    },
+  });
+}
+
+function createMockRequestHumanTool() {
+  return tool({
+    description:
+      "Simula acionar um consultor humano. Estamos no Playground de testes — nada é gravado de verdade, nenhuma conversa é assumida.",
+    inputSchema: z.object({
+      motivo: z.enum(HANDOFF_MOTIVOS),
+      resumo: z.string(),
+      urgencia: z.enum(HANDOFF_URGENCIAS).default("normal"),
+    }),
+    execute: async ({ motivo }) => {
+      return `[SIMULADO] Um consultor seria acionado agora (motivo: ${motivo}).`;
     },
   });
 }
@@ -73,7 +91,19 @@ function createMockSendVehiclePhotoTool() {
 }
 
 export function buildToolsForAgent(params: RegistryParams): ToolSet {
-  const { organizationId, agentId, toolsConfig, apiKey, conversationId, instanceId, phone, contactId, sandbox } = params;
+  const {
+    organizationId,
+    agentId,
+    toolsConfig,
+    apiKey,
+    conversationId,
+    instanceId,
+    phone,
+    contactId,
+    businessHoursStartHour,
+    businessHoursEndHour,
+    sandbox,
+  } = params;
   const tools: ToolSet = {};
 
   if (toolsConfig.search_knowledge) {
@@ -101,6 +131,20 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
     tools.createTask = sandbox
       ? createMockCreateTaskTool()
       : createCreateTaskTool({ contactId, conversationId, organizationId });
+  }
+
+  if (toolsConfig.request_human) {
+    tools.requestHuman = sandbox
+      ? createMockRequestHumanTool()
+      : createRequestHumanTool({
+          contactId,
+          conversationId,
+          organizationId,
+          instanceId,
+          phone,
+          businessHoursStartHour: businessHoursStartHour ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
+          businessHoursEndHour: businessHoursEndHour ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
+        });
   }
 
   if (toolsConfig.update_qualification) {

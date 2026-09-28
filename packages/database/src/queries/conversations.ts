@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Conversation, ConversationNote, ConversationMetrics, OrganizationSettings } from "@aula-agente/shared";
 import { isHumanTakeoverExpired } from "@aula-agente/shared";
+import { getConversationIdsWithOpenRequestHumanHandoff } from "./handoff-events.js";
 
 export async function getConversationsByOrganization(
   client: SupabaseClient,
@@ -99,12 +100,18 @@ export async function getExpiredTakeovers(client: SupabaseClient, defaultTimeout
     .eq("is_human_takeover", true);
   if (error) throw error;
 
+  // A requestHuman-originated handoff never auto-resumes on this timer — it
+  // only ends via a real human reply or the separate "handoff sem resposta"
+  // alert (see handoff-events.ts / Fase 1 item 4).
+  const openRequestHumanConvIds = await getConversationIdsWithOpenRequestHumanHandoff(client);
+
   const now = Date.now();
   const rows = data as unknown as Array<
     Conversation & { organizations: { settings: OrganizationSettings } | null }
   >;
 
   return rows
+    .filter((row) => !openRequestHumanConvIds.has(row.id))
     .filter((row) =>
       isHumanTakeoverExpired(
         row.human_takeover_at,

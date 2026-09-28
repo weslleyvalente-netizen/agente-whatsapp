@@ -3,6 +3,7 @@
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
 import { QualificationPanel } from "./qualification-panel";
+import { HandoffSummaryPanel } from "./handoff-summary-panel";
 import { TaskHistoryPanel } from "@/components/tasks/task-history-panel";
 import { Separator } from "@/components/ui/separator";
 import { formatPhone } from "@/lib/utils";
@@ -20,6 +21,11 @@ interface SidePanelProps {
 export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
   return (
     <div className="space-y-4 overflow-y-auto p-4">
+      {/* Handoff summary — only renders when there's a requestHuman handoff
+          for this conversation, at the very top so it's the first thing a
+          human sees when picking it up. */}
+      <HandoffSummaryPanel conversationId={conversation.id} />
+
       {/* Contact Info */}
       <div>
         <h3 className="text-sm font-semibold">Contato</h3>

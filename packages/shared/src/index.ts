@@ -9,3 +9,4 @@ export * from "./prompt-builder.js";
 export * from "./agent-config-diff.js";
 export * from "./agent-config-sections.js";
 export * from "./phone.js";
+export * from "./greeting-filter.js";

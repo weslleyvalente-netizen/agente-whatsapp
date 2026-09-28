@@ -4,7 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message, PlaygroundToolCall } from "@aula-agente/shared";
-import { formatDateTimeForPrompt } from "@aula-agente/shared";
+import { formatDateTimeForPrompt, DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
 import { extractTokenUsage } from "./token-usage.js";
 
@@ -191,6 +191,12 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const model = createModel(agent.provider, agent.model, apiKey);
 
+  // requestHuman uses the same business-hours window as the automatic
+  // follow-up feature to decide whether to tell the customer a consultant
+  // continues right away or only once the store reopens — one config knob,
+  // not a second one just for this tool.
+  const businessHours = agent.tools_config.followup_automatico ?? DEFAULT_FOLLOWUP_AUTOMATICO;
+
   const tools = buildToolsForAgent({
     organizationId,
     agentId: agent.id,
@@ -200,6 +206,8 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     instanceId,
     phone,
     contactId,
+    businessHoursStartHour: businessHours.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
+    businessHoursEndHour: businessHours.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
     sandbox: params.sandbox,
   });
 
