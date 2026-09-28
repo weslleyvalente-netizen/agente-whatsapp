@@ -134,13 +134,24 @@ function convertDates(text: string): string {
 // installment count and the currency amount that currency conversion
 // (run right after this stage) will handle. Only matches when directly
 // followed by "R$", so a bare "12x" elsewhere in the text is left alone.
+//
+// Any other "Nx" is a count of installments/terms ("em até 48x", "no plano
+// 12x", "6x/8x") and is spoken as "N vezes" — left raw, ElevenLabs read
+// "48x" as "quarenta e oito ix" (real production case, 28/09). "4x4"-style
+// dimensions are read as "quatro por quatro" instead.
 function convertInstallments(text: string): string {
-  return text.replace(/\b(\d+)x\s*(?:de\s+)?(?=R\$)/gi, (_match, count: string) => {
+  let result = text.replace(/\b(\d+)x\s*(?:de\s+)?(?=R\$)/gi, (_match, count: string) => {
     const n = Number(count);
     const words = numberToWordsPtBr(n, true);
     const noun = n === 1 ? "parcela" : "parcelas";
     return `${words} ${noun} de `;
   });
+  result = result.replace(/\b(\d+)x(\d+)\b/gi, (_match, a: string, b: string) => `${numberToWordsPtBr(Number(a))} por ${numberToWordsPtBr(Number(b))}`);
+  result = result.replace(/\b(\d+) ?x\b/gi, (_match, count: string) => {
+    const n = Number(count);
+    return n === 1 ? "uma vez" : `${numberToWordsPtBr(n, true)} vezes`;
+  });
+  return result.replace(/\b(vezes|vez)\/(?=\S)/g, "$1 ou ");
 }
 
 // R$ amounts, decimal ("R$ 371,83") or rounded to mil/milhão ("R$ 120

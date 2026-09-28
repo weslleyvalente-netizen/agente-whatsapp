@@ -116,8 +116,35 @@ describe("normalizeTextForTts", () => {
     expect(normalizeTextForTts("12x R$ 943,00")).toBe("doze parcelas de novecentos e quarenta e três reais");
   });
 
-  it("leaves a bare installment count with no following R$ untouched", () => {
-    expect(normalizeTextForTts("Você tem interesse em fechar em 12x?")).toBe("Você tem interesse em fechar em 12x?");
+  // Real production case (28/09): "financiando o saldo em até 48x pelo
+  // Banco Yamaha" reached ElevenLabs as raw "48x" and was spoken
+  // "quarenta e oito ix". A bare installment count is now spoken as "vezes".
+  it("speaks a bare installment count as 'vezes' (48x → quarenta e oito vezes)", () => {
+    expect(normalizeTextForTts("financiando o saldo em até 48x pelo Banco Yamaha")).toBe(
+      "financiando o saldo em até quarenta e oito vezes pelo Banco Yamaha"
+    );
+  });
+
+  it("uses feminine 'vezes' agreement and handles a question mark right after", () => {
+    expect(normalizeTextForTts("Você tem interesse em fechar em 12x?")).toBe("Você tem interesse em fechar em doze vezes?");
+    expect(normalizeTextForTts("no 1x")).toBe("no uma vez");
+    expect(normalizeTextForTts("em 22x")).toBe("em vinte e duas vezes");
+  });
+
+  it("handles uppercase X, a space before x, and 6x/8x pairs", () => {
+    expect(normalizeTextForTts("plano 18X")).toBe("plano dezoito vezes");
+    expect(normalizeTextForTts("em até 48 x")).toBe("em até quarenta e oito vezes");
+    expect(normalizeTextForTts("compare o 6x/8x")).toBe("compare o seis vezes ou oito vezes");
+  });
+
+  it("keeps 4x4 as a dimension, not an installment", () => {
+    expect(normalizeTextForTts("tração 4x4")).toBe("tração quatro por quatro");
+  });
+
+  it("still reads Nx followed by R$ as parcelas", () => {
+    expect(normalizeTextForTts("no plano 12x, fica 12x de R$ 706,27")).toBe(
+      "no plano doze vezes, fica doze parcelas de setecentos e seis reais e vinte e sete centavos"
+    );
   });
 
   // Percentages
