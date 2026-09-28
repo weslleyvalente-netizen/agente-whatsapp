@@ -8,9 +8,17 @@ import {
   getOpenTasksByConversation,
   updateTask,
   addTaskEvent,
+  getOpenOpportunitiesByContact,
+  createTaskWithDedup,
 } from "@aula-agente/database";
 import { getSendMessageQueue } from "@aula-agente/queue";
-import { HANDOFF_MOTIVOS, HANDOFF_URGENCIAS, isWithinBusinessHours } from "@aula-agente/shared";
+import {
+  HANDOFF_MOTIVOS,
+  HANDOFF_MOTIVO_LABELS,
+  HANDOFF_URGENCIAS,
+  isWithinBusinessHours,
+  toISODateInTimeZone,
+} from "@aula-agente/shared";
 
 interface RequestHumanToolContext {
   contactId: string;
@@ -53,10 +61,52 @@ async function reassignOpenTasksToHuman(
   );
 }
 
+// Fase 1 hardening (2026-09-28 incident): requestHuman replaces createTask
+// as the handoff path, but if an org hasn't configured EITHER a default
+// assignee OR a notification phone, the handoff was landing nowhere —
+// recorded in handoff_events, invisible everywhere else. Mirrors
+// create-task.ts's own opportunity-linking (exactly one open opportunity
+// for the contact, else leave it unlinked — never guess).
+async function createFallbackTaskIfUnrouted(
+  db: ReturnType<typeof getAdminClient>,
+  context: RequestHumanToolContext,
+  assigneeId: string | null,
+  notifyPhone: string | null,
+  motivo: (typeof HANDOFF_MOTIVOS)[number],
+  resumo: string,
+  urgencia: (typeof HANDOFF_URGENCIAS)[number]
+) {
+  if (assigneeId || notifyPhone) return;
+
+  try {
+    let opportunityId: string | null = null;
+    const openOpportunities = await getOpenOpportunitiesByContact(db, context.organizationId, context.contactId);
+    if (openOpportunities.length === 1) {
+      opportunityId = openOpportunities[0].id;
+    }
+
+    await createTaskWithDedup(db, {
+      organization_id: context.organizationId,
+      contact_id: context.contactId,
+      conversation_id: context.conversationId,
+      opportunity_id: opportunityId,
+      type: "other",
+      description: `Handoff sem responsável/telefone de aviso configurado — atender: ${resumo}`,
+      reason: `Motivo do handoff: ${HANDOFF_MOTIVO_LABELS[motivo]} (urgência ${urgencia})`,
+      priority: urgencia === "alta" ? "urgent" : "normal",
+      due_date: toISODateInTimeZone(new Date()),
+      created_by_type: "ai",
+      created_by_id: null,
+    });
+  } catch (err) {
+    console.error("requestHuman tool: failed to create fallback task (no assignee/phone configured):", err);
+  }
+}
+
 export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
   return tool({
     description:
-      "Aciona um consultor humano para continuar o atendimento — use no lugar de createTask sempre que a situação pedir intervenção humana de verdade: o cliente pediu para falar com alguém, há negociação de valor, uma proposta está pronta para ser fechada, é preciso coletar/confirmar documentos, houve reclamação, o pedido está fora do que você pode resolver, ou você não consegue avançar sozinha. Isso assume a conversa para um humano de forma explícita e mensurável — não é o mesmo que criar uma tarefa de follow-up. Depois de chamar, avise o cliente com naturalidade que um consultor vai continuar o atendimento (use o texto retornado como guia); não diga que é uma tarefa nem mencione sistemas internos.",
+      "Aciona um consultor humano para continuar o atendimento — use no lugar de createTask sempre que a situação pedir intervenção humana de verdade: o cliente pediu para falar com alguém, há negociação de valor, uma proposta está pronta para ser fechada, houve reclamação, o pedido está fora do que você pode resolver, ou você não consegue avançar sozinha. NÃO use para perguntas informativas (o que é preciso, quais documentos, como funciona, prazos) — essas você responde direto com a base de conhecimento/FAQ; chame esta ferramenta só quando o cliente já quiser negociar, aderir ou fechar, ou pedir algo que a base não cobre. Isso assume a conversa para um humano de forma explícita e mensurável — não é o mesmo que criar uma tarefa de follow-up. Depois de chamar, avise o cliente com naturalidade que um consultor vai continuar o atendimento (use o texto retornado como guia); não diga que é uma tarefa nem mencione sistemas internos.",
     inputSchema: z.object({
       motivo: z.enum(HANDOFF_MOTIVOS).describe("Motivo do handoff, o que melhor descreve a situação"),
       resumo: z.string().describe("Resumo curto (até 3 linhas) da situação para quem for atender"),
@@ -90,7 +140,7 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           console.error("requestHuman tool: failed to reassign open tasks:", err);
         }
 
-        const notifyPhone = org.settings.handoff_notification_phone;
+        const notifyPhone = org.settings.handoff_notification_phone ?? null;
         if (notifyPhone) {
           try {
             await getSendMessageQueue().add("send-message", {
@@ -105,6 +155,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
             console.error("requestHuman tool: failed to send internal notification:", err);
           }
         }
+
+        await createFallbackTaskIfUnrouted(db, context, assigneeId, notifyPhone, motivo, resumo, urgencia);
 
         const withinHours = isWithinBusinessHours(
           new Date(),

@@ -189,11 +189,10 @@ alterações, na branch base).
 
 ## Incidente de produção — requestHuman sem resposta (2026-09-28)
 
-Cliente real (conversa `008df306-8b1e-4ff4-8e6d-b8a92fab6288`) perguntou
-sobre documentos do consórcio, `requestHuman` foi chamado, e o cliente nunca
+Cliente real (conversa `008df306-8b1e-4ff4-8e6d-b8a92fab6288`) perguntou sobre
+documentos do consórcio, `requestHuman` foi chamado, e o cliente nunca
 recebeu resposta nem a equipe foi avisada. Três correções, branch
-`fix/request-human-drops-reply-during-handoff` (a partir da `main`, PR aberto,
-aguardando seu merge):
+`fix/request-human-drops-reply-during-handoff`:
 
 1. **Bug corrigido:** `process-message.ts` descartava a própria resposta do
    `requestHuman` — a checagem de "humano assumiu durante a geração" não
@@ -208,28 +207,64 @@ aguardando seu merge):
 3. **Descrição do tool ajustada:** removido "coletar/confirmar documentos" —
    isso empurrava a Helena a chamar handoff numa pergunta informativa simples.
    Perguntas informativas agora vão para o FAQ; `requestHuman` fica para
-   quando o cliente já quer negociar/aderir/fechar. **Precisa de validação
-   sua no Playground antes de confiar em produção** (3x a pergunta de
-   documentos, 3x "quero aderir").
+   quando o cliente já quer negociar/aderir/fechar. Validado no Playground
+   (pergunta de documentos → FAQ, sem handoff).
 4. **FAQ criada em produção, efeito imediato:** `knowledge_faqs`
    (id `77630127-1671-41d9-9b0d-c518c1146269`), agente `3ada5b0a`, pergunta
    "Quais documentos preciso para fazer o consórcio?", exatamente o texto que
    você forneceu.
 
-**Runbook — hotfix:**
-1. Revisar e mergear o PR de `fix/request-human-drops-reply-during-handoff`
-   na `main` (sem migration nova — só código).
-2. "Implantar" o serviço `worker` no EasyPanel (o `api` também carrega
-   `packages/agent-runtime`, então se o deploy automático não cobrir os dois,
-   implantar ambos).
-3. Validar no Playground a regra do item 3 acima antes de confiar nela.
-4. Depois do merge: atualizar `feat/fase2-triagem-tarefas` com a `main` (a
-   branch da Fase 2 já tinha uma cópia independente do fix do item 1 — é
-   esperado o merge reconhecer como já aplicado; o mais provável é precisar
-   resolver algo em `apps/worker/src/workers/process-message.ts` ou
-   `packages/shared/src/conversation-helpers.ts`, não em `request-human.ts`,
-   que a Fase 2 nunca tocou) e rodar a suíte completa de novo antes do merge
-   da Fase 2.
+### Etapa 1 — Deploy do hotfix (2026-09-28) — concluída
+
+- Merge `fix/request-human-drops-reply-during-handoff` → `main`, fast-forward
+  limpo (`f30c033..e42a242`), sem conflito. Suíte completa do monorepo
+  rodada antes do push — verde (só a falha pré-existente e não relacionada
+  de `costs/index.test.ts`).
+- Deploy automático confirmado no painel do EasyPanel:
+  - `worker`: build 1m47s, `### Success` (18:46:33 UTC), container ativo.
+  - `api`: mesmo commit, deploy concluído; `/health` respondendo `200`,
+    estável em duas checagens com 20s de intervalo.
+  - `web`: também redeployado com o mesmo commit (não inspecionado a fundo,
+    não fazia parte do escopo pedido).
+- Confirmado no banco: nem `default_handoff_assignee_id` nem
+  `handoff_notification_phone` configurados na organização `cf01d00d` — só
+  reportado, nada preenchido (o usuário configura pelo painel).
+
+### Investigação — Teste 2 do Playground falhou (2026-09-28) — corrigida, publicada
+
+Depois do hotfix, validação no Playground: Teste 1 (pergunta de documentos)
+OK. **Teste 2 falhou** — "Quero fechar o plano de 12x da Factor 150, como
+faço?" gerou `updateQualification` + `createTask`, sem chamar `requestHuman`;
+a Helena disse ao cliente que a equipe entraria em contato, sem handoff real.
+
+Investigação (sem publicar nada, a pedido):
+1. `request_human` confirmado `true` tanto no rascunho (`agent_configs`)
+   quanto no publicado (`agents`), mesmo `updated_at` — não era problema de
+   habilitação.
+2. Causa raiz: o rascunho do prompt nunca menciona `requestHuman` pelo nome —
+   três trechos mandavam "criar a tarefa"/"encaminhar (tarefa)" para fechar
+   negócio, competindo com (e vencendo) a descrição da ferramenta: a seção
+   "MÉTODO COMERCIAL" (vale para todos os produtos), a subseção "Encaminhar
+   para a equipe" do playbook LiberaCred, e o playbook de Consórcio (mais
+   vago, sem citar nenhuma ferramenta).
+3. Reescritos os três trechos no **rascunho apenas** (`agent_configs`, sem
+   tocar `agents`) para chamar `requestHuman` (com resumo: modelo, plano,
+   valores da tabela, urgência, entrada, parcela confortável, restrição,
+   pedido concreto) quando o cliente quer fechar/aderir/negociar ou pedir um
+   consultor; `createTask` passou a ficar reservado só para pendências
+   futuras (cliente vai mandar algo depois, ou retorno combinado numa data).
+4. `updateQualification` no Playground **não grava em tabela real** —
+   `playground.service.ts` sempre roda com `sandbox: true`, e
+   `registry.ts` troca `updateQualification`/`createTask`/`requestHuman` por
+   versões mockadas nesse modo. O badge "REAL" que apareceu era um bug de
+   rótulo: `SANDBOXED_TOOL_NAMES` em `agent-runner.ts` só listava
+   `createTask`/`sendVehiclePhoto`. Corrigido (branch
+   `fix/playground-simulated-tool-label`, PR aberto, TDD) para incluir
+   `updateQualification`, `requestHuman` e `sendRegisteredImage`.
+
+Validação: re-testado no Playground (fechar 12x Factor 150 → `requestHuman`;
+"quero aderir" → `requestHuman`; FAQ de documentos e pergunta de parcela →
+sem handoff). **Rascunho publicado pelo usuário.**
 
 ## Fase 2 — Triagem de tarefas (2026-09-28) — implementada, aguardando o passo 4 acima
 
@@ -282,10 +317,10 @@ produção, que não tenho aqui).
 
 ## Deploy e ativação — Fase 2 (pendente)
 
-1. **Pré-requisito:** mergear e implantar o hotfix
-   (`fix/request-human-drops-reply-during-handoff`) primeiro — ver runbook
-   acima. Depois, atualizar `feat/fase2-triagem-tarefas` com a `main` e rodar
-   a suíte completa de novo.
+1. **Pré-requisito (concluído):** hotfix mergeado e implantado (Etapa 1
+   acima), correção do prompt validada e publicada (investigação acima).
+   `feat/fase2-triagem-tarefas` atualizada com a `main` (Etapa 2) e suíte
+   completa rodada de novo.
 2. **Migration:** `supabase db push` para aplicar `00029` (só adiciona
    `tasks.consolidated_pendencies jsonb DEFAULT '[]'`, reversível).
 3. **Merge** `feat/fase2-triagem-tarefas` → `main`, push seu (nunca dou push

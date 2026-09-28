@@ -7,6 +7,8 @@ const getOrganizationById = vi.fn();
 const getOpenTasksByConversation = vi.fn();
 const updateTask = vi.fn();
 const addTaskEvent = vi.fn();
+const getOpenOpportunitiesByContact = vi.fn();
+const createTaskWithDedup = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -16,6 +18,8 @@ vi.mock("@aula-agente/database", () => ({
   getOpenTasksByConversation: (...args: unknown[]) => getOpenTasksByConversation(...args),
   updateTask: (...args: unknown[]) => updateTask(...args),
   addTaskEvent: (...args: unknown[]) => addTaskEvent(...args),
+  getOpenOpportunitiesByContact: (...args: unknown[]) => getOpenOpportunitiesByContact(...args),
+  createTaskWithDedup: (...args: unknown[]) => createTaskWithDedup(...args),
 }));
 
 const addToSendQueue = vi.fn();
@@ -46,6 +50,8 @@ beforeEach(() => {
   getOrganizationById.mockResolvedValue(orgNoDefaults);
   getOpenTasksByConversation.mockResolvedValue([]);
   createHandoffEvent.mockResolvedValue({ id: "handoff-1" });
+  getOpenOpportunitiesByContact.mockResolvedValue([]);
+  createTaskWithDedup.mockResolvedValue({ task: { id: "task-1", title: "Outro" }, wasUpdated: false });
 });
 
 describe("createRequestHumanTool", () => {
@@ -151,5 +157,74 @@ describe("createRequestHumanTool", () => {
     const result = await toolDef.execute!(baseInput, {} as never);
 
     expect(result).toContain("Não foi possível");
+  });
+
+  // Regression for the 2026-09-28 production incident: org cf01d00d had
+  // neither default_handoff_assignee_id nor handoff_notification_phone
+  // configured, so the handoff was recorded but nobody — and nothing —
+  // ever surfaced it. requestHuman now falls back to creating a task (same
+  // opportunity-linking as createTask) whenever neither route exists, so
+  // the handoff is at least visible somewhere in the panel.
+  describe("fallback task when no assignee/phone is configured", () => {
+    it("creates a fallback task when neither a default assignee nor a notification phone is configured", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+
+      const toolDef = createRequestHumanTool(context);
+      await toolDef.execute!(baseInput, {} as never);
+
+      expect(createTaskWithDedup).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({ organization_id: "org-1", contact_id: "contact-1", conversation_id: "conv-1" })
+      );
+    });
+
+    it("does not create a fallback task when a default assignee is configured", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: { default_handoff_assignee_id: "user-42" } });
+
+      const toolDef = createRequestHumanTool(context);
+      await toolDef.execute!(baseInput, {} as never);
+
+      expect(createTaskWithDedup).not.toHaveBeenCalled();
+    });
+
+    it("does not create a fallback task when a notification phone is configured", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: { handoff_notification_phone: "5511888880000" } });
+
+      const toolDef = createRequestHumanTool(context);
+      await toolDef.execute!(baseInput, {} as never);
+
+      expect(createTaskWithDedup).not.toHaveBeenCalled();
+    });
+
+    it("links the fallback task to the contact's sole open opportunity, same as createTask", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+      getOpenOpportunitiesByContact.mockResolvedValue([{ id: "opp-1" }]);
+
+      const toolDef = createRequestHumanTool(context);
+      await toolDef.execute!(baseInput, {} as never);
+
+      expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ opportunity_id: "opp-1" }));
+    });
+
+    it("leaves opportunity_id null when the contact has zero or several open opportunities", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+      getOpenOpportunitiesByContact.mockResolvedValue([{ id: "opp-1" }, { id: "opp-2" }]);
+
+      const toolDef = createRequestHumanTool(context);
+      await toolDef.execute!(baseInput, {} as never);
+
+      expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ opportunity_id: null }));
+    });
+
+    it("still succeeds the handoff even if the fallback task creation throws", async () => {
+      getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+      createTaskWithDedup.mockRejectedValue(new Error("db blip"));
+
+      const toolDef = createRequestHumanTool(context);
+      const result = await toolDef.execute!(baseInput, {} as never);
+
+      expect(result).not.toContain("Não foi possível");
+      expect(createHandoffEvent).toHaveBeenCalled();
+    });
   });
 });
