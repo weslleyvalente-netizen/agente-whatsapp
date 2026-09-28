@@ -28,6 +28,25 @@ export interface Task {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  consolidated_pendencies: TaskPendency[];
+}
+
+// One pending item folded into a consolidated task (Fase 2, item 2) — a
+// task's own type/title/description/priority/due_date always mirror the
+// highest-priority entry here (see task-consolidation.ts); this array is
+// the source of truth once consolidation is on, so a pendency resolved
+// individually (e.g. awaiting_customer_cpf, item 3) can leave the task
+// open with whatever else is still pending, instead of closing it outright.
+export interface TaskPendency {
+  type: TaskType;
+  description: string;
+  reason: string | null;
+  priority: TaskPriority;
+  due_date: string;
+  due_time: string | null;
+  added_at: string;
+  added_by_type: TaskCreatedByType;
+  added_by_id: string | null;
 }
 
 export type TaskEventType =
@@ -38,7 +57,13 @@ export type TaskEventType =
   | "cancelled"
   | "assigned"
   | "auto_followup_stage_1"
-  | "auto_followup_stage_2";
+  | "auto_followup_stage_2"
+  | "opportunity_auto_linked"
+  | "consolidated_pendency_added"
+  | "consolidated_pendency_resolved"
+  | "libera_cred_resumption_created"
+  | "libera_cred_resumption_escalated"
+  | "libera_cred_resumption_suggest_lost";
 
 export interface TaskEvent {
   id: string;

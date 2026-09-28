@@ -9,6 +9,8 @@ import {
   decideFollowupStage,
   decideFollowupGate,
   shouldFlagStalledNegotiation,
+  isAwaitingCustomerResolved,
+  resolveOpportunityAutoLink,
   type SortableTask,
 } from "./task-helpers.js";
 
@@ -288,5 +290,47 @@ describe("shouldFlagStalledNegotiation", () => {
 
   it("does not re-flag at the exact same instant (boundary case)", () => {
     expect(shouldFlagStalledNegotiation("2026-09-20T10:00:00Z", "2026-09-20T10:00:00Z")).toBe(false);
+  });
+});
+
+describe("isAwaitingCustomerResolved", () => {
+  it("resolves awaiting_customer_cpf only when cpf_hash changed", () => {
+    expect(isAwaitingCustomerResolved("awaiting_customer_cpf", ["cpf_hash"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_cpf", ["product_model"])).toBe(false);
+    expect(isAwaitingCustomerResolved("awaiting_customer_cpf", [])).toBe(false);
+  });
+
+  it("resolves awaiting_customer_data when any of its watched fields changed", () => {
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["birth_date"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["has_driver_license"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["driver_license_category"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["product_model"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["down_payment_amount"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["term_months"])).toBe(true);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", ["cpf_hash"])).toBe(false);
+    expect(isAwaitingCustomerResolved("awaiting_customer_data", [])).toBe(false);
+  });
+
+  it("never auto-resolves awaiting_customer_decision — no structural signal for a 'decision'", () => {
+    expect(isAwaitingCustomerResolved("awaiting_customer_decision", ["cpf_hash", "birth_date"])).toBe(false);
+  });
+
+  it("never auto-resolves task types outside the D3 scope", () => {
+    expect(isAwaitingCustomerResolved("scheduled_callback", ["birth_date"])).toBe(false);
+    expect(isAwaitingCustomerResolved("other", ["cpf_hash"])).toBe(false);
+  });
+});
+
+describe("resolveOpportunityAutoLink", () => {
+  it("links when the contact has exactly one open opportunity", () => {
+    expect(resolveOpportunityAutoLink(["opp-1"])).toBe("opp-1");
+  });
+
+  it("does not link when the contact has no open opportunity", () => {
+    expect(resolveOpportunityAutoLink([])).toBeNull();
+  });
+
+  it("does not link when the contact has more than one open opportunity — ambiguous, don't guess", () => {
+    expect(resolveOpportunityAutoLink(["opp-1", "opp-2"])).toBeNull();
   });
 });
