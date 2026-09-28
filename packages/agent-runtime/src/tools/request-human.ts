@@ -8,9 +8,17 @@ import {
   getOpenTasksByConversation,
   updateTask,
   addTaskEvent,
+  getOpenOpportunitiesByContact,
+  createTaskWithDedup,
 } from "@aula-agente/database";
 import { getSendMessageQueue } from "@aula-agente/queue";
-import { HANDOFF_MOTIVOS, HANDOFF_URGENCIAS, isWithinBusinessHours } from "@aula-agente/shared";
+import {
+  HANDOFF_MOTIVOS,
+  HANDOFF_MOTIVO_LABELS,
+  HANDOFF_URGENCIAS,
+  isWithinBusinessHours,
+  toISODateInTimeZone,
+} from "@aula-agente/shared";
 
 interface RequestHumanToolContext {
   contactId: string;
@@ -53,6 +61,48 @@ async function reassignOpenTasksToHuman(
   );
 }
 
+// Fase 1 hardening (2026-09-28 incident): requestHuman replaces createTask
+// as the handoff path, but if an org hasn't configured EITHER a default
+// assignee OR a notification phone, the handoff was landing nowhere —
+// recorded in handoff_events, invisible everywhere else. Mirrors
+// create-task.ts's own opportunity-linking (exactly one open opportunity
+// for the contact, else leave it unlinked — never guess).
+async function createFallbackTaskIfUnrouted(
+  db: ReturnType<typeof getAdminClient>,
+  context: RequestHumanToolContext,
+  assigneeId: string | null,
+  notifyPhone: string | null,
+  motivo: (typeof HANDOFF_MOTIVOS)[number],
+  resumo: string,
+  urgencia: (typeof HANDOFF_URGENCIAS)[number]
+) {
+  if (assigneeId || notifyPhone) return;
+
+  try {
+    let opportunityId: string | null = null;
+    const openOpportunities = await getOpenOpportunitiesByContact(db, context.organizationId, context.contactId);
+    if (openOpportunities.length === 1) {
+      opportunityId = openOpportunities[0].id;
+    }
+
+    await createTaskWithDedup(db, {
+      organization_id: context.organizationId,
+      contact_id: context.contactId,
+      conversation_id: context.conversationId,
+      opportunity_id: opportunityId,
+      type: "other",
+      description: `Handoff sem responsável/telefone de aviso configurado — atender: ${resumo}`,
+      reason: `Motivo do handoff: ${HANDOFF_MOTIVO_LABELS[motivo]} (urgência ${urgencia})`,
+      priority: urgencia === "alta" ? "urgent" : "normal",
+      due_date: toISODateInTimeZone(new Date()),
+      created_by_type: "ai",
+      created_by_id: null,
+    });
+  } catch (err) {
+    console.error("requestHuman tool: failed to create fallback task (no assignee/phone configured):", err);
+  }
+}
+
 export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
   return tool({
     description:
@@ -90,7 +140,7 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           console.error("requestHuman tool: failed to reassign open tasks:", err);
         }
 
-        const notifyPhone = org.settings.handoff_notification_phone;
+        const notifyPhone = org.settings.handoff_notification_phone ?? null;
         if (notifyPhone) {
           try {
             await getSendMessageQueue().add("send-message", {
@@ -105,6 +155,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
             console.error("requestHuman tool: failed to send internal notification:", err);
           }
         }
+
+        await createFallbackTaskIfUnrouted(db, context, assigneeId, notifyPhone, motivo, resumo, urgencia);
 
         const withinHours = isWithinBusinessHours(
           new Date(),
