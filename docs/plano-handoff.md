@@ -315,20 +315,33 @@ monorepo verde (só a falha pré-existente e não relacionada de
 não validei visualmente no navegador (precisa de login real no Supabase de
 produção, que não tenho aqui).
 
-## Deploy e ativação — Fase 2 (pendente)
+## Deploy e ativação — Fase 2 (2026-09-28) — deployado, ativação pendente
 
 1. **Pré-requisito (concluído):** hotfix mergeado e implantado (Etapa 1
    acima), correção do prompt validada e publicada (investigação acima).
    `feat/fase2-triagem-tarefas` atualizada com a `main` (Etapa 2) e suíte
-   completa rodada de novo.
-2. **Migration:** `supabase db push` para aplicar `00029` (só adiciona
-   `tasks.consolidated_pendencies jsonb DEFAULT '[]'`, reversível).
-3. **Merge** `feat/fase2-triagem-tarefas` → `main`, push seu (nunca dou push
-   na main). Deploy automático no EasyPanel dos serviços `api` e `worker`.
-4. **Confirmar saudável:** `/health` OK, worker processando o tick de 15 min
-   sem erro nos logs (`stale-conversation-followup`, que agora também roda a
-   checagem do LiberaCred).
-5. **Ativação gradual, uma flag por vez, cada uma em Configurações → "Fase 2 —
+   completa rodada de novo — verde, só a falha pré-existente e não
+   relacionada de `costs/index.test.ts`.
+2. **Migration `00029` — aplicada.** Coluna `tasks.consolidated_pendencies
+   jsonb NOT NULL DEFAULT '[]'` confirmada em produção via REST (rodada pelo
+   usuário no SQL Editor do Supabase, já que o CLI `supabase` não está
+   instalado localmente).
+3. **Merge `feat/fase2-triagem-tarefas` → `main` — concluído** (commit
+   `a2a6231`), push do usuário. Deploy automático no EasyPanel confirmado
+   `### Success` nos 3 serviços (`api`, `worker`, `web`).
+4. **Saudável — confirmado:**
+   - `api`: `/health` estável em 3 checagens (`HTTP 200`).
+   - `worker`: logs mostram o container novo processando mensagens reais
+     sem erro logo após o deploy (`Processed 1 message(s)... Sent message
+     to ...`).
+5. **Flags — confirmado desligadas.** Consultado `organizations.settings`
+   direto no banco: `task_auto_link_opportunity_enabled`,
+   `task_consolidation_by_opportunity_enabled`,
+   `task_auto_close_awaiting_customer_enabled` e
+   `libera_cred_resumption_enabled` todas ausentes (`null`) na única
+   organização em produção — os helpers tratam ausência como desligado.
+   Nenhuma automação nova está ativa.
+6. **Ativação gradual, uma flag por vez, cada uma em Configurações → "Fase 2 —
    Triagem de tarefas":**
    - A visão "Hoje" no Início já está ativa (sem flag) — dá pra conferir
      antes de ligar qualquer automação.
@@ -342,6 +355,6 @@ produção, que não tenho aqui).
      para clientes de verdade). Sugiro ligar por último, com o limite diário
      baixo (ex. 3-5) na primeira semana, e conferir as primeiras tarefas
      criadas antes de subir o limite para o padrão (10).
-6. **Backfill:** já rodado (60/60) antes do merge — não precisa rodar de novo
+7. **Backfill:** já rodado (60/60) antes do merge — não precisa rodar de novo
    a menos que você queira revisitar tarefas que ganharam oportunidade aberta
    depois desta data.
