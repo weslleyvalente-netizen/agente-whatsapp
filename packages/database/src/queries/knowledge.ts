@@ -11,6 +11,42 @@ export async function getDocumentsByAgent(client: SupabaseClient, agentId: strin
   return data as KnowledgeDocument[];
 }
 
+// Fase 2, item 5(a): pairs a semantic-search hit with its source document's
+// title/updated_at, so the LiberaCred resumption message can cite "which
+// table" and fall back to the document's own updated_at when the table's
+// text has no explicit vigency date (see isLiberaCredTableOutdated).
+export interface KnowledgeChunkWithDocumentMeta {
+  id: string;
+  content: string;
+  document_id: string;
+  document_title: string;
+  document_updated_at: string;
+}
+
+export async function getKnowledgeChunksWithDocumentMeta(
+  client: SupabaseClient,
+  chunkIds: string[]
+): Promise<KnowledgeChunkWithDocumentMeta[]> {
+  if (chunkIds.length === 0) return [];
+  const { data, error } = await client
+    .from("knowledge_chunks")
+    .select("id, content, document_id, knowledge_documents(title, updated_at)")
+    .in("id", chunkIds);
+  if (error) throw error;
+  return (data as unknown as Array<{
+    id: string;
+    content: string;
+    document_id: string;
+    knowledge_documents: { title: string; updated_at: string } | null;
+  }>).map((row) => ({
+    id: row.id,
+    content: row.content,
+    document_id: row.document_id,
+    document_title: row.knowledge_documents?.title ?? "",
+    document_updated_at: row.knowledge_documents?.updated_at ?? "",
+  }));
+}
+
 export async function getDocumentById(client: SupabaseClient, id: string) {
   const { data, error } = await client
     .from("knowledge_documents")
