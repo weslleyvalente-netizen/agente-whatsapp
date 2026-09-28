@@ -42,7 +42,13 @@ interface RunAgentResult {
   toolCallTrace: PlaygroundToolCall[];
 }
 
-const SANDBOXED_TOOL_NAMES = new Set(["createTask", "sendVehiclePhoto"]);
+const SANDBOXED_TOOL_NAMES = new Set([
+  "createTask",
+  "sendVehiclePhoto",
+  "updateQualification",
+  "requestHuman",
+  "sendRegisteredImage",
+]);
 
 export function extractToolCallTrace(
   steps: Array<{

@@ -186,4 +186,25 @@ describe("extractToolCallTrace", () => {
   it("returns an empty array when no step made any tool call", () => {
     expect(extractToolCallTrace([{ toolCalls: [], toolResults: [] }], false)).toEqual([]);
   });
+
+  it("marks updateQualification, requestHuman and sendRegisteredImage as simulated when sandbox is true", () => {
+    const steps = [
+      {
+        toolCalls: [
+          { toolCallId: "1", toolName: "updateQualification", input: {} },
+          { toolCallId: "2", toolName: "requestHuman", input: {} },
+          { toolCallId: "3", toolName: "sendRegisteredImage", input: {} },
+        ],
+        toolResults: [
+          { toolCallId: "1", output: "[SIMULADO] ..." },
+          { toolCallId: "2", output: "[SIMULADO] ..." },
+          { toolCallId: "3", output: "[SIMULADO] ..." },
+        ],
+      },
+    ];
+    const trace = extractToolCallTrace(steps, true);
+    expect(trace.find((t) => t.tool_name === "updateQualification")?.mode).toBe("simulated");
+    expect(trace.find((t) => t.tool_name === "requestHuman")?.mode).toBe("simulated");
+    expect(trace.find((t) => t.tool_name === "sendRegisteredImage")?.mode).toBe("simulated");
+  });
 });
