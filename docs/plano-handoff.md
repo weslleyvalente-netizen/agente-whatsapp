@@ -351,10 +351,19 @@ produção, que não tenho aqui).
    - `task_consolidation_by_opportunity_enabled` — muda o comportamento de
      dedup existente; acompanhar as primeiras consolidações antes de deixar
      ligado por padrão em todo lugar.
-   - `libera_cred_resumption_enabled` — o mais sensível (mensagens sugeridas
-     para clientes de verdade). Sugiro ligar por último, com o limite diário
-     baixo (ex. 3-5) na primeira semana, e conferir as primeiras tarefas
-     criadas antes de subir o limite para o padrão (10).
+   - `libera_cred_resumption_enabled` — a mais sensível (regera a sugestão
+     de mensagem com IA), mas **não envia nada ao cliente sozinha**: só cria
+     ou atualiza a tarefa `libera_cred_resumption` com a mensagem sugerida em
+     `description`, para a atendente copiar e enviar manualmente — conferido
+     no código (`apps/worker/src/workers/libera-cred-resumption.ts` e
+     `libera-cred-resumption-message.ts`), nenhum caminho usa a fila de
+     envio. Ainda assim, sugiro ligar por último, com o limite diário baixo
+     (ex. 3-5) na primeira semana, e conferir as primeiras tarefas criadas
+     antes de subir o limite para o padrão (10).
 7. **Backfill:** já rodado (60/60) antes do merge — não precisa rodar de novo
    a menos que você queira revisitar tarefas que ganharam oportunidade aberta
    depois desta data.
+
+**Ativação (2026-09-28):** `task_auto_link_opportunity_enabled` — **ligada**
+na organização `cf01d00d`, resto de `organizations.settings` preservado.
+Demais flags seguem desligadas.
