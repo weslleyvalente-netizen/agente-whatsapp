@@ -186,3 +186,47 @@ alterações, na branch base).
 - **Tudo que foi pedido nesta rodada está em produção e ativo.** Falta só,
   quando você quiser, gerar um handoff de teste via `requestHuman` pra ver o
   card do Início e o painel lateral da conversa na prática.
+
+## Incidente de produção — requestHuman sem resposta (2026-09-28)
+
+Cliente real (conversa `008df306-8b1e-4ff4-8e6d-b8a92fab6288`) perguntou sobre
+documentos do consórcio, `requestHuman` foi chamado, e o cliente nunca
+recebeu resposta nem a equipe foi avisada. Três correções, branch
+`fix/request-human-drops-reply-during-handoff`:
+
+1. **Bug corrigido:** `process-message.ts` descartava a própria resposta do
+   `requestHuman` — a checagem de "humano assumiu durante a geração" não
+   distinguia o takeover que o próprio `requestHuman` tinha acabado de
+   ativar. Nova função pura `shouldDropReplyForTakeover`
+   (`packages/shared/src/conversation-helpers.ts`), TDD. Isso afetava **todo**
+   handoff via `requestHuman`, não só este caso.
+2. **Lacuna fechada:** sem `default_handoff_assignee_id` nem
+   `handoff_notification_phone` configurados (caso da organização
+   `cf01d00d`), `requestHuman` agora cria uma tarefa de fallback (vinculada à
+   oportunidade, igual ao `createTask`) em vez de o handoff ficar invisível.
+3. **Descrição do tool ajustada:** removido "coletar/confirmar documentos" —
+   isso empurrava a Helena a chamar handoff numa pergunta informativa simples.
+   Perguntas informativas agora vão para o FAQ; `requestHuman` fica para
+   quando o cliente já quer negociar/aderir/fechar.
+4. **FAQ criada em produção, efeito imediato:** `knowledge_faqs`
+   (id `77630127-1671-41d9-9b0d-c518c1146269`), agente `3ada5b0a`, pergunta
+   "Quais documentos preciso para fazer o consórcio?".
+
+### Etapa 1 — Deploy do hotfix (2026-09-28) — concluída
+
+- Merge `fix/request-human-drops-reply-during-handoff` → `main`, fast-forward
+  limpo (`f30c033..e42a242`), sem conflito. Suíte completa do monorepo
+  rodada antes do push — verde (só a falha pré-existente e não relacionada
+  de `costs/index.test.ts`).
+- Deploy automático confirmado no painel do EasyPanel:
+  - `worker`: build 1m47s, `### Success` (18:46:33 UTC), container ativo.
+  - `api`: mesmo commit, deploy concluído; `/health` respondendo `200`,
+    estável em duas checagens com 20s de intervalo.
+  - `web`: também redeployado com o mesmo commit (não inspecionado a fundo,
+    não fazia parte do escopo pedido).
+- Confirmado no banco: nem `default_handoff_assignee_id` nem
+  `handoff_notification_phone` configurados na organização `cf01d00d` — só
+  reportado, nada preenchido (o usuário configura pelo painel).
+- **Pendente:** validação no Playground da descrição ajustada do
+  `requestHuman` (item 3 acima) — nota importante: a descrição do tool é
+  código, não passa por draft/publish, então já está valendo desde o deploy.
