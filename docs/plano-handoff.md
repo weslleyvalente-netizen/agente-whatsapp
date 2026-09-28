@@ -113,15 +113,15 @@ alterações, na branch base).
 
 ## Ajustes pós-aprovação (2026-09-28)
 
-1. **Limpeza do contato Yamaha — concluída.** Apaguei `wa_contacts` (o delete
-   fez cascade em `conversations`, `messages`, `tasks` e
-   `conversation_qualifications` — as FKs já são `ON DELETE CASCADE`).
-   Contagens confirmadas em zero para as 5 tabelas depois do delete.
-   **Pendente:** cadastrar o contato na lista de ignorados via SQL depende de
-   (a) a migration 00027 estar aplicada e (b) eu ter o telefone completo — eu
-   só exibi ele mascarado (`5511****00`) nos relatórios anteriores e nunca
-   salvei o valor completo em lugar nenhum, e a linha original já foi
-   apagada. Preciso que você me passe o número (ou eu não consigo recriá-lo).
+1. **Limpeza do contato Yamaha — concluída, ponta a ponta.** Apaguei
+   `wa_contacts` (o delete fez cascade em `conversations`, `messages`,
+   `tasks` e `conversation_qualifications` — as FKs já são `ON DELETE
+   CASCADE`); contagens confirmadas em zero para as 5 tabelas. Migrations
+   00027/00028 aplicadas em produção via `supabase db push` (2026-09-28, você
+   rodou) — tabelas `organization_ignored_contacts` e `handoff_events`
+   confirmadas existindo. Contato cadastrado na lista de ignorados: telefone
+   `551124316100`, label "Bot Yamaha Serviços Financeiros", `retention_mode
+   = no_store` (id `c7d609ec-13c6-407c-ae77-bb60c4c6777c`).
 2. **Filtro de saudação — normalização reforçada.** Agora ignora
    maiúsculas/minúsculas, acentos, pontuação e emoji nas bordas (início e
    fim) da mensagem antes de comparar — "Bom dia!", "bom dia 😊", "Boa
