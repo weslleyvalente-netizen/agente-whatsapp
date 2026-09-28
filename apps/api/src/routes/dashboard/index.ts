@@ -7,9 +7,24 @@ import {
   getRecentMessages,
   getPendingHandoffs,
   getOrganizationById,
+  getOpenTasksWithScoreInputs,
+  type OpenTaskWithScoreInputs,
 } from "@aula-agente/database";
-import { DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES } from "@aula-agente/shared";
+import {
+  DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES,
+  DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS,
+  FUNNEL_STAGES,
+  computeTaskPriorityScore,
+  resolveTaskBucket,
+  toISODateInTimeZone,
+  type Operation,
+  type WaitingOn,
+  type QualificationUrgency,
+  type TaskPriorityScoreWeights,
+} from "@aula-agente/shared";
 import { authMiddleware } from "../../middleware/auth.js";
+
+const TODAY_LIST_LIMIT = 10;
 
 const WINDOW_DAYS = 7;
 const MAX_URGENT = 20;
@@ -131,6 +146,93 @@ export function buildPendingHandoffs(rows: PendingHandoffRow[], nowMs: number, a
     .sort((a, b) => b.waitMinutes - a.waitMinutes);
 }
 
+export interface ScoredTodayTask {
+  taskId: string;
+  type: string;
+  title: string;
+  description: string;
+  reason: string | null;
+  priority: string;
+  dueDate: string;
+  contactName: string | null;
+  contactPhone: string;
+  conversationId: string | null;
+  opportunityId: string | null;
+  score: number;
+}
+
+// Fase 2, item 4: the "Hoje" view's top-10, built from raw open-task rows
+// (getOpenTasksWithScoreInputs) plus the same unanswered-handoff set the
+// "Handoffs aguardando" card already computes (buildPendingHandoffs) — no
+// duplicated handoff logic. Pure and unit-tested on its own; the route
+// handler below only wires DB calls to it.
+export function buildTodayPriorityList(
+  rows: OpenTaskWithScoreInputs[],
+  unansweredHandoffConversationIds: Set<string>,
+  todayISODate: string,
+  weights: TaskPriorityScoreWeights,
+  limit: number
+): ScoredTodayTask[] {
+  const scored = rows.map((row) => {
+    const bucket = resolveTaskBucket(row.task, todayISODate);
+    const dueDateBucket = bucket === "done" ? "upcoming" : bucket;
+
+    const opp = row.opportunity;
+    const opportunityValue = opp ? opp.credit_amount ?? opp.sale_amount ?? opp.bid_amount : null;
+
+    let stagePosition: number | null = null;
+    let stageCount: number | null = null;
+    if (opp) {
+      const stages = FUNNEL_STAGES[opp.operation as Operation] as readonly string[] | undefined;
+      const idx = stages?.indexOf(opp.stage) ?? -1;
+      if (stages && idx >= 0) {
+        stagePosition = idx;
+        stageCount = stages.length;
+      }
+    }
+
+    const anchor = opp ? opp.last_progress_at ?? opp.last_interaction_at ?? opp.created_at : null;
+    const daysStalled = anchor ? (Date.now() - new Date(anchor).getTime()) / (24 * 60 * 60 * 1000) : null;
+
+    const score = computeTaskPriorityScore(
+      {
+        priority: row.task.priority,
+        dueDateBucket,
+        opportunityValue,
+        stagePosition,
+        stageCount,
+        daysStalled,
+        waitingOn: (opp?.waiting_on as WaitingOn | null) ?? null,
+        waitingOnUntil: opp?.waiting_on_until ?? null,
+        qualificationUrgency: row.qualificationUrgency as QualificationUrgency | null,
+        hasUnansweredHandoff: row.task.conversation_id
+          ? unansweredHandoffConversationIds.has(row.task.conversation_id)
+          : false,
+        todayISODate,
+      },
+      weights
+    );
+
+    const item: ScoredTodayTask = {
+      taskId: row.task.id,
+      type: row.task.type,
+      title: row.task.title,
+      description: row.task.description,
+      reason: row.task.reason,
+      priority: row.task.priority,
+      dueDate: row.task.due_date,
+      contactName: row.contactName,
+      contactPhone: row.contactPhone,
+      conversationId: row.task.conversation_id,
+      opportunityId: row.task.opportunity_id,
+      score,
+    };
+    return item;
+  });
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
 export default async function dashboardRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
 
@@ -182,6 +284,48 @@ export default async function dashboardRoutes(app: FastifyInstance) {
           alertThresholdMinutes
         ),
       };
+    }
+  );
+
+  // Fase 2, item 4: top-10 open tasks/opportunities by priority score, with
+  // direct actions in the panel (abrir conversa / concluir / adiar — reuses
+  // the existing /inbox link and /tasks/:id/complete|reschedule endpoints,
+  // no new write endpoint needed here). Read-only, no flag — see D6 in
+  // docs/plano-fase2-triagem-tarefas.md.
+  app.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/dashboard/today",
+    async (request, reply) => {
+      const { organizationId } = request.params;
+      const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const db = getAdminClient();
+      const [rows, org] = await Promise.all([
+        getOpenTasksWithScoreInputs(db, organizationId),
+        getOrganizationById(db, organizationId),
+      ]);
+
+      let pendingHandoffRows: Awaited<ReturnType<typeof getPendingHandoffs>> = [];
+      try {
+        pendingHandoffRows = await getPendingHandoffs(db, organizationId);
+      } catch (err) {
+        request.log.error({ err, organizationId }, "Failed to load pending handoffs for today view");
+      }
+      const alertThresholdMinutes =
+        org.settings.handoff_unanswered_alert_minutes ?? DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES;
+      const handoffs = buildPendingHandoffs(pendingHandoffRows as PendingHandoffRow[], Date.now(), alertThresholdMinutes);
+      const unansweredHandoffConversationIds = new Set(
+        handoffs.filter((h) => h.unanswered).map((h) => h.conversationId)
+      );
+
+      const weights: TaskPriorityScoreWeights = org.settings.task_priority_score_weights
+        ? { ...DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, ...org.settings.task_priority_score_weights }
+        : DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS;
+
+      const todayISODate = toISODateInTimeZone(new Date());
+      const items = buildTodayPriorityList(rows, unansweredHandoffConversationIds, todayISODate, weights, TODAY_LIST_LIMIT);
+
+      return { items };
     }
   );
 }

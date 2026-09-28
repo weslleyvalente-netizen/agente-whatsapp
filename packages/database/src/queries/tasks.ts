@@ -314,6 +314,81 @@ export async function getTaskEvents(client: SupabaseClient, taskId: string) {
   return data as TaskEvent[];
 }
 
+// Fase 2, item 4: raw per-task inputs the "Hoje" view's score needs —
+// deliberately NOT the score itself (that's computeTaskPriorityScore, a
+// pure function in packages/shared) and NOT hasUnansweredHandoff (the
+// caller already has that from the dashboard's own pendingHandoffs query,
+// see buildPendingHandoffs in apps/api/src/routes/dashboard/index.ts — no
+// need to duplicate that logic here).
+export interface OpenTaskWithScoreInputs {
+  task: Task;
+  contactName: string | null;
+  contactPhone: string;
+  opportunity: {
+    operation: string;
+    stage: string;
+    credit_amount: number | null;
+    sale_amount: number | null;
+    bid_amount: number | null;
+    waiting_on: string | null;
+    waiting_on_until: string | null;
+    last_progress_at: string | null;
+    last_interaction_at: string | null;
+    created_at: string;
+  } | null;
+  qualificationUrgency: string | null;
+}
+
+export async function getOpenTasksWithScoreInputs(
+  client: SupabaseClient,
+  organizationId: string
+): Promise<OpenTaskWithScoreInputs[]> {
+  const { data, error } = await client
+    .from("tasks")
+    .select("*, wa_contacts(name, phone)")
+    .eq("organization_id", organizationId)
+    .in("status", OPEN_TASK_STATUSES);
+  if (error) throw error;
+
+  const rows = data as Array<Task & { wa_contacts: { name: string | null; phone: string } | null }>;
+
+  const opportunityIds = [...new Set(rows.map((r) => r.opportunity_id).filter((id): id is string => !!id))];
+  const conversationIds = [...new Set(rows.map((r) => r.conversation_id).filter((id): id is string => !!id))];
+
+  const opportunitiesById = new Map<string, OpenTaskWithScoreInputs["opportunity"]>();
+  if (opportunityIds.length > 0) {
+    const { data: opps, error: oppError } = await client
+      .from("opportunities")
+      .select(
+        "id, operation, stage, credit_amount, sale_amount, bid_amount, waiting_on, waiting_on_until, last_progress_at, last_interaction_at, created_at"
+      )
+      .in("id", opportunityIds);
+    if (oppError) throw oppError;
+    for (const o of opps ?? []) opportunitiesById.set(o.id, o);
+  }
+
+  const urgencyByConversationId = new Map<string, string | null>();
+  if (conversationIds.length > 0) {
+    const { data: quals, error: qualError } = await client
+      .from("conversation_qualifications")
+      .select("conversation_id, urgency")
+      .in("conversation_id", conversationIds);
+    if (qualError) throw qualError;
+    for (const q of quals ?? []) urgencyByConversationId.set(q.conversation_id, q.urgency);
+  }
+
+  return rows.map((row) => {
+    const { wa_contacts, ...task } = row;
+    return {
+      task: task as Task,
+      contactName: wa_contacts?.name ?? null,
+      contactPhone: wa_contacts?.phone ?? "",
+      opportunity: task.opportunity_id ? opportunitiesById.get(task.opportunity_id) ?? null : null,
+      qualificationUrgency: task.conversation_id ? urgencyByConversationId.get(task.conversation_id) ?? null : null,
+    };
+  });
+}
+
 export interface CreateTaskWithDedupInput {
   organization_id: string;
   contact_id: string;
