@@ -367,3 +367,66 @@ produção, que não tenho aqui).
 **Ativação (2026-09-28):** `task_auto_link_opportunity_enabled` — **ligada**
 na organização `cf01d00d`, resto de `organizations.settings` preservado.
 Demais flags seguem desligadas.
+
+## Follow-up direto da tarefa (2026-09-29) — implementado, aguardando deploy
+
+Plano completo, decisões (D1-D7) e requisitos adicionais em
+`docs/plano-followup-tarefa.md`. Branch `feat/followup-na-tarefa`.
+
+**Bug pré-existente encontrado e corrigido durante o planejamento:** toda
+mensagem enviada pelo painel (`/messages/send`) era salva com
+`evolution_message_id: null`, então o eco da Evolution (que volta pelo
+webhook como `fromMe`) nunca batia com `messageExistsByEvolutionId` e
+**duplicava a linha da mensagem** no banco — não afeta o cliente, mas polui
+o histórico. Corrigido no worker (`send-message.ts` agora captura o id real
+retornado pela Evolution e faz o backfill); o webhook já tratava
+corretamente o caso de duplicata (`if (!humanMessage) skip`), só faltava
+ter algo pra comparar. Testes de regressão nos três níveis (worker, service,
+webhook).
+
+**O que foi feito:**
+1. **Sugestão de follow-up por IA:** `generateTaskFollowupSuggestion`
+   (`packages/agent-runtime`) — mesmo padrão "nunca inventa dado" do gerador
+   do LiberaCred (Fase 2); reaproveita a descrição já gerada para tarefas
+   `libera_cred_resumption` na primeira geração; grava `ai_usage_events`
+   (fonte `task_followup_suggestion`).
+2. **Elegibilidade (D1/D2):** 13 tipos de tarefa elegíveis (fica de fora
+   `run_quote`/`update_quote`/`other`); gate por `waiting_on=scheduled_date`
+   não vencido (reaproveita `decideFollowupGate` da Fase 2); tarefa sem
+   `conversation_id` cai para a conversa aberta do contato
+   (`findOpenConversationByContact`), sem criar conversa nova.
+3. **Envio (D3/D4):** `sendPanelMessage` extraído de `/messages/send` para
+   ser reaproveitado — por padrão o envio **não ativa takeover**
+   (configurável por organização); nada é gravado em `handoff_events` (não
+   é um handoff de verdade), só `task_events` (`followup_sent`) e a nova
+   tabela `task_followup_sends`.
+4. **Proteção anti-ban (D5):** intervalo mínimo (padrão 45s) e limite diário
+   (padrão 40) contados por `evolution_instance_id`, não por organização —
+   uma org pode ter até 3 números.
+5. **Limite de regenerações (requisito 3):** `followup_regeneration_count`
+   por tarefa, configurável (padrão 5); a primeira geração nunca conta.
+6. **Contexto da Helena (requisito 2):** a seção fixa "Notas operacionais"
+   do prompt foi generalizada — cobre qualquer mensagem `human_agent` no
+   histórico (não só saudação curta), sem precisar marcar a origem da
+   mensagem.
+7. **Métricas (D7):** endpoint agregado
+   `GET /organizations/:id/followups/metrics` (total/original/editado);
+   sem página de relatório dedicada — fica para uma Fase de Medição futura.
+8. **Painel:** bloco "Follow-up" na tarefa (aba Tarefas e visão "Hoje", que
+   agora abre o mesmo painel — D6); card novo em Configurações.
+9. **Tudo desligado por padrão** (`task_followup_enabled`), mesmo padrão
+   das fases anteriores.
+
+**Migration `00030`** (não aplicada ainda): `tasks.followup_suggested_message`
+/ `followup_suggestion_generated_at` / `followup_regeneration_count` +
+tabela `task_followup_sends`. Aditiva e reversível.
+
+**Testes:** TDD em toda a lógica nova — eco duplicado (3 níveis),
+elegibilidade, throttle, geração de sugestão, `task-followup.service.ts`
+(13 testes), rotas (14 + 2 testes). Suíte completa do monorepo verde (só a
+falha pré-existente e não relacionada de `costs/index.test.ts`). `pnpm build`
+do `apps/web` verificado sem erros.
+
+**Deploy e ativação:** a preencher depois do merge, seguindo o mesmo
+runbook das fases anteriores (migration com seu OK → merge → deploy →
+confirmar saudável → flag desligada primeiro, então ativação gradual).
