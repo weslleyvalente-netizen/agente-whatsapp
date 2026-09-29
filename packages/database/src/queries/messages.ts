@@ -63,6 +63,25 @@ export async function updateMessageContent(client: SupabaseClient, id: string, c
   if (error) throw error;
 }
 
+// Backfills the real Evolution message id onto a row saved at send time
+// with evolution_message_id: null (see apps/worker/src/workers/send-message.ts).
+// Without this, the echo of our own outbound message that comes back through
+// the webhook never matches messageExistsByEvolutionId and gets duplicated.
+export async function setMessageEvolutionId(
+  client: SupabaseClient,
+  id: string,
+  evolutionMessageId: string
+) {
+  const { data, error } = await client
+    .from("messages")
+    .update({ evolution_message_id: evolutionMessageId })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Message;
+}
+
 export async function messageExistsByEvolutionId(
   client: SupabaseClient,
   evolutionMessageId: string
