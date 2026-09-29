@@ -1,8 +1,24 @@
-import { Worker } from "bullmq";
+import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
-import { getAdminClient, getInstanceById } from "@aula-agente/database";
+import { getAdminClient, getInstanceById, setMessageEvolutionId } from "@aula-agente/database";
+
+// Evolution/Baileys echoes the id it assigned back in the response's
+// key.id — capturing it here and backfilling it onto the row saved at
+// send time (which starts with evolution_message_id: null) is what lets
+// the webhook's messageExistsByEvolutionId recognize our own echo later
+// and skip re-saving it as a duplicate message.
+function extractEvolutionMessageId(response: unknown): string | null {
+  if (response && typeof response === "object" && "key" in response) {
+    const key = (response as { key?: unknown }).key;
+    if (key && typeof key === "object" && "id" in key) {
+      const id = (key as { id?: unknown }).id;
+      if (typeof id === "string") return id;
+    }
+  }
+  return null;
+}
 
 async function sendEvolutionText(instanceName: string, phone: string, text: string) {
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
@@ -67,35 +83,50 @@ async function sendEvolutionAudio(instanceName: string, phone: string, audioBase
   return response.json();
 }
 
+export async function processSendMessageJob(job: Job<SendMessageJobData> | { data: SendMessageJobData }) {
+  const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption } = job.data;
+
+  const db = getAdminClient();
+  const instance = await getInstanceById(db, instanceId);
+
+  let response: unknown;
+
+  if (audioBase64) {
+    try {
+      response = await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
+    } catch (error) {
+      // Never let a TTS/audio-send failure block the customer from getting a reply:
+      // fall back to the same text already generated for this message. Note the
+      // message row's stored media_type: "audio" becomes inaccurate when this fires
+      // (not corrected retroactively — accepted tradeoff).
+      const message = error instanceof Error ? error.message : "unknown_error";
+      console.warn(`Audio send to ${phone} failed, falling back to text: ${message}`);
+      response = await sendEvolutionText(instance.instance_name, phone, content);
+    }
+  } else if (mediaUrl) {
+    response = await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
+  } else {
+    response = await sendEvolutionText(instance.instance_name, phone, content);
+  }
+
+  const evolutionMessageId = extractEvolutionMessageId(response);
+  if (evolutionMessageId) {
+    try {
+      await setMessageEvolutionId(db, messageId, evolutionMessageId);
+    } catch (error) {
+      // Best-effort: losing the backfill only reintroduces the pre-existing
+      // duplicate-on-echo behavior for this one message, never blocks the send.
+      console.error(`Failed to backfill evolution_message_id for message ${messageId}:`, error);
+    }
+  }
+
+  console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
+}
+
 export function startSendMessageWorker() {
   const worker = new Worker<SendMessageJobData>(
     QUEUE_NAMES.SEND_MESSAGE,
-    async (job) => {
-      const { instanceId, phone, content, mediaUrl, audioBase64, caption } = job.data;
-
-      const db = getAdminClient();
-      const instance = await getInstanceById(db, instanceId);
-
-      if (audioBase64) {
-        try {
-          await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
-        } catch (error) {
-          // Never let a TTS/audio-send failure block the customer from getting a reply:
-          // fall back to the same text already generated for this message. Note the
-          // message row's stored media_type: "audio" becomes inaccurate when this fires
-          // (not corrected retroactively — accepted tradeoff).
-          const message = error instanceof Error ? error.message : "unknown_error";
-          console.warn(`Audio send to ${phone} failed, falling back to text: ${message}`);
-          await sendEvolutionText(instance.instance_name, phone, content);
-        }
-      } else if (mediaUrl) {
-        await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
-      } else {
-        await sendEvolutionText(instance.instance_name, phone, content);
-      }
-
-      console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
-    },
+    processSendMessageJob,
     {
       connection: getRedisConnection(),
       concurrency: 20,
