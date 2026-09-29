@@ -32,7 +32,7 @@ import {
   updateTaskFields,
   getOrganizationMembersDisplay,
 } from "../../services/task.service.js";
-import { resolveTaskFollowupEligibility, sendTaskFollowup } from "../../services/task-followup.service.js";
+import { resolveTaskFollowupEligibility, sendTaskFollowup, getFollowupTouchInfo } from "../../services/task-followup.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 // Confirms a row referenced by id in `table` belongs to `organizationId`,
@@ -282,6 +282,7 @@ export default async function taskRoutes(app: FastifyInstance) {
     }
 
     const { conversation } = eligibility;
+    const touchInfo = await getFollowupTouchInfo(db, conversation);
     const agent = await getAgentById(db, conversation.agent_id);
     const apiKey = await resolveApiKey(existing.organization_id, agent.provider);
 
@@ -323,6 +324,7 @@ export default async function taskRoutes(app: FastifyInstance) {
     return reply.status(200).send({
       message: suggestion.message,
       regenerationsRemaining: Math.max(maxRegenerations - newCount, 0),
+      touch: touchInfo,
     });
   });
 
@@ -350,22 +352,51 @@ export default async function taskRoutes(app: FastifyInstance) {
       message: parseResult.data.message,
       actorUserId: request.user.id,
       regenerationsBeforeSend: existing.followup_regeneration_count,
+      force: parseResult.data.force,
     });
 
     if (result.ok) {
       return reply.status(200).send({ task: result.task });
     }
 
-    if (result.reason === "not_eligible") {
-      return reply.status(400).send({ error: "Tarefa não elegível para follow-up", reason: result.detail });
+    switch (result.reason) {
+      case "not_eligible":
+        return reply.status(400).send({ error: "Tarefa não elegível para follow-up", reason: result.detail });
+      case "min_interval":
+        return reply
+          .status(429)
+          .send({ error: "Aguarde antes de enviar outro follow-up", reason: result.reason, retryAfterSeconds: result.retryAfterSeconds });
+      case "daily_limit":
+        return reply
+          .status(429)
+          .send({ error: "Limite diário de follow-ups atingido para este número", reason: result.reason });
+      case "recent_touch":
+        return reply.status(409).send({
+          error: "Já houve contato de saída recentemente",
+          reason: result.reason,
+          hoursSinceTouch: result.hoursSinceTouch,
+          canForce: true,
+        });
+      case "touch_limit_reached":
+        return reply.status(409).send({
+          error: "Limite de toques sem resposta atingido",
+          reason: result.reason,
+          touchCount: result.touchCount,
+          suggestMarkLost: true,
+          canForce: true,
+        });
+      case "unconfirmed":
+        return reply.status(409).send({
+          error: "Envio não confirmado — verifique antes de tentar de novo",
+          reason: result.reason,
+          pendingMessageId: result.pendingMessageId,
+          canForce: true,
+        });
+      case "send_failed":
+        return reply.status(502).send({ error: "Falha ao enviar o follow-up", reason: result.reason, detail: result.detail });
+      default:
+        return reply.status(500).send({ error: "Erro inesperado ao enviar o follow-up" });
     }
-    if (result.reason === "min_interval") {
-      return reply.status(429).send({ error: "Aguarde antes de enviar outro follow-up", retryAfterSeconds: result.retryAfterSeconds });
-    }
-    if (result.reason === "daily_limit") {
-      return reply.status(429).send({ error: "Limite diário de follow-ups atingido para este número" });
-    }
-    return reply.status(502).send({ error: "Falha ao enviar o follow-up", detail: result.detail });
   });
 
   app.patch<{ Params: { conversationId: string } }>(

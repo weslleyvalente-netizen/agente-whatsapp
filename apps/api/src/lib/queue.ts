@@ -31,14 +31,17 @@ export function enqueueProcessMessage(data: {
   });
 }
 
-export function enqueueSendMessage(data: {
-  conversationId: string;
-  messageId: string;
-  instanceId: string;
-  phone: string;
-  content: string;
-  organizationId: string;
-}) {
+export function enqueueSendMessage(
+  data: {
+    conversationId: string;
+    messageId: string;
+    instanceId: string;
+    phone: string;
+    content: string;
+    organizationId: string;
+  },
+  opts?: { attempts?: number }
+) {
   const queue = getSendMessageQueue();
-  return queue.add("send-message", data);
+  return queue.add("send-message", data, opts);
 }

@@ -20,6 +20,11 @@ export interface SendPanelMessageParams {
   // answering the conversation normally after a one-off follow-up.
   activateTakeover?: boolean;
   metadata?: Record<string, unknown> | null;
+  // Point 2: when true, the send-message job gets attempts: 1 — BullMQ's
+  // default retry (3 attempts) must never fire for a follow-up-from-task
+  // send, since a job whose HTTP response to us got lost after Evolution
+  // already delivered the message would otherwise resend it for real.
+  noAutoRetry?: boolean;
 }
 
 export interface SendPanelMessageResult {
@@ -91,14 +96,17 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
   const instance = await getInstanceById(db, conversation.evolution_instance_id);
   const contact = (conversation as unknown as { wa_contacts: { phone: string } }).wa_contacts;
 
-  await enqueueSendMessage({
-    conversationId: conversation.id,
-    messageId: message.id,
-    instanceId: instance.id,
-    phone: contact.phone,
-    content,
-    organizationId: conversation.organization_id,
-  });
+  await enqueueSendMessage(
+    {
+      conversationId: conversation.id,
+      messageId: message.id,
+      instanceId: instance.id,
+      phone: contact.phone,
+      content,
+      organizationId: conversation.organization_id,
+    },
+    params.noAutoRetry ? { attempts: 1 } : undefined
+  );
 
   return { message, instanceId: instance.id };
 }

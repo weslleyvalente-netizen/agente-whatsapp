@@ -66,7 +66,8 @@ describe("sendPanelMessage", () => {
     expect(handleConversationTakeover).toHaveBeenCalledWith({}, "org-1", "conv-1", "user-1");
     expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ trigger_type: "painel_manual" }));
     expect(enqueueSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ conversationId: "conv-1", messageId: "msg-1", instanceId: "instance-1" })
+      expect.objectContaining({ conversationId: "conv-1", messageId: "msg-1", instanceId: "instance-1" }),
+      undefined
     );
   });
 
@@ -135,5 +136,27 @@ describe("sendPanelMessage", () => {
     ).rejects.toThrow();
 
     expect(enqueueSendMessage).not.toHaveBeenCalled();
+  });
+
+  // Point 2: follow-up-from-task opts out of BullMQ's own retry so an
+  // ambiguous timeout can never resolve into a silent second send — the
+  // confirmation flow is the only path allowed to send again, and only
+  // with an explicit force.
+  it("passes attempts: 1 to the queue when noAutoRetry is set", async () => {
+    await sendPanelMessage({
+      conversation: baseConversation,
+      content: "Follow-up",
+      actorUserId: "user-1",
+      activateTakeover: false,
+      noAutoRetry: true,
+    });
+
+    expect(enqueueSendMessage).toHaveBeenCalledWith(expect.anything(), { attempts: 1 });
+  });
+
+  it("does not override the queue's default retry behavior when noAutoRetry is not set", async () => {
+    await sendPanelMessage({ conversation: baseConversation, content: "Oi", actorUserId: "user-1" });
+
+    expect(enqueueSendMessage).toHaveBeenCalledWith(expect.anything(), undefined);
   });
 });

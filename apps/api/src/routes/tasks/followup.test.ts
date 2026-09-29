@@ -41,11 +41,16 @@ const { resolveApiKey, generateTaskFollowupSuggestion } = vi.hoisted(() => ({
 }));
 vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey, generateTaskFollowupSuggestion }));
 
-const { resolveTaskFollowupEligibility, sendTaskFollowup } = vi.hoisted(() => ({
+const { resolveTaskFollowupEligibility, sendTaskFollowup, getFollowupTouchInfo } = vi.hoisted(() => ({
   resolveTaskFollowupEligibility: vi.fn(),
   sendTaskFollowup: vi.fn(),
+  getFollowupTouchInfo: vi.fn(),
 }));
-vi.mock("../../services/task-followup.service.js", () => ({ resolveTaskFollowupEligibility, sendTaskFollowup }));
+vi.mock("../../services/task-followup.service.js", () => ({
+  resolveTaskFollowupEligibility,
+  sendTaskFollowup,
+  getFollowupTouchInfo,
+}));
 
 vi.mock("../../middleware/auth.js", () => ({
   authMiddleware: async (request: { user?: unknown }) => {
@@ -81,6 +86,7 @@ beforeEach(() => {
   getOrganizationById.mockResolvedValue({ id: "org-1", settings: { task_followup_enabled: true } });
   getAgentById.mockResolvedValue({ id: "agent-1", provider: "anthropic", model: "claude-sonnet-5" });
   resolveTaskFollowupEligibility.mockResolvedValue({ eligible: true, conversation });
+  getFollowupTouchInfo.mockResolvedValue({ lastTouchAt: null, lastTouchBy: null, touchCount: 0 });
 });
 
 describe("POST /tasks/:taskId/followup-suggestion", () => {
@@ -94,6 +100,23 @@ describe("POST /tasks/:taskId/followup-suggestion", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ message: "Oi! Ainda pensando na proposta?", regenerationsRemaining: 5 });
     expect(incrementFollowupRegenerationCount).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  // Point 4d: the panel shows the last touch and touch count before the
+  // attendant even sends anything.
+  it("includes the touch info (last touch + count) in the response", async () => {
+    getFollowupTouchInfo.mockResolvedValue({ lastTouchAt: "2026-09-29T10:00:00Z", lastTouchBy: "agent", touchCount: 1 });
+    generateTaskFollowupSuggestion.mockResolvedValue({ message: "Oi!" });
+    setFollowupSuggestion.mockResolvedValue({});
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion" });
+
+    expect(response.json()).toMatchObject({
+      touch: { lastTouchAt: "2026-09-29T10:00:00Z", lastTouchBy: "agent", touchCount: 1 },
+    });
 
     await app.close();
   });
@@ -244,6 +267,71 @@ describe("POST /tasks/:taskId/send-followup", () => {
     });
 
     expect(response.statusCode).toBe(502);
+
+    await app.close();
+  });
+
+  // Point 4: coordination blocks — 409 with canForce, never silently retried.
+  it("returns 409 with canForce when blocked by a recent touch", async () => {
+    sendTaskFollowup.mockResolvedValue({ ok: false, reason: "recent_touch", hoursSinceTouch: 1.5 });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/tasks/task-1/send-followup",
+      payload: { message: "Oi!" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ reason: "recent_touch", hoursSinceTouch: 1.5, canForce: true });
+
+    await app.close();
+  });
+
+  it("returns 409 with suggestMarkLost when the touch limit was reached", async () => {
+    sendTaskFollowup.mockResolvedValue({ ok: false, reason: "touch_limit_reached", touchCount: 3 });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/tasks/task-1/send-followup",
+      payload: { message: "Oi!" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ reason: "touch_limit_reached", touchCount: 3, suggestMarkLost: true, canForce: true });
+
+    await app.close();
+  });
+
+  // Point 2: confirmation flow — 409, never mapped to 500/502 (not a failure).
+  it("returns 409 with canForce when the send is unconfirmed", async () => {
+    sendTaskFollowup.mockResolvedValue({ ok: false, reason: "unconfirmed", pendingMessageId: "msg-pending-1" });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/tasks/task-1/send-followup",
+      payload: { message: "Oi!" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ reason: "unconfirmed", pendingMessageId: "msg-pending-1", canForce: true });
+
+    await app.close();
+  });
+
+  it("passes force through to sendTaskFollowup", async () => {
+    sendTaskFollowup.mockResolvedValue({ ok: true, task: { ...task, status: "completed" } });
+
+    const app = await buildApp();
+    await app.inject({
+      method: "POST",
+      url: "/tasks/task-1/send-followup",
+      payload: { message: "Oi!", force: true },
+    });
+
+    expect(sendTaskFollowup).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
 
     await app.close();
   });
