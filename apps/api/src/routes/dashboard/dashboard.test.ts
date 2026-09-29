@@ -173,6 +173,7 @@ describe("buildTodayPriorityList (visão \"Hoje\" — Fase 2, item 4)", () => {
         followup_suggested_message: null,
         followup_suggestion_generated_at: null,
         followup_regeneration_count: 0,
+        followup_pending_message_id: null,
       },
       contactName: "Ana",
       contactPhone: "5511999990000",

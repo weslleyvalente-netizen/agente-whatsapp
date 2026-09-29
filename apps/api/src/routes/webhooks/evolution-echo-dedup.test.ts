@@ -19,6 +19,10 @@ vi.mock("@aula-agente/database", () => ({
   getIgnoredContact: (...args: unknown[]) => getIgnoredContact(...args),
   createHandoffEvent: (...args: unknown[]) => createHandoffEvent(...args),
   getOrganizationById: (...args: unknown[]) => getOrganizationById(...args),
+  // The echo race guard (evolution-echo-race.test.ts covers it directly) —
+  // no pending candidate here, so it always falls through to saveMessage.
+  findPendingOutboundMessages: async () => [],
+  setMessageEvolutionId: async () => undefined,
 }));
 
 const ensureConversation = vi.fn();
