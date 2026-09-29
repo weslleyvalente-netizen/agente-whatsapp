@@ -83,6 +83,11 @@ export interface OrganizationSettings {
   task_followup_daily_limit?: number;
   // Limite de vezes que "Gerar outra" pode ser usado numa mesma tarefa.
   task_followup_max_regenerations?: number;
+  // Coordenação com a cadência automática de 1h/23h (Helena) — ver
+  // packages/shared/src/task-followup-coordination.ts. Ausente usa
+  // DEFAULT_TASK_FOLLOWUP_CONFIG.
+  task_followup_min_hours_since_last_touch?: number;
+  task_followup_max_touches_without_reply?: number;
 }
 
 export interface OrganizationMember {

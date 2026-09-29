@@ -133,6 +133,9 @@ export const DEFAULT_TASK_FOLLOWUP_CONFIG = {
   daily_limit: 40,
   max_regenerations: 5,
   takeover_on_send: false,
+  // Coordination with the automatic 1h/23h cadence (point 4).
+  min_hours_since_last_touch: 4,
+  max_touches_without_reply: 3,
 };
 
 export const HANDOFF_TRIGGER_TYPES = [

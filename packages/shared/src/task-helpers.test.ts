@@ -8,6 +8,7 @@ import {
   computeTaskSummary,
   decideFollowupStage,
   decideFollowupGate,
+  shouldConsiderAutomaticFollowup,
   shouldFlagStalledNegotiation,
   isAwaitingCustomerResolved,
   resolveOpportunityAutoLink,
@@ -332,5 +333,30 @@ describe("resolveOpportunityAutoLink", () => {
 
   it("does not link when the contact has more than one open opportunity — ambiguous, don't guess", () => {
     expect(resolveOpportunityAutoLink(["opp-1", "opp-2"])).toBeNull();
+  });
+});
+
+describe("shouldConsiderAutomaticFollowup", () => {
+  // Contract that lets a follow-up sent from a Task end the automatic
+  // 1h/23h cadence for that conversation: stale-conversation-followup.ts's
+  // tick only fires when the conversation's own latest message is Helena's
+  // (role "agent") — any human-authored message (manual inbox reply, or a
+  // follow-up sent from a Task, both saved as role "human_agent") already
+  // stops it being picked up on the next 15-minute tick. This just names
+  // and tests that existing precondition so it can't silently regress.
+  it("considers the automatic follow-up only when the latest message is the AI's own (role agent)", () => {
+    expect(shouldConsiderAutomaticFollowup("agent")).toBe(true);
+  });
+
+  it("does not consider it when the latest message is a human/task follow-up (role human_agent)", () => {
+    expect(shouldConsiderAutomaticFollowup("human_agent")).toBe(false);
+  });
+
+  it("does not consider it when the latest message is from the customer", () => {
+    expect(shouldConsiderAutomaticFollowup("contact")).toBe(false);
+  });
+
+  it("does not consider it when there is no message yet", () => {
+    expect(shouldConsiderAutomaticFollowup(null)).toBe(false);
   });
 });

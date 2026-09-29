@@ -5,6 +5,7 @@ import {
   DEFAULT_TASK_RULES,
   decideFollowupStage,
   decideFollowupGate,
+  shouldConsiderAutomaticFollowup,
   shouldFlagStalledNegotiation,
   isWithinBusinessHours,
   toISODateInTimeZone,
@@ -242,7 +243,7 @@ export function startStaleConversationFollowupWorker() {
               // last message tells us whether Helena is the one waiting.
               const lastMessages = await getRecentMessages(db, conversation.id, 1);
               const lastMessage = lastMessages[0];
-              if (!lastMessage || lastMessage.role !== "agent") continue;
+              if (!shouldConsiderAutomaticFollowup(lastMessage?.role ?? null)) continue;
 
               // Correction #2: anchor the two windows to when the customer
               // actually went quiet, not to last_message_at (which Helena's
@@ -372,7 +373,7 @@ export function startStaleConversationFollowupWorker() {
 
                 const latestMessages = await getRecentMessages(db, conversation.id, 1);
                 const latestMessage = latestMessages[0];
-                if (!latestMessage || latestMessage.role !== "agent") continue;
+                if (!shouldConsiderAutomaticFollowup(latestMessage?.role ?? null)) continue;
 
                 const phone = fullConversation.wa_contacts?.phone;
                 if (!phone) {

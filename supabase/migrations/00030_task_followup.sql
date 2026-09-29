@@ -1,7 +1,11 @@
 ALTER TABLE tasks
   ADD COLUMN followup_suggested_message text,
   ADD COLUMN followup_suggestion_generated_at timestamptz,
-  ADD COLUMN followup_regeneration_count integer NOT NULL DEFAULT 0;
+  ADD COLUMN followup_regeneration_count integer NOT NULL DEFAULT 0,
+  -- Points to a `messages` row with evolution_message_id still NULL while a
+  -- follow-up send is in flight/unconfirmed. NULL means no pending send.
+  -- See task-followup.service.ts's confirmation flow.
+  ADD COLUMN followup_pending_message_id uuid REFERENCES messages(id) ON DELETE SET NULL;
 
 CREATE TABLE task_followup_sends (
   id                          uuid PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
