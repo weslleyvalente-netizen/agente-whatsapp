@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { createModel, extractTokenUsage } from "@aula-agente/agent-runtime";
+import { createModel } from "./agent-runner.js";
+import { extractTokenUsage } from "./token-usage.js";
 import { recordAiUsageEvent, getAdminClient } from "@aula-agente/database";
 import type { LLMProvider, TaskType } from "@aula-agente/shared";
 

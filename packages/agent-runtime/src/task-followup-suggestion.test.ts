@@ -14,7 +14,8 @@ const { generateObject, createModel, extractTokenUsage, recordAiUsageEvent, getA
 }));
 
 vi.mock("ai", () => ({ generateObject }));
-vi.mock("@aula-agente/agent-runtime", () => ({ createModel, extractTokenUsage }));
+vi.mock("./agent-runner.js", () => ({ createModel }));
+vi.mock("./token-usage.js", () => ({ extractTokenUsage }));
 vi.mock("@aula-agente/database", () => ({ recordAiUsageEvent, getAdminClient }));
 
 import {

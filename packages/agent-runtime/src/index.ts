@@ -8,3 +8,10 @@ export { createSendVehiclePhotoTool } from "./tools/send-vehicle-photo.js";
 export { createCreateTaskTool } from "./tools/create-task.js";
 export { resolveApiKey, resolveElevenLabsApiKey } from "./vault.js";
 export { extractTokenUsage, type TokenUsage } from "./token-usage.js";
+export {
+  generateTaskFollowupSuggestion,
+  buildTaskFollowupSystemPrompt,
+  type GenerateTaskFollowupSuggestionParams,
+  type TaskFollowupSuggestionResult,
+  type TaskFollowupOpportunityContext,
+} from "./task-followup-suggestion.js";
