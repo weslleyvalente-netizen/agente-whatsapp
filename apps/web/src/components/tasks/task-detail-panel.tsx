@@ -165,7 +165,21 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const [followupLoading, setFollowupLoading] = useState(false);
   const [followupText, setFollowupText] = useState("");
   const [regenerationsRemaining, setRegenerationsRemaining] = useState<number | null>(null);
+  const [followupTouch, setFollowupTouch] = useState<{
+    lastTouchAt: string | null;
+    lastTouchBy: "agent" | "human_agent" | null;
+    touchCount: number;
+  } | null>(null);
   const [followupError, setFollowupError] = useState<string | null>(null);
+  // Set when the last send attempt came back with canForce (recent_touch,
+  // touch_limit_reached, or unconfirmed) — the panel then shows a "confirmar
+  // mesmo assim" button with an explicit duplicate-risk warning instead of
+  // silently retrying.
+  const [followupBlock, setFollowupBlock] = useState<{
+    reason: string;
+    message: string;
+    suggestMarkLost?: boolean;
+  } | null>(null);
   const [sending, setSending] = useState(false);
 
   const fetchDetails = useCallback(async () => {
@@ -192,6 +206,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       const data = await apiFetch(`/tasks/${taskId}/followup-suggestion`, { method: "POST" });
       setFollowupText(data.message);
       setRegenerationsRemaining(data.regenerationsRemaining);
+      setFollowupTouch(data.touch ?? null);
       setFollowupUnavailable(false);
     } catch {
       // Backend already validated eligibility (type/conversation/date gate)
@@ -213,22 +228,37 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details?.task.status]);
 
-  const handleSendFollowup = async () => {
+  const handleSendFollowup = async (force = false) => {
     if (!details?.customer) return;
     const who = details.customer.name || formatPhone(details.customer.phone);
-    if (!confirm(`Enviar esta mensagem para ${who}?\n\n${followupText}`)) return;
+    if (!force && !confirm(`Enviar esta mensagem para ${who}?\n\n${followupText}`)) return;
 
     setSending(true);
     setFollowupError(null);
+    setFollowupBlock(null);
     try {
       await apiFetch(`/tasks/${taskId}/send-followup`, {
         method: "POST",
-        body: JSON.stringify({ message: followupText }),
+        body: JSON.stringify({ message: followupText, ...(force ? { force: true } : {}) }),
       });
       onTaskChanged();
       await fetchDetails();
     } catch (err) {
-      setFollowupError(err instanceof Error ? err.message : "Erro ao enviar o follow-up");
+      const body = (err as { body?: { reason?: string; canForce?: boolean; suggestMarkLost?: boolean; hoursSinceTouch?: number; touchCount?: number } })?.body;
+      if (body?.canForce) {
+        const messageByReason: Record<string, string> = {
+          recent_touch: `Já houve contato de saída há ${body.hoursSinceTouch?.toFixed(1)}h. Enviar mesmo assim pode soar repetitivo para o cliente.`,
+          touch_limit_reached: `Já foram ${body.touchCount} tentativas de contato sem resposta. Considere marcar a oportunidade como perdida (motivo: sem resposta) em vez de tentar de novo.`,
+          unconfirmed: "O envio anterior não foi confirmado — pode já ter chegado ao cliente. Enviar de novo agora pode duplicar a mensagem.",
+        };
+        setFollowupBlock({
+          reason: body.reason ?? "blocked",
+          message: messageByReason[body.reason ?? ""] ?? "Envio bloqueado.",
+          suggestMarkLost: body.suggestMarkLost,
+        });
+      } else {
+        setFollowupError(err instanceof Error ? err.message : "Erro ao enviar o follow-up");
+      }
     } finally {
       setSending(false);
     }
@@ -383,6 +413,14 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
             {isOpenTask && !followupUnavailable && (
               <div className="space-y-2 rounded-md border p-3">
                 <p className="text-sm font-medium">Follow-up</p>
+                {followupTouch && (
+                  <p className="text-xs text-muted-foreground">
+                    {followupTouch.lastTouchAt
+                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "Helena" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
+                      : "Nenhum toque pendente — o cliente respondeu por último. "}
+                    {followupTouch.touchCount} toque(s) sem resposta.
+                  </p>
+                )}
                 {followupLoading && !followupText && (
                   <p className="text-sm text-muted-foreground">Gerando sugestão...</p>
                 )}
@@ -395,8 +433,21 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       disabled={sending}
                     />
                     {followupError && <p className="text-sm text-destructive">{followupError}</p>}
+                    {followupBlock && (
+                      <div className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2">
+                        <p className="text-sm">{followupBlock.message}</p>
+                        {followupBlock.suggestMarkLost && (
+                          <p className="text-xs text-muted-foreground">
+                            Considere marcar a oportunidade como perdida (motivo: sem resposta) em vez de insistir.
+                          </p>
+                        )}
+                        <Button size="sm" variant="destructive" disabled={sending} onClick={() => handleSendFollowup(true)}>
+                          Confirmar envio mesmo assim
+                        </Button>
+                      </div>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button size="sm" onClick={handleSendFollowup} disabled={sending || !followupText.trim()}>
+                      <Button size="sm" onClick={() => handleSendFollowup()} disabled={sending || !followupText.trim()}>
                         {sending ? "Enviando..." : "Enviar e concluir"}
                       </Button>
                       <Button
