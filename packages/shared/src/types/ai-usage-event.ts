@@ -1,7 +1,12 @@
 // LLM calls that don't produce a row in `messages` — Playground and Trainer
 // turns, per-image description calls, and config-import suggestions — but
 // still cost real money on the same Anthropic API key.
-export type AiUsageSource = "playground" | "trainer" | "image_description" | "import_suggestion";
+export type AiUsageSource =
+  | "playground"
+  | "trainer"
+  | "image_description"
+  | "import_suggestion"
+  | "task_followup_suggestion";
 
 export interface AiUsageEvent {
   id: string;

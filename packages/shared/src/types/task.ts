@@ -29,6 +29,13 @@ export interface Task {
   created_at: string;
   updated_at: string;
   consolidated_pendencies: TaskPendency[];
+  // Follow-up-from-task (see task-followup-eligibility.ts /
+  // task-followup-throttle.ts): the AI-suggested message, kept on the task
+  // so opening it again doesn't regenerate for free, and how many times
+  // "Gerar outra" has been used against this task's configured cap.
+  followup_suggested_message: string | null;
+  followup_suggestion_generated_at: string | null;
+  followup_regeneration_count: number;
 }
 
 // One pending item folded into a consolidated task (Fase 2, item 2) — a
@@ -63,7 +70,8 @@ export type TaskEventType =
   | "consolidated_pendency_resolved"
   | "libera_cred_resumption_created"
   | "libera_cred_resumption_escalated"
-  | "libera_cred_resumption_suggest_lost";
+  | "libera_cred_resumption_suggest_lost"
+  | "followup_sent";
 
 export interface TaskEvent {
   id: string;

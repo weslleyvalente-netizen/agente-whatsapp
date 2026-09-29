@@ -207,11 +207,22 @@ describe("compileSystemPrompt", () => {
   it("always includes a fixed operational note about not repeating a filtered human greeting, regardless of org config", () => {
     const result = compileSystemPrompt(baseConfig());
     expect(result).toContain("# Notas operacionais");
-    expect(result.toLowerCase()).toContain("não repita a saudação");
+    expect(result.toLowerCase()).toContain("saudação");
+    expect(result.toLowerCase()).toContain("não cumprimente de novo");
   });
 
   it("appends the operational notes section after every configured section", () => {
     const result = compileSystemPrompt(baseConfig({ playbook: { script_atendimento: "1. Identificar necessidade" } }));
     expect(result.indexOf("# Notas operacionais")).toBeGreaterThan(result.indexOf("Script de atendimento"));
+  });
+
+  // Follow-up direto da tarefa: a mensagem que a atendente manda pela tarefa
+  // chega no histórico como um turno human_agent igual a qualquer outro —
+  // a regra fixa precisa cobrir esse caso também, não só a saudação curta
+  // original, sem precisar marcar a origem da mensagem.
+  it("generalizes the operational note to any human_agent message, not just short greetings", () => {
+    const result = compileSystemPrompt(baseConfig());
+    expect(result.toLowerCase()).toContain("não é uma instrução para você");
+    expect(result.toLowerCase()).toContain("continue de onde o atendimento parou");
   });
 });

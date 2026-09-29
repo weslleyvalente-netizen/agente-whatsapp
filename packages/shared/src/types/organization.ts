@@ -68,6 +68,21 @@ export interface OrganizationSettings {
   // item 5(c): máximo de tarefas de retomada NOVAS criadas por dia (não
   // conta escalonamentos de tarefas já existentes).
   libera_cred_resumption_daily_limit?: number;
+
+  // Follow-up direto da tarefa — todas `undefined`/`false` por padrão,
+  // mesmo padrão de rollout das fases anteriores.
+  // Chave mestra: sem ela ligada, as rotas de sugestão/envio recusam.
+  task_followup_enabled?: boolean;
+  // Por padrão, enviar um follow-up NÃO ativa is_human_takeover (a Helena
+  // continua respondendo normalmente). A organização pode ligar para exigir
+  // handoff humano depois de qualquer follow-up manual.
+  task_followup_takeover_on_send?: boolean;
+  // Anti-ban: contados por evolution_instance_id, não por organização — ver
+  // task-followup-throttle.ts. Ausente usa DEFAULT_TASK_FOLLOWUP_CONFIG.
+  task_followup_min_interval_seconds?: number;
+  task_followup_daily_limit?: number;
+  // Limite de vezes que "Gerar outra" pode ser usado numa mesma tarefa.
+  task_followup_max_regenerations?: number;
 }
 
 export interface OrganizationMember {

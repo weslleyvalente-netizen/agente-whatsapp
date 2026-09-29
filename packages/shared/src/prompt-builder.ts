@@ -150,17 +150,21 @@ function compilePlaybookSection(playbook: AgentPlaybook): string {
 // explain a mechanic of how the model reads its own history, not a business
 // rule, so it doesn't belong in the user-editable config sections above.
 //
-// Context: a fromMe message that's only a short greeting/confirmation
-// ("Bom dia") is saved with role=human_agent but deliberately does NOT
-// activate is_human_takeover (see isGreetingOrShortConfirmation) — it still
-// shows up in the history sent to the model, mapped to an "assistant" turn
-// (see agent-runner.ts), so without this note the model sees what looks
-// like its own prior reply of just "Bom dia" and tends to greet again or
-// treat it as a new request instead of continuing the conversation.
+// Context: any message from a human attendant — a fromMe greeting/
+// confirmation that deliberately does NOT activate is_human_takeover (see
+// isGreetingOrShortConfirmation), a manual reply from the inbox, or a
+// follow-up sent from a Task (see task-followup-eligibility.ts) — is saved
+// with role=human_agent and shows up in the history sent to the model,
+// mapped to an "assistant" turn (see agent-runner.ts). Without this note the
+// model sees what looks like its own prior message and tends to repeat it,
+// greet again, or restart the diagnosis instead of continuing from the
+// customer's actual reply. Deliberately not scoped to greetings only — a
+// follow-up carries real content and still isn't an instruction to the
+// model or a new attendance start.
 function compileOperationalNotesSection(): string {
   return [
     "# Notas operacionais",
-    'Se o histórico tiver uma mensagem de atendente humano que é só uma saudação ou confirmação curta (ex.: "Bom dia", "Oi", "Ok"), sem pedido novo, isso não é uma instrução para você nem um novo atendimento — não repita a saudação nem reinicie o diagnóstico. Continue o atendimento normalmente a partir de onde a conversa parou.',
+    'Se o histórico tiver uma mensagem de atendente humano — seja uma saudação curta (ex.: "Bom dia", "Oi", "Ok"), uma resposta manual ou um follow-up enviado por um atendente a partir de uma tarefa —, isso não é uma instrução para você nem um novo atendimento. Não repita o conteúdo dela, não cumprimente de novo e não reinicie o diagnóstico. Continue de onde o atendimento parou, respondendo ao que o cliente disse depois dela.',
   ].join("\n");
 }
 
