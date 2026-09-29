@@ -21,6 +21,7 @@ import {
   DEFAULT_GREETING_WORDS,
   DEFAULT_GREETING_MAX_LENGTH,
   DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG,
+  DEFAULT_TASK_FOLLOWUP_CONFIG,
 } from "@aula-agente/shared";
 
 interface MemberOption {
@@ -75,6 +76,20 @@ export default function SettingsPage() {
   );
   const [savingFase2, setSavingFase2] = useState(false);
 
+  // Follow-up direto da tarefa
+  const [followupEnabled, setFollowupEnabled] = useState(false);
+  const [followupTakeoverOnSend, setFollowupTakeoverOnSend] = useState(
+    DEFAULT_TASK_FOLLOWUP_CONFIG.takeover_on_send
+  );
+  const [followupMinInterval, setFollowupMinInterval] = useState(
+    String(DEFAULT_TASK_FOLLOWUP_CONFIG.min_interval_seconds)
+  );
+  const [followupDailyLimit, setFollowupDailyLimit] = useState(String(DEFAULT_TASK_FOLLOWUP_CONFIG.daily_limit));
+  const [followupMaxRegenerations, setFollowupMaxRegenerations] = useState(
+    String(DEFAULT_TASK_FOLLOWUP_CONFIG.max_regenerations)
+  );
+  const [savingFollowup, setSavingFollowup] = useState(false);
+
   // Fase 1 — contatos ignorados
   const [ignoredContacts, setIgnoredContacts] = useState<OrganizationIgnoredContact[]>([]);
   const [newIgnoredPhone, setNewIgnoredPhone] = useState("");
@@ -123,6 +138,20 @@ export default function SettingsPage() {
     );
     setLiberaCredDailyLimit(
       String(currentOrg.settings.libera_cred_resumption_daily_limit ?? DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit)
+    );
+
+    setFollowupEnabled(currentOrg.settings.task_followup_enabled ?? false);
+    setFollowupTakeoverOnSend(
+      currentOrg.settings.task_followup_takeover_on_send ?? DEFAULT_TASK_FOLLOWUP_CONFIG.takeover_on_send
+    );
+    setFollowupMinInterval(
+      String(currentOrg.settings.task_followup_min_interval_seconds ?? DEFAULT_TASK_FOLLOWUP_CONFIG.min_interval_seconds)
+    );
+    setFollowupDailyLimit(
+      String(currentOrg.settings.task_followup_daily_limit ?? DEFAULT_TASK_FOLLOWUP_CONFIG.daily_limit)
+    );
+    setFollowupMaxRegenerations(
+      String(currentOrg.settings.task_followup_max_regenerations ?? DEFAULT_TASK_FOLLOWUP_CONFIG.max_regenerations)
     );
 
     apiFetch(`/organizations/${currentOrg.id}/members/display`)
@@ -258,6 +287,38 @@ export default function SettingsPage() {
 
     await refetch();
     setSavingFase2(false);
+  };
+
+  const handleSaveFollowupSettings = async () => {
+    if (!currentOrg) return;
+    setSavingFollowup(true);
+
+    const supabase = createClient();
+    await supabase
+      .from("organizations")
+      .update({
+        settings: {
+          ...currentOrg.settings,
+          task_followup_enabled: followupEnabled,
+          task_followup_takeover_on_send: followupTakeoverOnSend,
+          task_followup_min_interval_seconds: Math.max(
+            1,
+            Number(followupMinInterval) || DEFAULT_TASK_FOLLOWUP_CONFIG.min_interval_seconds
+          ),
+          task_followup_daily_limit: Math.max(
+            1,
+            Number(followupDailyLimit) || DEFAULT_TASK_FOLLOWUP_CONFIG.daily_limit
+          ),
+          task_followup_max_regenerations: Math.max(
+            1,
+            Number(followupMaxRegenerations) || DEFAULT_TASK_FOLLOWUP_CONFIG.max_regenerations
+          ),
+        },
+      })
+      .eq("id", currentOrg.id);
+
+    await refetch();
+    setSavingFollowup(false);
   };
 
   const handleSaveGreetingSettings = async () => {
@@ -629,6 +690,84 @@ export default function SettingsPage() {
           <Button onClick={handleSaveFase2Settings} disabled={savingFase2}>
             <Save className="mr-2 h-4 w-4" />
             {savingFase2 ? "Salvando..." : "Salvar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Follow-up direto da tarefa</CardTitle>
+          <CardDescription>
+            Deixa a atendente enviar o follow-up de uma tarefa (mensagem sugerida por IA, editável)
+            sem abrir o WhatsApp. Desligado até você ativar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="followup-enabled">Habilitar follow-up direto da tarefa</Label>
+              <p className="text-sm text-muted-foreground">
+                Mostra o bloco de envio nas tarefas elegíveis (aba Tarefas e visão "Hoje").
+              </p>
+            </div>
+            <Switch id="followup-enabled" checked={followupEnabled} onCheckedChange={setFollowupEnabled} />
+          </div>
+
+          {followupEnabled && (
+            <>
+              <div className="flex items-center justify-between border-t pt-4">
+                <div>
+                  <Label htmlFor="followup-takeover">Ativar takeover ao enviar</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Por padrão o envio não ativa takeover — a Helena continua respondendo
+                    normalmente. Ligue se quiser exigir um humano depois de qualquer follow-up.
+                  </p>
+                </div>
+                <Switch
+                  id="followup-takeover"
+                  checked={followupTakeoverOnSend}
+                  onCheckedChange={setFollowupTakeoverOnSend}
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Intervalo mínimo entre envios (segundos)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={followupMinInterval}
+                    onChange={(e) => setFollowupMinInterval(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Contado por número de WhatsApp.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Limite diário de follow-ups</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={followupDailyLimit}
+                    onChange={(e) => setFollowupDailyLimit(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Contado por número de WhatsApp.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Limite de regenerações por tarefa</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={followupMaxRegenerations}
+                    onChange={(e) => setFollowupMaxRegenerations(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">Vezes que "Gerar outra" pode ser usado.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          <Button onClick={handleSaveFollowupSettings} disabled={savingFollowup}>
+            <Save className="mr-2 h-4 w-4" />
+            {savingFollowup ? "Salvando..." : "Salvar"}
           </Button>
         </CardContent>
       </Card>

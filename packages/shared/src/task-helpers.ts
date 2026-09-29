@@ -197,6 +197,17 @@ export function resolveOpportunityAutoLink(openOpportunityIds: string[]): string
   return openOpportunityIds.length === 1 ? openOpportunityIds[0] : null;
 }
 
+// Follow-up-from-task coordination point (c): stale-conversation-followup.ts
+// only fires when the conversation's own latest message is the AI's own
+// (role "agent") — this names that precondition so both the worker and a
+// test can refer to it explicitly instead of an inline role comparison.
+// Any human-authored message (manual inbox reply or a Task follow-up, both
+// role "human_agent") ends the automatic 1h/23h cadence for that
+// conversation until the AI speaks in it again.
+export function shouldConsiderAutomaticFollowup(latestMessageRole: string | null): boolean {
+  return latestMessageRole === "agent";
+}
+
 export function decideFollowupStage(params: DecideFollowupStageParams): FollowupStageAction {
   const {
     hoursSinceCustomerReply,

@@ -53,3 +53,11 @@ export const rescheduleTaskSchema = z.object({
 export const cancelTaskSchema = z.object({
   note: z.string().max(2000).nullable().optional(),
 });
+
+export const sendTaskFollowupSchema = z.object({
+  message: z.string().min(1).max(4000),
+  // Bypasses the "already pending"/coordination guards after the attendant
+  // explicitly confirms the risk of a possible duplicate — never bypasses
+  // the anti-ban throttle. See task-followup.service.ts.
+  force: z.boolean().optional(),
+});

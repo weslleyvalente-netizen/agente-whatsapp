@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { add } = vi.hoisted(() => ({ add: vi.fn() }));
+const { add, sendAdd } = vi.hoisted(() => ({ add: vi.fn(), sendAdd: vi.fn() }));
 
 vi.mock("@aula-agente/queue", () => ({
   getProcessMessageQueue: () => ({ add }),
-  getSendMessageQueue: () => ({ add: vi.fn() }),
+  getSendMessageQueue: () => ({ add: sendAdd }),
 }));
 
-import { enqueueProcessMessage } from "./queue.js";
+import { enqueueProcessMessage, enqueueSendMessage } from "./queue.js";
+
+const sendMessageData = {
+  conversationId: "conv-1",
+  messageId: "msg-1",
+  instanceId: "instance-1",
+  phone: "5511999999999",
+  content: "Oi!",
+  organizationId: "org-1",
+};
 
 describe("enqueueProcessMessage", () => {
   beforeEach(() => {
@@ -42,5 +51,28 @@ describe("enqueueProcessMessage", () => {
 
     expect(add.mock.calls[0][2].deduplication).toEqual({ id: "conv-a", replace: true });
     expect(add.mock.calls[1][2].deduplication).toEqual({ id: "conv-b", replace: true });
+  });
+});
+
+describe("enqueueSendMessage", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("uses the queue's own default attempts (retries) when no override is given", async () => {
+    await enqueueSendMessage(sendMessageData);
+
+    expect(sendAdd).toHaveBeenCalledWith("send-message", sendMessageData, undefined);
+  });
+
+  // Point 2: a follow-up-from-task send must never auto-retry through
+  // BullMQ — a job whose HTTP response to us got lost after Evolution
+  // already delivered the message would otherwise resend it for real on
+  // retry. The confirmation flow (task-followup.service.ts) is the only
+  // path allowed to send again, and only with an explicit force.
+  it("passes attempts: 1 through when the caller opts out of auto-retry", async () => {
+    await enqueueSendMessage(sendMessageData, { attempts: 1 });
+
+    expect(sendAdd).toHaveBeenCalledWith("send-message", sendMessageData, { attempts: 1 });
   });
 });

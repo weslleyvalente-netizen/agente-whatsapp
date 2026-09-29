@@ -125,6 +125,19 @@ export const DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG = {
   escalate_after_days: 7,
 };
 
+// Used whenever an org hasn't configured its own task_followup_min_interval_seconds
+// / task_followup_daily_limit / task_followup_max_regenerations /
+// task_followup_takeover_on_send (see OrganizationSettings).
+export const DEFAULT_TASK_FOLLOWUP_CONFIG = {
+  min_interval_seconds: 45,
+  daily_limit: 40,
+  max_regenerations: 5,
+  takeover_on_send: false,
+  // Coordination with the automatic 1h/23h cadence (point 4).
+  min_hours_since_last_touch: 4,
+  max_touches_without_reply: 3,
+};
+
 export const HANDOFF_TRIGGER_TYPES = [
   "request_human",
   "painel_manual",

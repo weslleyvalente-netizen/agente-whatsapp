@@ -63,6 +63,55 @@ export async function updateMessageContent(client: SupabaseClient, id: string, c
   if (error) throw error;
 }
 
+// Backfills the real Evolution message id onto a row saved at send time
+// with evolution_message_id: null (see apps/worker/src/workers/send-message.ts).
+// Without this, the echo of our own outbound message that comes back through
+// the webhook never matches messageExistsByEvolutionId and gets duplicated.
+export async function setMessageEvolutionId(
+  client: SupabaseClient,
+  id: string,
+  evolutionMessageId: string
+) {
+  const { data, error } = await client
+    .from("messages")
+    .update({ evolution_message_id: evolutionMessageId })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Message;
+}
+
+export async function getMessageById(client: SupabaseClient, id: string) {
+  const { data, error } = await client.from("messages").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data as Message | null;
+}
+
+// Race guard for the echo-duplication fix: when the Evolution echo of one
+// of OUR OWN outbound messages (Helena's own reply, a manual panel send, or
+// a Task follow-up — any role in ["agent", "human_agent"]) arrives at the
+// webhook before the send-message worker has backfilled its real
+// evolution_message_id, it can't be matched by id yet. This returns the
+// candidate rows still pending in a recent window so the caller (see
+// matchPendingOutboundMessage in @aula-agente/shared) can pick the right
+// one instead of treating the echo as brand-new customer-facing content.
+export async function findPendingOutboundMessages(
+  client: SupabaseClient,
+  conversationId: string,
+  sinceISO: string
+) {
+  const { data, error } = await client
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .in("role", ["agent", "human_agent"])
+    .is("evolution_message_id", null)
+    .gte("created_at", sinceISO);
+  if (error) throw error;
+  return data as Message[];
+}
+
 export async function messageExistsByEvolutionId(
   client: SupabaseClient,
   evolutionMessageId: string

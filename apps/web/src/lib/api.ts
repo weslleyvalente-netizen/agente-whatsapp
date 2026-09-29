@@ -37,7 +37,16 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(formatApiError(body.error) || `API error: ${response.status}`);
+    const err = new Error(formatApiError(body.error) || `API error: ${response.status}`) as Error & {
+      status?: number;
+      body?: unknown;
+    };
+    // Some routes (e.g. send-followup's 409 outcomes) put structured fields
+    // alongside `error` — attach the parsed body and status so a caller that
+    // needs them (not just the message) can read err.body/err.status.
+    err.status = response.status;
+    err.body = body;
+    throw err;
   }
 
   if (response.status === 204) return null;

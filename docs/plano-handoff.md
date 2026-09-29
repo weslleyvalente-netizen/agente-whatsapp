@@ -367,3 +367,115 @@ produção, que não tenho aqui).
 **Ativação (2026-09-28):** `task_auto_link_opportunity_enabled` — **ligada**
 na organização `cf01d00d`, resto de `organizations.settings` preservado.
 Demais flags seguem desligadas.
+
+## Follow-up direto da tarefa (2026-09-29) — implementado, aguardando deploy
+
+Plano completo, decisões (D1-D7) e requisitos adicionais em
+`docs/plano-followup-tarefa.md`. Branch `feat/followup-na-tarefa`.
+
+**Bug pré-existente encontrado e corrigido durante o planejamento:** toda
+mensagem enviada pelo painel (`/messages/send`) era salva com
+`evolution_message_id: null`, então o eco da Evolution (que volta pelo
+webhook como `fromMe`) nunca batia com `messageExistsByEvolutionId` e
+**duplicava a linha da mensagem** no banco — não afeta o cliente, mas polui
+o histórico. Corrigido no worker (`send-message.ts` agora captura o id real
+retornado pela Evolution e faz o backfill); o webhook já tratava
+corretamente o caso de duplicata (`if (!humanMessage) skip`), só faltava
+ter algo pra comparar. Testes de regressão nos três níveis (worker, service,
+webhook).
+
+**O que foi feito:**
+1. **Sugestão de follow-up por IA:** `generateTaskFollowupSuggestion`
+   (`packages/agent-runtime`) — mesmo padrão "nunca inventa dado" do gerador
+   do LiberaCred (Fase 2); reaproveita a descrição já gerada para tarefas
+   `libera_cred_resumption` na primeira geração; grava `ai_usage_events`
+   (fonte `task_followup_suggestion`).
+2. **Elegibilidade (D1/D2):** 13 tipos de tarefa elegíveis (fica de fora
+   `run_quote`/`update_quote`/`other`); gate por `waiting_on=scheduled_date`
+   não vencido (reaproveita `decideFollowupGate` da Fase 2); tarefa sem
+   `conversation_id` cai para a conversa aberta do contato
+   (`findOpenConversationByContact`), sem criar conversa nova.
+3. **Envio (D3/D4):** `sendPanelMessage` extraído de `/messages/send` para
+   ser reaproveitado — por padrão o envio **não ativa takeover**
+   (configurável por organização); nada é gravado em `handoff_events` (não
+   é um handoff de verdade), só `task_events` (`followup_sent`) e a nova
+   tabela `task_followup_sends`.
+4. **Proteção anti-ban (D5):** intervalo mínimo (padrão 45s) e limite diário
+   (padrão 40) contados por `evolution_instance_id`, não por organização —
+   uma org pode ter até 3 números.
+5. **Limite de regenerações (requisito 3):** `followup_regeneration_count`
+   por tarefa, configurável (padrão 5); a primeira geração nunca conta.
+6. **Contexto da Helena (requisito 2):** a seção fixa "Notas operacionais"
+   do prompt foi generalizada — cobre qualquer mensagem `human_agent` no
+   histórico (não só saudação curta), sem precisar marcar a origem da
+   mensagem.
+7. **Métricas (D7):** endpoint agregado
+   `GET /organizations/:id/followups/metrics` (total/original/editado);
+   sem página de relatório dedicada — fica para uma Fase de Medição futura.
+8. **Painel:** bloco "Follow-up" na tarefa (aba Tarefas e visão "Hoje", que
+   agora abre o mesmo painel — D6); card novo em Configurações.
+9. **Tudo desligado por padrão** (`task_followup_enabled`), mesmo padrão
+   das fases anteriores.
+
+**Migration `00030`** (não aplicada ainda): `tasks.followup_suggested_message`
+/ `followup_suggestion_generated_at` / `followup_regeneration_count` /
+`followup_pending_message_id` + tabela `task_followup_sends`. Aditiva e
+reversível.
+
+**Testes:** TDD em toda a lógica nova — eco duplicado (3 níveis),
+elegibilidade, throttle, geração de sugestão, `task-followup.service.ts`,
+rotas. Suíte completa do monorepo verde (só a falha pré-existente e não
+relacionada de `costs/index.test.ts`). `pnpm build` do `apps/web`
+verificado sem erros.
+
+### Reforços de robustez (2026-09-29) — 4 pontos levantados antes do runbook
+
+1. **Corrida do eco (achado: também afeta as mensagens da própria Helena).**
+   O eco da Evolution podia chegar pelo webhook antes do backfill do
+   `evolution_message_id` — não só no follow-up da tarefa, mas em **toda**
+   mensagem de saída, inclusive as respostas normais da IA (`role=agent`,
+   salvas via `createMessage` direto em `process-message.ts` e
+   `stale-conversation-followup.ts`, fora do `saveMessage`). Sem correção,
+   o eco de uma resposta da Helena podia ser gravado como mensagem humana
+   nova e ativar takeover em cima da própria conversa da IA. Corrigido no
+   webhook (`matchPendingOutboundMessage`): casa o eco por conversa +
+   conteúdo (texto) ou conversa + `media_type` (áudio/imagem — o eco não
+   traz o texto real, só um placeholder fixo), numa janela de 2 min, mais
+   antigo primeiro em caso de empate.
+2. **Confirmação de envio.** `sendTaskFollowup` não era síncrono (erro meu
+   de design anterior) — só enfileirava e concluía a tarefa na hora, sem
+   nenhuma confirmação. Agora: `tasks.followup_pending_message_id` marca um
+   envio em voo; espera até 12s pelo backfill do `evolution_message_id`
+   (prova de que a Evolution aceitou o envio — não espera o eco, que
+   depende de mais um salto de rede). Confirmado → conclui a tarefa. Não
+   confirmado → estado "não confirmado" (nunca "falhou"), nada mais é
+   escrito. Um clique duplicado ou nova tentativa reconsulta o MESMO envio
+   pendente em vez de mandar de novo — cobre duplo clique de graça. Só
+   `force` explícito manda uma mensagem nova por cima de um pendente.
+   `enqueueSendMessage` ganhou `attempts: 1` para follow-ups da tarefa — o
+   retry automático de 3 tentativas do BullMQ (que existe hoje em
+   `/messages/send` também, não alterado por instrução sua) poderia
+   reenviar de verdade uma mensagem cuja resposta HTTP se perdeu depois de
+   já ter sido entregue.
+3. **Coordenação com a cadência automática de 1h/23h.** Confirmado em
+   produção: `followup_automatico.ativo = true` para a Helena
+   (`primeiro_followup_horas: 1`, `segundo_followup_horas: 23`). O
+   automático já se protege sozinho contra o follow-up manual (só dispara
+   quando a última mensagem da conversa é da própria Helena — extraído e
+   testado como `shouldConsiderAutomaticFollowup`). Faltava o caminho
+   inverso: antes de enviar pela tarefa, checa o último toque de saída
+   (automático ou manual) e quantos toques sem resposta já houve
+   (`task_followup_min_hours_since_last_touch`, padrão 4h;
+   `task_followup_max_touches_without_reply`, padrão 3 — ao atingir,
+   sugere marcar a oportunidade como perdida, não bloqueia
+   automaticamente). `force` ignora essas duas checagens, mas nunca o
+   limite anti-ban por instância.
+4. **Painel:** mostra o último toque (quem, há quanto tempo) e a contagem
+   antes de gerar a sugestão; estados bloqueados (`recent_touch`,
+   `touch_limit_reached`, `unconfirmed`) mostram aviso específico com botão
+   "Confirmar envio mesmo assim".
+
+**Deploy e ativação:** ver runbook completo entregue no chat — migration
+00030 pendente (confirmado: é a única), push e merge por você, verificação
+de saúde, teste manual específico do Bloco 0 (mudança no envio manual do
+painel) com plano de rollback, e ativação gradual das flags.

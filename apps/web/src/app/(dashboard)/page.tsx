@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { StatusLamp } from "@/components/ui/status-lamp";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { TASK_TYPE_LABELS } from "@aula-agente/shared";
+import { TASK_TYPE_LABELS, type TaskType, type TaskPriority } from "@aula-agente/shared";
+import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
+import type { TaskWithRelations } from "@/components/tasks/task-card";
 
 interface UrgentConversation {
   conversationId: string;
@@ -106,6 +108,7 @@ export default function HomePage() {
   // acima (endpoints diferentes, não precisa bloquear um no outro).
   const [today, setToday] = useState<TodayItem[] | null>(null);
   const [actingTaskId, setActingTaskId] = useState<string | null>(null);
+  const [followupItem, setFollowupItem] = useState<TodayItem | null>(null);
 
   const fetchToday = () => {
     if (!currentOrg) return;
@@ -151,6 +154,43 @@ export default function HomePage() {
       setActingTaskId(null);
     }
   };
+
+  // The "Hoje" widget's item shape (TodayItem) has less than a full Task —
+  // TaskDetailPanel re-fetches everything real (customer/conversation/
+  // qualification) via /tasks/:id/details itself; the `task` prop here is
+  // only read for header labels (type/priority) and the follow-up
+  // eligibility check, so the rest is filled with harmless placeholders.
+  function toPlaceholderTask(item: TodayItem): TaskWithRelations {
+    return {
+      id: item.taskId,
+      organization_id: currentOrg?.id ?? "",
+      contact_id: "",
+      conversation_id: item.conversationId,
+      opportunity_id: item.opportunityId,
+      assignee_type: null,
+      assignee_id: null,
+      type: item.type as TaskType,
+      title: item.description,
+      description: item.description,
+      ai_summary: null,
+      reason: item.reason,
+      priority: item.priority as TaskPriority,
+      status: "pending",
+      due_date: item.dueDate,
+      due_time: null,
+      created_by_type: "ai",
+      created_by_id: null,
+      completed_at: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      consolidated_pendencies: [],
+      followup_suggested_message: null,
+      followup_suggestion_generated_at: null,
+      followup_regeneration_count: 0,
+      wa_contacts: { name: item.contactName, phone: item.contactPhone },
+      conversations: null,
+    } as unknown as TaskWithRelations;
+  }
 
   if (loading) return <div>Carregando...</div>;
   if (error || !summary) return <div>Nao foi possivel carregar o resumo.</div>;
@@ -284,6 +324,14 @@ export default function HomePage() {
                       size="sm"
                       variant="outline"
                       disabled={actingTaskId === item.taskId}
+                      onClick={() => setFollowupItem(item)}
+                    >
+                      Enviar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={actingTaskId === item.taskId}
                       onClick={() => handlePostponeToday(item.taskId, 1)}
                     >
                       Adiar
@@ -339,6 +387,19 @@ export default function HomePage() {
           )}
         </CardContent>
       </Card>
+
+      {followupItem && currentOrg && (
+        <TaskDetailPanel
+          task={toPlaceholderTask(followupItem)}
+          taskId={followupItem.taskId}
+          organizationId={currentOrg.id}
+          onClose={() => setFollowupItem(null)}
+          onTaskChanged={() => {
+            fetchToday();
+            setFollowupItem(null);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getExpiredTakeovers } from "./conversations.js";
+import { getExpiredTakeovers, findOpenConversationByContact } from "./conversations.js";
 
 // Minimal fake Supabase client covering just the two `.from()` chains
 // getExpiredTakeovers issues: conversations (select + eq) and handoff_events
@@ -66,5 +66,62 @@ describe("getExpiredTakeovers", () => {
     const result = await getExpiredTakeovers(client, 30 * 60 * 1000);
 
     expect(result.map((c) => c.id)).toEqual(["conv-2"]);
+  });
+});
+
+// Task→conversation fallback for the follow-up-from-task feature (D2): a
+// task without conversation_id can still send if the contact has an open
+// conversation, regardless of which agent it's with — unlike
+// findOpenConversation, which requires a matching agent_id.
+function makeContactConversationsClient(conversations: Record<string, unknown>[]) {
+  const from = (table: string) => {
+    if (table !== "conversations") throw new Error(`unexpected table ${table}`);
+    const filters: Array<(row: Record<string, unknown>) => boolean> = [];
+    return {
+      select: () => ({
+        eq(col: string, val: unknown) {
+          filters.push((row) => row[col] === val);
+          return this;
+        },
+        in(col: string, vals: unknown[]) {
+          filters.push((row) => vals.includes(row[col]));
+          return this;
+        },
+        order: () => ({
+          limit: () => ({
+            async maybeSingle() {
+              const matches = conversations
+                .filter((row) => filters.every((f) => f(row)))
+                .sort((a, b) => ((a.created_at as string) < (b.created_at as string) ? 1 : -1));
+              return { data: matches[0] ?? null, error: null };
+            },
+          }),
+        }),
+      }),
+    };
+  };
+  return { from } as any;
+}
+
+describe("findOpenConversationByContact", () => {
+  it("returns the most recent open/waiting conversation for the contact, any agent", async () => {
+    const client = makeContactConversationsClient([
+      { id: "conv-old", contact_id: "contact-1", status: "open", created_at: "2026-01-01T00:00:00Z" },
+      { id: "conv-new", contact_id: "contact-1", status: "waiting", created_at: "2026-02-01T00:00:00Z" },
+    ]);
+
+    const result = await findOpenConversationByContact(client, "contact-1");
+
+    expect(result?.id).toBe("conv-new");
+  });
+
+  it("returns null when the contact has no open/waiting conversation", async () => {
+    const client = makeContactConversationsClient([
+      { id: "conv-closed", contact_id: "contact-1", status: "closed", created_at: "2026-01-01T00:00:00Z" },
+    ]);
+
+    const result = await findOpenConversationByContact(client, "contact-1");
+
+    expect(result).toBeNull();
   });
 });

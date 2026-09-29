@@ -60,6 +60,23 @@ export async function findOpenConversation(
   return data as Conversation | null;
 }
 
+// Task→conversation fallback for follow-up-from-task (D2): unlike
+// findOpenConversation, doesn't require a matching agent_id — a task has no
+// agent of its own, so this looks at the contact's open/waiting conversation
+// regardless of which agent is handling it.
+export async function findOpenConversationByContact(client: SupabaseClient, contactId: string) {
+  const { data, error } = await client
+    .from("conversations")
+    .select("*")
+    .eq("contact_id", contactId)
+    .in("status", ["open", "waiting"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data as Conversation | null;
+}
+
 export async function createConversation(
   client: SupabaseClient,
   conversation: Omit<Conversation, "id" | "created_at" | "updated_at">

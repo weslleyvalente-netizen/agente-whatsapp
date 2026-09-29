@@ -1,5 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { evolutionWebhookPayloadSchema, resolveGreetingFilterConfig, isGreetingOrShortConfirmation } from "@aula-agente/shared";
+import {
+  evolutionWebhookPayloadSchema,
+  resolveGreetingFilterConfig,
+  isGreetingOrShortConfirmation,
+  matchPendingOutboundMessage,
+} from "@aula-agente/shared";
 import type { GreetingFilterConfig } from "@aula-agente/shared";
 import {
   getAdminClient,
@@ -10,6 +15,8 @@ import {
   getOrganizationById,
   getOpenHandoffEvent,
   markFirstHumanReply,
+  findPendingOutboundMessages,
+  setMessageEvolutionId,
 } from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
@@ -22,6 +29,13 @@ import { syncContactToCrm } from "../../integrations/crm-sync.js";
 // message under retention_mode "minimal_record" — proves traffic still
 // arrives without storing anything the contact actually said.
 const IGNORED_CONTACT_PLACEHOLDER = "[mensagem de contato ignorado]";
+
+// Echo race guard (see matchPendingOutboundMessage): how far back to look
+// for one of OUR OWN outbound messages still waiting for its
+// evolution_message_id backfill. Generous enough to cover normal network/
+// worker latency, tight enough to not casually match an unrelated later
+// message with the same text.
+const PENDING_ECHO_MATCH_WINDOW_MS = 2 * 60 * 1000;
 
 // Pure decision extracted for testing (see evolution.test.ts): a fromMe
 // message only skips activating takeover when it's both the start of a new
@@ -220,6 +234,27 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       const durationSeconds = isIgnoredMinimalRecord ? undefined : extracted.durationSeconds;
 
       if (payload.data.key.fromMe) {
+        const db = getAdminClient();
+
+        // Echo race guard: this fromMe echo might be OUR OWN outbound
+        // message (Helena's own reply, a manual panel send, or a Task
+        // follow-up) arriving before the send-message worker backfilled its
+        // real evolution_message_id — in which case messageExistsByEvolutionId
+        // inside saveMessage below can't recognize it yet. Match it here by
+        // conversation + content/media_type within a short recent window
+        // instead, so it's treated as already-recorded (skip everything,
+        // same as an exact id match) rather than a brand-new human-initiated
+        // message that would wrongly re-activate takeover or duplicate the row.
+        if (!isIgnoredMinimalRecord) {
+          const sinceISO = new Date(Date.now() - PENDING_ECHO_MATCH_WINDOW_MS).toISOString();
+          const pendingCandidates = await findPendingOutboundMessages(db, conversation.id, sinceISO);
+          const matched = matchPendingOutboundMessage(pendingCandidates, { mediaType, content });
+          if (matched) {
+            await setMessageEvolutionId(db, matched.id, evolutionMessageId);
+            return reply.status(200).send({ ok: true, skipped: "duplicate", messageId: matched.id });
+          }
+        }
+
         // A human replied directly from the connected phone or WhatsApp Web
         // (not through our inbox) — record it and take the conversation
         // over exactly like a manual inbox reply does, so the agent stops
@@ -240,7 +275,6 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         }
 
         const isFirstTakeover = !conversation.is_human_takeover;
-        const db = getAdminClient();
 
         // A message to/from an ignored contact never activates takeover or
         // touches tasks, regardless of content — same reasoning as no_store,

@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Pencil, MoreVertical, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS } from "@aula-agente/shared";
+import { Textarea } from "@/components/ui/textarea";
+import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_FOLLOWUP_ELIGIBLE_TYPES } from "@aula-agente/shared";
 
 interface QualificationValues {
   attendance_type: string | null;
@@ -155,6 +156,32 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const [error, setError] = useState(false);
   const [forceShowGeneric, setForceShowGeneric] = useState(false);
 
+  // Follow-up direto da tarefa (docs/plano-followup-tarefa.md). The block is
+  // hidden entirely when the backend rejects it (feature off, task type not
+  // eligible, no conversation, gated by an unarrived scheduled_date) — the
+  // 400/404 from the first suggestion fetch is the real eligibility check,
+  // this client-side type check is just to avoid firing it needlessly.
+  const [followupUnavailable, setFollowupUnavailable] = useState(false);
+  const [followupLoading, setFollowupLoading] = useState(false);
+  const [followupText, setFollowupText] = useState("");
+  const [regenerationsRemaining, setRegenerationsRemaining] = useState<number | null>(null);
+  const [followupTouch, setFollowupTouch] = useState<{
+    lastTouchAt: string | null;
+    lastTouchBy: "agent" | "human_agent" | null;
+    touchCount: number;
+  } | null>(null);
+  const [followupError, setFollowupError] = useState<string | null>(null);
+  // Set when the last send attempt came back with canForce (recent_touch,
+  // touch_limit_reached, or unconfirmed) — the panel then shows a "confirmar
+  // mesmo assim" button with an explicit duplicate-risk warning instead of
+  // silently retrying.
+  const [followupBlock, setFollowupBlock] = useState<{
+    reason: string;
+    message: string;
+    suggestMarkLost?: boolean;
+  } | null>(null);
+  const [sending, setSending] = useState(false);
+
   const fetchDetails = useCallback(async () => {
     setLoading(true);
     setError(false);
@@ -171,6 +198,71 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   useEffect(() => {
     fetchDetails();
   }, [fetchDetails]);
+
+  const fetchFollowupSuggestion = useCallback(async () => {
+    setFollowupLoading(true);
+    setFollowupError(null);
+    try {
+      const data = await apiFetch(`/tasks/${taskId}/followup-suggestion`, { method: "POST" });
+      setFollowupText(data.message);
+      setRegenerationsRemaining(data.regenerationsRemaining);
+      setFollowupTouch(data.touch ?? null);
+      setFollowupUnavailable(false);
+    } catch {
+      // Backend already validated eligibility (type/conversation/date gate)
+      // or the feature is off for this org — either way, don't show the block.
+      setFollowupUnavailable(true);
+    } finally {
+      setFollowupLoading(false);
+    }
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!details) return;
+    const isOpen = details.task.status !== "completed" && details.task.status !== "cancelled";
+    if (!isOpen || !TASK_FOLLOWUP_ELIGIBLE_TYPES.includes(task.type)) {
+      setFollowupUnavailable(true);
+      return;
+    }
+    fetchFollowupSuggestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details?.task.status]);
+
+  const handleSendFollowup = async (force = false) => {
+    if (!details?.customer) return;
+    const who = details.customer.name || formatPhone(details.customer.phone);
+    if (!force && !confirm(`Enviar esta mensagem para ${who}?\n\n${followupText}`)) return;
+
+    setSending(true);
+    setFollowupError(null);
+    setFollowupBlock(null);
+    try {
+      await apiFetch(`/tasks/${taskId}/send-followup`, {
+        method: "POST",
+        body: JSON.stringify({ message: followupText, ...(force ? { force: true } : {}) }),
+      });
+      onTaskChanged();
+      await fetchDetails();
+    } catch (err) {
+      const body = (err as { body?: { reason?: string; canForce?: boolean; suggestMarkLost?: boolean; hoursSinceTouch?: number; touchCount?: number } })?.body;
+      if (body?.canForce) {
+        const messageByReason: Record<string, string> = {
+          recent_touch: `Já houve contato de saída há ${body.hoursSinceTouch?.toFixed(1)}h. Enviar mesmo assim pode soar repetitivo para o cliente.`,
+          touch_limit_reached: `Já foram ${body.touchCount} tentativas de contato sem resposta. Considere marcar a oportunidade como perdida (motivo: sem resposta) em vez de tentar de novo.`,
+          unconfirmed: "O envio anterior não foi confirmado — pode já ter chegado ao cliente. Enviar de novo agora pode duplicar a mensagem.",
+        };
+        setFollowupBlock({
+          reason: body.reason ?? "blocked",
+          message: messageByReason[body.reason ?? ""] ?? "Envio bloqueado.",
+          suggestMarkLost: body.suggestMarkLost,
+        });
+      } else {
+        setFollowupError(err instanceof Error ? err.message : "Erro ao enviar o follow-up");
+      }
+    } finally {
+      setSending(false);
+    }
+  };
 
   const handleSaveSection = async (patch: Record<string, unknown>) => {
     if (!details?.conversation) {
@@ -317,6 +409,66 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               hideTitle
               emptyFallback="Nenhum resumo disponível ainda."
             />
+
+            {isOpenTask && !followupUnavailable && (
+              <div className="space-y-2 rounded-md border p-3">
+                <p className="text-sm font-medium">Follow-up</p>
+                {followupTouch && (
+                  <p className="text-xs text-muted-foreground">
+                    {followupTouch.lastTouchAt
+                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "Helena" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
+                      : "Nenhum toque pendente — o cliente respondeu por último. "}
+                    {followupTouch.touchCount} toque(s) sem resposta.
+                  </p>
+                )}
+                {followupLoading && !followupText && (
+                  <p className="text-sm text-muted-foreground">Gerando sugestão...</p>
+                )}
+                {followupText && (
+                  <>
+                    <Textarea
+                      value={followupText}
+                      onChange={(e) => setFollowupText(e.target.value)}
+                      rows={4}
+                      disabled={sending}
+                    />
+                    {followupError && <p className="text-sm text-destructive">{followupError}</p>}
+                    {followupBlock && (
+                      <div className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-2">
+                        <p className="text-sm">{followupBlock.message}</p>
+                        {followupBlock.suggestMarkLost && (
+                          <p className="text-xs text-muted-foreground">
+                            Considere marcar a oportunidade como perdida (motivo: sem resposta) em vez de insistir.
+                          </p>
+                        )}
+                        <Button size="sm" variant="destructive" disabled={sending} onClick={() => handleSendFollowup(true)}>
+                          Confirmar envio mesmo assim
+                        </Button>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" onClick={() => handleSendFollowup()} disabled={sending || !followupText.trim()}>
+                        {sending ? "Enviando..." : "Enviar e concluir"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={sending || followupLoading || regenerationsRemaining === 0}
+                        onClick={fetchFollowupSuggestion}
+                        title={regenerationsRemaining === 0 ? "Limite de regenerações atingido" : undefined}
+                      >
+                        {followupLoading ? "Gerando..." : "Gerar outra"}
+                      </Button>
+                      {regenerationsRemaining !== null && (
+                        <span className="text-xs text-muted-foreground">
+                          {regenerationsRemaining} regeneração(ões) restante(s)
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {!hasAnyQualificationSection && !forceShowGeneric && (
               <button

@@ -8,6 +8,7 @@ import {
   getPendingHandoffs,
   getOrganizationById,
   getOpenTasksWithScoreInputs,
+  getFollowupMetrics,
   type OpenTaskWithScoreInputs,
 } from "@aula-agente/database";
 import {
@@ -326,6 +327,26 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const items = buildTodayPriorityList(rows, unansweredHandoffConversationIds, todayISODate, weights, TODAY_LIST_LIMIT);
 
       return { items };
+    }
+  );
+
+  // D7: aggregate-only metrics (total/original/edited) for the follow-up
+  // direto da tarefa feature — no dedicated report UI yet, see
+  // docs/plano-followup-tarefa.md. Response-rate breakdown is deferred to a
+  // future Fase de Medição.
+  app.get<{ Params: { organizationId: string }; Querystring: { days?: string } }>(
+    "/organizations/:organizationId/followups/metrics",
+    async (request, reply) => {
+      const { organizationId } = request.params;
+      const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const days = Number(request.query.days) > 0 ? Number(request.query.days) : 30;
+      const sinceISO = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+      const db = getAdminClient();
+      const metrics = await getFollowupMetrics(db, organizationId, sinceISO);
+      return metrics;
     }
   );
 }

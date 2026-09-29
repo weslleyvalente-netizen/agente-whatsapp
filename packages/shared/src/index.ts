@@ -13,3 +13,7 @@ export * from "./agent-config-diff.js";
 export * from "./agent-config-sections.js";
 export * from "./phone.js";
 export * from "./greeting-filter.js";
+export * from "./task-followup-eligibility.js";
+export * from "./task-followup-throttle.js";
+export * from "./task-followup-coordination.js";
+export * from "./message-echo-match.js";

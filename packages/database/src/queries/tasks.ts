@@ -43,6 +43,84 @@ export async function updateTask(client: SupabaseClient, id: string, updates: Pa
   return data as Task;
 }
 
+// Follow-up-from-task: stores the current AI suggestion on the task itself
+// so reopening it doesn't regenerate for free, and reuses task-detail's
+// description as the initial suggestion for libera_cred_resumption tasks
+// (see generateTaskFollowupSuggestion).
+export async function setFollowupSuggestion(client: SupabaseClient, id: string, message: string) {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ followup_suggested_message: message, followup_suggestion_generated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Task;
+}
+
+// Caller (task-followup.service.ts) already has the current task loaded and
+// passes newCount = current + 1 — kept as a plain setter rather than an
+// atomic increment to match the rest of this file's style.
+export async function incrementFollowupRegenerationCount(client: SupabaseClient, id: string, newCount: number) {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ followup_regeneration_count: newCount })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Task;
+}
+
+// Send-confirmation flow (point 2): non-null while a follow-up send is in
+// flight/unconfirmed, so a duplicate click or a retry after an ambiguous
+// timeout re-checks the same pending send instead of firing a new one.
+export async function setFollowupPendingMessage(
+  client: SupabaseClient,
+  id: string,
+  messageId: string | null
+) {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ followup_pending_message_id: messageId })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Task;
+}
+
+const FOLLOWUP_TOUCH_EVENT_TYPES = ["auto_followup_stage_1", "auto_followup_stage_2", "followup_sent"];
+
+// Coordination with the automatic 1h/23h cadence (point 4): counts every
+// outbound "touch" (Helena's automatic nudges + Task follow-up sends)
+// logged across ALL tasks tied to this conversation since a given time
+// (normally the customer's last reply) — task_events has no conversation_id
+// of its own, so this joins through tasks.conversation_id in two steps.
+export async function countFollowupTouchEventsForConversationSince(
+  client: SupabaseClient,
+  conversationId: string,
+  sinceISO: string
+): Promise<number> {
+  const { data: taskRows, error: taskError } = await client
+    .from("tasks")
+    .select("id")
+    .eq("conversation_id", conversationId);
+  if (taskError) throw taskError;
+
+  const taskIds = (taskRows as Array<{ id: string }>).map((t) => t.id);
+  if (taskIds.length === 0) return 0;
+
+  const { data, error } = await client
+    .from("task_events")
+    .select("id")
+    .in("task_id", taskIds)
+    .in("event_type", FOLLOWUP_TOUCH_EVENT_TYPES)
+    .gte("created_at", sinceISO);
+  if (error) throw error;
+  return (data as Array<{ id: string }>).length;
+}
+
 export async function getTaskById(client: SupabaseClient, id: string) {
   const { data, error } = await client.from("tasks").select("*").eq("id", id).single();
   if (error) throw error;
@@ -570,6 +648,10 @@ export async function createTaskWithDedup(
     created_by_type: input.created_by_type,
     created_by_id: input.created_by_id,
     consolidated_pendencies: [toPendency(input)],
+    followup_suggested_message: null,
+    followup_suggestion_generated_at: null,
+    followup_regeneration_count: 0,
+    followup_pending_message_id: null,
   });
 
   await addTaskEvent(client, {

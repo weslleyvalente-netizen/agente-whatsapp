@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createTaskWithDedup } from "./tasks.js";
+import {
+  createTaskWithDedup,
+  setFollowupSuggestion,
+  incrementFollowupRegenerationCount,
+  setFollowupPendingMessage,
+  countFollowupTouchEventsForConversationSince,
+} from "./tasks.js";
 
 // Minimal fake Supabase client covering exactly the `.from("tasks")` /
 // `.from("task_events")` chains createTaskWithDedup (and the query helpers it
@@ -234,5 +240,154 @@ describe("createTaskWithDedup", () => {
     expect(result.task.id).toBe("task-linked");
     expect(result.task.description).toBe("nova descrição");
     expect(tasks).toHaveLength(1);
+  });
+});
+
+// Minimal fake for the two simple setters below — just update().eq().select().single().
+function makeSimpleUpdateClient(seed: Row[]) {
+  const tasks: Row[] = [...seed];
+  const from = (table: string) => {
+    if (table !== "tasks") throw new Error(`unexpected table ${table}`);
+    let filterId: string | undefined;
+    let payload: Row | undefined;
+    return {
+      update(changes: Row) {
+        payload = changes;
+        return this;
+      },
+      eq(col: string, val: unknown) {
+        if (col === "id") filterId = val as string;
+        return this;
+      },
+      select: () => ({
+        async single() {
+          const row = tasks.find((t) => t.id === filterId);
+          if (!row) return { data: null, error: { message: "not found" } };
+          Object.assign(row, payload);
+          return { data: row, error: null };
+        },
+      }),
+    };
+  };
+  return { client: { from } as any, tasks };
+}
+
+describe("setFollowupSuggestion", () => {
+  it("stores the suggested message and its generation timestamp", async () => {
+    const { client, tasks } = makeSimpleUpdateClient([{ id: "task-1" }]);
+
+    const result = await setFollowupSuggestion(client, "task-1", "Oi! Vamos fechar o plano de 12x?");
+
+    expect(result.followup_suggested_message).toBe("Oi! Vamos fechar o plano de 12x?");
+    expect(typeof result.followup_suggestion_generated_at).toBe("string");
+    expect(tasks[0].followup_suggested_message).toBe("Oi! Vamos fechar o plano de 12x?");
+  });
+});
+
+describe("incrementFollowupRegenerationCount", () => {
+  it("sets the new regeneration count and returns the updated task", async () => {
+    const { client } = makeSimpleUpdateClient([{ id: "task-1", followup_regeneration_count: 2 }]);
+
+    const result = await incrementFollowupRegenerationCount(client, "task-1", 3);
+
+    expect(result.followup_regeneration_count).toBe(3);
+  });
+});
+
+describe("setFollowupPendingMessage", () => {
+  it("sets the pending message pointer", async () => {
+    const { client, tasks } = makeSimpleUpdateClient([{ id: "task-1", followup_pending_message_id: null }]);
+
+    const result = await setFollowupPendingMessage(client, "task-1", "msg-1");
+
+    expect(result.followup_pending_message_id).toBe("msg-1");
+    expect(tasks[0].followup_pending_message_id).toBe("msg-1");
+  });
+
+  it("clears the pending message pointer when passed null", async () => {
+    const { client } = makeSimpleUpdateClient([{ id: "task-1", followup_pending_message_id: "msg-1" }]);
+
+    const result = await setFollowupPendingMessage(client, "task-1", null);
+
+    expect(result.followup_pending_message_id).toBeNull();
+  });
+});
+
+// Fake for countFollowupTouchEventsForConversationSince's two-step query:
+// tasks.select("id").eq("conversation_id", ...) then
+// task_events.select("id").in("task_id", ids).in("event_type", ...).gte(...).
+function makeTouchCountClient(tasks: Row[], events: Row[]) {
+  const from = (table: string) => {
+    if (table === "tasks") {
+      const filters: Array<(row: Row) => boolean> = [];
+      const builder: any = {
+        select: () => builder,
+        eq(col: string, val: unknown) {
+          filters.push((row) => row[col] === val);
+          return builder;
+        },
+        then(resolve: (v: { data: Row[]; error: null }) => void) {
+          resolve({ data: tasks.filter((row) => filters.every((f) => f(row))), error: null });
+        },
+      };
+      return builder;
+    }
+    if (table === "task_events") {
+      const filters: Array<(row: Row) => boolean> = [];
+      const builder: any = {
+        select: () => builder,
+        in(col: string, vals: unknown[]) {
+          filters.push((row) => vals.includes(row[col]));
+          return builder;
+        },
+        gte(col: string, val: unknown) {
+          filters.push((row) => (row[col] as string) >= (val as string));
+          return builder;
+        },
+        then(resolve: (v: { data: Row[]; error: null }) => void) {
+          resolve({ data: events.filter((row) => filters.every((f) => f(row))), error: null });
+        },
+      };
+      return builder;
+    }
+    throw new Error(`unexpected table ${table}`);
+  };
+  return { from } as any;
+}
+
+describe("countFollowupTouchEventsForConversationSince", () => {
+  it("counts auto_followup and followup_sent events across every task for the conversation", async () => {
+    const client = makeTouchCountClient(
+      [
+        { id: "task-1", conversation_id: "conv-1" },
+        { id: "task-2", conversation_id: "conv-1" },
+      ],
+      [
+        { id: "e1", task_id: "task-1", event_type: "auto_followup_stage_1", created_at: "2026-09-29T10:00:00Z" },
+        { id: "e2", task_id: "task-2", event_type: "followup_sent", created_at: "2026-09-29T11:00:00Z" },
+        { id: "e3", task_id: "task-1", event_type: "created", created_at: "2026-09-29T09:00:00Z" }, // not a touch
+      ]
+    );
+
+    const count = await countFollowupTouchEventsForConversationSince(client, "conv-1", "2026-09-29T00:00:00Z");
+
+    expect(count).toBe(2);
+  });
+
+  it("excludes events before the since timestamp", async () => {
+    const client = makeTouchCountClient(
+      [{ id: "task-1", conversation_id: "conv-1" }],
+      [{ id: "e1", task_id: "task-1", event_type: "followup_sent", created_at: "2026-09-29T05:00:00Z" }]
+    );
+
+    const count = await countFollowupTouchEventsForConversationSince(client, "conv-1", "2026-09-29T06:00:00Z");
+
+    expect(count).toBe(0);
+  });
+
+  it("returns 0 when the conversation has no tasks at all", async () => {
+    const client = makeTouchCountClient([], []);
+    const count = await countFollowupTouchEventsForConversationSince(client, "conv-1", "2026-09-29T00:00:00Z");
+    expect(count).toBe(0);
   });
 });
