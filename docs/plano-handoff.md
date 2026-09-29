@@ -418,15 +418,64 @@ webhook).
    das fases anteriores.
 
 **Migration `00030`** (não aplicada ainda): `tasks.followup_suggested_message`
-/ `followup_suggestion_generated_at` / `followup_regeneration_count` +
-tabela `task_followup_sends`. Aditiva e reversível.
+/ `followup_suggestion_generated_at` / `followup_regeneration_count` /
+`followup_pending_message_id` + tabela `task_followup_sends`. Aditiva e
+reversível.
 
 **Testes:** TDD em toda a lógica nova — eco duplicado (3 níveis),
-elegibilidade, throttle, geração de sugestão, `task-followup.service.ts`
-(13 testes), rotas (14 + 2 testes). Suíte completa do monorepo verde (só a
-falha pré-existente e não relacionada de `costs/index.test.ts`). `pnpm build`
-do `apps/web` verificado sem erros.
+elegibilidade, throttle, geração de sugestão, `task-followup.service.ts`,
+rotas. Suíte completa do monorepo verde (só a falha pré-existente e não
+relacionada de `costs/index.test.ts`). `pnpm build` do `apps/web`
+verificado sem erros.
 
-**Deploy e ativação:** a preencher depois do merge, seguindo o mesmo
-runbook das fases anteriores (migration com seu OK → merge → deploy →
-confirmar saudável → flag desligada primeiro, então ativação gradual).
+### Reforços de robustez (2026-09-29) — 4 pontos levantados antes do runbook
+
+1. **Corrida do eco (achado: também afeta as mensagens da própria Helena).**
+   O eco da Evolution podia chegar pelo webhook antes do backfill do
+   `evolution_message_id` — não só no follow-up da tarefa, mas em **toda**
+   mensagem de saída, inclusive as respostas normais da IA (`role=agent`,
+   salvas via `createMessage` direto em `process-message.ts` e
+   `stale-conversation-followup.ts`, fora do `saveMessage`). Sem correção,
+   o eco de uma resposta da Helena podia ser gravado como mensagem humana
+   nova e ativar takeover em cima da própria conversa da IA. Corrigido no
+   webhook (`matchPendingOutboundMessage`): casa o eco por conversa +
+   conteúdo (texto) ou conversa + `media_type` (áudio/imagem — o eco não
+   traz o texto real, só um placeholder fixo), numa janela de 2 min, mais
+   antigo primeiro em caso de empate.
+2. **Confirmação de envio.** `sendTaskFollowup` não era síncrono (erro meu
+   de design anterior) — só enfileirava e concluía a tarefa na hora, sem
+   nenhuma confirmação. Agora: `tasks.followup_pending_message_id` marca um
+   envio em voo; espera até 12s pelo backfill do `evolution_message_id`
+   (prova de que a Evolution aceitou o envio — não espera o eco, que
+   depende de mais um salto de rede). Confirmado → conclui a tarefa. Não
+   confirmado → estado "não confirmado" (nunca "falhou"), nada mais é
+   escrito. Um clique duplicado ou nova tentativa reconsulta o MESMO envio
+   pendente em vez de mandar de novo — cobre duplo clique de graça. Só
+   `force` explícito manda uma mensagem nova por cima de um pendente.
+   `enqueueSendMessage` ganhou `attempts: 1` para follow-ups da tarefa — o
+   retry automático de 3 tentativas do BullMQ (que existe hoje em
+   `/messages/send` também, não alterado por instrução sua) poderia
+   reenviar de verdade uma mensagem cuja resposta HTTP se perdeu depois de
+   já ter sido entregue.
+3. **Coordenação com a cadência automática de 1h/23h.** Confirmado em
+   produção: `followup_automatico.ativo = true` para a Helena
+   (`primeiro_followup_horas: 1`, `segundo_followup_horas: 23`). O
+   automático já se protege sozinho contra o follow-up manual (só dispara
+   quando a última mensagem da conversa é da própria Helena — extraído e
+   testado como `shouldConsiderAutomaticFollowup`). Faltava o caminho
+   inverso: antes de enviar pela tarefa, checa o último toque de saída
+   (automático ou manual) e quantos toques sem resposta já houve
+   (`task_followup_min_hours_since_last_touch`, padrão 4h;
+   `task_followup_max_touches_without_reply`, padrão 3 — ao atingir,
+   sugere marcar a oportunidade como perdida, não bloqueia
+   automaticamente). `force` ignora essas duas checagens, mas nunca o
+   limite anti-ban por instância.
+4. **Painel:** mostra o último toque (quem, há quanto tempo) e a contagem
+   antes de gerar a sugestão; estados bloqueados (`recent_touch`,
+   `touch_limit_reached`, `unconfirmed`) mostram aviso específico com botão
+   "Confirmar envio mesmo assim".
+
+**Deploy e ativação:** ver runbook completo entregue no chat — migration
+00030 pendente (confirmado: é a única), push e merge por você, verificação
+de saúde, teste manual específico do Bloco 0 (mudança no envio manual do
+painel) com plano de rollback, e ativação gradual das flags.
