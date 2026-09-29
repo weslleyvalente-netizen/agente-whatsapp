@@ -36,6 +36,9 @@ export interface Task {
   followup_suggested_message: string | null;
   followup_suggestion_generated_at: string | null;
   followup_regeneration_count: number;
+  // Points to a `messages` row while a follow-up send is in flight/
+  // unconfirmed (see task-followup.service.ts's confirmation flow, point 2).
+  followup_pending_message_id: string | null;
 }
 
 // One pending item folded into a consolidated task (Fase 2, item 2) — a
