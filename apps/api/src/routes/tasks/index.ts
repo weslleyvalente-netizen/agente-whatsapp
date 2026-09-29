@@ -4,7 +4,9 @@ import {
   updateTaskSchema,
   rescheduleTaskSchema,
   cancelTaskSchema,
+  sendTaskFollowupSchema,
   updateConversationQualificationSchema,
+  DEFAULT_TASK_FOLLOWUP_CONFIG,
 } from "@aula-agente/shared";
 import type { SupabaseClient } from "@aula-agente/database";
 import {
@@ -15,7 +17,14 @@ import {
   getQualificationByConversationId,
   upsertConversationQualification,
   decryptCpf,
+  getOrganizationById,
+  getAgentById,
+  getOpportunityById,
+  getRecentMessages,
+  setFollowupSuggestion,
+  incrementFollowupRegenerationCount,
 } from "@aula-agente/database";
+import { resolveApiKey, generateTaskFollowupSuggestion } from "@aula-agente/agent-runtime";
 import {
   completeTask,
   cancelTask,
@@ -23,6 +32,7 @@ import {
   updateTaskFields,
   getOrganizationMembersDisplay,
 } from "../../services/task.service.js";
+import { resolveTaskFollowupEligibility, sendTaskFollowup } from "../../services/task-followup.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 // Confirms a row referenced by id in `table` belongs to `organizationId`,
@@ -240,6 +250,122 @@ export default async function taskRoutes(app: FastifyInstance) {
       parseResult.data.due_time ?? null
     );
     return task;
+  });
+
+  // Follow-up direto da tarefa (D1-D7 em docs/plano-followup-tarefa.md).
+  // Generates (or regenerates, via "Gerar outra") the AI-suggested message
+  // shown editable in the task panel. The very first generation for a task
+  // doesn't count against task_followup_max_regenerations — only an
+  // explicit regeneration (a stored suggestion already existed) does.
+  app.post<{ Params: { taskId: string } }>("/tasks/:taskId/followup-suggestion", async (request, reply) => {
+    const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    const org = await getOrganizationById(db, existing.organization_id);
+    if (!org.settings?.task_followup_enabled) {
+      return reply.status(404).send({ error: "Follow-up direto da tarefa não está habilitado" });
+    }
+
+    const eligibility = await resolveTaskFollowupEligibility(db, existing);
+    if (!eligibility.eligible) {
+      return reply.status(400).send({ error: "Tarefa não elegível para follow-up", reason: eligibility.reason });
+    }
+
+    const maxRegenerations = org.settings.task_followup_max_regenerations ?? DEFAULT_TASK_FOLLOWUP_CONFIG.max_regenerations;
+    const isRegeneration = !!existing.followup_suggested_message;
+    if (isRegeneration && existing.followup_regeneration_count >= maxRegenerations) {
+      return reply.status(429).send({ error: "Limite de regenerações atingido", regenerationsRemaining: 0 });
+    }
+
+    const { conversation } = eligibility;
+    const agent = await getAgentById(db, conversation.agent_id);
+    const apiKey = await resolveApiKey(existing.organization_id, agent.provider);
+
+    const [recentMessages, qualification] = await Promise.all([
+      getRecentMessages(db, conversation.id, 20),
+      getQualificationByConversationId(db, conversation.id).catch(() => null),
+    ]);
+    const opportunity = existing.opportunity_id ? await getOpportunityById(db, existing.opportunity_id) : null;
+
+    const suggestion = await generateTaskFollowupSuggestion({
+      organizationId: existing.organization_id,
+      agentId: agent.id,
+      provider: agent.provider,
+      model: agent.model,
+      apiKey,
+      task: { type: existing.type, description: existing.description },
+      reuseTaskDescriptionIfLiberaCred: existing.type === "libera_cred_resumption" && !isRegeneration,
+      context: {
+        recentMessages: recentMessages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })),
+        qualificationSummary: qualification?.summary ?? null,
+        opportunity: opportunity
+          ? {
+              stage: opportunity.stage ?? null,
+              creditAmount: opportunity.credit_amount ?? null,
+              saleAmount: opportunity.sale_amount ?? null,
+              bidAmount: opportunity.bid_amount ?? null,
+            }
+          : null,
+      },
+    });
+
+    await setFollowupSuggestion(db, existing.id, suggestion.message);
+
+    const newCount = isRegeneration ? existing.followup_regeneration_count + 1 : existing.followup_regeneration_count;
+    if (isRegeneration) {
+      await incrementFollowupRegenerationCount(db, existing.id, newCount);
+    }
+
+    return reply.status(200).send({
+      message: suggestion.message,
+      regenerationsRemaining: Math.max(maxRegenerations - newCount, 0),
+    });
+  });
+
+  app.post<{ Params: { taskId: string } }>("/tasks/:taskId/send-followup", async (request, reply) => {
+    const parseResult = sendTaskFollowupSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({ error: parseResult.error.issues });
+    }
+
+    const db = getAdminClient();
+    const existing = await getTaskById(db, request.params.taskId);
+    const membership = request.user.memberships.find(
+      (m) => m.organization_id === existing.organization_id
+    );
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    const org = await getOrganizationById(db, existing.organization_id);
+    if (!org.settings?.task_followup_enabled) {
+      return reply.status(404).send({ error: "Follow-up direto da tarefa não está habilitado" });
+    }
+
+    const result = await sendTaskFollowup({
+      taskId: existing.id,
+      organizationId: existing.organization_id,
+      message: parseResult.data.message,
+      actorUserId: request.user.id,
+      regenerationsBeforeSend: existing.followup_regeneration_count,
+    });
+
+    if (result.ok) {
+      return reply.status(200).send({ task: result.task });
+    }
+
+    if (result.reason === "not_eligible") {
+      return reply.status(400).send({ error: "Tarefa não elegível para follow-up", reason: result.detail });
+    }
+    if (result.reason === "min_interval") {
+      return reply.status(429).send({ error: "Aguarde antes de enviar outro follow-up", retryAfterSeconds: result.retryAfterSeconds });
+    }
+    if (result.reason === "daily_limit") {
+      return reply.status(429).send({ error: "Limite diário de follow-ups atingido para este número" });
+    }
+    return reply.status(502).send({ error: "Falha ao enviar o follow-up", detail: result.detail });
   });
 
   app.patch<{ Params: { conversationId: string } }>(
