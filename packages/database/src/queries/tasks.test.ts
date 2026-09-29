@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTaskWithDedup } from "./tasks.js";
+import { createTaskWithDedup, setFollowupSuggestion, incrementFollowupRegenerationCount } from "./tasks.js";
 
 // Minimal fake Supabase client covering exactly the `.from("tasks")` /
 // `.from("task_events")` chains createTaskWithDedup (and the query helpers it
@@ -234,5 +234,56 @@ describe("createTaskWithDedup", () => {
     expect(result.task.id).toBe("task-linked");
     expect(result.task.description).toBe("nova descrição");
     expect(tasks).toHaveLength(1);
+  });
+});
+
+// Minimal fake for the two simple setters below — just update().eq().select().single().
+function makeSimpleUpdateClient(seed: Row[]) {
+  const tasks: Row[] = [...seed];
+  const from = (table: string) => {
+    if (table !== "tasks") throw new Error(`unexpected table ${table}`);
+    let filterId: string | undefined;
+    let payload: Row | undefined;
+    return {
+      update(changes: Row) {
+        payload = changes;
+        return this;
+      },
+      eq(col: string, val: unknown) {
+        if (col === "id") filterId = val as string;
+        return this;
+      },
+      select: () => ({
+        async single() {
+          const row = tasks.find((t) => t.id === filterId);
+          if (!row) return { data: null, error: { message: "not found" } };
+          Object.assign(row, payload);
+          return { data: row, error: null };
+        },
+      }),
+    };
+  };
+  return { client: { from } as any, tasks };
+}
+
+describe("setFollowupSuggestion", () => {
+  it("stores the suggested message and its generation timestamp", async () => {
+    const { client, tasks } = makeSimpleUpdateClient([{ id: "task-1" }]);
+
+    const result = await setFollowupSuggestion(client, "task-1", "Oi! Vamos fechar o plano de 12x?");
+
+    expect(result.followup_suggested_message).toBe("Oi! Vamos fechar o plano de 12x?");
+    expect(typeof result.followup_suggestion_generated_at).toBe("string");
+    expect(tasks[0].followup_suggested_message).toBe("Oi! Vamos fechar o plano de 12x?");
+  });
+});
+
+describe("incrementFollowupRegenerationCount", () => {
+  it("sets the new regeneration count and returns the updated task", async () => {
+    const { client } = makeSimpleUpdateClient([{ id: "task-1", followup_regeneration_count: 2 }]);
+
+    const result = await incrementFollowupRegenerationCount(client, "task-1", 3);
+
+    expect(result.followup_regeneration_count).toBe(3);
   });
 });

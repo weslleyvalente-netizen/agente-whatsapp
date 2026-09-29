@@ -43,6 +43,35 @@ export async function updateTask(client: SupabaseClient, id: string, updates: Pa
   return data as Task;
 }
 
+// Follow-up-from-task: stores the current AI suggestion on the task itself
+// so reopening it doesn't regenerate for free, and reuses task-detail's
+// description as the initial suggestion for libera_cred_resumption tasks
+// (see generateTaskFollowupSuggestion).
+export async function setFollowupSuggestion(client: SupabaseClient, id: string, message: string) {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ followup_suggested_message: message, followup_suggestion_generated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Task;
+}
+
+// Caller (task-followup.service.ts) already has the current task loaded and
+// passes newCount = current + 1 — kept as a plain setter rather than an
+// atomic increment to match the rest of this file's style.
+export async function incrementFollowupRegenerationCount(client: SupabaseClient, id: string, newCount: number) {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ followup_regeneration_count: newCount })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Task;
+}
+
 export async function getTaskById(client: SupabaseClient, id: string) {
   const { data, error } = await client.from("tasks").select("*").eq("id", id).single();
   if (error) throw error;
@@ -570,6 +599,9 @@ export async function createTaskWithDedup(
     created_by_type: input.created_by_type,
     created_by_id: input.created_by_id,
     consolidated_pendencies: [toPendency(input)],
+    followup_suggested_message: null,
+    followup_suggestion_generated_at: null,
+    followup_regeneration_count: 0,
   });
 
   await addTaskEvent(client, {
