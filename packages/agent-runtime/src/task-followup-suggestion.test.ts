@@ -103,6 +103,20 @@ describe("generateTaskFollowupSuggestion", () => {
     expect(result.message.length).toBeGreaterThan(0);
   });
 
+  it("reports a cost recording failure instead of pretending the generic message was generated", async () => {
+    generateObject.mockResolvedValue({ object: { message: "Mensagem personalizada" }, usage: { inputTokens: 10, outputTokens: 5 } });
+    recordAiUsageEvent.mockRejectedValue(new Error("source check constraint"));
+    const result = await generateTaskFollowupSuggestion(baseParams);
+    expect(result.generated).toBe(false);
+  });
+
+  it("includes the prior suggestion and asks for a different approach", async () => {
+    generateObject.mockResolvedValue({ object: { message: "Outra abordagem" }, usage: {} });
+    await generateTaskFollowupSuggestion({ ...baseParams, previousMessage: "Texto anterior" });
+    expect(generateObject.mock.calls[0][0].prompt).toContain("Texto anterior");
+    expect(generateObject.mock.calls[0][0].prompt).toContain("abordagem diferente");
+  });
+
   it("falls back to a safe generic message when the model returns an empty message", async () => {
     generateObject.mockResolvedValue({
       object: { message: "" },

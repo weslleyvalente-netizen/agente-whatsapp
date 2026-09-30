@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import {
   createTaskSchema,
@@ -276,13 +277,19 @@ export default async function taskRoutes(app: FastifyInstance) {
     }
 
     const maxRegenerations = org.settings.task_followup_max_regenerations ?? DEFAULT_TASK_FOLLOWUP_CONFIG.max_regenerations;
+    const body = z.object({ regenerate: z.boolean().optional() }).safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: body.error.issues });
+    const touchInfo = await getFollowupTouchInfo(db, eligibility.conversation);
+    if (existing.followup_suggested_message && !body.data.regenerate) return reply.send({
+      message: existing.followup_suggested_message,
+      regenerationsRemaining: Math.max(maxRegenerations - existing.followup_regeneration_count, 0), touch: touchInfo,
+    });
     const isRegeneration = !!existing.followup_suggested_message;
     if (isRegeneration && existing.followup_regeneration_count >= maxRegenerations) {
       return reply.status(429).send({ error: "Limite de regenerações atingido", regenerationsRemaining: 0 });
     }
 
     const { conversation } = eligibility;
-    const touchInfo = await getFollowupTouchInfo(db, conversation);
     const agent = await getAgentById(db, conversation.agent_id);
     const apiKey = await resolveApiKey(existing.organization_id, agent.provider);
 
@@ -299,6 +306,7 @@ export default async function taskRoutes(app: FastifyInstance) {
       model: agent.model,
       apiKey,
       task: { type: existing.type, description: existing.description },
+      previousMessage: isRegeneration ? existing.followup_suggested_message ?? undefined : undefined,
       reuseTaskDescriptionIfLiberaCred: existing.type === "libera_cred_resumption" && !isRegeneration,
       context: {
         recentMessages: recentMessages.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })),
@@ -314,6 +322,10 @@ export default async function taskRoutes(app: FastifyInstance) {
       },
     });
 
+    if (suggestion.generated === false) return reply.status(503).send({
+      error: "Não foi possível gerar a sugestão. Tente novamente.", reason: "generation_failed",
+      regenerationsRemaining: Math.max(maxRegenerations - existing.followup_regeneration_count, 0),
+    });
     await setFollowupSuggestion(db, existing.id, suggestion.message);
 
     const newCount = isRegeneration ? existing.followup_regeneration_count + 1 : existing.followup_regeneration_count;

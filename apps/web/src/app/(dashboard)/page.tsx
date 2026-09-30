@@ -390,6 +390,7 @@ export default function HomePage() {
 
       {followupItem && currentOrg && (
         <TaskDetailPanel
+            key={followupItem.taskId}
           task={toPlaceholderTask(followupItem)}
           taskId={followupItem.taskId}
           organizationId={currentOrg.id}

@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildSummary } from "./index.js";
 
 describe("buildSummary", () => {
+  beforeEach(() => vi.setSystemTime(new Date("2026-08-20T12:00:00Z")));
+  afterEach(() => vi.useRealTimers());
   it("includes ai_usage_events (Playground, Trainer, image description, import suggestions) in the totals, not just real customer messages", () => {
     vi.setSystemTime(new Date("2026-08-20T12:00:00Z"));
 

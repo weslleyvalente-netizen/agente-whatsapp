@@ -128,7 +128,7 @@ describe("POST /tasks/:taskId/followup-suggestion", () => {
     incrementFollowupRegenerationCount.mockResolvedValue({});
 
     const app = await buildApp();
-    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion" });
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion", payload: { regenerate: true } });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ message: "Nova sugestão", regenerationsRemaining: 2 });
@@ -141,11 +141,44 @@ describe("POST /tasks/:taskId/followup-suggestion", () => {
     getTaskById.mockResolvedValue({ ...task, followup_suggested_message: "Sugestão antiga", followup_regeneration_count: 5 });
 
     const app = await buildApp();
-    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion" });
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion", payload: { regenerate: true } });
 
     expect(response.statusCode).toBe(429);
     expect(generateTaskFollowupSuggestion).not.toHaveBeenCalled();
 
+    await app.close();
+  });
+
+  it("reopening uses the saved suggestion even at the limit, without charging a regeneration", async () => {
+    getTaskById.mockResolvedValue({ ...task, followup_suggested_message: "Texto salvo", followup_regeneration_count: 5 });
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ message: "Texto salvo", regenerationsRemaining: 0 });
+    expect(generateTaskFollowupSuggestion).not.toHaveBeenCalled();
+    expect(incrementFollowupRegenerationCount).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("keeps the old suggestion and quota on a generation failure", async () => {
+    getTaskById.mockResolvedValue({ ...task, followup_suggested_message: "Texto anterior", followup_regeneration_count: 2 });
+    generateTaskFollowupSuggestion.mockResolvedValue({ message: "Texto padrão", generated: false });
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion", payload: { regenerate: true } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ reason: "generation_failed", regenerationsRemaining: 3 });
+    expect(setFollowupSuggestion).not.toHaveBeenCalled();
+    expect(incrementFollowupRegenerationCount).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("passes the prior suggestion when asking for a different approach", async () => {
+    getTaskById.mockResolvedValue({ ...task, followup_suggested_message: "Sugestão anterior" });
+    generateTaskFollowupSuggestion.mockResolvedValue({ message: "Nova abordagem", generated: true });
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/tasks/task-1/followup-suggestion", payload: { regenerate: true } });
+    expect(response.statusCode).toBe(200);
+    expect(generateTaskFollowupSuggestion).toHaveBeenCalledWith(expect.objectContaining({ previousMessage: "Sugestão anterior" }));
     await app.close();
   });
 

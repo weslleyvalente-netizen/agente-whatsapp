@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import {
   evolutionWebhookPayloadSchema,
+  identifyLeadOrigin,
   resolveGreetingFilterConfig,
   isGreetingOrShortConfirmation,
   matchPendingOutboundMessage,
@@ -23,6 +24,7 @@ import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
+import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
 // A placeholder saved instead of real content for an ignored contact's
@@ -232,6 +234,18 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       const content = isIgnoredMinimalRecord ? IGNORED_CONTACT_PLACEHOLDER : extracted.content;
       const mediaType = isIgnoredMinimalRecord ? null : extracted.mediaType;
       const durationSeconds = isIgnoredMinimalRecord ? undefined : extracted.durationSeconds;
+
+      if (!payload.data.key.fromMe && !isIgnoredMinimalRecord) {
+        const context = payload.data.contextInfo;
+        const message = payload.data.message as Record<string, unknown> | null | undefined;
+        const nested = message?.extendedTextMessage as { contextInfo?: { externalAdReply?: Record<string, unknown> } } | undefined;
+        const origin = identifyLeadOrigin({ text: extracted.content, ad: context?.externalAdReply ?? nested?.contextInfo?.externalAdReply });
+        try {
+          await recordLeadOrigin(getAdminClient(), organizationId, contact.id, origin);
+        } catch (err) {
+          request.log.error({ err, contactId: contact.id }, "Failed to record lead origin");
+        }
+      }
 
       if (payload.data.key.fromMe) {
         const db = getAdminClient();

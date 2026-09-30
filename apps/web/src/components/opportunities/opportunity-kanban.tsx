@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { DndContext, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
+import { useRef, useState } from "react";
+import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
 import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS } from "@aula-agente/shared";
 import type { Opportunity, Operation } from "@aula-agente/shared";
@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Pencil } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
+import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
 
 // Contact name/phone is embedded server-side (getOpportunitiesByOrganization
@@ -22,11 +23,13 @@ export type OpportunityWithContact = Opportunity & {
 function OpportunityCard({
   opportunity,
   onEdit,
+  onOpen,
 }: {
   opportunity: OpportunityWithContact;
   onEdit: (opportunity: OpportunityWithContact) => void;
+  onOpen: (opportunity: OpportunityWithContact) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: opportunity.id });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: opportunity.id });
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
@@ -34,7 +37,7 @@ function OpportunityCard({
 
   return (
     <div className="mb-2">
-      <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="cursor-grab">
+      <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="cursor-grab" onClick={() => !isDragging && onOpen(opportunity)} onKeyUp={e => { if (e.key === "Enter") onOpen(opportunity); }}>
         <Card>
           <CardContent className="p-3 text-sm space-y-1">
             <div className="flex items-start justify-between gap-2">
@@ -44,7 +47,7 @@ function OpportunityCard({
                 aria-label="Editar oportunidade"
                 className="shrink-0 text-muted-foreground hover:text-foreground"
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => onEdit(opportunity)}
+                onClick={e => { e.stopPropagation(); onEdit(opportunity); }}
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
@@ -90,10 +93,12 @@ function StageColumn({
   stage,
   opportunities,
   onEdit,
+  onOpen,
 }: {
   stage: string;
   opportunities: OpportunityWithContact[];
   onEdit: (opportunity: OpportunityWithContact) => void;
+  onOpen: (opportunity: OpportunityWithContact) => void;
 }) {
   const { setNodeRef } = useDroppable({ id: stage });
   return (
@@ -104,7 +109,7 @@ function StageColumn({
         </CardHeader>
         <CardContent className="p-3 pt-0">
           {opportunities.map((o) => (
-            <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} />
+            <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} />
           ))}
         </CardContent>
       </Card>
@@ -123,9 +128,13 @@ export function OpportunityKanban({
 }) {
   const [pending, setPending] = useState<{ opportunity: OpportunityWithContact; targetStage: string } | null>(null);
   const [editing, setEditing] = useState<OpportunityWithContact | null>(null);
+  const [selected, setSelected] = useState<OpportunityWithContact | null>(null);
+  const draggedAt = useRef(0);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
   const stages = FUNNEL_STAGES[operation];
 
   function handleDragEnd(event: DragEndEvent) {
+    draggedAt.current = Date.now();
     const opportunityId = String(event.active.id);
     const targetStage = event.over?.id as string | undefined;
     if (!targetStage) return;
@@ -148,7 +157,7 @@ export function OpportunityKanban({
 
   return (
     <>
-      <DndContext onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} onDragStart={() => { draggedAt.current = Date.now(); }} onDragEnd={handleDragEnd}>
         <div className="flex gap-4 overflow-x-auto">
           {stages.map((stage) => (
             <StageColumn
@@ -156,10 +165,12 @@ export function OpportunityKanban({
               stage={stage}
               opportunities={opportunities.filter((o) => o.stage === stage)}
               onEdit={setEditing}
+              onOpen={o => { if (Date.now() - draggedAt.current > 400) setSelected(o); }}
             />
           ))}
         </div>
       </DndContext>
+      {selected && <OpportunityDetailDialog opportunity={selected} onClose={() => setSelected(null)} onChanged={onChanged}/>}
       {pending && (
         <StageChangeDialog
           open={!!pending}

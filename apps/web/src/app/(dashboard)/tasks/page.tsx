@@ -201,6 +201,7 @@ export default function TasksPage() {
         if (!selectedTask) return null;
         return (
           <TaskDetailPanel
+            key={selectedTaskId}
             task={selectedTask}
             taskId={selectedTaskId}
             organizationId={currentOrg.id}

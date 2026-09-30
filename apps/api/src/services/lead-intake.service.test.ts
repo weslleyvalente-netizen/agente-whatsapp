@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const recordLeadOrigin = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("./lead-origin.service.js", () => ({ recordLeadOrigin }));
+
 const {
   getAllOrganizations,
   getAgentsByOrganization,

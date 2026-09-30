@@ -161,6 +161,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   // eligible, no conversation, gated by an unarrived scheduled_date) — the
   // 400/404 from the first suggestion fetch is the real eligibility check,
   // this client-side type check is just to avoid firing it needlessly.
+  const [followupLoaded, setFollowupLoaded] = useState(false);
   const [followupUnavailable, setFollowupUnavailable] = useState(false);
   const [followupLoading, setFollowupLoading] = useState(false);
   const [followupText, setFollowupText] = useState("");
@@ -199,19 +200,21 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
     fetchDetails();
   }, [fetchDetails]);
 
-  const fetchFollowupSuggestion = useCallback(async () => {
+  const fetchFollowupSuggestion = useCallback(async (regenerate = false) => {
     setFollowupLoading(true);
     setFollowupError(null);
     try {
-      const data = await apiFetch(`/tasks/${taskId}/followup-suggestion`, { method: "POST" });
+      const data = await apiFetch(`/tasks/${taskId}/followup-suggestion`, { method: "POST", body: JSON.stringify({ regenerate }) });
       setFollowupText(data.message);
+      setFollowupLoaded(true);
       setRegenerationsRemaining(data.regenerationsRemaining);
       setFollowupTouch(data.touch ?? null);
       setFollowupUnavailable(false);
-    } catch {
-      // Backend already validated eligibility (type/conversation/date gate)
-      // or the feature is off for this org — either way, don't show the block.
-      setFollowupUnavailable(true);
+    } catch (error) {
+      const err = error as Error & { status?: number; body?: { regenerationsRemaining?: number } };
+      setFollowupUnavailable(err.status === 400 || err.status === 404);
+      setFollowupError(err.message);
+      if (err.body?.regenerationsRemaining !== undefined) setRegenerationsRemaining(err.body.regenerationsRemaining);
     } finally {
       setFollowupLoading(false);
     }
@@ -424,7 +427,8 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 {followupLoading && !followupText && (
                   <p className="text-sm text-muted-foreground">Gerando sugestão...</p>
                 )}
-                {followupText && (
+                {!followupText && followupError && <div className="space-y-2"><p className="text-sm text-destructive">{followupError}</p><Button size="sm" disabled={followupLoading} onClick={() => fetchFollowupSuggestion()}>Tentar novamente</Button></div>}
+                {followupLoaded && (
                   <>
                     <Textarea
                       value={followupText}
@@ -454,7 +458,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                         size="sm"
                         variant="outline"
                         disabled={sending || followupLoading || regenerationsRemaining === 0}
-                        onClick={fetchFollowupSuggestion}
+                        onClick={() => fetchFollowupSuggestion(true)}
                         title={regenerationsRemaining === 0 ? "Limite de regenerações atingido" : undefined}
                       >
                         {followupLoading ? "Gerando..." : "Gerar outra"}

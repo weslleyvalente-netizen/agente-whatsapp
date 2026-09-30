@@ -40,6 +40,7 @@ export interface GenerateTaskFollowupSuggestionParams {
   // this reuses task.description instead of a second AI call. "Gerar
   // outra" always passes false, even for this task type.
   reuseTaskDescriptionIfLiberaCred: boolean;
+  previousMessage?: string;
   context: {
     recentMessages: Array<{ role: string; content: string }>;
     qualificationSummary: string | null;
@@ -48,6 +49,7 @@ export interface GenerateTaskFollowupSuggestionParams {
 }
 
 export interface TaskFollowupSuggestionResult {
+  generated: boolean;
   message: string;
 }
 
@@ -59,6 +61,7 @@ function buildUserPrompt(params: GenerateTaskFollowupSuggestionParams): string {
     `Tipo de tarefa: ${task.type}`,
     `Descrição da tarefa: ${task.description}`,
   ];
+  if (params.previousMessage) lines.push(`Sugestão anterior: ${params.previousMessage}`, "Escreva uma abordagem diferente, sem repetir a sugestão anterior.");
   if (context.qualificationSummary) {
     lines.push(`Qualificação registrada: ${context.qualificationSummary}`);
   }
@@ -81,14 +84,13 @@ function buildUserPrompt(params: GenerateTaskFollowupSuggestionParams): string {
 }
 
 // Follow-up direto da tarefa: generates (or reuses) the AI-suggested
-// message shown editable in the task panel. Every failure mode — model
-// error, empty response — falls back to a safe generic message rather than
-// blocking the attendant from sending something.
+// message shown editable in the task panel. Failures are explicit so callers
+// preserve the previous text and do not consume a regeneration.
 export async function generateTaskFollowupSuggestion(
   params: GenerateTaskFollowupSuggestionParams
 ): Promise<TaskFollowupSuggestionResult> {
   if (params.task.type === "libera_cred_resumption" && params.reuseTaskDescriptionIfLiberaCred) {
-    return { message: params.task.description };
+    return { message: params.task.description, generated: true };
   }
 
   try {
@@ -115,9 +117,9 @@ export async function generateTaskFollowupSuggestion(
     });
 
     const message = result.object.message?.trim();
-    return { message: message || FALLBACK_MESSAGE };
+    return { message: message || FALLBACK_MESSAGE, generated: !!message };
   } catch (err) {
-    console.error("Task followup suggestion generation failed, using safe fallback:", err);
-    return { message: FALLBACK_MESSAGE };
+    console.error("Task followup suggestion generation failed:", err);
+    return { message: FALLBACK_MESSAGE, generated: false };
   }
 }

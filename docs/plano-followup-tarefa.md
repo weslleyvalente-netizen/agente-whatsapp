@@ -403,8 +403,73 @@ peça do plano que eu decidi sozinho sem te perguntar.
 **Tarefa 23: atualizar `docs/plano-handoff.md`**
 - Seção PROGRESSO com o resumo do que foi feito, igual às Fases 1/2.
 
-## Deploy e ativação (a preencher ao final da implementação)
+## Deploy e ativação — verificação em 2026-09-30
 
-Vou escrever o passo a passo completo (migration → merge → deploy → ordem
-de ativação das flags) depois que o código estiver pronto e testado,
-seguindo o mesmo formato usado nas Fases 1 e 2.
+### Estado confirmado
+
+- Merge local na main: `caf6c2d` (follow-up direto da tarefa).
+- EasyPanel: último deploy desse merge com `Success` em API, worker e web
+  (29/09: worker 18:43:00, API 18:43:11, web 18:44:36, horário de Brasília).
+- API `/health`: HTTP 200 em 30/09 às 18:01.
+- Banco às 18:05: mensagem de cliente às 18:05:10, resposta `agent` às
+  18:05:31 e mensagem `human_agent` às 18:04:40, com identificadores Evolution.
+  Evidência de recebimento e processamento; não substitui teste funcional dirigido.
+- Quatro colunas novas de `tasks` e tabela `task_followup_sends` acessíveis.
+  Isso confirma a estrutura, não o registro de 00030 no histórico de migrations;
+  a aplicação anterior foi feita pelo SQL Editor.
+- `task_followup_enabled` ausente: recurso desligado.
+- `task_followup_takeover_on_send` ausente: takeover desligado por padrão.
+- `task_auto_link_opportunity_enabled` continua `true`.
+- Nenhuma flag alterada nesta verificação. Teste manual e ativação pendentes.
+
+### Conferência de migrations
+
+Rodar `supabase migration list` no projeto vinculado e guardar o resultado.
+Se 00030 continuar pendente apesar de a estrutura existir, não reaplicar o SQL
+cegamente: comparar a estrutura completa e reconciliar o histórico com o CLI.
+Não foi confirmado nesta verificação que 00030 é a única migration pendente.
+
+### Teste manual do Bloco 0 — antes de ativar
+
+1. Com o follow-up ainda desligado, enviar pelo Inbox do painel uma mensagem
+   identificável para uma conversa existente de teste.
+2. Confirmar recebimento único no WhatsApp e um único registro lógico no
+   histórico, com `evolution_message_id` preenchido.
+3. Confirmar que o takeover manual esperado do Inbox continua funcionando;
+   o eco não deve produzir uma nova mensagem nem outro handoff.
+4. Em conversa de teste sem takeover, testar resposta da Helena e, se
+   habilitados, áudio TTS e imagem: ecos não devem assumir a conversa.
+5. Se houver duplicação, falha de envio ou takeover indevido, suspender a
+   ativação e executar o rollback abaixo.
+
+### Ativação gradual — depende de autorização
+
+1. Ligar somente `task_followup_enabled`; manter takeover desativado.
+2. Abrir uma tarefa elegível de teste, verificar último toque e contagem,
+   gerar sugestão, editar e enviar. Confirmar recebimento único, conclusão
+   apenas após confirmação e ausência de takeover causado pelo follow-up.
+3. Responder pelo contato de teste: Helena deve continuar o contexto sem
+   nova saudação nem repetição do follow-up. Verificar `task_events`, custo
+   em `ai_usage_events` e métricas do endpoint.
+4. Verificar limites: 45 segundos e 40/dia por instância; 4 horas desde o
+   último toque e 3 toques sem resposta; até 5 regenerações por tarefa.
+   Ao atingir 3 toques, envio normal bloqueado e perda apenas sugerida.
+5. Verificar estado não confirmado: clique comum deve consultar o mesmo
+   envio pendente; reenvio com `force` exige aviso explícito de duplicação.
+   Não provocar falhas de rede em conversas de clientes reais.
+6. Confirmar que a cadência automática 1h/23h não continua após o toque
+   `human_agent`, enquanto ele permanecer como última mensagem.
+7. Só ligar `task_followup_takeover_on_send` se a organização decidir que
+   quer assumir a conversa após o follow-up; o padrão aprovado é desligado.
+
+### Rollback
+
+- Problema exclusivo do follow-up: desligar `task_followup_enabled` e
+  preservar registros de envios pendentes; não reenviar às cegas.
+- Problema do Bloco 0: a flag não reverte essa alteração. Reimplantar a
+  revisão anterior ao merge nos três serviços (API, worker e web), ou
+  preparar uma branch de rollback com `git revert -m 1 caf6c2d`, revisar
+  e integrar na main mediante autorização. Verificar saúde e repetir o
+  teste manual do Inbox após o rollback.
+- Manter a migration aditiva e os dados; não remover tabelas/colunas no
+  rollback operacional.

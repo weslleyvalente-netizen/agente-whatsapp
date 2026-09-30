@@ -479,3 +479,26 @@ verificado sem erros.
 00030 pendente (confirmado: é a única), push e merge por você, verificação
 de saúde, teste manual específico do Bloco 0 (mudança no envio manual do
 painel) com plano de rollback, e ativação gradual das flags.
+
+
+### Follow-up na tarefa — deploy verificado (2026-09-30)
+
+- Merge `caf6c2d`: implantação confirmada com `Success` nos logs de API,
+  worker e web do EasyPanel. API HTTP 200 em 30/09 às 18:01 (Brasília).
+- Banco às 18:05 confirma mensagens novas de cliente e respostas da Helena
+  com identificador Evolution; estrutura das quatro colunas de tarefas e
+  tabela `task_followup_sends` presente.
+- `task_followup_enabled` e `task_followup_takeover_on_send` ausentes:
+  funcionalidade e takeover desligados por padrão. Auto-link de oportunidade
+  permanece ligado. Nenhuma configuração alterada nesta verificação.
+- Correção do registro anterior: presença da estrutura não confirma o
+  histórico de migrations nem que 00030 seja a única pendente; conferir
+  `supabase migration list` antes de futuras aplicações.
+- Deploy verificado; teste manual dirigido do Bloco 0, validação funcional
+  do follow-up e autorização para ativar continuam pendentes.
+- Runbook persistido em `docs/plano-followup-tarefa.md`, incluindo teste do
+  Inbox com flag desligada, ativação gradual e rollback dos três serviços.
+
+### Oportunidade detalhada, origem e Gerar outra — 30/09/2026
+
+Implementação local na branch codex/oportunidade-detalhada-followup: card ampliado, ações do funil com evidência, filtros de situação, origem automática Wix/Meta/Instagram orgânico e correção manual, correção de cache/regeneração/erros de sugestão. Migration 00031 preparada para custos de sugestões, não aplicada. Sem push e sem alterações em produção nesta etapa. Plano e runbook em docs/plano-oportunidade-detalhada.md.

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import {
   createOpportunitySchema,
@@ -13,6 +14,7 @@ import {
   getOpportunityById,
   getOpportunitiesByOrganization,
   addOpportunityEvent,
+  getContactById, getQualificationByConversationId, getOpportunityEvents, getOpenTasksByContact, decryptCpf,
 } from "@aula-agente/database";
 import {
   changeStage,
@@ -37,6 +39,40 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       return getOpportunitiesByOrganization(db, organizationId, request.query);
     }
   );
+
+  app.patch<{ Params: { opportunityId: string } }>("/opportunities/:opportunityId/origin", async (request, reply) => {
+    const db = getAdminClient();
+    const opportunity = await getOpportunityById(db, request.params.opportunityId);
+    if (!request.user.memberships.some(m => m.organization_id === opportunity.organization_id)) return reply.status(403).send({ error: "Access denied" });
+    const parsed = z.object({ source: z.enum(["site_wix", "facebook_ads", "instagram_ads", "meta_ads", "instagram_organic"]), evidence: z.string().trim().max(1000).optional() }).safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues });
+    const contact = await getContactById(db, opportunity.contact_id);
+    if (contact.organization_id !== opportunity.organization_id) return reply.status(403).send({ error: "Access denied" });
+    const origin = { ...parsed.data, evidence: parsed.data.evidence || "Correção manual pela atendente", method: "manual", identified_at: new Date().toISOString(), changed_by_id: request.user.id };
+    let query = db.from("wa_contacts").update({ metadata: { ...contact.metadata, lead_origin: origin } }).eq("organization_id", opportunity.organization_id).eq("id", contact.id);
+    query = contact.metadata == null ? query.is("metadata", null) : query.eq("metadata", JSON.stringify(contact.metadata));
+    const { data, error } = await query.select("id").maybeSingle();
+    if (error) throw error;
+    if (!data) return reply.status(409).send({ error: "Os dados mudaram. Atualize o card e tente novamente." });
+    return { origin };
+  });
+
+  app.get<{ Params: { opportunityId: string }; Querystring: { revealCpf?: string } }>("/opportunities/:opportunityId/details", async (request, reply) => {
+    const db = getAdminClient();
+    const opportunity = await getOpportunityById(db, request.params.opportunityId);
+    if (!request.user.memberships.some(m => m.organization_id === opportunity.organization_id)) return reply.status(403).send({ error: "Access denied" });
+    const customer = await getContactById(db, opportunity.contact_id);
+    if (customer.organization_id !== opportunity.organization_id) return reply.status(403).send({ error: "Access denied" });
+    const { data: conversation, error } = await db.from("conversations").select("id,last_message_at,status").eq("organization_id", opportunity.organization_id).eq("contact_id", opportunity.contact_id).order("last_message_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) throw error;
+    const raw = conversation ? await getQualificationByConversationId(db, conversation.id) : null;
+    const qualification = raw && raw.organization_id === opportunity.organization_id ? (() => {
+      const { cpf_encrypted, cpf_hash, ...safe } = raw;
+      return { ...safe, has_cpf: !!cpf_encrypted, cpf: request.query.revealCpf === "true" && cpf_encrypted ? decryptCpf(cpf_encrypted) : null };
+    })() : null;
+    const [events, tasks] = await Promise.all([getOpportunityEvents(db, opportunity.id), getOpenTasksByContact(db, opportunity.organization_id, opportunity.contact_id)]);
+    return { opportunity, customer: { id: customer.id, name: customer.name, phone: customer.phone }, conversation, qualification, events, tasks: tasks.filter(t => t.opportunity_id === opportunity.id), origin: customer.metadata?.lead_origin ?? null };
+  });
 
   app.post<{ Params: { organizationId: string } }>(
     "/organizations/:organizationId/opportunities",

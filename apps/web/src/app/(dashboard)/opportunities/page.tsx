@@ -13,6 +13,7 @@ import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 
 export default function OpportunitiesPage() {
   const { currentOrg } = useOrganization();
+  const [status, setStatus] = useState("open");
   const [operation, setOperation] = useState<Operation>("vehicle_sale");
   const [opportunities, setOpportunities] = useState<OpportunityWithContact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,14 +27,14 @@ export default function OpportunitiesPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities`);
+      const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities?status=${status}`);
       setOpportunities(data);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [currentOrg]);
+  }, [currentOrg, status]);
 
   const countsByOperation = useMemo(() => {
     const counts = new Map<Operation, number>();
@@ -58,6 +59,7 @@ export default function OpportunitiesPage() {
         <h1 className="text-2xl font-semibold">Funil de vendas</h1>
         <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
       </div>
+      <label className="flex items-center gap-2 text-sm">Situação<select className="rounded border bg-background p-2" value={status} onChange={e => setStatus(e.target.value)}><option value="open">Em andamento</option><option value="won">Ganhos</option><option value="lost">Perdidos</option></select></label>
       <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
         <TabsList>
           {OPERATIONS.map((op) => (

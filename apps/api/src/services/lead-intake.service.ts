@@ -7,6 +7,8 @@ import {
   updateConversation,
   upsertConversationQualification,
 } from "@aula-agente/database";
+import { identifyLeadOrigin } from "@aula-agente/shared";
+import { recordLeadOrigin } from "./lead-origin.service.js";
 import type { NormalizedWixLead } from "@aula-agente/shared";
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { ensureConversation } from "./conversation.service.js";
@@ -74,6 +76,12 @@ export async function ingestWixLead(
     contactName: lead.name,
     contactPhotoUrl: null,
   });
+
+  try {
+    await recordLeadOrigin(db, org.id, contact.id, identifyLeadOrigin({ wix: true }));
+  } catch (err) {
+    console.error("Failed to record Wix lead origin", err);
+  }
 
   // Already existed — either the customer already talked to us before, or
   // Wix retried the same webhook delivery. Either way, don't send a second
