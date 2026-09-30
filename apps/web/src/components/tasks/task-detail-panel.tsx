@@ -46,6 +46,7 @@ interface QualificationValues {
 
 interface TaskDetails {
   task: {
+    description: string;
     id: string;
     status: string;
     priority: string;
@@ -403,14 +404,20 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               )}
             </div>
 
+            <section className="space-y-2">
+              <h3 className="text-sm font-medium">Descrição do negócio / tarefa</h3>
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {details.task.description?.trim() || "Nenhuma descrição informada."}
+              </p>
+            </section>
+
             <QualificationSection
-              title="Resumo do atendimento"
+              title="Resumo adicional do atendimento"
               fields={SUMMARY_FIELDS}
               values={qualification as unknown as Record<string, unknown>}
               onSave={handleSaveSection}
               truncateSummary
-              hideTitle
-              emptyFallback="Nenhum resumo disponível ainda."
+              emptyFallback="Nenhum resumo adicional informado."
             />
 
             {isOpenTask && !followupUnavailable && (

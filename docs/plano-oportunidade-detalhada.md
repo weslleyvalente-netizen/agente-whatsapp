@@ -50,3 +50,7 @@ Validação: suites API, runtime, shared, database e worker; typecheck API/runti
 - Flags preservadas: follow-up e vínculo automático ligados; consolidação, encerramento automático e LiberaCred ausentes/desligados.
 - Não havia novas mensagens de cliente após o deploy durante esta conferência; última entrada 19:32:23, resposta 19:32:33 (America/Sao_Paulo). Nenhum envio de teste criado para provocar tráfego.
 - Origem automática validada por testes; não se simulou webhook em produção nem alterou origem/resultado de lead real.
+
+### Ajuste do painel da tarefa — 30/09/2026
+
+A área acima do follow-up agora exibe sempre a descrição salva em details.task.description, com quebras de linha preservadas. Resumo adicional da qualificação permanece separado e editável, sem substituir ou ocultar a descrição do negócio. Ajuste apenas da interface, sem migration ou geração de IA.
