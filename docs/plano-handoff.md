@@ -506,3 +506,7 @@ Implementação local na branch codex/oportunidade-detalhada-followup: card ampl
 ### Publicação da oportunidade detalhada — 30/09/2026
 
 Após OK do usuário, publicado 453678e na main. Histórico 00029/00030 reconciliado após conferência, 00031 aplicada pelo CLI; nenhuma migration pendente. API saudável, web publicado, worker iniciado e job periódico observado. Card e confirmação de perda conferidos sem alterar negócio real; Gerar outra validado na tarefa Paulo Da Silva, custo gravado e cota preservada ao reabrir. Nenhum envio ao cliente; flags mantidas. Detalhes e limitações em docs/plano-oportunidade-detalhada.md.
+
+### Descrição da tarefa sempre visível — 30/09/2026
+
+Publicado a784445 após autorização. Deploy web concluído com Success; descrição de Paulo Da Silva confirmada no painel, resumo adicional separado e follow-up preservado. API /health ok. Sem migration, envio ao cliente ou alteração de qualificação.
