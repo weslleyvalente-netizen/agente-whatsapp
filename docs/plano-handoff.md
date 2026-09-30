@@ -502,3 +502,7 @@ painel) com plano de rollback, e ativação gradual das flags.
 ### Oportunidade detalhada, origem e Gerar outra — 30/09/2026
 
 Implementação local na branch codex/oportunidade-detalhada-followup: card ampliado, ações do funil com evidência, filtros de situação, origem automática Wix/Meta/Instagram orgânico e correção manual, correção de cache/regeneração/erros de sugestão. Migration 00031 preparada para custos de sugestões, não aplicada. Sem push e sem alterações em produção nesta etapa. Plano e runbook em docs/plano-oportunidade-detalhada.md.
+
+### Publicação da oportunidade detalhada — 30/09/2026
+
+Após OK do usuário, publicado 453678e na main. Histórico 00029/00030 reconciliado após conferência, 00031 aplicada pelo CLI; nenhuma migration pendente. API saudável, web publicado, worker iniciado e job periódico observado. Card e confirmação de perda conferidos sem alterar negócio real; Gerar outra validado na tarefa Paulo Da Silva, custo gravado e cota preservada ao reabrir. Nenhum envio ao cliente; flags mantidas. Detalhes e limitações em docs/plano-oportunidade-detalhada.md.

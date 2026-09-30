@@ -28,7 +28,7 @@ Gerar outra: requisição explícita regenerate=true, texto anterior no prompt, 
 
 Validação: suites API, runtime, shared, database e worker; typecheck API/runtime/shared/web e build de produção web. Um teste antigo de custos dependia da data real; relógio fixado no teste, sem alteração da regra do relatório. Validação visual/interativa no ambiente publicado permanece no checklist abaixo.
 
-## Runbook (aguardar aprovação; não executado)
+## Runbook (executado após OK em 30/09/2026)
 
 1. Conferir branch e migrations com `supabase migration list`. A nova migration preparada aqui é 00031_task_followup_usage_source.sql; conferir qualquer outra pendência antes de aplicar.
 2. Com OK explícito, executar `supabase db push`. Confirmar ai_usage_events_source_check inclui task_followup_suggestion. Nenhuma coluna/linha é removida; somente uma fonte adicional é permitida.
@@ -38,3 +38,15 @@ Validação: suites API, runtime, shared, database e worker; typecheck API/runti
 6. Validar origem: Wix, anúncio com plataforma conhecida, Meta desconhecida e frase vim do Instagram. Correção manual permanece após nova mensagem. Não criar envios para clientes apenas para validar.
 7. Validar sugestões: reabrir conserva texto/cota; Gerar outra modifica abordagem e consome uma regeneração somente no sucesso; falha preserva texto/cota e mostra erro; apagar texto mantém campo editável. Mensagens/sugestões genéricas antigas permanecem até regeneração explícita.
 8. Rollback: reverter apenas o commit desta funcionalidade e redeploy API/web, preservando outros commits. Manter CHECK ampliado (compatível com código antigo). Restaurar CHECK antigo só após avaliar os registros com task_followup_suggestion; não apagar custos para permitir rollback.
+
+## Resultado da publicação — 30/09/2026
+
+- Commit 453678e publicado na branch e integrado por fast-forward à main; push da main iniciou o deploy.
+- CLI encontrado no cache local. Histórico 00029/00030 reconciliado com migration repair após conferência de colunas, defaults, FKs, índices, RLS e policies já existentes. Nenhuma estrutura dessas migrations foi reaplicada.
+- db push aplicou somente 00031; migration list confirma 00001–00031 sincronizadas. CHECK de ai_usage_events confirmado com task_followup_suggestion.
+- API /health ok e rota nova existente (401 sem autenticação). Web build/deploy Success no EasyPanel; interface nova observada no navegador. Worker iniciou os cinco consumidores e executou o job de liberação de takeover.
+- Card de Pedro abriu com resumo, parcela e modelo, histórico e ações; formulário de perda mostrou motivo/evidência e foi cancelado sem alterar oportunidade.
+- Gerar outra na tarefa de Paulo Da Silva produziu texto contextual, salvou um ai_usage_event e incrementou a cota de 2 para 3 usadas (2 restantes). Reabertura manteve texto/cota. Nenhuma mensagem enviada ao cliente no teste.
+- Flags preservadas: follow-up e vínculo automático ligados; consolidação, encerramento automático e LiberaCred ausentes/desligados.
+- Não havia novas mensagens de cliente após o deploy durante esta conferência; última entrada 19:32:23, resposta 19:32:33 (America/Sao_Paulo). Nenhum envio de teste criado para provocar tráfego.
+- Origem automática validada por testes; não se simulou webhook em produção nem alterou origem/resultado de lead real.
