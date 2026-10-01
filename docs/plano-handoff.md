@@ -545,3 +545,7 @@ Implementados em codex/busca-funil-whatsapp: busca entre todos os funis e situa�
 - EasyPanel Success: worker 14:57:31, API 14:57:39, web 14:57:59 (Brasília). API /health OK.
 - Validado em produção: busca por (62) 9636-6089 retorna Yara Arcanjo / Consórcio / Ganho / Adesão; card exibe Abrir no WhatsApp com URL do contato e Mover para outro funil. Seletor e motivo exibidos; cancelado sem mudança.
 - Nenhuma mensagem enviada ou negócio modificado. Visão operacional permanece ligada, cadência de 1h/23h/48h desligada. Registro salvo localmente sem novo push de documentação para evitar redeploy redundante.
+
+
+### Planejamento da próxima fase — 01/10/2026
+Plano em docs/plano-funil-automatico.md: criação/avanço com evidência, fila A identificar, congelamento com calendário/motivo/tarefa futura transacional e editor unificado. Diagnóstico read-only encontrou 114 contatos com 170 tarefas abertas e nenhum negócio; classificação e apply dependem de aprovação. Migration 00032 somente proposta, sem schema/código/flag/produção alterados. Aguardando aprovação do plano conforme regras de trabalho.
