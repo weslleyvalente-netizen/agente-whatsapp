@@ -22,3 +22,5 @@ export * from "./lead-origin.js";
 
 export * from "./sales-workspace.js";
 export * from "./low-intent-cadence.js";
+
+export * from "./opportunity-search.js";

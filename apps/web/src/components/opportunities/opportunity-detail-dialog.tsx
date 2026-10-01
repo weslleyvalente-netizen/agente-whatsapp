@@ -5,8 +5,8 @@ import { useOrganization } from "@/providers/organization-provider";
 import { ChatPanel } from "@/components/inbox/chat-panel";
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import { apiFetch } from "@/lib/api";
-import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, LEAD_ORIGIN_LABELS, TASK_TYPE_LABELS } from "@aula-agente/shared";
-import type { Opportunity, OpportunityEvent, Task, LeadOriginSource } from "@aula-agente/shared";
+import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATIONS, buildWhatsAppUrl, OPERATION_LABELS, LEAD_ORIGIN_LABELS, TASK_TYPE_LABELS } from "@aula-agente/shared";
+import type { Opportunity, OpportunityEvent, Task, LeadOriginSource, Operation } from "@aula-agente/shared";
 import type { OpportunityWithContact } from "./opportunity-kanban";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -32,6 +32,9 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
  const [error, setError] = useState<string | null>(null);
  const [originEditing, setOriginEditing] = useState(false);
  const [originSource, setOriginSource] = useState<LeadOriginSource>("site_wix");
+ const [moving, setMoving] = useState(false);
+ const [targetOperation, setTargetOperation] = useState<Operation>(opportunity.operation);
+ const [moveReason, setMoveReason] = useState("");
  const [editing, setEditing] = useState(false);
  const [stage, setStage] = useState<string | null>(null);
  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
@@ -40,6 +43,13 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
  useEffect(() => { load(); }, [load]);
  const o = details?.opportunity ?? opportunity; const q = details?.qualification;
  async function changeStage(e: string) { await apiFetch(`/opportunities/${o.id}/stage`, { method: "POST", body: JSON.stringify({ stage, evidence: e }) }); setStage(null); await load(); onChanged(); }
+ async function moveOperation() {
+  if (targetOperation === o.operation || !moveReason.trim()) return;
+  setSaving(true); setError(null);
+  try { await apiFetch(`/opportunities/${o.id}/operation`, { method: "POST", body: JSON.stringify({ operation: targetOperation, evidence: moveReason.trim() }) }); setMoving(false); setMoveReason(""); await load(); onChanged(); }
+  catch (err) { setError((err as Error).message); } finally { setSaving(false); }
+ }
+ const whatsappUrl = buildWhatsAppUrl(details?.customer.phone ?? opportunity.wa_contacts?.phone);
  async function saveOrigin() { setSaving(true); try { await apiFetch(`/opportunities/${o.id}/origin`, { method: "PATCH", body: JSON.stringify({ source: originSource }) }); setOriginEditing(false); await load(); } catch (err) { setError((err as Error).message); } finally { setSaving(false); } }
  async function closeDeal() {
   if (!closing || !evidence.trim()) { setError("Descreva o que confirma essa decisão."); return; }
@@ -53,7 +63,8 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!details && <Button variant="outline" onClick={() => load()}>Carregar detalhes</Button>}
     <div className="flex flex-wrap gap-2">{FUNNEL_STAGES[o.operation].map(s => <Button key={s} size="sm" variant={s === o.stage ? "default" : "outline"} disabled={o.status !== "open" || s === o.stage} onClick={() => setStage(s)}>{FUNNEL_STAGE_LABELS[s] ?? s}</Button>)}</div>
-    <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>Editar dados</Button>{details?.conversation && <Link className={buttonVariants({ variant: "outline" })} href={`/inbox?id=${details.conversation.id}`}>Abrir conversa</Link>}{o.status === "open" && <><Button onClick={() => { setError(null); setClosing("won"); }}>Marcar como ganho</Button><Button variant="destructive" onClick={() => { setError(null); setClosing("lost"); }}>Marcar como perdido</Button></>}</div>
+    <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditing(true)}>Editar dados</Button><Button variant="outline" disabled={saving} onClick={() => { setTargetOperation(o.operation); setMoveReason(""); setMoving(!moving); }}>Mover para outro funil</Button>{whatsappUrl && <a className={buttonVariants({ variant: "outline" })} href={whatsappUrl} target="_blank" rel="noopener noreferrer">Abrir no WhatsApp</a>}{details?.conversation && <Link className={buttonVariants({ variant: "outline" })} href={`/inbox?id=${details.conversation.id}`}>Abrir conversa</Link>}{o.status === "open" && <><Button onClick={() => { setError(null); setClosing("won"); }}>Marcar como ganho</Button><Button variant="destructive" onClick={() => { setError(null); setClosing("lost"); }}>Marcar como perdido</Button></>}</div>
+    {moving && <section className="space-y-3 rounded-lg border p-4"><h3 className="font-medium">Mover para outro funil</h3><label className="block text-sm">Funil de destino<select aria-label="Funil de destino" className="mt-1 block w-full rounded border bg-background p-2" value={targetOperation} disabled={saving} onChange={e => setTargetOperation(e.target.value as Operation)}>{OPERATIONS.map(op => <option key={op} value={op}>{OPERATION_LABELS[op]}</option>)}</select></label><p className="text-sm text-muted-foreground">O negócio entra em {FUNNEL_STAGE_LABELS[FUNNEL_STAGES[targetOperation][0]]}. O histórico e a situação atual são preservados.</p><label className="block text-sm">Motivo da mudança<Textarea value={moveReason} disabled={saving} onChange={e => setMoveReason(e.target.value)} placeholder="Ex.: veio pela bike e decidiu aderir ao consórcio" /></label><div className="flex gap-2"><Button disabled={saving || targetOperation === o.operation || !moveReason.trim()} onClick={moveOperation}>{saving ? "Salvando..." : "Confirmar mudança"}</Button><Button variant="outline" disabled={saving} onClick={() => setMoving(false)}>Cancelar</Button></div></section>}
     {closing && <section className="space-y-3 rounded-lg border p-4"><h3 className="font-medium">Confirmar negócio {closing === "won" ? "ganho" : "perdido"}</h3>{closing === "lost" && <label className="block text-sm">Motivo<select className="mt-1 block w-full rounded border bg-background p-2" value={reason} onChange={e => setReason(e.target.value)}><option value="sem_resposta">Sem resposta</option><option value="preco">Preço</option><option value="sem_interesse">Sem interesse</option><option value="comprou_outro">Comprou em outro lugar</option><option value="outro">Outro (descreva abaixo)</option></select></label>}<label className="block text-sm">O que confirma essa decisão?<Textarea value={evidence} onChange={e => setEvidence(e.target.value)} /></label><div className="flex gap-2"><Button disabled={saving || !evidence.trim()} onClick={closeDeal}>{saving ? "Salvando..." : "Confirmar"}</Button><Button variant="outline" disabled={saving} onClick={() => setClosing(null)}>Cancelar</Button></div></section>}
     <div className={workspaceEnabled && details?.conversation && chatOpen ? "grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : ""}>
     <div className="grid gap-5 md:grid-cols-[1.5fr_1fr]">

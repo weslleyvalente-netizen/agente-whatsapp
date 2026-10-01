@@ -71,3 +71,10 @@ Tarefas vinculadas somente ao contato também são exibidas, identificadas como 
 - Validado no navegador: coluna Pronto para Marina, indicadores de resposta/tarefas, ordem decrescente de criação, card completo com conversa lateral e tarefas vinculadas ao contato e ao negócio. Painel de tarefa abriu com descrição, resumo e controles de follow-up.
 - Nenhuma mensagem enviada, tarefa concluída ou etapa comercial alterada durante a validação. Teste real de envio e remoção de handoff após resposta humana ainda pendente.
 - Na Sonia, tarefa com data futura permite envio porque waiting_on é null; o bloqueio existente requer waiting_on=scheduled_date, conforme decisão aprovada. Não foi alterado o agendamento ou a qualificação.
+
+### Busca global e mudança de funil — 01/10/2026 (implementado localmente)
+- Diagnóstico read-only: Yara Arcanjo, telefone terminado em 6366089, já possui oportunidade consortium/won/membership; invisível no filtro inicial open, não é card ausente. Nenhum dado da cliente foi alterado.
+- Busca em todos os funis e situações ao digitar; nome sem acentos, telefone com/sem pontuação, DDI e nono dígito histórico, produto, observações, próxima ação, condições e rótulos de operação/etapa/situação. Resultados abrem o mesmo card completo; limpar retorna ao Kanban.
+- Card grande: Abrir no WhatsApp (link wa.me, sem enviar automaticamente) e Mover para outro funil. Reutiliza endpoint autorizado existente /operation, exige motivo e mostra reinício na primeira etapa; preserva contato, situação e histórico.
+- Sem migration, mudança de flags ou alteração dos negócios durante implementação. Testes: shared277/API243/database60/runtime116/worker116 = 812; build web de produção passou.
+- Publicação ainda pendente. Validar após deploy: buscar Yara/telefone e observar Ganho/Consórcio, abrir card e WhatsApp sem enviar; mover negócio de teste com motivo e conferir primeira etapa/histórico. Cadência automática permanece desligada.

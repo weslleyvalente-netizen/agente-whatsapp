@@ -535,3 +535,6 @@ Publicado a784445 após autorização. Deploy web concluído com Success; descri
 - Validado no navegador: coluna Pronto para Marina, indicadores de resposta/tarefas, ordem decrescente de criação, card completo com conversa lateral e tarefas vinculadas ao contato e ao negócio. Painel de tarefa abriu com descrição, resumo e controles de follow-up.
 - Nenhuma mensagem enviada, tarefa concluída ou etapa comercial alterada durante a validação. Teste real de envio e remoção de handoff após resposta humana ainda pendente.
 - Na Sonia, tarefa com data futura permite envio porque waiting_on é null; o bloqueio existente requer waiting_on=scheduled_date, conforme decisão aprovada. Não foi alterado o agendamento ou a qualificação.
+
+### Busca global no funil e controles do card — 01/10/2026
+Implementados em codex/busca-funil-whatsapp: busca entre todos os funis e situações, botão Abrir no WhatsApp e Mover para outro funil com motivo/histórico pelo endpoint já existente. Caso Yara: card está ganho em Consórcio/Adesão, oculto pelo filtro Em andamento; diagnóstico sem alterações na cliente. 812 testes e build web passaram. Sem migration/ativação/publicação; instruções em docs/plano-funil-marina.md.
