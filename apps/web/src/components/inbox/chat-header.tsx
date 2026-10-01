@@ -25,6 +25,7 @@ const PILL_TRIGGER_CLASS =
   "h-8 w-auto rounded-full border-transparent bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/20";
 
 interface ChatHeaderProps {
+  compact?: boolean;
   conversation: {
     id: string;
     organization_id: string;
@@ -44,6 +45,7 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({
+  compact = false,
   conversation,
   onStatusChange,
   onTakeoverToggle,
@@ -54,7 +56,7 @@ export function ChatHeader({
   onClose,
 }: ChatHeaderProps) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b px-4 py-3">
+    <div className={compact ? "flex flex-wrap items-center gap-2 border-b p-3" : "flex items-center justify-between gap-4 border-b px-4 py-3"}>
       <div className="min-w-0">
         <p className="truncate font-medium">
           {conversation.wa_contacts?.name || formatPhone(conversation.wa_contacts?.phone) || "Conversa"}
@@ -65,7 +67,7 @@ export function ChatHeader({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className={compact ? "flex w-full flex-wrap items-center gap-2" : "flex shrink-0 items-center gap-2"}>
         <Select value={conversation.status} onValueChange={(v) => v && onStatusChange(v)}>
           <SelectTrigger className={PILL_TRIGGER_CLASS}>
             <SelectValue>{(value: ConversationStatus) => STATUS_LABELS[value] ?? value}</SelectValue>

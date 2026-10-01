@@ -148,9 +148,10 @@ interface TaskDetailPanelProps {
   organizationId: string;
   onClose: () => void;
   onTaskChanged: () => void;
+  embedded?: boolean;
 }
 
-export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged, embedded = false }: TaskDetailPanelProps) {
   const router = useRouter();
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -215,6 +216,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       const err = error as Error & { status?: number; body?: { regenerationsRemaining?: number } };
       setFollowupUnavailable(err.status === 400 || err.status === 404);
       setFollowupError(err.message);
+      if (err.status === 422) { setFollowupText(""); setFollowupLoaded(true); }
       if (err.body?.regenerationsRemaining !== undefined) setRegenerationsRemaining(err.body.regenerationsRemaining);
     } finally {
       setFollowupLoading(false);
@@ -316,12 +318,11 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       sectionHasContent(CONSORTIUM_FIELDS, qualification as unknown as Record<string, unknown>)) ||
     sectionHasContent(OBSERVATION_FIELDS, qualification as unknown as Record<string, unknown>);
 
-  return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg" showCloseButton={false}>
-        <SheetHeader>
+  const content = (
+    <>
+        <div className="space-y-2 p-4">
           <div className="flex items-center justify-between gap-2">
-            <SheetTitle>{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</SheetTitle>
+            <h3 className="font-semibold">{details?.customer?.name || (details?.customer ? formatPhone(details.customer.phone) : "Tarefa")}</h3>
             <div className="flex shrink-0 items-center gap-1">
               {isOpenTask && (
                 <TaskDialog
@@ -348,7 +349,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               {formatRelativeTime(details?.conversation?.lastMessageAt)}
             </span>
           </div>
-        </SheetHeader>
+        </div>
 
         {loading && <p className="p-4 text-sm text-muted-foreground">Carregando...</p>}
 
@@ -426,7 +427,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 {followupTouch && (
                   <p className="text-xs text-muted-foreground">
                     {followupTouch.lastTouchAt
-                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "Helena" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
+                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "Mariana (IA)" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
                       : "Nenhum toque pendente — o cliente respondeu por último. "}
                     {followupTouch.touchCount} toque(s) sem resposta.
                   </p>
@@ -434,12 +435,13 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 {followupLoading && !followupText && (
                   <p className="text-sm text-muted-foreground">Gerando sugestão...</p>
                 )}
-                {!followupText && followupError && <div className="space-y-2"><p className="text-sm text-destructive">{followupError}</p><Button size="sm" disabled={followupLoading} onClick={() => fetchFollowupSuggestion()}>Tentar novamente</Button></div>}
+                {!followupLoaded && followupError && <div className="space-y-2"><p className="text-sm text-destructive">{followupError}</p><Button size="sm" disabled={followupLoading} onClick={() => fetchFollowupSuggestion()}>Tentar novamente</Button></div>}
                 {followupLoaded && (
                   <>
                     <Textarea
                       value={followupText}
                       onChange={(e) => setFollowupText(e.target.value)}
+                      placeholder="Escreva ou edite a mensagem para o cliente"
                       rows={4}
                       disabled={sending}
                     />
@@ -595,7 +597,8 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
             )}
           </div>
         )}
-      </SheetContent>
-    </Sheet>
+    </>
   );
+  if (embedded) return <section className="rounded-lg border bg-background">{content}</section>;
+  return <Sheet open onOpenChange={open => !open && onClose()}><SheetContent className="w-full overflow-y-auto sm:max-w-lg" showCloseButton={false}><SheetHeader className="sr-only"><SheetTitle>Detalhes da tarefa</SheetTitle></SheetHeader>{content}</SheetContent></Sheet>;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setMessageEvolutionId } from "./messages.js";
+import { setMessageEvolutionId, updateMessageContent } from "./messages.js";
 
 // Minimal fake covering .from("messages").update(...).eq("id", ...).select().single(),
 // same style as the inline fakes used elsewhere in this package's query tests.
@@ -52,4 +52,11 @@ describe("setMessageEvolutionId", () => {
 
     await expect(setMessageEvolutionId(client as never, "missing", "EVO123")).rejects.toThrow();
   });
+});
+
+it("persists the transcription timestamp along with its text",async()=>{
+ const row:any={id:"audio",content:"[audio]",metadata:{duration_seconds:10}};
+ const db:any={from:()=>({update:(payload:any)=>({eq:async(_column:string,id:string)=>{if(id===row.id) Object.assign(row,payload);return {error:null};}})})};
+ await updateMessageContent(db,"audio","🎤 Pedi outro CPF",{duration_seconds:10,audio_transcribed_at:"2026-10-01T11:00:00Z"});
+ expect(row).toMatchObject({content:"🎤 Pedi outro CPF",metadata:{duration_seconds:10,audio_transcribed_at:"2026-10-01T11:00:00Z"}});
 });

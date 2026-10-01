@@ -60,6 +60,25 @@ export default function SettingsPage() {
   const [greetingMaxLength, setGreetingMaxLength] = useState(String(DEFAULT_GREETING_MAX_LENGTH));
   const [savingGreeting, setSavingGreeting] = useState(false);
 
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" = "sales_workspace_enabled") {
+    if (!currentOrg || savingWorkspace) return;
+    setSavingWorkspace(true); setWorkspaceError(null);
+    try {
+      const client = createClient();
+      const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
+      if (readError) throw readError;
+      let query = client.from("organizations").update({ settings: { ...org.settings, [flag]: enabled, ...(flag === "sales_low_intent_cadence_enabled" && enabled ? { sales_low_intent_cadence_started_at: new Date().toISOString() } : {}) } }).eq("id", currentOrg.id);
+      query = org.settings == null ? query.is("settings", null) : query.eq("settings", JSON.stringify(org.settings));
+      const { data, error } = await query.select("id").maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("As configurações mudaram. Atualize a página e tente novamente.");
+      await refetch();
+    } catch (err) { setWorkspaceError((err as Error).message); } finally { setSavingWorkspace(false); }
+  }
+
   // Fase 2 — triagem de tarefas
   const [taskAutoLinkEnabled, setTaskAutoLinkEnabled] = useState(false);
   const [taskConsolidationEnabled, setTaskConsolidationEnabled] = useState(false);
@@ -601,6 +620,10 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader><CardTitle>Operação no funil de vendas</CardTitle><CardDescription>Encaminhamentos da IA, indicadores nos leads, conversa e tarefas dentro do negócio.</CardDescription></CardHeader>
+        <CardContent className="space-y-3"><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-workspace">Ativar nova visão do funil</Label><Switch id="sales-workspace" checked={currentOrg?.settings.sales_workspace_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value)}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="low-intent-cadence">Retornos sem tarefa: 1h, 23h e encerramento em 48h</Label><Switch id="low-intent-cadence" checked={currentOrg?.settings.sales_low_intent_cadence_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value, "sales_low_intent_cadence_enabled")}/></div>{workspaceError && <p role="alert" className="text-sm text-destructive">{workspaceError}</p>}<p className="text-xs text-muted-foreground">As duas opções começam desligadas. A cadência envia mensagens apenas para novos atendimentos elegíveis após a ativação; não marca negócios como perdidos.</p></CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Fase 2 — Triagem de tarefas</CardTitle>

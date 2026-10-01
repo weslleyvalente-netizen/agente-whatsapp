@@ -10,6 +10,7 @@ import {
 } from "@aula-agente/shared";
 import {
   getAdminClient,
+  getOrganizationById,
   createOpportunity,
   getOpportunityById,
   getOpportunitiesByOrganization,
@@ -25,6 +26,8 @@ import {
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
+import { enrichSalesWorkspace } from "../../services/sales-workspace.service.js";
+
 export default async function opportunityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
 
@@ -36,7 +39,8 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       const db = getAdminClient();
-      return getOpportunitiesByOrganization(db, organizationId, request.query);
+      const [rows, organization] = await Promise.all([getOpportunitiesByOrganization(db, organizationId, request.query), getOrganizationById(db, organizationId)]);
+      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true);
     }
   );
 
@@ -71,7 +75,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       return { ...safe, has_cpf: !!cpf_encrypted, cpf: request.query.revealCpf === "true" && cpf_encrypted ? decryptCpf(cpf_encrypted) : null };
     })() : null;
     const [events, tasks] = await Promise.all([getOpportunityEvents(db, opportunity.id), getOpenTasksByContact(db, opportunity.organization_id, opportunity.contact_id)]);
-    return { opportunity, customer: { id: customer.id, name: customer.name, phone: customer.phone }, conversation, qualification, events, tasks: tasks.filter(t => t.opportunity_id === opportunity.id), origin: customer.metadata?.lead_origin ?? null };
+    return { opportunity, customer: { id: customer.id, name: customer.name, phone: customer.phone }, conversation, qualification, events, tasks: tasks.filter(t => t.opportunity_id === opportunity.id || !t.opportunity_id), origin: customer.metadata?.lead_origin ?? null };
   });
 
   app.post<{ Params: { organizationId: string } }>(

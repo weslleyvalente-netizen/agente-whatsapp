@@ -52,3 +52,8 @@ describe("origin persistence", () => {
   const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "PATCH", url: "/opportunities/opp-1/origin", payload: { source: "site_wix" } }); expect(r.statusCode).toBe(409); await app.close();
  });
 });
+
+it("shows unlinked contact tasks without pulling another business's tasks",async()=>{
+ m.getOpenTasksByContact.mockResolvedValue([{id:"linked",opportunity_id:"opp-1"},{id:"contact-only",opportunity_id:null},{id:"other-business",opportunity_id:"opp-2"}]);
+ const r=await request("/opportunities/opp-1/details");expect(r.json().tasks.map((t:any)=>t.id)).toEqual(["linked","contact-only"]);
+});

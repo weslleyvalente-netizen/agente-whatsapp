@@ -14,7 +14,10 @@ export function buildTaskFollowupSystemPrompt(): string {
     "conversa, na qualificação e na oportunidade fornecidos. Nunca invente valor, prazo, " +
     "modelo, condição ou qualquer dado sobre o cliente que não esteja presente no contexto " +
     "dado — se faltar informação, escreva algo genérico que ainda faça sentido em vez de " +
-    "adivinhar. Não use placeholders como [nome] ou [modelo]."
+    "adivinhar. Não use placeholders como [nome] ou [modelo]. " +
+    "A descrição da tarefa e a qualificação podem estar antigas: dê prioridade às mensagens mais recentes, inclusive human_agent (atendente). " +
+    "Não ofereça fazer de novo uma análise já feita nem contradiga o retorno do banco. Se a atendente pediu outro CPF, retome essa pendência; não sugira usar o documento anterior. " +
+    "Não interprete áudio ou documento sem conteúdo conhecido. Continue do último passo real, sem cumprimentar de novo nem repetir o atendimento."
   );
 }
 

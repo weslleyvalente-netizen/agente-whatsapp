@@ -36,6 +36,7 @@ import {
 import { resolveApiKey, runAgent } from "@aula-agente/agent-runtime";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 import { buildFollowupNudgeMessage } from "../lib/followup-nudge.js";
+import { runLowIntentCadenceCheck } from "./low-intent-followup.js";
 import { runLiberaCredResumptionCheck } from "./libera-cred-resumption.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -118,7 +119,8 @@ async function runStalledNegotiationCheck(
 async function runBaselineTaskCheck(
   db: ReturnType<typeof getAdminClient>,
   org: { id: string; settings: unknown },
-  agentId: string
+  agentId: string,
+  excluded = new Set<string>()
 ): Promise<number> {
   const staleHours =
     (org.settings as { task_rules?: { stale_conversation_hours?: number } })?.task_rules
@@ -129,6 +131,7 @@ async function runBaselineTaskCheck(
   let created = 0;
 
   for (const conversation of staleConversations) {
+    if (excluded.has(conversation.id)) continue;
     try {
       const openTask = await getOpenTaskByConversation(db, org.id, conversation.id);
       if (openTask) continue;
@@ -219,6 +222,11 @@ export function startStaleConversationFollowupWorker() {
 
           const followupConfig = agent.tools_config.followup_automatico ?? DEFAULT_FOLLOWUP_AUTOMATICO;
 
+          const lowIntentHandled = await runLowIntentCadenceCheck(db, org, agent.id, new Date(), {
+            start: followupConfig.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
+            end: followupConfig.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
+          });
+
           // AI auto-messaging is off for this agent (the default — every
           // existing org until it explicitly opts in). Fall back to this
           // worker's pre-followup-automático behavior: just alert staff with
@@ -227,7 +235,7 @@ export function startStaleConversationFollowupWorker() {
           // every org that never opted into AI auto-messaging would silently
           // stop getting these staff alerts entirely on deploy.
           if (!followupConfig.ativo) {
-            created += await runBaselineTaskCheck(db, org, agent.id);
+            created += await runBaselineTaskCheck(db, org, agent.id, lowIntentHandled);
             continue;
           }
 
@@ -238,6 +246,7 @@ export function startStaleConversationFollowupWorker() {
           const staleConversations = await getStaleWaitingConversations(db, org.id, agent.id, cutoffISO);
 
           for (const conversation of staleConversations) {
+            if (lowIntentHandled.has(conversation.id)) continue;
             try {
               // Correction #1 (see plan's Global Constraints): only the real
               // last message tells us whether Helena is the one waiting.

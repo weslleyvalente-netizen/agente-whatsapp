@@ -19,3 +19,6 @@ export * from "./task-followup-coordination.js";
 export * from "./message-echo-match.js";
 
 export * from "./lead-origin.js";
+
+export * from "./sales-workspace.js";
+export * from "./low-intent-cadence.js";

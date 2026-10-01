@@ -82,6 +82,7 @@ const task = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getRecentMessages.mockResolvedValue([]);
   getTaskById.mockResolvedValue(task);
   getOrganizationById.mockResolvedValue({ id: "org-1", settings: { task_followup_enabled: true } });
   getAgentById.mockResolvedValue({ id: "agent-1", provider: "anthropic", model: "claude-sonnet-5" });
@@ -401,3 +402,20 @@ describe("POST /tasks/:taskId/send-followup", () => {
     await app.close();
   });
 });
+
+describe("suggestion audio cache",()=>{
+ it("does not reuse a suggestion made before the human audio was transcribed",async()=>{
+  getTaskById.mockResolvedValue({...task,followup_suggested_message:"Texto sem ouvir a atendente",followup_suggestion_generated_at:"2026-10-01T10:00:00Z"});
+  getRecentMessages.mockResolvedValue([{id:"audio",role:"human_agent",media_type:"audio",content:"🎤 Conseguiu outro CPF?",metadata:{audio_transcribed_at:"2026-10-01T11:00:00Z"}}]);
+  generateTaskFollowupSuggestion.mockResolvedValue({message:"Conseguiu outro CPF para a nova análise?",generated:true});
+  const app=await buildApp();const response=await app.inject({method:"POST",url:"/tasks/task-1/followup-suggestion"});
+  expect(response.json().message).toBe("Conseguiu outro CPF para a nova análise?");await app.close();
+ });
+});
+
+ it("allows manual writing instead of showing stale audio context when the generation quota is exhausted",async()=>{
+  getTaskById.mockResolvedValue({...task,followup_suggested_message:"Texto anterior ao áudio",followup_suggestion_generated_at:"2026-10-01T10:00:00Z",followup_regeneration_count:5});
+  getRecentMessages.mockResolvedValue([{role:"human_agent",media_type:"audio",content:"🎤 Pedi outro CPF",metadata:{audio_transcribed_at:"2026-10-01T11:00:00Z"}}]);
+  const app=await buildApp();const response=await app.inject({method:"POST",url:"/tasks/task-1/followup-suggestion"});
+  expect(response.statusCode).toBe(422);expect(response.json().regenerationsRemaining).toBe(0);expect(generateTaskFollowupSuggestion).not.toHaveBeenCalled();await app.close();
+ });

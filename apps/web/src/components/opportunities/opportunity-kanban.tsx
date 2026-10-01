@@ -3,11 +3,11 @@
 import { useRef, useState } from "react";
 import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
-import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS } from "@aula-agente/shared";
-import type { Opportunity, Operation } from "@aula-agente/shared";
+import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, sortNewestSalesCards } from "@aula-agente/shared";
+import type { Opportunity, Operation, SalesCardState } from "@aula-agente/shared";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Pencil } from "lucide-react";
+import { Pencil, Flame, UserCheck, MessageCircle, ListChecks } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
@@ -17,6 +17,7 @@ import { OpportunityEditDialog } from "@/components/opportunities/opportunity-ed
 // row, so the joined shape is declared once here rather than widening the
 // shared domain type for a display-only concern.
 export type OpportunityWithContact = Opportunity & {
+  sales_state?: SalesCardState;
   wa_contacts: { name: string | null; phone: string } | null;
 };
 
@@ -52,6 +53,14 @@ function OpportunityCard({
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </div>
+            {opportunity.sales_state && <div className="flex flex-wrap gap-2 text-xs">
+              {opportunity.sales_state.hot && <span title="Intenção de fechamento ou negociação" className="flex items-center gap-1 text-orange-600"><Flame className="size-3.5"/>Quente</span>}
+              {opportunity.sales_state.humanPending && <span className="flex items-center gap-1 text-primary"><UserCheck className="size-3.5"/>Atendimento pendente</span>}
+              {opportunity.sales_state.customerReplied && <span title="A última mensagem da conversa é do cliente" className="flex items-center gap-1"><MessageCircle className="size-3.5"/>Cliente respondeu</span>}
+              {opportunity.sales_state.taskCount > 0 && <span className="flex items-center gap-1"><ListChecks className="size-3.5"/>{opportunity.sales_state.taskCount} tarefa(s)</span>}
+            </div>}
+            <p className="text-xs text-muted-foreground">Criado em {new Date(opportunity.created_at).toLocaleDateString("pt-BR")}</p>
+            {opportunity.sales_state?.readyForHuman && <p className="text-xs text-muted-foreground">Etapa comercial: {FUNNEL_STAGE_LABELS[opportunity.stage] ?? opportunity.stage}</p>}
             {opportunity.product_model && (
               <p className="text-muted-foreground">{opportunity.product_model}</p>
             )}
@@ -105,10 +114,10 @@ function StageColumn({
     <div ref={setNodeRef} className="w-64 shrink-0">
       <Card>
         <CardHeader className="p-3">
-          <CardTitle className="text-sm">{FUNNEL_STAGE_LABELS[stage] ?? stage}</CardTitle>
+          <CardTitle className="text-sm">{stage === "__ready_for_marina" ? "Pronto para Marina" : FUNNEL_STAGE_LABELS[stage] ?? stage} <span className="text-muted-foreground">({opportunities.length})</span></CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0">
-          {opportunities.map((o) => (
+          {sortNewestSalesCards(opportunities).map((o) => (
             <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} />
           ))}
         </CardContent>
@@ -121,23 +130,25 @@ export function OpportunityKanban({
   operation,
   opportunities,
   onChanged,
+  workspaceEnabled = false,
 }: {
   operation: Operation;
   opportunities: OpportunityWithContact[];
   onChanged: () => void;
+  workspaceEnabled?: boolean;
 }) {
   const [pending, setPending] = useState<{ opportunity: OpportunityWithContact; targetStage: string } | null>(null);
   const [editing, setEditing] = useState<OpportunityWithContact | null>(null);
   const [selected, setSelected] = useState<OpportunityWithContact | null>(null);
   const draggedAt = useRef(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
-  const stages = FUNNEL_STAGES[operation];
+  const stages = [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
 
   function handleDragEnd(event: DragEndEvent) {
     draggedAt.current = Date.now();
     const opportunityId = String(event.active.id);
     const targetStage = event.over?.id as string | undefined;
-    if (!targetStage) return;
+    if (!targetStage || targetStage === "__ready_for_marina") return;
 
     const opportunity = opportunities.find((o) => o.id === opportunityId);
     if (!opportunity || opportunity.stage === targetStage) return;
@@ -163,14 +174,14 @@ export function OpportunityKanban({
             <StageColumn
               key={stage}
               stage={stage}
-              opportunities={opportunities.filter((o) => o.stage === stage)}
+              opportunities={opportunities.filter((o) => stage === "__ready_for_marina" ? o.sales_state?.readyForHuman : o.stage === stage && !o.sales_state?.readyForHuman)}
               onEdit={setEditing}
               onOpen={o => { if (Date.now() - draggedAt.current > 400) setSelected(o); }}
             />
           ))}
         </div>
       </DndContext>
-      {selected && <OpportunityDetailDialog opportunity={selected} onClose={() => setSelected(null)} onChanged={onChanged}/>}
+      {selected && <OpportunityDetailDialog opportunity={opportunities.find(o => o.id === selected.id) ?? selected} onClose={() => setSelected(null)} onChanged={onChanged}/>}
       {pending && (
         <StageChangeDialog
           open={!!pending}

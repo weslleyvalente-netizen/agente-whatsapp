@@ -510,3 +510,13 @@ Após OK do usuário, publicado 453678e na main. Histórico 00029/00030 reconcil
 ### Descrição da tarefa sempre visível — 30/09/2026
 
 Publicado a784445 após autorização. Deploy web concluído com Success; descrição de Paulo Da Silva confirmada no painel, resumo adicional separado e follow-up preservado. API /health ok. Sem migration, envio ao cliente ou alteração de qualificação.
+
+
+### Funil operacional da Marina — implementação local (01/10/2026)
+- Marina é a vendedora; Mariana é a IA. Branch codex/funil-operacao-marina, baseada na main a784445.
+- Coluna operacional Pronto para Marina e indicadores; etapa comercial preservada, mais novos primeiro; card grande com chat lateral e tarefas executáveis.
+- Cadência sem tarefa para leads iniciais sem intenção:1h/23h/final48h, flag separada e desligada; registro em mensagens, confirmação antes de avançar e sem retry automático.
+- Diagnóstico Andreia: áudio da atendente era [audio], sem transcrição. Correção sob demanda com texto salvo, invalidação da sugestão antiga e erro explícito para mídia indisponível. Não houve alteração desse contato em produção.
+- 802 testes, tipos e build web passaram. Dois timeouts em testes antigos na execução paralela desapareceram na repetição integral, sem mudar testes.
+- Sem migration/push/ativação. Ambas as flags novas ausentes no banco, portanto desligadas. Runbook: docs/plano-funil-marina.md.
+- Perda automática, teto global combinado e limpeza das tarefas antigas continuam pendentes para próximo bloco.

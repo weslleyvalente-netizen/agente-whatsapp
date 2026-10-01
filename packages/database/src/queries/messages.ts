@@ -58,8 +58,8 @@ export async function createMessage(
   return data as Message;
 }
 
-export async function updateMessageContent(client: SupabaseClient, id: string, content: string) {
-  const { error } = await client.from("messages").update({ content }).eq("id", id);
+export async function updateMessageContent(client: SupabaseClient, id: string, content: string, metadata?: Message["metadata"]) {
+  const { error } = await client.from("messages").update(metadata ? { content, metadata } : { content }).eq("id", id);
   if (error) throw error;
 }
 

@@ -34,6 +34,7 @@ import {
   getOrganizationMembersDisplay,
 } from "../../services/task.service.js";
 import { resolveTaskFollowupEligibility, sendTaskFollowup, getFollowupTouchInfo } from "../../services/task-followup.service.js";
+import { prepareFollowupAudioContext } from "../../services/followup-audio-context.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 // Confirms a row referenced by id in `table` belongs to `organizationId`,
@@ -280,23 +281,29 @@ export default async function taskRoutes(app: FastifyInstance) {
     const body = z.object({ regenerate: z.boolean().optional() }).safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: body.error.issues });
     const touchInfo = await getFollowupTouchInfo(db, eligibility.conversation);
-    if (existing.followup_suggested_message && !body.data.regenerate) return reply.send({
+    const { conversation } = eligibility;
+    let prepared;
+    try {
+      prepared = await prepareFollowupAudioContext(db, conversation, await getRecentMessages(db, conversation.id, 20));
+    } catch (error) {
+      return reply.status(422).send({ error: (error as Error).message, reason: "incomplete_audio_context" });
+    }
+    const audioContextUpdated = prepared.changed || prepared.messages.some(m => m.metadata?.audio_transcribed_at && (!existing.followup_suggestion_generated_at || new Date(m.metadata.audio_transcribed_at).getTime() > new Date(existing.followup_suggestion_generated_at).getTime()));
+    if (existing.followup_suggested_message && !body.data.regenerate && !audioContextUpdated) return reply.send({
       message: existing.followup_suggested_message,
       regenerationsRemaining: Math.max(maxRegenerations - existing.followup_regeneration_count, 0), touch: touchInfo,
     });
     const isRegeneration = !!existing.followup_suggested_message;
     if (isRegeneration && existing.followup_regeneration_count >= maxRegenerations) {
+      if (audioContextUpdated) return reply.status(422).send({ error: "O áudio foi recuperado, mas o limite de regenerações foi atingido. A sugestão antiga foi bloqueada; escreva a mensagem manualmente.", reason: "audio_context_updated", regenerationsRemaining: 0 });
       return reply.status(429).send({ error: "Limite de regenerações atingido", regenerationsRemaining: 0 });
     }
 
-    const { conversation } = eligibility;
     const agent = await getAgentById(db, conversation.agent_id);
     const apiKey = await resolveApiKey(existing.organization_id, agent.provider);
 
-    const [recentMessages, qualification] = await Promise.all([
-      getRecentMessages(db, conversation.id, 20),
-      getQualificationByConversationId(db, conversation.id).catch(() => null),
-    ]);
+    const recentMessages = prepared.messages;
+    const qualification = await getQualificationByConversationId(db, conversation.id).catch(() => null);
     const opportunity = existing.opportunity_id ? await getOpportunityById(db, existing.opportunity_id) : null;
 
     const suggestion = await generateTaskFollowupSuggestion({

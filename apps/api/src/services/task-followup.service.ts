@@ -90,12 +90,14 @@ export async function getFollowupTouchInfo(
 ): Promise<FollowupTouchInfo> {
   const [lastContact, recentMessages] = await Promise.all([
     getLastContactMessage(db, conversation.id),
-    getRecentMessages(db, conversation.id, 1),
+    getRecentMessages(db, conversation.id, 20),
   ]);
   const anchorISO = lastContact?.created_at ?? conversation.created_at;
-  const touchCount = await countFollowupTouchEventsForConversationSince(db, conversation.id, anchorISO);
+  const recordedTaskTouches = await countFollowupTouchEventsForConversationSince(db, conversation.id, anchorISO);
+  const noTaskTouches = recentMessages.filter(m => m.role === "agent" && m.evolution_message_id && m.metadata?.low_intent_followup && new Date(m.created_at).getTime() > new Date(anchorISO).getTime()).length;
+  const touchCount = recordedTaskTouches + noTaskTouches;
 
-  const lastMessage = recentMessages[0] ?? null;
+  const lastMessage = recentMessages.at(-1) ?? null;
   if (!lastMessage || lastMessage.role === "contact") {
     return { lastTouchAt: null, lastTouchBy: null, touchCount };
   }

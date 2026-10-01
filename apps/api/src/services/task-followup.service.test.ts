@@ -353,3 +353,10 @@ describe("sendTaskFollowup", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+it("counts confirmed no-task automatic touches when coordinating a later seller followup",async()=>{
+ getLastContactMessage.mockResolvedValue({created_at:"2026-10-01T10:00:00Z"});
+ getRecentMessages.mockResolvedValue([{role:"agent",created_at:"2026-10-01T11:00:00Z",evolution_message_id:"sent",metadata:{low_intent_followup:{anchor:"2026-10-01T10:00:00Z",stage:1}}},{role:"agent",created_at:"2026-10-02T09:00:00Z",evolution_message_id:"sent2",metadata:{low_intent_followup:{anchor:"2026-10-01T10:00:00Z",stage:2}}}]);
+ countFollowupTouchEventsForConversationSince.mockResolvedValue(0);
+ const result=await getFollowupTouchInfo({} as any,conversation);expect(result.touchCount).toBe(2);expect(result.lastTouchAt).toBe("2026-10-02T09:00:00Z");
+});

@@ -17,6 +17,9 @@ export interface Organization {
 }
 
 export interface OrganizationSettings {
+  sales_workspace_enabled?: boolean;
+  sales_low_intent_cadence_enabled?: boolean;
+  sales_low_intent_cadence_started_at?: string;
   max_documents: number;
   max_agents: number;
   max_instances: number;

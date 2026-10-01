@@ -16,9 +16,12 @@ import type { Message } from "@aula-agente/shared";
 
 interface ChatPanelProps {
   conversationId: string;
+  compact?: boolean;
+  onClose?: () => void;
+  onConversationChanged?: () => void;
 }
 
-export function ChatPanel({ conversationId }: ChatPanelProps) {
+export function ChatPanel({ conversationId, onClose, onConversationChanged, compact = false }: ChatPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -109,6 +112,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
     });
 
     fetchConversation();
+    onConversationChanged?.();
   };
 
   const handleDisableAi = async () => {
@@ -161,6 +165,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
       // refetch so the header button and the notice bar below reflect it
       // immediately instead of waiting for the next realtime event.
       fetchConversation();
+      onConversationChanged?.();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao enviar");
     } finally {
@@ -180,6 +185,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
       <div className="flex min-w-0 flex-1 flex-col">
         {conversation && (
           <ChatHeader
+            compact={compact}
             conversation={conversation}
             onStatusChange={handleStatusChange}
             onTakeoverToggle={handleTakeoverToggle}
@@ -187,7 +193,7 @@ export function ChatPanel({ conversationId }: ChatPanelProps) {
             onReenableAi={handleReenableAi}
             onUpdate={fetchConversation}
             onOpenDetails={() => setDetailsOpen(true)}
-            onClose={() => router.push("/inbox")}
+            onClose={onClose ?? (() => router.push("/inbox"))}
           />
         )}
 
