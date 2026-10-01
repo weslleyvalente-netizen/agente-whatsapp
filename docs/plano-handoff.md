@@ -538,3 +538,10 @@ Publicado a784445 após autorização. Deploy web concluído com Success; descri
 
 ### Busca global no funil e controles do card — 01/10/2026
 Implementados em codex/busca-funil-whatsapp: busca entre todos os funis e situações, botão Abrir no WhatsApp e Mover para outro funil com motivo/histórico pelo endpoint já existente. Caso Yara: card está ganho em Consórcio/Adesão, oculto pelo filtro Em andamento; diagnóstico sem alterações na cliente. 812 testes e build web passaram. Sem migration/ativação/publicação; instruções em docs/plano-funil-marina.md.
+
+
+### Publicação da busca e controles do card — 01/10/2026
+- Usuário autorizou; fast-forward na main e push de 870c8a4, incluindo registros de deploy/ativação anteriores.
+- EasyPanel Success: worker 14:57:31, API 14:57:39, web 14:57:59 (Brasília). API /health OK.
+- Validado em produção: busca por (62) 9636-6089 retorna Yara Arcanjo / Consórcio / Ganho / Adesão; card exibe Abrir no WhatsApp com URL do contato e Mover para outro funil. Seletor e motivo exibidos; cancelado sem mudança.
+- Nenhuma mensagem enviada ou negócio modificado. Visão operacional permanece ligada, cadência de 1h/23h/48h desligada. Registro salvo localmente sem novo push de documentação para evitar redeploy redundante.

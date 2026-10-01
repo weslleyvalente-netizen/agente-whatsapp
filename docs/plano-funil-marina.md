@@ -78,3 +78,10 @@ Tarefas vinculadas somente ao contato também são exibidas, identificadas como 
 - Card grande: Abrir no WhatsApp (link wa.me, sem enviar automaticamente) e Mover para outro funil. Reutiliza endpoint autorizado existente /operation, exige motivo e mostra reinício na primeira etapa; preserva contato, situação e histórico.
 - Sem migration, mudança de flags ou alteração dos negócios durante implementação. Testes: shared277/API243/database60/runtime116/worker116 = 812; build web de produção passou.
 - Publicação ainda pendente. Validar após deploy: buscar Yara/telefone e observar Ganho/Consórcio, abrir card e WhatsApp sem enviar; mover negócio de teste com motivo e conferir primeira etapa/histórico. Cadência automática permanece desligada.
+
+
+### Publicação da busca e controles do card — 01/10/2026
+- Usuário autorizou; fast-forward na main e push de 870c8a4, incluindo registros de deploy/ativação anteriores.
+- EasyPanel Success: worker 14:57:31, API 14:57:39, web 14:57:59 (Brasília). API /health OK.
+- Validado em produção: busca por (62) 9636-6089 retorna Yara Arcanjo / Consórcio / Ganho / Adesão; card exibe Abrir no WhatsApp com URL do contato e Mover para outro funil. Seletor e motivo exibidos; cancelado sem mudança.
+- Nenhuma mensagem enviada ou negócio modificado. Visão operacional permanece ligada, cadência de 1h/23h/48h desligada. Registro salvo localmente sem novo push de documentação para evitar redeploy redundante.
