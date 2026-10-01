@@ -559,6 +559,9 @@ Plano em docs/plano-funil-automatico.md: criação/avanço com evidência, fila 
 - Entrada e avanço conservadores por evidência, confirmação de envio para proposta, sem regressão ou reabertura; A identificar para conversa sem negócio e operação desconhecida.
 - 840 testes, tipos, build web e testes SQL em banco temporário passaram. Revisão independente: sete achados importantes corrigidos com regressões; nenhum minor pendente.
 - Dry-run: 114 contatos com 171 tarefas abertas sem negócio; 55 candidatos preliminares, 59 sem identificação segura. Nenhum apply.
-- Histórico remoto inclui 20260930233509_sync_published_agent_name, espelhada exatamente sem reaplicação. Migration nova 20261001193000_sales_opportunity_freeze (timestamp posterior para evitar --include-all/repair), não aplicada.
+- Histórico remoto inclui 20260930233509_sync_published_agent_name, espelhada exatamente sem reaplicação. Migration nova 20261001194818_sales_opportunity_freeze (timestamp posterior para evitar --include-all/repair), não aplicada.
 - Flags sales_auto_pipeline_enabled e sales_opportunity_freeze_enabled confirmadas null/desligadas em produção. CLI Supabase não disponível neste ambiente: migration list final no terminal do usuário antes de db push.
 - Publicação, migration e ativação aguardam autorização. Runbook completo e decisões em docs/plano-funil-automatico.md.
+
+### Publicação aprovada — 01/10/2026
+Migration sales_opportunity_freeze aplicada com sucesso pelo conector Supabase, versão remota 20261001194818; arquivo local alinhado ao histórico. Flags sales_auto_pipeline_enabled e sales_opportunity_freeze_enabled permanecem ausentes/desligadas. Backfill não aplicado. Publicação e saúde em verificação.

@@ -36,7 +36,7 @@ Plano aprovado — 01/10/2026. Marina é a vendedora; Mariana é a IA. Implement
 - Mostrar origem do valor quando houver divergência negócio/qualificação. Não copiar valores estimados ou preço antigo para novo plano.
 
 ## Migration proposta (não aplicada)
-20261001193000_sales_opportunity_freeze.sql, após confirmar histórico remoto:
+20261001194818_sales_opportunity_freeze.sql, após confirmar histórico remoto:
 - opportunities.frozen_until date, freeze_reason text e vínculo/metadata do retorno gerado; constraints para pares válidos e índices apenas se consultas justificarem.
 - RPC transacional para congelar/reagendar/descongelar e criar/atualizar tarefa e eventos sob lock; service role restrito, verificação da organização e ator vindos da API, sem permissões públicas adicionais.
 - Eventos compatíveis com CHECK existente: examinar antes de adicionar tipos de congelamento/descongelamento; alteração aditiva, down documentado. Nenhuma limpeza/backfill nesta migration.
@@ -78,8 +78,8 @@ Primeiro editor completo e congelamento em teste controlado. Depois congelamento
 - A migration desta fase inclui RPC de sincronização automática além do congelamento: a criação concorrente e os eventos precisam ocorrer sob lock no banco. A função é restrita a service_role, com checagem de organização/mensagem/flag.
 
 ## Runbook de publicação (aguardar aprovação)
-1. Conferir `supabase migration list`: somente a 20261001193000 desta fase deve estar pendente. Parar se existir outra pendência inesperada.
-2. Revisar a 20261001193000 e, após aprovação, executar `supabase db push`. Confirmar os campos e as funções no banco. Migration aditiva; não ativa flags nem faz backfill.
+1. Conferir `supabase migration list`: somente a 20261001194818 desta fase deve estar pendente. Parar se existir outra pendência inesperada.
+2. Revisar a 20261001194818 e, após aprovação, executar `supabase db push`. Confirmar os campos e as funções no banco. Migration aditiva; não ativa flags nem faz backfill.
 3. Enviar a branch e revisar/mesclar na main somente com autorização. A main dispara deploy automático de API, worker e web no EasyPanel.
 4. Conferir os três serviços, saúde da API e mensagens recentes processadas pelo worker. Confirmar `sales_auto_pipeline_enabled` e `sales_opportunity_freeze_enabled` ausentes ou false. Não desligar as flags anteriores já aprovadas.
 5. Com flags novas desligadas, validar primeiro o editor pelos dois lápis: mesmos dados, resumo/CPF protegido/origem, salvar seção e conferir card. Testar mensagem manual pelo painel em contato controlado e verificar entrega única, sem mudança indevida de takeover pelo eco.
@@ -93,7 +93,7 @@ Rollback: desligar entrada/avanço automático interrompe novas alterações. De
 
 Teste SQL local: instalar @electric-sql/pglite em pasta temporária e executar `node packages/database/scripts/test-sales-freeze-migration.mjs /caminho/temporario/node_modules/@electric-sql/pglite/dist/index.js`. Não usa nem escreve em produção.
 
-Histórico remoto conferido por consulta somente leitura: 00001–00031 e 20260930233509 (sync_published_agent_name). Esta última foi espelhada exatamente no repositório, sem reaplicação. A migration nova recebeu timestamp posterior, 20261001193000, para permitir db push normal sem --include-all ou repair. A CLI Supabase não está disponível no ambiente deste assistente; executar migration list no terminal já usado pelo usuário antes de aplicar. Flags novas confirmadas null/desligadas em produção em 01/10; nenhuma escrita realizada.
+Histórico remoto conferido por consulta somente leitura: 00001–00031 e 20260930233509 (sync_published_agent_name). Esta última foi espelhada exatamente no repositório, sem reaplicação. A migration nova recebeu timestamp posterior, 20261001194818, para permitir db push normal sem --include-all ou repair. A CLI Supabase não está disponível no ambiente deste assistente; executar migration list no terminal já usado pelo usuário antes de aplicar. Flags novas confirmadas null/desligadas em produção em 01/10; nenhuma escrita realizada.
 
 ## Verificação e registro final
 840 testes Vitest: shared 292, database 66, runtime 116, API 246, worker 120. Tipos e build web aprovados. Migration validada em PostgreSQL temporário (PGlite), incluindo idempotência, preservação de CPF/retorno, rollback, autorização/data, avanço confirmado e negócio encerrado. Revisão independente encontrou sete problemas importantes, corrigidos com testes de regressão RED→GREEN; nenhum minor pendente. Não houve envio de mensagem a cliente, push, migration aplicada ou flag ativada.
@@ -103,7 +103,7 @@ Registro das decisões (e limitações de validação):
 - centralizar sincronização no worker — preserva simulação Playground e só considera proposta confirmada — custo: avanço aparece após o worker confirmar envio.
 - pausar cadência até descongelamento explícito — evita reativar cobranças antigas ao chegar a data — custo: Marina precisa iniciar o retorno pela tarefa.
 - aplicar backfill apenas em etapa posterior aprovada — script somente leitura rejeita apply — custo: cards históricos ainda precisam de revisão.
-- espelhar migration já aplicada e dar timestamp posterior à nova — histórico remoto tem 20260930233509 e numeração 00032 ficaria anterior — custo: arquivo novo usa 20261001193000 em vez do nome proposto. Nenhuma reaplicação de produção.
+- espelhar migration já aplicada e dar timestamp posterior à nova — histórico remoto tem 20260930233509 e numeração 00032 ficaria anterior — custo: arquivo novo usa 20261001194818 em vez do nome proposto. Nenhuma reaplicação de produção.
 - estado remoto conferido via connector readonly — CLI não instalada, migration list final fica no runbook — custo: conferência CLI antes de aplicar ainda necessária.
 - entrega Evolution não validada ao vivo — publicação não autorizada e não enviar a clientes reais — custo: teste controlado após deploy permanece necessário.
 - contagens dry-run verificadas por leitura REST e classificação local — candidatos ainda sujeitos à revisão — custo: nenhum backfill entregue sem aprovação.

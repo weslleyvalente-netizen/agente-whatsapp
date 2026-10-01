@@ -13,7 +13,7 @@ CREATE TABLE conversations(id uuid primary key,organization_id uuid,contact_id u
 CREATE TABLE messages(id uuid primary key,organization_id uuid,conversation_id uuid,role text,content text,created_at timestamptz,evolution_message_id text);
 CREATE TABLE conversation_qualifications(conversation_id uuid,organization_id uuid);`);
 const root=fileURLToPath(new URL('../../../supabase/migrations/',import.meta.url));
-for(const name of ['00010_tasks.sql','00024_opportunities.sql','00029_task_consolidated_pendencies.sql','20261001193000_sales_opportunity_freeze.sql']) await db.exec(readFileSync(root+name,'utf8'));
+for(const name of ['00010_tasks.sql','00024_opportunities.sql','00029_task_consolidated_pendencies.sql','20261001194818_sales_opportunity_freeze.sql']) await db.exec(readFileSync(root+name,'utf8'));
 console.log('Migration SQL loaded');
 const org='00000000-0000-0000-0000-000000000001',user='00000000-0000-0000-0000-000000000002',contact='00000000-0000-0000-0000-000000000003',opp='00000000-0000-0000-0000-000000000004',convo='00000000-0000-0000-0000-000000000005';
 await db.exec(`INSERT INTO organizations VALUES('${org}','{"sales_opportunity_freeze_enabled":true,"sales_auto_pipeline_enabled":true}');INSERT INTO auth.users VALUES('${user}');INSERT INTO organization_members VALUES('${org}','${user}');INSERT INTO wa_contacts VALUES('${contact}','${org}');INSERT INTO conversations VALUES('${convo}','${org}','${contact}','open',now());INSERT INTO opportunities(id,organization_id,contact_id,operation,initial_operation,stage) VALUES('${opp}','${org}','${contact}','consortium','consortium','qualification');
