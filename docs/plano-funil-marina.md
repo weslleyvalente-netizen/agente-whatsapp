@@ -64,3 +64,10 @@ Tarefas vinculadas somente ao contato também são exibidas, identificadas como 
 - Worker novo iniciou cinco consumidores e processou/enviou resposta real; banco confirmou cinco mensagens de clientes e uma da IA após 14:21:40.
 - Controles novos observados na interface implantada; sales_workspace_enabled e sales_low_intent_cadence_enabled continuam ausentes/desligadas. Não houve ativação ou mensagem de teste enviada pelo assistente.
 - Correção de contexto de áudio disponível no fluxo existente de sugestões. Validação manual de envio/áudio e da visão nova ainda pendente, conforme runbook. Primeiro ativar somente a visão do funil; cadência fica para depois dessa validação.
+
+
+### Ativação da visão operacional — 01/10/2026
+- Autorizada pelo usuário e realizada pelo painel: sales_workspace_enabled=true; sales_low_intent_cadence_enabled permanece ausente/desligada (confirmado no banco).
+- Validado no navegador: coluna Pronto para Marina, indicadores de resposta/tarefas, ordem decrescente de criação, card completo com conversa lateral e tarefas vinculadas ao contato e ao negócio. Painel de tarefa abriu com descrição, resumo e controles de follow-up.
+- Nenhuma mensagem enviada, tarefa concluída ou etapa comercial alterada durante a validação. Teste real de envio e remoção de handoff após resposta humana ainda pendente.
+- Na Sonia, tarefa com data futura permite envio porque waiting_on é null; o bloqueio existente requer waiting_on=scheduled_date, conforme decisão aprovada. Não foi alterado o agendamento ou a qualificação.
