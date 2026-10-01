@@ -565,3 +565,5 @@ Plano em docs/plano-funil-automatico.md: criação/avanço com evidência, fila 
 
 ### Publicação aprovada — 01/10/2026
 Migration sales_opportunity_freeze aplicada com sucesso pelo conector Supabase, versão remota 20261001194818; arquivo local alinhado ao histórico. Flags sales_auto_pipeline_enabled e sales_opportunity_freeze_enabled permanecem ausentes/desligadas. Backfill não aplicado. Publicação e saúde em verificação.
+
+Deploy concluído: main fdb923d. EasyPanel confirmou Success para worker às 19:50:55 UTC, API às 19:51:07 UTC e web às 19:51:31 UTC. API /health ok às 19:51:59 UTC; logs mostram os cinco workers iniciados. Funil carregou e os dois lápis abrem Editar dados do negócio. Flags novas continuam null/desligadas. Após reinício, havia mensagem human_agent registrada, mas ainda nenhuma nova mensagem contact/agent para comprovar resposta orgânica nesta janela. Testes de envio controlado, congelar/descongelar e avanço automático ficam para ativação gradual; nenhum cliente ou tarefa foi alterado durante a verificação.

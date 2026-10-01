@@ -108,3 +108,6 @@ Registro das decisões (e limitações de validação):
 - entrega Evolution não validada ao vivo — publicação não autorizada e não enviar a clientes reais — custo: teste controlado após deploy permanece necessário.
 - contagens dry-run verificadas por leitura REST e classificação local — candidatos ainda sujeitos à revisão — custo: nenhum backfill entregue sem aprovação.
 - atualizar a guarda estática dos campos publicados para incluir a migration espelhada — produção já publica name junto com seis campos, sem escrita direta nova — custo: teste reconhece duas migrations explícitas e valida sete campos na mais recente.
+
+## Publicação — 01/10/2026
+Autorizada pelo usuário. Migration aplicada pelo conector Supabase com versão 20261001194818 e arquivo local alinhado. Main fdb923d publicada; API, worker e web com Success no EasyPanel. Health ok, cinco workers iniciados, editor acessível pelos dois lápis. Flags novas desligadas; backfill não aplicado. Testes manuais de envio e ativação ainda pendentes; sem tráfego contact/agent novo na janela inicial após restart para comprovar resposta orgânica.
