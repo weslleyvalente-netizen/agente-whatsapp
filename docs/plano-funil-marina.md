@@ -56,3 +56,11 @@ Validação visual e de envio em ambiente implantado ainda deverá seguir o runb
 Cadência executada antes da condição do follow-up antigo, com seleção própria de 1h e exclusão do fluxo antigo para contatos tratados. Ganhos/perdidos sem outro negócio aberto não recebem mensagem. Falha de transcrição limpa sugestão antiga antes de habilitar envio manual; cota esgotada com áudio novo também permite escrita manual sem reusar texto antigo. Falha de atualização periódica preserva card e rascunhos.
 
 Tarefas vinculadas somente ao contato também são exibidas, identificadas como sem negócio vinculado; tarefas de outro negócio não entram. Não houve backfill ou modificação dos vínculos.
+
+
+### Publicação do funil operacional — 01/10/2026
+- Autorizada pelo usuário; main atualizada por fast-forward e push a ce1db09, sem conflitos ou migration.
+- EasyPanel: worker Success às 14:21:40, API às 14:21:52 e web às 14:23:38 (Brasília). API /health OK após troca dos containers.
+- Worker novo iniciou cinco consumidores e processou/enviou resposta real; banco confirmou cinco mensagens de clientes e uma da IA após 14:21:40.
+- Controles novos observados na interface implantada; sales_workspace_enabled e sales_low_intent_cadence_enabled continuam ausentes/desligadas. Não houve ativação ou mensagem de teste enviada pelo assistente.
+- Correção de contexto de áudio disponível no fluxo existente de sugestões. Validação manual de envio/áudio e da visão nova ainda pendente, conforme runbook. Primeiro ativar somente a visão do funil; cadência fica para depois dessa validação.
