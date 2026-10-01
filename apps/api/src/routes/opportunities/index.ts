@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import {
+  isValidFreezeDate, toISODateInTimeZone,
   createOpportunitySchema,
   updateOpportunitySchema,
   changeOpportunityStageSchema,
@@ -9,6 +10,7 @@ import {
   markOpportunityLostSchema,
 } from "@aula-agente/shared";
 import {
+  freezeOpportunity, getUnidentifiedSalesContacts,
   getAdminClient,
   getOrganizationById,
   createOpportunity,
@@ -43,6 +45,23 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true);
     }
   );
+
+  app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/unidentified",async(request,reply)=>{
+    const orgId=request.params.organizationId;
+    if(!request.user.memberships.some(m=>m.organization_id===orgId))return reply.status(403).send({error:"Access denied"});
+    const db=getAdminClient();const org=await getOrganizationById(db,orgId);
+    if(org.settings.sales_auto_pipeline_enabled!==true)return [];
+    return getUnidentifiedSalesContacts(db,orgId);
+  });
+
+  app.post<{Params:{opportunityId:string}}>("/opportunities/:opportunityId/freeze", async(request,reply)=>{
+    const parsed=z.object({date:z.string().nullable(),reason:z.string().trim().min(1).max(2000)}).safeParse(request.body);
+    if(!parsed.success) return reply.status(400).send({error:parsed.error.issues});
+    if(parsed.data.date!==null && !isValidFreezeDate(parsed.data.date,toISODateInTimeZone(new Date()))) return reply.status(400).send({error:"Informe uma data futura válida"});
+    const db=getAdminClient(); const o=await getOpportunityById(db,request.params.opportunityId);
+    if(!request.user.memberships.some(m=>m.organization_id===o.organization_id)) return reply.status(403).send({error:"Access denied"});
+    return freezeOpportunity(db,{organizationId:o.organization_id,opportunityId:o.id,actorId:request.user.id,date:parsed.data.date,reason:parsed.data.reason});
+  });
 
   app.patch<{ Params: { opportunityId: string } }>("/opportunities/:opportunityId/origin", async (request, reply) => {
     const db = getAdminClient();

@@ -13,6 +13,7 @@ import {
 import type { StaleConversationFollowupJobData } from "@aula-agente/queue";
 import { getRedisConnection, getStaleConversationFollowupQueue, getSendMessageQueue } from "@aula-agente/queue";
 import {
+  hasFrozenContact,
   getAdminClient,
   getAllOrganizations,
   getAgentsByOrganization,
@@ -69,6 +70,7 @@ async function runStalledNegotiationCheck(
 
   for (const row of stalePriced) {
     try {
+      if(await hasFrozenContact(db,org.id,row.contact_id,true)) continue;
       const priorTask = await getLatestTaskByConversationAndType(
         db,
         org.id,
@@ -133,6 +135,7 @@ async function runBaselineTaskCheck(
   for (const conversation of staleConversations) {
     if (excluded.has(conversation.id)) continue;
     try {
+      if(await hasFrozenContact(db,org.id,conversation.contact_id,true))continue;
       const openTask = await getOpenTaskByConversation(db, org.id, conversation.id);
       if (openTask) continue;
 
@@ -248,6 +251,7 @@ export function startStaleConversationFollowupWorker() {
           for (const conversation of staleConversations) {
             if (lowIntentHandled.has(conversation.id)) continue;
             try {
+              if(await hasFrozenContact(db,org.id,conversation.contact_id,true)) continue;
               // Correction #1 (see plan's Global Constraints): only the real
               // last message tells us whether Helena is the one waiting.
               const lastMessages = await getRecentMessages(db, conversation.id, 1);
@@ -424,6 +428,7 @@ export function startStaleConversationFollowupWorker() {
                     media_url: null,
                     media_type: null,
                     metadata: {
+                      source: "automatic_followup",
                       model: result.model,
                       input_tokens: result.inputTokens,
                       output_tokens: result.outputTokens,

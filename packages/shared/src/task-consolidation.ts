@@ -9,6 +9,7 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { urgent: 0, high: 1, normal
 // the dedup-by-type behavior createTaskWithDedup already has for
 // non-consolidated tasks, just applied within the list.
 export function upsertPendency(pendencies: TaskPendency[], next: TaskPendency): TaskPendency[] {
+  if(pendencies.some(p=>p.type===next.type && p.freeze_opportunity_id))return [...pendencies];
   const withoutType = pendencies.filter((p) => p.type !== next.type);
   return [...withoutType, next];
 }

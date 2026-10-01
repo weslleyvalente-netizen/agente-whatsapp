@@ -7,6 +7,8 @@ export type TaskCreatedByType = "ai" | "human";
 export type TaskAssigneeType = "human" | "ai";
 
 export interface Task {
+  /** Derived display field; never stored on tasks. */
+  opportunity_frozen_until?: string | null;
   id: string;
   organization_id: string;
   contact_id: string;
@@ -48,6 +50,7 @@ export interface Task {
 // individually (e.g. awaiting_customer_cpf, item 3) can leave the task
 // open with whatever else is still pending, instead of closing it outright.
 export interface TaskPendency {
+  freeze_opportunity_id?: string;
   type: TaskType;
   description: string;
   reason: string | null;

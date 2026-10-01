@@ -12,13 +12,18 @@ import { Badge } from "@/components/ui/badge";
 import { OpportunityKanban, type OpportunityWithContact } from "@/components/opportunities/opportunity-kanban";
 import { Input } from "@/components/ui/input";
 import { OpportunityDetailDialog } from "@/components/opportunities/opportunity-detail-dialog";
+import { ChatPanel } from "@/components/inbox/chat-panel";
+import { Dialog,DialogContent,DialogHeader,DialogTitle } from "@/components/ui/dialog";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 
 export default function OpportunitiesPage() {
   const { currentOrg } = useOrganization();
+  const [unidentified,setUnidentified]=useState<{id:string;contact_id:string;last_message_at:string;wa_contacts:{name:string|null;phone:string}|null}[]>([]);
+  const [unidentifiedSelected,setUnidentifiedSelected]=useState<string|null>(null);
   const [query, setQuery] = useState("");
   const searching = query.trim().length > 0;
   const [searchSelected, setSearchSelected] = useState<OpportunityWithContact | null>(null);
+  const [freezeFilter,setFreezeFilter]=useState("active");
   const [status, setStatus] = useState("open");
   const [operation, setOperation] = useState<Operation>("vehicle_sale");
   const [opportunities, setOpportunities] = useState<OpportunityWithContact[]>([]);
@@ -37,6 +42,8 @@ export default function OpportunitiesPage() {
     try {
       const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities${searching ? "" : `?status=${status}`}`);
       setOpportunities(data);
+      if(currentOrg.settings.sales_auto_pipeline_enabled===true)setUnidentified(await apiFetch(`/organizations/${currentOrg.id}/opportunities/unidentified`));
+      else setUnidentified([]);
     } catch (err) {
       if (showLoading) setError((err as Error).message);
       else setRefreshError((err as Error).message);
@@ -54,8 +61,8 @@ export default function OpportunitiesPage() {
   }, [opportunities]);
 
   const opportunitiesForTab = useMemo(
-    () => opportunities.filter((o) => o.operation === operation),
-    [opportunities, operation]
+    () => opportunities.filter((o) => o.operation === operation && (freezeFilter==="all" || (freezeFilter==="frozen" ? !!o.frozen_until && o.frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) : !o.frozen_until || o.frozen_until<=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"})))),
+    [opportunities, operation, freezeFilter]
   );
 
   const searchResults = useMemo(() => sortNewestSalesCards(opportunities.filter(o => matchesOpportunitySearch(o, query))), [opportunities, query]);
@@ -77,9 +84,11 @@ export default function OpportunitiesPage() {
         <h1 className="text-2xl font-semibold">Funil de vendas</h1>
         <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
       </div>
+      {currentOrg?.settings.sales_auto_pipeline_enabled===true && <section className="rounded-lg border p-4"><h2 className="font-medium">A identificar ({unidentified.length})</h2><p className="text-sm text-muted-foreground">Contatos em atendimento sem negócio. A operação precisa ser identificada antes de criar o card.</p><div className="mt-3 flex flex-wrap gap-2">{unidentified.filter(row=>!searching || `${row.wa_contacts?.name??""} ${row.wa_contacts?.phone??""}`.toLowerCase().includes(query.toLowerCase())).map(row=><Button variant="outline" key={row.id} onClick={()=>setUnidentifiedSelected(row.id)}>{row.wa_contacts?.name||row.wa_contacts?.phone||"Contato"}</Button>)}</div></section>}
+      {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open)setUnidentifiedSelected(null)}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>setUnidentifiedSelected(null)} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
       <div className="flex items-center gap-2"><Input aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" onClick={() => setQuery("")}>Limpar busca</Button>}</div>
       {searching && <p className="text-sm text-muted-foreground">Busca em todos os funis e situações, incluindo ganhos e perdidos.</p>}
-      {!searching && <><label className="flex items-center gap-2 text-sm">Situação<select className="rounded border bg-background p-2" value={status} onChange={e => setStatus(e.target.value)}><option value="open">Em andamento</option><option value="won">Ganhos</option><option value="lost">Perdidos</option></select></label>
+      {!searching && <><label className="flex items-center gap-2 text-sm">Fila<select value={freezeFilter} onChange={e=>setFreezeFilter(e.target.value)} className="rounded border bg-background p-2"><option value="active">Para agir</option><option value="frozen">Congelados</option><option value="all">Todos</option></select></label><label className="flex items-center gap-2 text-sm">Situação<select className="rounded border bg-background p-2" value={status} onChange={e => setStatus(e.target.value)}><option value="open">Em andamento</option><option value="won">Ganhos</option><option value="lost">Perdidos</option></select></label>
       <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
         <TabsList>
           {OPERATIONS.map((op) => (

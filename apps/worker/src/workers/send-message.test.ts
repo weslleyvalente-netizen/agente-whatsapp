@@ -6,8 +6,12 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId } = vi.hoisted(()
   setMessageEvolutionId: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@aula-agente/database", () => ({ getAdminClient, getInstanceById, setMessageEvolutionId }));
+vi.mock("@aula-agente/database", () => ({
+  shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
+  syncSalesPipeline: vi.fn().mockResolvedValue(null),
+  hasFrozenContact: vi.fn().mockResolvedValue(false), getAdminClient, getInstanceById, setMessageEvolutionId, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
+import * as database from "@aula-agente/database";
 import { processSendMessageJob } from "./send-message.js";
 
 const originalFetch = global.fetch;
@@ -108,4 +112,36 @@ describe("processSendMessageJob", () => {
 
     expect(setMessageEvolutionId).not.toHaveBeenCalled();
   });
+});
+
+it("cancela job antigo da IA gravado antes do congelamento sem chamar Evolution",async()=>{
+ vi.mocked(database.getMessageById).mockResolvedValue({role:"agent",created_at:"2026-10-01T10:00:00Z",metadata:null} as any);
+ vi.mocked(database.getConversationById).mockResolvedValue({contact_id:"p"} as any);
+ vi.mocked(database.shouldCancelPreFreezeAgentMessage).mockResolvedValue(true);
+ global.fetch=vi.fn();
+ await processSendMessageJob({data:{conversationId:"c",messageId:"m",instanceId:"i",phone:"5511",content:"Retorno",organizationId:"org"}});
+ expect(global.fetch).not.toHaveBeenCalled();
+ vi.mocked(database.getMessageById).mockResolvedValue(null);vi.mocked(database.shouldCancelPreFreezeAgentMessage).mockResolvedValue(false);
+ global.fetch=originalFetch;
+});
+it("cancela follow-up da tarefa congelada, mas preserva envio manual deliberado",async()=>{
+ getInstanceById.mockResolvedValue({instance_name:"loja-1"});
+ vi.mocked(database.getConversationById).mockResolvedValue({contact_id:"p"} as any);
+ vi.mocked(database.hasFrozenContact).mockResolvedValue(true);
+ global.fetch=vi.fn().mockResolvedValue(jsonResponse({key:{id:"manual"}})) as any;
+ const data={conversationId:"c",messageId:"m",instanceId:"i",phone:"5511",content:"Retorno",organizationId:"org"};
+ vi.mocked(database.getMessageById).mockResolvedValue({role:"human_agent",metadata:{source:"task_followup"}} as any);
+ await processSendMessageJob({data});expect(global.fetch).not.toHaveBeenCalled();
+ vi.mocked(database.getMessageById).mockResolvedValue({role:"human_agent",metadata:null} as any);
+ await processSendMessageJob({data});expect(global.fetch).toHaveBeenCalledTimes(1);
+ vi.mocked(database.getMessageById).mockResolvedValue(null);vi.mocked(database.hasFrozenContact).mockResolvedValue(false);global.fetch=originalFetch;
+});
+
+it("mantém aviso interno requestHuman com identificador sintético",async()=>{
+ getInstanceById.mockResolvedValue({instance_name:"loja-1"});
+ vi.mocked(database.getMessageById).mockRejectedValueOnce(new Error("invalid input syntax for type uuid"));
+ global.fetch=vi.fn().mockResolvedValue(jsonResponse({key:{id:"notify"}})) as any;
+ await expect(processSendMessageJob({data:{conversationId:"c",messageId:"handoff-notify-123",instanceId:"i",phone:"5511",content:"Handoff interno",organizationId:"org"}})).resolves.toBeUndefined();
+ expect(global.fetch).toHaveBeenCalledTimes(1);
+ vi.mocked(database.getMessageById).mockReset().mockResolvedValue(null);global.fetch=originalFetch;
 });

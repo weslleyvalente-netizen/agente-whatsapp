@@ -37,6 +37,7 @@ const {
 }));
 
 vi.mock("@aula-agente/database", () => ({
+  hasFrozenContact: vi.fn().mockResolvedValue(false),
   getAdminClient: () => ({}),
   getTaskById,
   getOrganizationById,

@@ -1,3 +1,4 @@
+import {hasFrozenContact} from "@aula-agente/database";
 import {
   DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG,
   FUNNEL_STAGES,
@@ -100,6 +101,7 @@ export async function runLiberaCredResumptionCheck(
 
   for (const opp of opportunities) {
     try {
+      if(await hasFrozenContact(db,org.id,opp.contact_id,true)) continue;
       if (opp.waiting_on === "team" || opp.waiting_on === "bank_or_admin") continue;
 
       const lastInteractionISO = opp.last_interaction_at ?? opp.created_at;

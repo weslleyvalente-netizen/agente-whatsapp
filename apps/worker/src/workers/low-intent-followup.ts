@@ -1,4 +1,4 @@
-import { getStaleWaitingConversations, getConversationById, getRecentMessages, getLastContactMessage, getOpenTaskByConversation, getOpenHandoffEvent, createMessage, updateConversation, type getAdminClient } from "@aula-agente/database";
+import { hasFrozenContact, getStaleWaitingConversations, getConversationById, getRecentMessages, getLastContactMessage, getOpenTaskByConversation, getOpenHandoffEvent, createMessage, updateConversation, type getAdminClient } from "@aula-agente/database";
 import { decideLowIntentCadence, isWithinBusinessHours, toISODateInTimeZone, DEFAULT_TASK_FOLLOWUP_CONFIG, type Organization, type Message } from "@aula-agente/shared";
 import { getSendMessageQueue, getRedisConnection } from "@aula-agente/queue";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -23,6 +23,7 @@ export async function runLowIntentFollowup(db: ReturnType<typeof getAdminClient>
  try {
   const c=await getConversationById(db,conversationId);
   if(c.organization_id && c.organization_id !== org.id) return true;
+  if(await hasFrozenContact(db,org.id,c.contact_id,true)) return true;
   const [handoff,task,latest,lastContact,opportunities]=await Promise.all([
    getOpenHandoffEvent(db,conversationId), getOpenTaskByConversation(db,org.id,conversationId), getRecentMessages(db,conversationId,1), getLastContactMessage(db,conversationId),
    readAll(()=>db.from("opportunities").select("status,stage,waiting_on,sale_amount,credit_amount").eq("organization_id",org.id).eq("contact_id",c.contact_id).order("id")),

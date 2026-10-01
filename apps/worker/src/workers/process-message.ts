@@ -1,3 +1,4 @@
+import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker } from "bullmq";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES, shouldDropReplyForTakeover } from "@aula-agente/shared";
@@ -266,6 +267,7 @@ export function startProcessMessageWorker() {
           contactName: conversation.wa_contacts?.name ?? null,
         });
 
+        try { await syncSalesPipeline(db,organizationId,conversationId); } catch(error) { console.error("Pipeline sync failed",conversationId,error); }
         // Generation can take a while (LLM latency, tool calls). Before
         // acting on the result, re-check reality: a human may have taken
         // over, AI may have been disabled, or the customer may have sent

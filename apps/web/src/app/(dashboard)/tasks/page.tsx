@@ -90,7 +90,12 @@ export default function TasksPage() {
         .limit(500),
     ]);
 
-    setTasks([...((openTasks as TaskWithRelations[]) || []), ...((doneTasks as TaskWithRelations[]) || [])]);
+    const frozenByContact=new Map<string,string>();
+    for(let offset=0;;offset+=500){const {data,error}=await supabase.from("opportunities").select("*").eq("organization_id",currentOrg.id).eq("status","open").order("id").range(offset,offset+499);if(error)throw error;
+      for(const o of data??[])if(o.frozen_until && (!frozenByContact.has(o.contact_id)||o.frozen_until>frozenByContact.get(o.contact_id)!))frozenByContact.set(o.contact_id,o.frozen_until);
+      if((data??[]).length<500)break;
+    }
+    setTasks([...((openTasks as TaskWithRelations[]) || []), ...((doneTasks as TaskWithRelations[]) || [])].map(t=>({...t,opportunity_frozen_until:frozenByContact.get(t.contact_id)??null})));
     setLoading(false);
   }, [currentOrg]);
 

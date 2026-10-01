@@ -59,16 +59,21 @@ describe("agents table published-field write path", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("publish_agent_config still sets exactly the six published fields, and no other migration writes to agents", () => {
+  it("published-field writes stay inside the two versioned publishing migrations", () => {
     const migrationsDir = path.join(REPO_ROOT, "supabase/migrations");
     const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql"));
 
     const filesUpdatingAgents = files.filter((f) =>
       /UPDATE\s+agents\s+SET/i.test(readFileSync(path.join(migrationsDir, f), "utf-8"))
     );
-    expect(filesUpdatingAgents).toEqual(["00016_publish_agent_config_function.sql"]);
+    expect(filesUpdatingAgents.sort()).toEqual(["00016_publish_agent_config_function.sql", "20260930233509_sync_published_agent_name.sql"]);
 
     const sql = readFileSync(path.join(migrationsDir, "00016_publish_agent_config_function.sql"), "utf-8");
+    const currentSql=readFileSync(path.join(migrationsDir,"20260930233509_sync_published_agent_name.sql"),"utf-8");
+    const currentSet=currentSql.match(/UPDATE\s+agents\s+SET([\s\S]*?)WHERE/i)?.[1]??"";
+    expect([...currentSet.matchAll(/^\s*(\w+)\s*=/gm)].map(m=>m[1]).sort()).toEqual(["name","system_prompt","model","provider","temperature","max_tokens","tools_config"].sort());
+    expect(currentSql).toContain("a.system_prompt = v.compiled_system_prompt");
+    expect(currentSql).toContain("from agent_versions order by agent_id, version desc");
     const setClause = sql.match(/UPDATE\s+agents\s+SET([\s\S]*?)WHERE/i)?.[1] ?? "";
     const setColumns = [...setClause.matchAll(/^\s*(\w+)\s*=/gm)].map((m) => m[1]);
 

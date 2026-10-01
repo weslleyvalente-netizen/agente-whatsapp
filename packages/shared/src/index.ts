@@ -24,3 +24,9 @@ export * from "./sales-workspace.js";
 export * from "./low-intent-cadence.js";
 
 export * from "./opportunity-search.js";
+
+export * from "./opportunity-freeze.js";
+
+export * from "./opportunity-edit-values.js";
+
+export * from "./sales-pipeline-policy.js";

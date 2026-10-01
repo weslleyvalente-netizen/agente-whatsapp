@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@aula-agente/database";
 import {
+  hasFrozenContact,
   getAdminClient,
   getTaskById,
   getOrganizationById,
@@ -39,6 +40,7 @@ export async function resolveTaskFollowupEligibility(
   db: SupabaseClient,
   task: Task
 ): Promise<FollowupEligibilityResult> {
+  if (await hasFrozenContact(db,task.organization_id,task.contact_id)) return {eligible:false,reason:"scheduled_callback_not_due"};
   if (!isTaskFollowupEligible(task.type)) {
     return { eligible: false, reason: "not_eligible_type" };
   }

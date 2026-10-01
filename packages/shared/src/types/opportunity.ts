@@ -15,6 +15,9 @@ export interface Opportunity {
   product: Product | null;
   product_model: string | null;
   initial_operation: Operation;
+  frozen_until?: string | null;
+  freeze_reason?: string | null;
+  freeze_task_id?: string | null;
   sale_amount: number | null;
   credit_amount: number | null;
   down_payment_amount: number | null;

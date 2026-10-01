@@ -14,13 +14,19 @@ export function isHotLead(task: { type: TaskType; status: TaskStatus }): boolean
 
 export type TaskBucket = "overdue" | "today" | "upcoming" | "done";
 
+export function getOperationalTaskDueDate(task:{due_date:string;opportunity_frozen_until?:string|null}):string{
+ return task.opportunity_frozen_until && task.opportunity_frozen_until>task.due_date ? task.opportunity_frozen_until : task.due_date;
+}
+
 export function resolveTaskBucket(
-  task: { due_date: string; status: TaskStatus },
+  task: { due_date: string; status: TaskStatus; opportunity_frozen_until?: string | null },
   todayISODate: string
 ): TaskBucket {
   if (DONE_TASK_STATUSES.includes(task.status)) return "done";
-  if (task.due_date < todayISODate) return "overdue";
-  if (task.due_date === todayISODate) return "today";
+  if(task.opportunity_frozen_until && task.opportunity_frozen_until>todayISODate)return "upcoming";
+  const dueDate=getOperationalTaskDueDate(task);
+  if (dueDate < todayISODate) return "overdue";
+  if (dueDate === todayISODate) return "today";
   return "upcoming";
 }
 
@@ -70,6 +76,7 @@ export function sortTasksForToday<T extends SortableTask>(tasks: T[], nowMs: num
 }
 
 export interface TaskSummaryInput {
+  opportunity_frozen_until?: string | null;
   type: TaskType;
   status: TaskStatus;
   due_date: string;
@@ -93,7 +100,7 @@ export function computeTaskSummary(tasks: TaskSummaryInput[], todayISODate: stri
     if (task.status === "completed" && task.completed_at?.slice(0, 10) === todayISODate) {
       summary.completedToday++;
     }
-    if (isHotLead(task) && OPEN_TASK_STATUSES.includes(task.status)) {
+    if (isHotLead(task) && OPEN_TASK_STATUSES.includes(task.status) && !(task.opportunity_frozen_until && task.opportunity_frozen_until>todayISODate)) {
       summary.hotOpenLeads++;
     }
   }

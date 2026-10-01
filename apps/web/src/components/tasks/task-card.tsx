@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { formatPhone, formatRelativeTime, cn } from "@/lib/utils";
-import { isHotLead, TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from "@aula-agente/shared";
+import { getOperationalTaskDueDate, isHotLead, TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_STATUS_LABELS } from "@aula-agente/shared";
 import type { Task } from "@aula-agente/shared";
 import { Flame } from "lucide-react";
 
@@ -27,7 +27,8 @@ function assigneeLabel(task: Task, memberEmailsById: Record<string, string>): st
 }
 
 function dueLabel(task: Task): string {
-  const due = new Date(`${task.due_date}T00:00:00`);
+  if(task.opportunity_frozen_until && task.opportunity_frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}))return `Congelado até ${new Date(`${task.opportunity_frozen_until}T12:00:00`).toLocaleDateString("pt-BR")}`;
+  const due = new Date(`${getOperationalTaskDueDate(task)}T00:00:00`);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diffDays = Math.round((due.getTime() - today.getTime()) / 86_400_000);

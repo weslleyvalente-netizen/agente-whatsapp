@@ -53,6 +53,7 @@ function OpportunityCard({
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </div>
+            {opportunity.frozen_until && <p className="text-xs text-blue-600">Retorno combinado: {new Date(`${opportunity.frozen_until}T12:00:00`).toLocaleDateString("pt-BR")}</p>}
             {opportunity.sales_state && <div className="flex flex-wrap gap-2 text-xs">
               {opportunity.sales_state.hot && <span title="Intenção de fechamento ou negociação" className="flex items-center gap-1 text-orange-600"><Flame className="size-3.5"/>Quente</span>}
               {opportunity.sales_state.humanPending && <span className="flex items-center gap-1 text-primary"><UserCheck className="size-3.5"/>Atendimento pendente</span>}
@@ -197,7 +198,6 @@ export function OpportunityKanban({
           open={!!editing}
           onOpenChange={(open) => !open && setEditing(null)}
           onSaved={() => {
-            setEditing(null);
             onChanged();
           }}
         />

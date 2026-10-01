@@ -137,3 +137,8 @@ describe("buildConsolidatedDescription", () => {
     expect(description).toContain("Retornar com a simulação.");
   });
 });
+
+it("não substitui o retorno do congelamento por callback automático",()=>{
+ const frozen={...pendency({type:"scheduled_callback",due_date:"2026-11-01"}),freeze_opportunity_id:"opp"};
+ expect(upsertPendency([frozen],pendency({type:"scheduled_callback",due_date:"2026-10-02"}))[0].due_date).toBe("2026-11-01");
+});

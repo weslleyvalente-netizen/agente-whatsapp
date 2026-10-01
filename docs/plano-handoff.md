@@ -549,3 +549,16 @@ Implementados em codex/busca-funil-whatsapp: busca entre todos os funis e situa�
 
 ### Planejamento da próxima fase — 01/10/2026
 Plano em docs/plano-funil-automatico.md: criação/avanço com evidência, fila A identificar, congelamento com calendário/motivo/tarefa futura transacional e editor unificado. Diagnóstico read-only encontrou 114 contatos com 170 tarefas abertas e nenhum negócio; classificação e apply dependem de aprovação. Migration 00032 somente proposta, sem schema/código/flag/produção alterados. Aguardando aprovação do plano conforme regras de trabalho.
+
+
+### Funil automático, congelamento e editor completo — implementação local em 01/10/2026
+- Branch codex/plano-funil-automatico. Plano aprovado e implementação concluída, com commit local sem push.
+- Congelar/reagendar/descongelar com data e motivo, tarefa futura transacional e preservação das outras pendências. Resposta antecipada destaca o card; não descongela. Data operacional retorna à fila no dia combinado; sem envio automático.
+- Guardas persistentes nas cadências, sugestões/envios de tarefa, contagens e worker de envio; watermark mantém invalidação de jobs antigos mesmo após descongelar. Envio manual deliberado e respostas novas seguem disponíveis; avisos internos requestHuman preservados.
+- Editor único por seção nos dois lápis: condições, resumo, dados do cliente, CPF protegido, responsável/origem; não recupera condições de outro funil.
+- Entrada e avanço conservadores por evidência, confirmação de envio para proposta, sem regressão ou reabertura; A identificar para conversa sem negócio e operação desconhecida.
+- 840 testes, tipos, build web e testes SQL em banco temporário passaram. Revisão independente: sete achados importantes corrigidos com regressões; nenhum minor pendente.
+- Dry-run: 114 contatos com 171 tarefas abertas sem negócio; 55 candidatos preliminares, 59 sem identificação segura. Nenhum apply.
+- Histórico remoto inclui 20260930233509_sync_published_agent_name, espelhada exatamente sem reaplicação. Migration nova 20261001193000_sales_opportunity_freeze (timestamp posterior para evitar --include-all/repair), não aplicada.
+- Flags sales_auto_pipeline_enabled e sales_opportunity_freeze_enabled confirmadas null/desligadas em produção. CLI Supabase não disponível neste ambiente: migration list final no terminal do usuário antes de db push.
+- Publicação, migration e ativação aguardam autorização. Runbook completo e decisões em docs/plano-funil-automatico.md.

@@ -23,6 +23,7 @@ const {
 }));
 
 vi.mock("@aula-agente/database", () => ({
+  hasFrozenContact: vi.fn().mockResolvedValue(false),
   getOpenLiberaCredPlanPresentedOpportunities,
   getOpenTaskByOpportunityAndType,
   getTaskEvents,

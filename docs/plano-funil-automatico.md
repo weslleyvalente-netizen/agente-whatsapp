@@ -1,6 +1,6 @@
 # Funil automático, congelamento e edição completa
 
-Plano para aprovação — 01/10/2026. Marina é a vendedora; Mariana é a IA. Esta fase ainda não foi implementada.
+Plano aprovado — 01/10/2026. Marina é a vendedora; Mariana é a IA. Implementação local concluída, sem push ou aplicação da migration.
 
 ## Problemas confirmados
 - Diagnóstico de produção em 01/10: 114 contatos com 170 tarefas abertas sem nenhuma oportunidade (qualquer situação); contagem bruta, não autorização nem número de candidatos automaticamente classificáveis.
@@ -36,7 +36,7 @@ Plano para aprovação — 01/10/2026. Marina é a vendedora; Mariana é a IA. E
 - Mostrar origem do valor quando houver divergência negócio/qualificação. Não copiar valores estimados ou preço antigo para novo plano.
 
 ## Migration proposta (não aplicada)
-00032_sales_opportunity_freeze.sql, após confirmar histórico remoto:
+20261001193000_sales_opportunity_freeze.sql, após confirmar histórico remoto:
 - opportunities.frozen_until date, freeze_reason text e vínculo/metadata do retorno gerado; constraints para pares válidos e índices apenas se consultas justificarem.
 - RPC transacional para congelar/reagendar/descongelar e criar/atualizar tarefa e eventos sob lock; service role restrito, verificação da organização e ator vindos da API, sem permissões públicas adicionais.
 - Eventos compatíveis com CHECK existente: examinar antes de adicionar tipos de congelamento/descongelamento; alteração aditiva, down documentado. Nenhuma limpeza/backfill nesta migration.
@@ -68,3 +68,43 @@ D6: nenhuma perda/ganho automática ou atualização em lote sem aprovação das
 
 ## Ativação proposta
 Primeiro editor completo e congelamento em teste controlado. Depois congelamento manual para operação. Só depois criação/avanço automáticos para leads novos; revisar candidatos antigos e aprovar backfill à parte. Cadência 1h/23h/48h permanece desligada até validar guardas e coordenação desta fase.
+
+## Decisões durante a implementação
+- Sincronização centralizada no worker após a qualificação/handoff e após confirmação de envio. As ferramentas simuladas do Playground não executam essa sincronização.
+- Proposta exige mensagem de saída confirmada, com valor registrado e prazo, quando aplicável; perguntas de orçamento, condições negadas e estimativas não contam; texto de geração ainda não enviado não avança. Critério conservador: variações sem valor compatível permanecem na etapa atual.
+- frozen_at permanece como marca de invalidação após descongelar e protege também jobs antigos da IA que não tinham marca de follow-up. Respostas novas a mensagens do cliente e envio manual deliberado continuam disponíveis.
+- Enquanto existir o combinado, cadências antigas continuam pausadas mesmo após a data; a tarefa volta à fila e Marina decide o próximo passo. Descongelar remove a pausa.
+- Contatos sem negócio: dry-run em 01/10 encontrou 114 contatos / 171 tarefas, com 55 candidatos preliminares e 59 sem classificação segura. Nenhuma criação em lote aplicada. O script deliberadamente rejeita --apply; a aplicação será preparada somente após revisão/aprovação das contagens e evidências.
+- A migration desta fase inclui RPC de sincronização automática além do congelamento: a criação concorrente e os eventos precisam ocorrer sob lock no banco. A função é restrita a service_role, com checagem de organização/mensagem/flag.
+
+## Runbook de publicação (aguardar aprovação)
+1. Conferir `supabase migration list`: somente a 20261001193000 desta fase deve estar pendente. Parar se existir outra pendência inesperada.
+2. Revisar a 20261001193000 e, após aprovação, executar `supabase db push`. Confirmar os campos e as funções no banco. Migration aditiva; não ativa flags nem faz backfill.
+3. Enviar a branch e revisar/mesclar na main somente com autorização. A main dispara deploy automático de API, worker e web no EasyPanel.
+4. Conferir os três serviços, saúde da API e mensagens recentes processadas pelo worker. Confirmar `sales_auto_pipeline_enabled` e `sales_opportunity_freeze_enabled` ausentes ou false. Não desligar as flags anteriores já aprovadas.
+5. Com flags novas desligadas, validar primeiro o editor pelos dois lápis: mesmos dados, resumo/CPF protegido/origem, salvar seção e conferir card. Testar mensagem manual pelo painel em contato controlado e verificar entrega única, sem mudança indevida de takeover pelo eco.
+6. Ativar congelamento primeiro. Em contato controlado, congelar para data futura com CPF pendente: conferir selo, retorno criado uma vez e CPF preservado; repetir/reagendar; verificar que Hoje/atrasadas deixam de cobrar e follow-up fica indisponível. Envio manual da conversa segue permitido.
+7. Validar resposta antecipada: Cliente respondeu aparece e data combinada permanece. Descongelar com motivo: callback do congelamento removido e CPF preservado. No retorno, a tarefa reaparece, sem disparo automático.
+8. Ativar entrada/avanço automático depois. Novo contato com modalidade identificada gera um único card; oi sozinho fica A identificar; qualificação real avança; proposta só após confirmação do envio; pedido de fechar aparece Pronto para Marina via requestHuman. Testar duplicação/reprocessamento, negócio encerrado e múltiplos negócios sem escolher um deles.
+9. Manter cadência 1h/23h/48h desligada até validar a coordenação; acompanhar logs de Pipeline sync failed, erros SQL e follow-ups cancelados por congelamento.
+10. Revisar dry-run dos antigos e aprovar candidatos à parte. Não executar --apply em nenhum script nesta publicação.
+
+Rollback: desligar entrada/avanço automático interrompe novas alterações. Desligar congelamento esconde a criação/reagendamento, mas negócios já congelados seguem protegidos e podem ser descongelados. Preferir corrigir código mantendo migration aditiva; rollback para código anterior exige suspender as automações de follow-up, pois ele desconhece o congelamento. Antes de remover campos, exportar datas/motivos e tratar retornos; tarefas/eventos permanecem.
+
+Teste SQL local: instalar @electric-sql/pglite em pasta temporária e executar `node packages/database/scripts/test-sales-freeze-migration.mjs /caminho/temporario/node_modules/@electric-sql/pglite/dist/index.js`. Não usa nem escreve em produção.
+
+Histórico remoto conferido por consulta somente leitura: 00001–00031 e 20260930233509 (sync_published_agent_name). Esta última foi espelhada exatamente no repositório, sem reaplicação. A migration nova recebeu timestamp posterior, 20261001193000, para permitir db push normal sem --include-all ou repair. A CLI Supabase não está disponível no ambiente deste assistente; executar migration list no terminal já usado pelo usuário antes de aplicar. Flags novas confirmadas null/desligadas em produção em 01/10; nenhuma escrita realizada.
+
+## Verificação e registro final
+840 testes Vitest: shared 292, database 66, runtime 116, API 246, worker 120. Tipos e build web aprovados. Migration validada em PostgreSQL temporário (PGlite), incluindo idempotência, preservação de CPF/retorno, rollback, autorização/data, avanço confirmado e negócio encerrado. Revisão independente encontrou sete problemas importantes, corrigidos com testes de regressão RED→GREEN; nenhum minor pendente. Não houve envio de mensagem a cliente, push, migration aplicada ou flag ativada.
+
+Registro das decisões (e limitações de validação):
+- o plano está em tarefas numeradas descritivas; manter ledger manual com testes por tarefa, sem extrator de briefs — não há blocos Task/Expected para o script.
+- centralizar sincronização no worker — preserva simulação Playground e só considera proposta confirmada — custo: avanço aparece após o worker confirmar envio.
+- pausar cadência até descongelamento explícito — evita reativar cobranças antigas ao chegar a data — custo: Marina precisa iniciar o retorno pela tarefa.
+- aplicar backfill apenas em etapa posterior aprovada — script somente leitura rejeita apply — custo: cards históricos ainda precisam de revisão.
+- espelhar migration já aplicada e dar timestamp posterior à nova — histórico remoto tem 20260930233509 e numeração 00032 ficaria anterior — custo: arquivo novo usa 20261001193000 em vez do nome proposto. Nenhuma reaplicação de produção.
+- estado remoto conferido via connector readonly — CLI não instalada, migration list final fica no runbook — custo: conferência CLI antes de aplicar ainda necessária.
+- entrega Evolution não validada ao vivo — publicação não autorizada e não enviar a clientes reais — custo: teste controlado após deploy permanece necessário.
+- contagens dry-run verificadas por leitura REST e classificação local — candidatos ainda sujeitos à revisão — custo: nenhum backfill entregue sem aprovação.
+- atualizar a guarda estática dos campos publicados para incluir a migration espelhada — produção já publica name junto com seis campos, sem escrita direta nova — custo: teste reconhece duas migrations explícitas e valida sete campos na mais recente.

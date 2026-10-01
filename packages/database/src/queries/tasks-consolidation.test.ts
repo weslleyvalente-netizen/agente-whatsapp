@@ -10,7 +10,7 @@ import { createTaskWithDedup, resolveAwaitingCustomerPendency } from "./tasks.js
 // already-passing fixture in tasks.test.ts.
 type Row = Record<string, unknown>;
 
-function makeFakeClient(seed: { tasks?: Row[]; task_events?: Row[]; organizations?: Row[]; opportunities?: Row[] }) {
+function makeFakeClient(seed: { tasks?: Row[]; task_events?: Row[]; organizations?: Row[]; opportunities?: Row[]; beforeUpdate?:()=>void }) {
   const tables: Record<string, Row[]> = {
     tasks: seed.tasks ? [...seed.tasks] : [],
     task_events: seed.task_events ? [...seed.task_events] : [],
@@ -49,6 +49,7 @@ function makeFakeClient(seed: { tasks?: Row[]; task_events?: Row[]; organization
         return builder;
       },
       update(changes: Row) {
+        const hook=seed.beforeUpdate;seed.beforeUpdate=undefined;hook?.();
         mode = "update";
         payload = changes;
         return builder;
@@ -72,12 +73,12 @@ function makeFakeClient(seed: { tasks?: Row[]; task_events?: Row[]; organization
         }
         if (mode === "update") {
           const idx = rows.findIndex((row) => filters.every((f) => f(row)));
-          if (idx === -1) return { data: null, error: { message: "not found" } };
+          if (idx === -1) return { data: null, error: { message: "not found",code:"PGRST116" } };
           rows[idx] = { ...rows[idx], ...payload };
           return { data: rows[idx], error: null };
         }
         const matches = resolveMatches();
-        if (matches.length === 0) return { data: null, error: { message: "not found" } };
+        if (matches.length === 0) return { data: null, error: { message: "not found",code:"PGRST116" } };
         return { data: matches[0], error: null };
       },
       // Supports `await builder` directly for a plain select (array result),
@@ -407,4 +408,12 @@ describe("resolveAwaitingCustomerPendency", () => {
     expect(updated.status).toBe("completed");
     expect(tables.task_events.some((e) => e.event_type === "completed")).toBe(true);
   });
+});
+
+it("preserva retorno que chega durante dedup com consolidação desligada",async()=>{
+ const row:Row={id:"task",organization_id:"org-1",contact_id:"contact-1",opportunity_id:"opp",type:"awaiting_customer_cpf",status:"pending",description:"CPF",priority:"urgent",due_date:"2026-09-01",created_at:"2026-09-01",updated_at:"old",consolidated_pendencies:[]};
+ const callback={type:"scheduled_callback",description:"Retornar",priority:"normal",due_date:"2026-11-01",added_at:"2026-10-01",added_by_type:"human",added_by_id:null,reason:null,due_time:null,freeze_opportunity_id:"opp"};
+ const {client,tables}=makeFakeClient({tasks:[row],organizations:[org()],beforeUpdate:()=>{row.updated_at="new";row.consolidated_pendencies=[{...callback,type:"awaiting_customer_cpf",freeze_opportunity_id:undefined,description:"CPF",priority:"urgent"},callback]}});
+ await createTaskWithDedup(client,{...baseInput,opportunity_id:"opp",type:"awaiting_customer_cpf"});
+ expect((tables.tasks[0].consolidated_pendencies as Row[]).some(p=>p.freeze_opportunity_id==="opp")).toBe(true);
 });

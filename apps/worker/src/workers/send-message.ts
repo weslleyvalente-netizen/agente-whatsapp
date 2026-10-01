@@ -1,8 +1,9 @@
+import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
-import { getAdminClient, getInstanceById, setMessageEvolutionId } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -87,6 +88,21 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
   const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption } = job.data;
 
   const db = getAdminClient();
+  const internalNotification=messageId.startsWith("handoff-notify-");
+  const recorded=internalNotification?null:await getMessageById(db,messageId);
+  const metadata=recorded?.metadata;
+  if(recorded && (recorded.role==="agent" || metadata?.source==="task_followup")){
+    const c=await getConversationById(db,job.data.conversationId);
+    if(await shouldCancelPreFreezeAgentMessage(db,job.data.organizationId,c.contact_id,recorded.created_at)) return;
+  }
+  if(metadata?.source==="task_followup" || metadata?.source==="automatic_followup" || metadata?.low_intent_followup){
+    const conversation=await getConversationById(db,job.data.conversationId);
+    const automatic=metadata?.source!=="task_followup";
+    if(await hasFrozenContact(db,job.data.organizationId,conversation.contact_id,automatic)){
+      console.log("Follow-up cancelled: frozen business",messageId);
+      return;
+    }
+  }
   const instance = await getInstanceById(db, instanceId);
 
   let response: unknown;
@@ -120,6 +136,7 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
     }
   }
 
+  try { if(!internalNotification)await syncSalesPipeline(db,job.data.organizationId,job.data.conversationId,messageId); } catch(error) { console.error("Pipeline sync failed after send",messageId,error); }
   console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
 }
 

@@ -16,3 +16,7 @@ export * from "./opportunities.js";
 export * from "./ignored-contacts.js";
 export * from "./handoff-events.js";
 export * from "./task-followup-sends.js";
+
+export * from "./opportunity-freeze.js";
+
+export * from "./sales-pipeline.js";

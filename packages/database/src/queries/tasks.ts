@@ -37,8 +37,12 @@ export async function createTask(
   return data as Task;
 }
 
-export async function updateTask(client: SupabaseClient, id: string, updates: Partial<Task>) {
-  const { data, error } = await client.from("tasks").update(updates).eq("id", id).select().single();
+export class TaskWriteConflict extends Error { constructor(){super("A tarefa mudou. Atualize e tente novamente.")} }
+export async function updateTask(client: SupabaseClient, id: string, updates: Partial<Task>, expectedUpdatedAt?: string) {
+  let query=client.from("tasks").update(updates).eq("id",id);
+  if(expectedUpdatedAt)query=query.eq("updated_at",expectedUpdatedAt);
+  const {data,error}=await query.select().single();
+  if(error && expectedUpdatedAt && error.code==="PGRST116")throw new TaskWriteConflict();
   if (error) throw error;
   return data as Task;
 }
@@ -225,7 +229,8 @@ export async function resolveAwaitingCustomerPendency(
   organizationId: string,
   taskId: string,
   resolvedType: TaskType,
-  note: string
+  note: string,
+  conflictAttempt=0
 ): Promise<{ taskCompleted: boolean }> {
   const task = await getTaskById(client, taskId);
   const pendencies = task.consolidated_pendencies ?? [];
@@ -234,7 +239,7 @@ export async function resolveAwaitingCustomerPendency(
   if (hasOthers) {
     const remaining = removePendencyByType(pendencies, resolvedType);
     const primary = pickPrimaryPendency(remaining)!;
-    await updateTask(client, taskId, {
+    try { await updateTask(client, taskId, {
       type: primary.type,
       title: TASK_TYPE_LABELS[primary.type],
       description: buildConsolidatedDescription(remaining),
@@ -243,7 +248,8 @@ export async function resolveAwaitingCustomerPendency(
       due_date: earliestDueDate(remaining)!,
       due_time: primary.due_time,
       consolidated_pendencies: remaining,
-    });
+    },task.updated_at);
+    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1);throw error;}
     await addTaskEvent(client, {
       task_id: taskId,
       organization_id: organizationId,
@@ -255,11 +261,12 @@ export async function resolveAwaitingCustomerPendency(
     return { taskCompleted: false };
   }
 
-  await updateTask(client, taskId, {
+  try { await updateTask(client, taskId, {
     status: "completed",
     completed_at: new Date().toISOString(),
     consolidated_pendencies: [],
-  });
+  },task.updated_at);
+  }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1);throw error;}
   await addTaskEvent(client, {
     task_id: taskId,
     organization_id: organizationId,
@@ -410,6 +417,7 @@ export interface OpenTaskWithScoreInputs {
     bid_amount: number | null;
     waiting_on: string | null;
     waiting_on_until: string | null;
+    frozen_until?: string | null;
     last_progress_at: string | null;
     last_interaction_at: string | null;
     created_at: string;
@@ -438,8 +446,9 @@ export async function getOpenTasksWithScoreInputs(
     const { data: opps, error: oppError } = await client
       .from("opportunities")
       .select(
-        "id, operation, stage, credit_amount, sale_amount, bid_amount, waiting_on, waiting_on_until, last_progress_at, last_interaction_at, created_at"
+        "*"
       )
+      .eq("organization_id",organizationId)
       .in("id", opportunityIds);
     if (oppError) throw oppError;
     for (const o of opps ?? []) opportunitiesById.set(o.id, o);
@@ -455,10 +464,16 @@ export async function getOpenTasksWithScoreInputs(
     for (const q of quals ?? []) urgencyByConversationId.set(q.conversation_id, q.urgency);
   }
 
+  const frozenByContact=new Map<string,string>();
+  for(let offset=0;;offset+=500){
+    const {data,error}=await client.from("opportunities").select("*").eq("organization_id",organizationId).eq("status","open").order("id").range(offset,offset+499);if(error)throw error;
+    for(const o of data??[])if(o.frozen_until && (!frozenByContact.has(o.contact_id)||o.frozen_until>frozenByContact.get(o.contact_id)!))frozenByContact.set(o.contact_id,o.frozen_until);
+    if((data??[]).length<500)break;
+  }
   return rows.map((row) => {
     const { wa_contacts, ...task } = row;
     return {
-      task: task as Task,
+      task: {...task,opportunity_frozen_until:frozenByContact.get(task.contact_id)??null} as Task,
       contactName: wa_contacts?.name ?? null,
       contactPhone: wa_contacts?.phone ?? "",
       opportunity: task.opportunity_id ? opportunitiesById.get(task.opportunity_id) ?? null : null,
@@ -535,7 +550,8 @@ function pendencyFromTask(task: Task): TaskPendency {
 
 export async function createTaskWithDedup(
   client: SupabaseClient,
-  input: CreateTaskWithDedupInput
+  input: CreateTaskWithDedupInput,
+  conflictAttempt=0
 ): Promise<{ task: Task; wasUpdated: boolean }> {
   const { autoLinkEnabled, consolidationEnabled } = await getTaskConsolidationSettings(
     client,
@@ -557,7 +573,7 @@ export async function createTaskWithDedup(
       : await getOpenTaskByOpportunityAndType(client, input.organization_id, opportunityId, input.type)
     : await getOpenTaskByContactAndType(client, input.organization_id, input.contact_id, input.type);
 
-  if (existing && consolidating) {
+  if (existing && (consolidating || (existing.consolidated_pendencies??[]).length>1 || (existing.consolidated_pendencies??[]).some(p=>p.freeze_opportunity_id))) {
     const currentPendencies = existing.consolidated_pendencies?.length
       ? existing.consolidated_pendencies
       : [pendencyFromTask(existing)];
@@ -565,7 +581,8 @@ export async function createTaskWithDedup(
     const primary = pickPrimaryPendency(merged)!;
     const primaryChanged = primary.type !== existing.type;
 
-    const task = await updateTask(client, existing.id, {
+    let task:Task;
+    try { task=await updateTask(client, existing.id, {
       type: primary.type,
       title: TASK_TYPE_LABELS[primary.type],
       description: buildConsolidatedDescription(merged),
@@ -574,7 +591,11 @@ export async function createTaskWithDedup(
       due_date: earliestDueDate(merged)!,
       due_time: primary.due_time,
       consolidated_pendencies: merged,
-    });
+    },existing.updated_at);
+    }catch(error){
+      if(error instanceof TaskWriteConflict && conflictAttempt<3)return createTaskWithDedup(client,input,conflictAttempt+1);
+      throw error;
+    }
     await addTaskEvent(client, {
       task_id: task.id,
       organization_id: input.organization_id,
@@ -595,10 +616,12 @@ export async function createTaskWithDedup(
   });
 
   if (decision.action === "update") {
-    const task = await updateTask(client, decision.taskId, {
+    let task:Task;
+    try { task=await updateTask(client, decision.taskId, {
       ...decision.changes,
       consolidated_pendencies: [toPendency(input)],
-    });
+    },existing?.updated_at);
+    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return createTaskWithDedup(client,input,conflictAttempt+1);throw error;}
     await addTaskEvent(client, {
       task_id: task.id,
       organization_id: input.organization_id,

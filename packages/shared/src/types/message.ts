@@ -16,6 +16,8 @@ export interface Message {
 }
 
 export interface MessageMetadata {
+  source?: "task_followup" | "automatic_followup";
+  task_id?: string;
   audio_transcribed_at?: string;
   low_intent_followup?: { anchor: string; stage: 1 | 2 | 3 };
   model?: string;

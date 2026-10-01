@@ -16,7 +16,7 @@ import {
   DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS,
   FUNNEL_STAGES,
   computeTaskPriorityScore,
-  resolveTaskBucket,
+  resolveTaskBucket, getOperationalTaskDueDate,
   toISODateInTimeZone,
   type Operation,
   type WaitingOn,
@@ -174,7 +174,7 @@ export function buildTodayPriorityList(
   weights: TaskPriorityScoreWeights,
   limit: number
 ): ScoredTodayTask[] {
-  const scored = rows.map((row) => {
+  const scored = rows.filter(row=>!(row.task.opportunity_frozen_until && row.task.opportunity_frozen_until>todayISODate) && (!row.opportunity?.frozen_until || row.opportunity.frozen_until<=todayISODate)).map((row) => {
     const bucket = resolveTaskBucket(row.task, todayISODate);
     const dueDateBucket = bucket === "done" ? "upcoming" : bucket;
 
@@ -221,7 +221,7 @@ export function buildTodayPriorityList(
       description: row.task.description,
       reason: row.task.reason,
       priority: row.task.priority,
-      dueDate: row.task.due_date,
+      dueDate: getOperationalTaskDueDate(row.task),
       contactName: row.contactName,
       contactPhone: row.contactPhone,
       conversationId: row.task.conversation_id,

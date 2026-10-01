@@ -1,5 +1,5 @@
 import {beforeEach,describe,it,expect,vi} from "vitest";
-const m=vi.hoisted(()=>({getStaleWaitingConversations:vi.fn(),getConversationById:vi.fn(),getLastContactMessage:vi.fn(),getRecentMessages:vi.fn(),getOpenTaskByConversation:vi.fn(),getOpenHandoffEvent:vi.fn(),createMessage:vi.fn(),updateConversation:vi.fn(),add:vi.fn(),acquire:vi.fn(),release:vi.fn(),eval:vi.fn()}));
+const m=vi.hoisted(()=>({hasFrozenContact:vi.fn().mockResolvedValue(false),getStaleWaitingConversations:vi.fn(),getConversationById:vi.fn(),getLastContactMessage:vi.fn(),getRecentMessages:vi.fn(),getOpenTaskByConversation:vi.fn(),getOpenHandoffEvent:vi.fn(),createMessage:vi.fn(),updateConversation:vi.fn(),add:vi.fn(),acquire:vi.fn(),release:vi.fn(),eval:vi.fn()}));
 vi.mock("@aula-agente/database",()=>m);
 vi.mock("@aula-agente/queue",()=>({getSendMessageQueue:()=>({add:m.add}),getRedisConnection:()=>({eval:m.eval})}));
 vi.mock("../lib/lock.js",()=>({acquireConversationLock:m.acquire,releaseConversationLock:m.release}));
@@ -43,3 +43,5 @@ it("excludes a closed deal even if an old unresponsive task remains open",async(
  m.getOpenTaskByConversation.mockResolvedValue({id:"old-task",type:"customer_unresponsive"});
  expect(await runLowIntentFollowup(db([],[{status:"lost",stage:"qualification"}]) as any,org as any,"c",anchor,new Date("2026-10-01T11:00Z"))).toBe(true);expect(m.add).not.toHaveBeenCalled();
 });
+
+it("não retoma cadência automática em negócio com retorno combinado",async()=>{m.hasFrozenContact.mockResolvedValueOnce(true);expect(await runLowIntentFollowup(db() as any,org as any,"c",anchor,new Date())).toBe(true);expect(m.add).not.toHaveBeenCalled();});
