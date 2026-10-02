@@ -27,3 +27,11 @@ it('routes a complete financing handoff to simulation even after a short acknowl
 it('keeps incomplete financing in documentation without inventing bank results',()=>{
  expect(decide({customerText:'Quero financiar',humanHandoff:true,qualification:{attendance_type:'financing',product_model:'CG160 Titan',down_payment_amount:0}})).toMatchObject({stage:'documentation'});
 });
+
+it("identifica moto elétrica sem escolha definitiva",()=>{expect(decide({customerText:"Ta quanto a moto elétrica",qualification:null})).toMatchObject({operation:"vehicle_sale",stage:"interest_received"})});
+it("aproveita histórico após resposta curta",()=>{expect(decide({customerText:"Valor",customerHistory:["Ta quanto a moto elétrica","Vc tem a x13 pro","Ta"],qualification:null})).toMatchObject({operation:"vehicle_sale",stage:"interest_received"})});
+it("não ressuscita recusa ou resolve ambiguidade",()=>{
+ expect(decide({customerText:"oi",customerHistory:["Quero bike","Não tenho mais interesse"],qualification:null})).toBeNull();
+ expect(decide({customerText:"Ok",customerHistory:["Quero bike","consórcio ou financiamento"],qualification:null})).toBeNull();
+});
+it("prioriza modalidade atual",()=>{expect(decide({customerText:"Quero consórcio",customerHistory:["Quero bike"],qualification:null})).toMatchObject({operation:"consortium"})});

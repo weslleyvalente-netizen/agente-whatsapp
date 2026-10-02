@@ -1,5 +1,5 @@
 import type {Operation} from "./types/opportunity.js";
-export interface PipelineInput {customerText:string;qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;}
+export interface PipelineInput {customerText:string;customerHistory?:string[];qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;}
 const normalize=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 export function decideSalesPipeline(input:PipelineInput):{operation:Operation;stage:string;explicitOperation:boolean}|null{
  const customer=normalize(input.customerText);const q=input.qualification??{};
@@ -10,12 +10,23 @@ export function decideSalesPipeline(input:PipelineInput):{operation:Operation;st
   ["financing",/\bfinanciamento\b|\bfinanciar\b/.test(positive)],
   ["libera_cred",/libera\s*cred/.test(positive)],
   ["contemplated_letter",/carta contemplada/.test(positive)],
-  ["vehicle_sale",/\ba vista\b|\bbike\b|\bbicicleta\b/.test(positive)],
+  ["vehicle_sale",/\ba vista\b|\bbike\b|\bbicicleta\b|\bmoto(?:cicleta)?\s+eletrica\b/.test(positive)],
  ];
  const explicit=signals.filter(([,hit])=>hit).map(([op])=>op);
  if(explicit.length>1 || !explicit.length && positive!==customer) return null;
  const attendance:Partial<Record<string,Operation>>={consortium:"consortium",financing:"financing",cash:"vehicle_sale"};
- const operation=explicit[0]??input.operation??attendance[String(q.attendance_type)];
+ let historicalOperation:Operation|undefined;
+ // Read customer evidence newest first; never infer intent from the AI's offers.
+ if(!explicit.length && !input.operation && !attendance[String(q.attendance_type)]) {
+  for(const text of [...(input.customerHistory??[])].reverse()) {
+   const normalized=normalize(text);
+   if(/nao (?:tenho|quero)(?: mais)? interesse|\bdesisti\b|ja comprei|\bnao\s+(?:quero|tenho interesse)/.test(normalized))return null;
+   const historical=decideSalesPipeline({customerText:text,qualification:null});
+   if(historical){historicalOperation=historical.operation;break;}
+   if(/consorcio|financiamento|financiar|libera\s*cred|carta contemplada|\bbike\b|\bbicicleta\b|moto\s+eletrica/.test(normalized))return null;
+  }
+ }
+ const operation=explicit[0]??input.operation??attendance[String(q.attendance_type)]??historicalOperation;
  if(!operation)return null;
  let stage="interest_received";
  const interested=!!(q.product_model||q.product_interest);

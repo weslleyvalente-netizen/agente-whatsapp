@@ -645,3 +645,11 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - TDD: três regressões inicialmente falharam; 119 testes do runtime e verificação de tipos passaram após a correção. Leitura do catálogo real confirmou X13, R$ 11.900, como relacionada a X13 Pro.
 - Recomendação: cliente com interesse concreto deve ter card em Interesse recebido, mesmo sem escolha definitiva. Nenhum card ou dado de produção foi alterado nesta correção.
 - Branch codex/fix-catalog-partial-search; commit local, sem push ou deploy.
+
+### Correção — criação de card pelo contexto (02/10/2026)
+
+- Reconhece moto elétrica como interesse em veículo, sem exigir escolha definitiva.
+- Sincronização considera as últimas 30 mensagens do cliente da mesma conversa, em ordem temporal, para recuperar a modalidade após respostas curtas. Ofertas da IA não são evidência de intenção; recusas e ambiguidades interrompem a recuperação. Modalidade atual/cadastro/negócio existente têm precedência sobre histórico.
+- Preserva etapa inicial sem qualificação estruturada, resultados humanos, congelamento, eventos e idempotência da RPC existente. Sem migration ou flag nova; usa sales_auto_pipeline_enabled já ligada.
+- Verificação: 317 testes shared, 74 database, 135 worker e verificações de tipos passaram. Busca parcial do catálogo acompanha esta publicação (119 testes runtime já validados).
+- Publicação autorizada pelo usuário; correção pontual do card de Adrielly será verificada após implantação, sem envio ao cliente.
