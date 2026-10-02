@@ -653,3 +653,7 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Preserva etapa inicial sem qualificação estruturada, resultados humanos, congelamento, eventos e idempotência da RPC existente. Sem migration ou flag nova; usa sales_auto_pipeline_enabled já ligada.
 - Verificação: 317 testes shared, 74 database, 135 worker e verificações de tipos passaram. Busca parcial do catálogo acompanha esta publicação (119 testes runtime já validados).
 - Publicação autorizada pelo usuário; correção pontual do card de Adrielly será verificada após implantação, sem envio ao cliente.
+
+Verificação da publicação ba7d3a9: worker Success 19:42:30 UTC, API Success 19:42:43 UTC; /health ok 19:44:06 UTC. Card de Adrielly criado pela rotina corrigida: f2285466-f089-4d57-aa61-bb7119fe1a35, vehicle_sale/interest_received, tarefa existente vinculada e preservada. Sem mensagens enviadas ou revisão em massa.
+
+Diagnóstico Josiel (62 99837-8953): retornou em 02/10 às 16:07 BRT prometendo resposta amanhã; tarefa return_customer para 03/10 correta. Card LiberaCred em plan_term_presented existente; qualification attendance_type consortium, modalidade ainda em avaliação. Tarefa customer_unresponsive high de hoje continua pending apesar da resposta; outra financing_followup para 05/10 e next_action_due_date 24/09 estão desatualizados. Nenhum registro desse contato foi alterado nesta consulta.
