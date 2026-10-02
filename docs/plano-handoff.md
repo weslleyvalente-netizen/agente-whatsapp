@@ -665,3 +665,5 @@ Diagnóstico Josiel (62 99837-8953): retornou em 02/10 às 16:07 BRT prometendo 
 - TDD: quatro regressões falharam inicialmente; 78 testes database, 253 API e verificações de tipos passaram, incluindo integração em takeover/IA desligada e pendências consolidadas.
 - Correção pontual autorizada: Josiel, tarefa 61d78984-3583-48b6-acec-2de0812b3f40 concluída pela rotina usando última resposta real. Retorno 208e3400-1267-4f00-a2e1-85f5c72b1f48 preservado pending para 03/10. Outros contatos não alterados.
 - Branch codex/fix-resolve-unresponsive-replies: commit local sem push; automação geral ainda não implantada.
+
+Publicação autorizada da correção de silêncio: main/origin 0689c65. API EasyPanel Success em 02/10/2026 às 19:54:24 UTC (16:54:24 Brasília). Saúde HTTP confirmada após deploy. A resolução funciona nas novas respostas recebidas; sem revisão em massa das tarefas antigas. Josiel já corrigido pontualmente e retorno de 03/10 preservado.
