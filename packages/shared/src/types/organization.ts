@@ -24,6 +24,10 @@ export interface OrganizationSettings {
   sales_opportunity_freeze_enabled?: boolean;
   sales_low_intent_cadence_enabled?: boolean;
   sales_low_intent_cadence_started_at?: string;
+  sales_low_intent_final_delay_hours?: number;
+  sales_low_intent_closing_message?: string;
+  scheduled_ad_closure_enabled?: boolean;
+  scheduled_ad_closure_batch?: import('../ad-closure.js').ScheduledAdClosureBatch;
   max_documents: number;
   max_agents: number;
   max_instances: number;

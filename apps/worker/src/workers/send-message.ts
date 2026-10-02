@@ -1,3 +1,4 @@
+import {processScheduledAdClosure,shouldSuppressScheduledAdLegacySend} from "./scheduled-ad-closure.js";
 import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES } from "@aula-agente/shared";
@@ -21,7 +22,7 @@ function extractEvolutionMessageId(response: unknown): string | null {
   return null;
 }
 
-async function sendEvolutionText(instanceName: string, phone: string, text: string) {
+async function sendEvolutionText(instanceName: string, phone: string, text: string, signal?: AbortSignal) {
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 
@@ -32,6 +33,7 @@ async function sendEvolutionText(instanceName: string, phone: string, text: stri
       apikey: EVOLUTION_API_KEY,
     },
     body: JSON.stringify({ number: phone, text }),
+    signal,
   });
 
   if (!response.ok) {
@@ -91,6 +93,14 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
   const internalNotification=messageId.startsWith("handoff-notify-");
   const recorded=internalNotification?null:await getMessageById(db,messageId);
   const metadata=recorded?.metadata;
+  if(recorded && metadata?.scheduled_ad_closure){
+    await processScheduledAdClosure(db,job.data,recorded,async(text,signal)=>{
+      const instance=await getInstanceById(db,instanceId);
+      return sendEvolutionText(instance.instance_name,phone,text,signal);
+    });
+    return;
+  }
+  if(recorded && (metadata?.source==="automatic_followup" || metadata?.low_intent_followup) && await shouldSuppressScheduledAdLegacySend(db,job.data.organizationId,job.data.conversationId))return;
   if(recorded && (recorded.role==="agent" || metadata?.source==="task_followup")){
     const c=await getConversationById(db,job.data.conversationId);
     if(await shouldCancelPreFreezeAgentMessage(db,job.data.organizationId,c.contact_id,recorded.created_at)) return;

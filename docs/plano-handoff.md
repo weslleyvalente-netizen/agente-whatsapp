@@ -591,3 +591,10 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - EasyPanel confirmou Success: worker às 23:52:36, API às 23:52:50 e web às 23:54:41 (Brasília). API /health respondeu ok às 23:59:45; logs confirmaram cinco workers iniciados.
 - Interface implantada conferida: novos controles e etapas Aguardando simulação, Financiamento aprovado e Financiamento reprovado. sales_action_queue_enabled, sales_qualified_handoff_task_enabled e sales_auto_pipeline_enabled continuam null/desligadas, conferidas no banco e painel.
 - Nenhuma tarefa histórica, cliente ou estágio foi alterado durante a verificação; nenhuma mensagem de teste enviada. Validação da fila ligada e envio controlado permanecem para ativação gradual. Registro de deploy salvo localmente sem novo push para evitar redeploy de documentação.
+
+
+### Despedida configurável e fila dos anúncios — 02/10/2026
+- Usuário autorizou fila histórica em 03/10, 8h–18h Brasília, um contato por 15 minutos, concluindo tarefas após confirmação. Texto e espera da despedida contínua editáveis em Configurações → Follow-up e despedida; padrão de 1h após o segundo retorno confirmado.
+- Levantamento/manifesto: 20 contatos, 33 tarefas (11 LiberaCred, 7 consórcio, 2 exterior); Arthur incluído. Primeiro horário 8h, último previsto 12h45, sujeito ao tick e atrasos. Nenhum envio/conclusão durante o levantamento.
+- Branch codex/despedida-anuncios-agendada. Sem migration; lista revisada/snapshots em settings, CAS persistente antes da rede, attempts:1, timeout 30s, limitador por instância, cancelamento com resposta/alteração e recuperação por eco. Tarefas e eventos preservados. Pausa disponível; cadência contínua e outras automações não serão ativadas.
+- 886 testes, tipos e build web passaram. Runbook em docs/despedida-anuncios-agendada.md. Publicação/registro em andamento.

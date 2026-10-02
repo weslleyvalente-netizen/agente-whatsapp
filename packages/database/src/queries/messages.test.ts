@@ -60,3 +60,14 @@ it("persists the transcription timestamp along with its text",async()=>{
  await updateMessageContent(db,"audio","🎤 Pedi outro CPF",{duration_seconds:10,audio_transcribed_at:"2026-10-01T11:00:00Z"});
  expect(row).toMatchObject({content:"🎤 Pedi outro CPF",metadata:{duration_seconds:10,audio_transcribed_at:"2026-10-01T11:00:00Z"}});
 });
+
+it("registra o primeiro instante confirmado da cadência, preservando o eco e os metadados",async()=>{
+ const row:any={id:"cadence",evolution_message_id:null,metadata:{source:"automatic_followup",low_intent_followup:{anchor:"start",stage:2}}};
+ const db=makeFakeClient([row]);
+ await setMessageEvolutionId(db as any,"cadence","EVO");
+ expect(row.metadata.low_intent_followup.confirmed_at).toEqual(expect.any(String));
+ const first=row.metadata.low_intent_followup.confirmed_at;
+ await setMessageEvolutionId(db as any,"cadence","EVO");
+ expect(row.metadata.low_intent_followup.confirmed_at).toBe(first);
+ expect(row.metadata.source).toBe("automatic_followup");
+});

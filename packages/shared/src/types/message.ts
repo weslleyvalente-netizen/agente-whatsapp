@@ -19,7 +19,8 @@ export interface MessageMetadata {
   source?: "task_followup" | "automatic_followup";
   task_id?: string;
   audio_transcribed_at?: string;
-  low_intent_followup?: { anchor: string; stage: 1 | 2 | 3 };
+  low_intent_followup?: { anchor: string; stage: 1 | 2 | 3; confirmed_at?: string };
+  scheduled_ad_closure?: { batch_id:string; attempted_at?:string; cancelled_at?:string; confirmed_at?:string };
   model?: string;
   input_tokens?: number;
   output_tokens?: number;

@@ -79,7 +79,14 @@ export async function setMessageEvolutionId(
     .select()
     .single();
   if (error) throw error;
-  return data as Message;
+  const message=data as Message;
+  if(message.metadata?.low_intent_followup && !message.metadata.low_intent_followup.confirmed_at){
+    const metadata={...message.metadata,low_intent_followup:{...message.metadata.low_intent_followup,confirmed_at:new Date().toISOString()}};
+    const {data:confirmed,error:confirmationError}=await client.from("messages").update({metadata}).eq("id",id).select().single();
+    if(confirmationError)throw confirmationError;
+    return confirmed as Message;
+  }
+  return message;
 }
 
 export async function getMessageById(client: SupabaseClient, id: string) {
@@ -107,6 +114,7 @@ export async function findPendingOutboundMessages(
     .eq("conversation_id", conversationId)
     .in("role", ["agent", "human_agent"])
     .is("evolution_message_id", null)
+    .is("metadata->scheduled_ad_closure->>cancelled_at", null)
     .gte("created_at", sinceISO);
   if (error) throw error;
   return data as Message[];

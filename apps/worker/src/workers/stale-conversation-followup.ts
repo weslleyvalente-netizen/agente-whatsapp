@@ -40,6 +40,8 @@ import { buildFollowupNudgeMessage } from "../lib/followup-nudge.js";
 import { runLowIntentCadenceCheck } from "./low-intent-followup.js";
 import { runLiberaCredResumptionCheck } from "./libera-cred-resumption.js";
 
+import {runScheduledAdClosureCheck} from "./scheduled-ad-closure.js";
+
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 // A conversation silent for longer than this never enters the auto-followup
@@ -203,6 +205,7 @@ export function startStaleConversationFollowupWorker() {
       let liberaCredSuggestedLost = 0;
 
       for (const org of organizations) {
+        const scheduledClosures = await runScheduledAdClosureCheck(db, org);
         stalledFlagged += await runStalledNegotiationCheck(db, org);
 
         const agents = await getAgentsByOrganization(db, org.id);
@@ -229,6 +232,8 @@ export function startStaleConversationFollowupWorker() {
             start: followupConfig.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
             end: followupConfig.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
           });
+
+          for(const id of scheduledClosures)lowIntentHandled.add(id);
 
           // AI auto-messaging is off for this agent (the default — every
           // existing org until it explicitly opts in). Fall back to this

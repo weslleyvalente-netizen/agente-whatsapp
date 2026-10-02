@@ -1,5 +1,5 @@
 import { hasFrozenContact, getStaleWaitingConversations, getConversationById, getRecentMessages, getLastContactMessage, getOpenTaskByConversation, getOpenHandoffEvent, createMessage, updateConversation, type getAdminClient } from "@aula-agente/database";
-import { decideLowIntentCadence, isWithinBusinessHours, toISODateInTimeZone, DEFAULT_TASK_FOLLOWUP_CONFIG, type Organization, type Message } from "@aula-agente/shared";
+import { decideLowIntentCadence, isWithinBusinessHours, toISODateInTimeZone, DEFAULT_TASK_FOLLOWUP_CONFIG, validateClosingSettings, type Organization, type Message } from "@aula-agente/shared";
 import { getSendMessageQueue, getRedisConnection } from "@aula-agente/queue";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 
@@ -37,8 +37,10 @@ export async function runLowIntentFollowup(db: ReturnType<typeof getAdminClient>
   const history: Message[]=await readAll(()=>db.from("messages").select("role,created_at,metadata,evolution_message_id").eq("organization_id",org.id).eq("conversation_id",conversationId).gte("created_at",anchor).order("created_at"));
   const original=history.filter(m=>m.role==="agent" && !m.metadata?.low_intent_followup).at(-1);
   if(!original || !org.settings.sales_low_intent_cadence_started_at || original.created_at < org.settings.sales_low_intent_cadence_started_at) return true;
-  const attempts=history.filter(m=>m.metadata?.low_intent_followup?.anchor === anchor).map(m=>({stage:m.metadata!.low_intent_followup!.stage,confirmed:!!m.evolution_message_id}));
-  const stage=decideLowIntentCadence((now.getTime()-new Date(original.created_at).getTime())/3600000,attempts);
+  const closing=validateClosingSettings(org.settings.sales_low_intent_closing_message,org.settings.sales_low_intent_final_delay_hours);
+  const originalTime=new Date(original.created_at).getTime();
+  const attempts=history.filter(m=>m.metadata?.low_intent_followup?.anchor === anchor).map(m=>({stage:m.metadata!.low_intent_followup!.stage,confirmed:!!m.evolution_message_id,sentAtHours:(new Date(m.metadata?.low_intent_followup?.confirmed_at ?? m.created_at).getTime()-originalTime)/3600000}));
+  const stage=decideLowIntentCadence((now.getTime()-new Date(original.created_at).getTime())/3600000,attempts,closing.delayHours);
   if(!stage || !c.wa_contacts?.phone) return true;
   const interval = Math.max(1, org.settings.task_followup_min_interval_seconds ?? DEFAULT_TASK_FOLLOWUP_CONFIG.min_interval_seconds);
   const dailyLimit = Math.max(1, org.settings.task_followup_daily_limit ?? DEFAULT_TASK_FOLLOWUP_CONFIG.daily_limit);
@@ -51,7 +53,7 @@ export async function runLowIntentFollowup(db: ReturnType<typeof getAdminClient>
     return 1
   `, 2, `low-intent:interval:${c.evolution_instance_id}`, `low-intent:daily:${c.evolution_instance_id}:${toISODateInTimeZone(now)}`, interval * 1000, dailyLimit);
   if (Number(reserved) !== 1) return true;
-  const message=await createMessage(db,{conversation_id:c.id,organization_id:org.id,evolution_message_id:null,role:"agent",content:TEXTS[stage],media_url:null,media_type:null,metadata:{low_intent_followup:{anchor,stage}}});
+  const message=await createMessage(db,{conversation_id:c.id,organization_id:org.id,evolution_message_id:null,role:"agent",content:stage===3?closing.message:TEXTS[stage],media_url:null,media_type:null,metadata:{low_intent_followup:{anchor,stage}}});
   // Reserve the attempt before enqueueing; a timeout/crash never sends a second
   // copy. Ambiguous attempts stay pending and are not automatically retried.
   await getSendMessageQueue().add("send-message",{conversationId:c.id,messageId:message.id,instanceId:c.evolution_instance_id,phone:c.wa_contacts.phone,content:message.content ?? TEXTS[stage],organizationId:org.id},{attempts:1,jobId:`low-intent-${message.id}`});

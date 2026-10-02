@@ -15,10 +15,10 @@ describe("low intent followup",()=>{
   expect(handled).toBe(true);expect(m.add).toHaveBeenCalledWith("send-message",expect.objectContaining({messageId:"msg"}),{attempts:1,jobId:"low-intent-msg"});expect(m.createMessage).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({metadata:{low_intent_followup:{anchor,stage:1}}}));
  });
  it("blocks a send when the instance quota or interval is exhausted",async()=>{m.eval.mockResolvedValue(0);await runLowIntentFollowup(db([{role:"agent",created_at:anchor,metadata:null}]) as any,org as any,"c",anchor,new Date("2026-10-01T11:00Z"));expect(m.add).not.toHaveBeenCalled();expect(m.createMessage).not.toHaveBeenCalled();});
- it("sends a final availability message at 48h",async()=>{
-  const messages=[{role:"agent",created_at:anchor,metadata:null},...([1,2] as const).map(stage=>({role:"agent",evolution_message_id:"sent",metadata:{low_intent_followup:{anchor,stage}}}))];
-  await runLowIntentFollowup(db(messages) as any,org as any,"c",anchor,new Date("2026-10-03T11:00Z"));
-  expect(m.createMessage).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({content:expect.stringContaining("estamos à disposição"),metadata:{low_intent_followup:{anchor,stage:3}}}));
+ it("uses the editable farewell one hour after the second effective send",async()=>{
+  const messages=[{role:"agent",created_at:anchor,metadata:null},...([1,2] as const).map(stage=>({role:"agent",created_at:stage===2?"2026-10-02T10:00:00Z":"2026-10-01T11:00:00Z",evolution_message_id:"sent",metadata:{low_intent_followup:{anchor,stage}}}))];
+  await runLowIntentFollowup(db(messages) as any,{...org,settings:{...org.settings,sales_low_intent_closing_message:"Seguimos à disposição! 😊",sales_low_intent_final_delay_hours:1}} as any,"c",anchor,new Date("2026-10-02T11:00Z"));
+  expect(m.createMessage).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({content:"Seguimos à disposição! 😊",metadata:{low_intent_followup:{anchor,stage:3}}}));
  });
  it("does not advance after an unconfirmed delivery",async()=>{
   await runLowIntentFollowup(db([{role:"agent",created_at:anchor,metadata:null},{role:"agent",evolution_message_id:null,metadata:{low_intent_followup:{anchor,stage:1}}}]) as any,org as any,"c",anchor,new Date("2026-10-02T09:00Z"));expect(m.add).not.toHaveBeenCalled();

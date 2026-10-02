@@ -20,3 +20,5 @@ export * from "./task-followup-sends.js";
 export * from "./opportunity-freeze.js";
 
 export * from "./sales-pipeline.js";
+
+export * from "./ad-closure.js";

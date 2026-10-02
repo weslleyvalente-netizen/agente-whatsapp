@@ -22,6 +22,8 @@ import {
   DEFAULT_GREETING_MAX_LENGTH,
   DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG,
   DEFAULT_TASK_FOLLOWUP_CONFIG,
+  DEFAULT_AD_CLOSING_MESSAGE,
+  validateClosingSettings,
 } from "@aula-agente/shared";
 
 interface MemberOption {
@@ -63,7 +65,7 @@ export default function SettingsPage() {
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
     setSavingWorkspace(true); setWorkspaceError(null);
     try {
@@ -94,6 +96,26 @@ export default function SettingsPage() {
     String(DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit)
   );
   const [savingFase2, setSavingFase2] = useState(false);
+
+  const [closingMessage,setClosingMessage]=useState(DEFAULT_AD_CLOSING_MESSAGE);
+  const [closingHours,setClosingHours]=useState("1");
+  const [savingClosing,setSavingClosing]=useState(false);
+  const [closingError,setClosingError]=useState<string|null>(null);
+  const saveClosingSettings=async()=>{
+    if(!currentOrg || savingClosing)return;
+    setSavingClosing(true);setClosingError(null);
+    try{
+      const validated=validateClosingSettings(closingMessage,closingHours);
+      const client=createClient();
+      const {data:org,error:readError}=await client.from("organizations").select("settings").eq("id",currentOrg.id).single();
+      if(readError)throw readError;
+      let q=client.from("organizations").update({settings:{...org.settings,sales_low_intent_closing_message:validated.message,sales_low_intent_final_delay_hours:validated.delayHours}}).eq("id",currentOrg.id);
+      q=org.settings==null?q.is("settings",null):q.eq("settings",JSON.stringify(org.settings));
+      const {data,error}=await q.select("id").maybeSingle();
+      if(error)throw error;if(!data)throw new Error("As configurações mudaram. Atualize e tente novamente.");
+      await refetch();
+    }catch(error){setClosingError((error as Error).message);}finally{setSavingClosing(false);}
+  };
 
   // Follow-up direto da tarefa
   const [followupEnabled, setFollowupEnabled] = useState(false);
@@ -159,6 +181,8 @@ export default function SettingsPage() {
       String(currentOrg.settings.libera_cred_resumption_daily_limit ?? DEFAULT_LIBERA_CRED_RESUMPTION_CONFIG.daily_limit)
     );
 
+    setClosingMessage(currentOrg.settings.sales_low_intent_closing_message ?? DEFAULT_AD_CLOSING_MESSAGE);
+    setClosingHours(String(currentOrg.settings.sales_low_intent_final_delay_hours ?? 1));
     setFollowupEnabled(currentOrg.settings.task_followup_enabled ?? false);
     setFollowupTakeoverOnSend(
       currentOrg.settings.task_followup_takeover_on_send ?? DEFAULT_TASK_FOLLOWUP_CONFIG.takeover_on_send
@@ -312,12 +336,16 @@ export default function SettingsPage() {
     if (!currentOrg) return;
     setSavingFollowup(true);
 
+    setClosingError(null);
+    try {
     const supabase = createClient();
-    await supabase
+    const {data:latest,error:readError}=await supabase.from("organizations").select("settings").eq("id",currentOrg.id).single();
+    if(readError)throw readError;
+    let query=supabase
       .from("organizations")
       .update({
         settings: {
-          ...currentOrg.settings,
+          ...latest.settings,
           task_followup_enabled: followupEnabled,
           task_followup_takeover_on_send: followupTakeoverOnSend,
           task_followup_min_interval_seconds: Math.max(
@@ -335,9 +363,12 @@ export default function SettingsPage() {
         },
       })
       .eq("id", currentOrg.id);
+    query=latest.settings==null?query.is("settings",null):query.eq("settings",JSON.stringify(latest.settings));
+    const {data,error}=await query.select("id").maybeSingle();
+    if(error)throw error;if(!data)throw new Error("As configurações mudaram. Atualize e tente novamente.");
 
     await refetch();
-    setSavingFollowup(false);
+    }catch(error){setClosingError((error as Error).message);}finally{setSavingFollowup(false);}
   };
 
   const handleSaveGreetingSettings = async () => {
@@ -622,7 +653,7 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader><CardTitle>Operação no funil de vendas</CardTitle><CardDescription>Encaminhamentos da IA, indicadores nos leads, conversa e tarefas dentro do negócio.</CardDescription></CardHeader>
-        <CardContent className="space-y-3"><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-queue">Fila de atendimento da Marina no funil</Label><Switch id="sales-queue" checked={currentOrg?.settings.sales_action_queue_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_action_queue_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-handoff-task">Criar tarefa nos encaminhamentos qualificados</Label><Switch id="sales-handoff-task" checked={currentOrg?.settings.sales_qualified_handoff_task_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_qualified_handoff_task_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-freeze">Congelar negócios e criar retorno</Label><Switch id="sales-freeze" checked={currentOrg?.settings.sales_opportunity_freeze_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_opportunity_freeze_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-auto">Entrada e avanço automático no funil</Label><Switch id="sales-auto" checked={currentOrg?.settings.sales_auto_pipeline_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_auto_pipeline_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-workspace">Ativar nova visão do funil</Label><Switch id="sales-workspace" checked={currentOrg?.settings.sales_workspace_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value)}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="low-intent-cadence">Retornos sem tarefa: 1h, 23h e encerramento em 48h</Label><Switch id="low-intent-cadence" checked={currentOrg?.settings.sales_low_intent_cadence_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value, "sales_low_intent_cadence_enabled")}/></div>{workspaceError && <p role="alert" className="text-sm text-destructive">{workspaceError}</p>}<p className="text-xs text-muted-foreground">As duas opções começam desligadas. A cadência envia mensagens apenas para novos atendimentos elegíveis após a ativação; não marca negócios como perdidos.</p></CardContent>
+        <CardContent className="space-y-3"><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-queue">Fila de atendimento da Marina no funil</Label><Switch id="sales-queue" checked={currentOrg?.settings.sales_action_queue_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_action_queue_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-handoff-task">Criar tarefa nos encaminhamentos qualificados</Label><Switch id="sales-handoff-task" checked={currentOrg?.settings.sales_qualified_handoff_task_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_qualified_handoff_task_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-freeze">Congelar negócios e criar retorno</Label><Switch id="sales-freeze" checked={currentOrg?.settings.sales_opportunity_freeze_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_opportunity_freeze_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-auto">Entrada e avanço automático no funil</Label><Switch id="sales-auto" checked={currentOrg?.settings.sales_auto_pipeline_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"sales_auto_pipeline_enabled")}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="sales-workspace">Ativar nova visão do funil</Label><Switch id="sales-workspace" checked={currentOrg?.settings.sales_workspace_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value)}/></div><div className="flex items-center justify-between gap-3"><Label htmlFor="low-intent-cadence">Retornos sem tarefa: 1h, 23h e despedida no prazo configurado</Label><Switch id="low-intent-cadence" checked={currentOrg?.settings.sales_low_intent_cadence_enabled === true} disabled={savingWorkspace} onCheckedChange={value => toggleWorkspace(value, "sales_low_intent_cadence_enabled")}/></div>{workspaceError && <p role="alert" className="text-sm text-destructive">{workspaceError}</p>}<p className="text-xs text-muted-foreground">As duas opções começam desligadas. A cadência envia mensagens apenas para novos atendimentos elegíveis após a ativação; não marca negócios como perdidos.</p></CardContent>
       </Card>
       <Card>
         <CardHeader>
@@ -719,7 +750,7 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Follow-up direto da tarefa</CardTitle>
+          <CardTitle>Follow-up e despedida</CardTitle>
           <CardDescription>
             Deixa a atendente enviar o follow-up de uma tarefa (mensagem sugerida por IA, editável)
             sem abrir o WhatsApp. Desligado até você ativar.
@@ -787,6 +818,15 @@ export default function SettingsPage() {
               </div>
             </>
           )}
+
+          <div className="space-y-4 border-t pt-4">
+            <div><h3 className="font-medium">Despedida para leads sem resposta</h3><p className="text-sm text-muted-foreground">Depois dos retornos de 1h e 23h, encerra as mensagens sem criar tarefa para a Marina. Só envia com a cadência ativada.</p></div>
+            <div className="space-y-2"><Label htmlFor="closing-hours">Espera após o segundo retorno (horas)</Label><Input id="closing-hours" type="number" min={0.25} max={168} step={0.25} value={closingHours} onChange={e=>setClosingHours(e.target.value)}/><p className="text-xs text-muted-foreground">Padrão: 1 hora após o envio efetivo. Respeita o horário de atendimento e cancela se o cliente responder.</p></div>
+            <div className="space-y-2"><Label htmlFor="closing-message">Mensagem de despedida</Label><Textarea id="closing-message" rows={5} maxLength={1000} value={closingMessage} onChange={e=>setClosingMessage(e.target.value)}/></div>
+            {closingError && <p role="alert" className="text-sm text-destructive">{closingError}</p>}
+            <Button onClick={saveClosingSettings} disabled={savingClosing}><Save className="mr-2 h-4 w-4"/>{savingClosing?"Salvando...":"Salvar despedida"}</Button>
+            {currentOrg?.settings.scheduled_ad_closure_batch && <div className="space-y-2 rounded border p-3"><div className="flex items-center justify-between gap-3"><Label htmlFor="scheduled-closure">Fila de despedidas agendada</Label><Switch id="scheduled-closure" checked={currentOrg.settings.scheduled_ad_closure_enabled===true} disabled={savingWorkspace} onCheckedChange={v=>toggleWorkspace(v,"scheduled_ad_closure_enabled")}/></div><p className="text-sm text-muted-foreground">{currentOrg.settings.scheduled_ad_closure_batch.recipients.length} contatos · intervalo mínimo de {currentOrg.settings.scheduled_ad_closure_batch.intervalMinutes} minutos. Desligue para pausar.</p><p className="text-xs text-muted-foreground">A fila usa o texto aprovado no agendamento. Editar a despedida acima vale para os novos atendimentos.</p></div>}
+          </div>
 
           <Button onClick={handleSaveFollowupSettings} disabled={savingFollowup}>
             <Save className="mr-2 h-4 w-4" />
