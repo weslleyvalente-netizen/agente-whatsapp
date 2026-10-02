@@ -634,3 +634,6 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Correção: DragOverlay renderizado por portal no body; origem preservada com opacidade e preview sem registrar outro draggable. Overlay removido ao cancelar ou soltar; confirmação comercial preservada.
 - Teste local com card fictício: antes, após nove movimentos para a direita, o centro permanecia em x=209 fora da coluna destino (348–648); depois, centro x≈407 sobre o destino e card visível. Mouse e teclado abriram a confirmação Interesse recebido → Qualificação. Cancelar removeu o preview; nenhuma escrita em negócio real.
 - Página temporária de teste removida antes da compilação e do commit.
+
+- Publicação da correção autorizada: main/origin `70b4920`. EasyPanel Success em 02/10/2026 às 19:10:20 UTC (16:10:20 Brasília). API saudável às 19:11:53 UTC.
+- Conferência em produção: overlay acima das colunas; mouse e teclado abriram confirmação Interesse recebido → Qualificação. Ambas as confirmações foram canceladas, sem atualizar negócios.
