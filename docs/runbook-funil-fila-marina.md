@@ -63,3 +63,9 @@ TDD: classificação/ordenação da fila, financiamento completo/incompleto, con
 Revisão independente encontrou quatro problemas corrigidos com regressões: troca automática de modalidade não apaga resultados bancários; nenhum card aberto some da fila; pendências consolidadas participam da prioridade; painel recarrega após concluir/cancelar. A precedência dos compromissos sobre ações bancárias foi corrigida no recheck; revisão final sem achados importantes pendentes.
 
 Validação visual completa e envio controlado serão feitos depois do deploy; não foram simulados como resultado em produção.
+
+## Ativação realizada — 02/10/2026
+
+Autorizada pelo usuário às 9h20–9h21 Brasília. sales_action_queue_enabled, sales_auto_pipeline_enabled e sales_qualified_handoff_task_enabled confirmadas true. Migrations já aplicadas, sem novo deploy ou migration. Fila conferida em produção; task_followup_enabled e responsável de handoff existentes preservados. Sem backfill, perdas, exclusões ou envio de teste. Cadência contínua permanece desligada; fila histórica aprovada de 03/10 preservada.
+
+21 testes direcionados passaram. Não havia novas entradas após ativação às 9h21:42 para comprovar a criação/avanço em fluxo orgânico. A fila inclui acervo histórico: Cliente respondeu não equivale a resposta de hoje, e Compromissos de hoje inclui datas vencidas. Classificação de pendências que estão somente em texto e saneamento das datas antigas continuam sujeitos à revisão histórica.
