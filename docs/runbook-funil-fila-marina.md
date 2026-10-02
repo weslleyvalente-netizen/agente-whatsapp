@@ -20,7 +20,7 @@ Nenhum apply histórico foi executado. A reorganização visual não altera a pr
 
 ## Migration e flags
 
-Nova migration `20261002023000_sales_marina_queue.sql`: substitui `sync_sales_pipeline` mantendo assinatura e escopo/service_role; aceita o estágio Aguardando simulação, valida dados/encaminhamento reais, protege resultados humanos e preenche apenas valores comerciais que estavam vazios. Nenhuma coluna/tabela nova; não contém atualização histórica. A função só age quando chamada, com automação ligada.
+Nova migration `20261002024809_sales_marina_queue.sql`: substitui `sync_sales_pipeline` mantendo assinatura e escopo/service_role; aceita o estágio Aguardando simulação, valida dados/encaminhamento reais, protege resultados humanos e preenche apenas valores comerciais que estavam vazios. Nenhuma coluna/tabela nova; não contém atualização histórica. A função só age quando chamada, com automação ligada.
 
 Confirmado por consulta somente leitura: as duas flags novas e sales_auto_pipeline_enabled estão ausentes em produção, portanto desligadas.
 

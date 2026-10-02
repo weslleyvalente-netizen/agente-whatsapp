@@ -18,7 +18,7 @@ await db.exec(`ALTER TABLE conversation_qualifications ADD COLUMN cpf_encrypted 
 CREATE TABLE handoff_events(id uuid primary key,organization_id uuid,conversation_id uuid,trigger_type text,motivo text,resumo text,urgencia text,handed_at timestamptz,first_human_reply_at timestamptz);
 CREATE TABLE agents(id uuid primary key,organization_id uuid,tools_config jsonb);
 ALTER TABLE conversations ADD COLUMN agent_id uuid;`);
-try{await db.exec(readFileSync(root+'20261002023000_sales_marina_queue.sql','utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
+try{await db.exec(readFileSync(root+'20261002024809_sales_marina_queue.sql','utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
 console.log('Migration SQL loaded');
 const org='00000000-0000-0000-0000-000000000001',user='00000000-0000-0000-0000-000000000002',contact='00000000-0000-0000-0000-000000000003',opp='00000000-0000-0000-0000-000000000004',convo='00000000-0000-0000-0000-000000000005';
 await db.exec(`INSERT INTO organizations VALUES('${org}','{"sales_opportunity_freeze_enabled":true,"sales_auto_pipeline_enabled":true}');INSERT INTO auth.users VALUES('${user}');INSERT INTO organization_members VALUES('${org}','${user}');INSERT INTO wa_contacts VALUES('${contact}','${org}');INSERT INTO conversations VALUES('${convo}','${org}','${contact}','open',now());INSERT INTO opportunities(id,organization_id,contact_id,operation,initial_operation,stage) VALUES('${opp}','${org}','${contact}','consortium','consortium','qualification');

@@ -576,7 +576,11 @@ A pedido do usuário: busca no funil por nome e telefone validada; card completo
 - Aprovada a concentração da operação no Funil, respeitando conta compartilhada e preservando todas as tarefas. Branch codex/funil-fila-marina, base de71dcb; sem push, migration ou ativação.
 - Fila entre todos os funis: encaminhamentos, respostas, compromissos, pendências e ações; retornos futuros, banco/cliente e silêncio separados. Card grande mantém chat e tarefa executável. Pendências antigas sem negócio aberto ficam acessíveis no próprio Funil.
 - Financiamento: Aguardando simulação, análise, aprovado/reprovado; somente humano registra submissão e resultado. Cadastro completo + handoff pendente gera card/tarefa transacional no próximo horário, inclusive com responsável já configurado. Reutiliza tarefa, preserva pendências/prioridade/datas, registra consolidação e não duplica em repetição. Sem perda automática.
-- Migration nova 20261002023000_sales_marina_queue.sql apenas preparada. sales_action_queue_enabled e sales_qualified_handoff_task_enabled começam desligadas; criação automática depende de sales_auto_pipeline_enabled. Não há reparo histórico em lote.
+- Migration nova 20261002024809_sales_marina_queue.sql apenas preparada. sales_action_queue_enabled e sales_qualified_handoff_task_enabled começam desligadas; criação automática depende de sales_auto_pipeline_enabled. Não há reparo histórico em lote.
 - Consulta read-only: 207 tarefas abertas, 147 sem opportunity_id, 71 customer_unresponsive, 143 sem negócio aberto associado. Nenhum registro modificado.
 - 856 testes, tipos, build web e SQL transacional local passaram. Flags novas confirmadas ausentes/desligadas em produção. Revisão independente: quatro achados corrigidos, incluindo proteção de resultado na troca de modalidade, cards sem tarefa, pendências consolidadas e painel atualizado após concluir.
 - Publicação/ativação e validação visual/controlada pendentes; runbook em docs/runbook-funil-fila-marina.md. Pedro continua caso de reparo histórico a revisar antes de apply; não é lead frio.
+
+
+### Publicação da fila da Marina — iniciada (01/10/2026)
+Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_queue pendente. Migration aplicada pelo conector Supabase, versão 20261002024809; arquivo local alinhado ao histórico, função validada no banco. Nenhuma tarefa antiga alterada; flags novas e sales_auto_pipeline_enabled permanecem ausentes/desligadas. Deploy em preparação.
