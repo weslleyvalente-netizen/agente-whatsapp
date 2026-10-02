@@ -584,3 +584,10 @@ A pedido do usuário: busca no funil por nome e telefone validada; card completo
 
 ### Publicação da fila da Marina — iniciada (01/10/2026)
 Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_queue pendente. Migration aplicada pelo conector Supabase, versão 20261002024809; arquivo local alinhado ao histórico, função validada no banco. Nenhuma tarefa antiga alterada; flags novas e sales_auto_pipeline_enabled permanecem ausentes/desligadas. Deploy em preparação.
+
+
+### Publicação da fila da Marina — concluída (01/10/2026)
+- Main publicada em 118aab9. Migration sales_marina_queue aplicada, histórico local/remoto alinhado em 20261002024809.
+- EasyPanel confirmou Success: worker às 23:52:36, API às 23:52:50 e web às 23:54:41 (Brasília). API /health respondeu ok às 23:59:45; logs confirmaram cinco workers iniciados.
+- Interface implantada conferida: novos controles e etapas Aguardando simulação, Financiamento aprovado e Financiamento reprovado. sales_action_queue_enabled, sales_qualified_handoff_task_enabled e sales_auto_pipeline_enabled continuam null/desligadas, conferidas no banco e painel.
+- Nenhuma tarefa histórica, cliente ou estágio foi alterado durante a verificação; nenhuma mensagem de teste enviada. Validação da fila ligada e envio controlado permanecem para ativação gradual. Registro de deploy salvo localmente sem novo push para evitar redeploy de documentação.

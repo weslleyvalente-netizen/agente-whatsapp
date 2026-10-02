@@ -32,7 +32,11 @@ Confirmado por consulta somente leitura: as duas flags novas e sales_auto_pipeli
 
 A migration é funcional e reversível: após desligar as duas automações, restaurar a definição anterior da função contida em `20261001194818_sales_opportunity_freeze.sql` (usar CREATE OR REPLACE). Manter os cards, tarefas e eventos já criados. Estágios novos devem ser reconciliados manualmente antes de restaurar uma versão antiga da interface. Não há down destrutivo automático.
 
-## Publicação (ainda não executada)
+## Publicação concluída em 01/10/2026
+
+Migration aplicada pelo conector Supabase, versão 20261002024809; main publicada em 118aab9. EasyPanel confirmou Success dos três serviços, API saudável e cinco workers iniciados. Controles novos e etapas de financiamento conferidos no CRM. Flags novas e avanço automático permanecem desligados; nenhuma alteração histórica ou mensagem de teste executada. A fila ativada e envio controlado ainda precisam de validação.
+
+Passos de referência:
 
 1. Conferir `git status`, a branch e `supabase migration list`. O histórico anterior deve estar sincronizado; somente a migration nova deste recurso deve estar pendente. Se houver outra, parar e reconciliar a origem antes de aplicar.
 2. Após aprovação do usuário, executar `supabase db push`. Confirmar no histórico e consultar `pg_get_functiondef` para a assinatura existente de sync_sales_pipeline. As flags novas continuam desligadas.
