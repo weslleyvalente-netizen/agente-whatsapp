@@ -616,10 +616,13 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Reorganização dos dados históricos permanece pendente de levantamento/contagens/aprovação próprios. Rollback: desligar fila para visão anterior; desligar qualified e pipeline para parar novas mutações, preservando registros. Registro salvo localmente sem push de documentação.
 
 
-### Visual do funil — 02/10/2026 (pronto para revisão, não publicado)
+### Visual do funil — 02/10/2026 (publicado)
 
 - Referência visual: CRM Assis enviado pelo usuário; design aprovado.
 - Colunas suaves com marcador de cor, contador e rolagem; cards com nome, valores, produto, data, próxima ação e indicadores existentes.
 - Busca e filtros agrupados; pendências antigas e contatos a identificar abaixo do quadro principal.
 - Abertura do card completo, edição e mudança de etapa preservadas; nenhuma alteração de automação, flag ou banco.
-- Branch: `codex/visual-funil-marina`. Publicação depende de autorização.
+- Branch: `codex/visual-funil-marina`; publicação autorizada e enviada para main/origin no commit `59b81ea`.
+- Build final local e no servidor passaram. EasyPanel confirmou Success em 02/10/2026 às 18:52:29 UTC (15:52:29 Brasília).
+- Conferência em produção: novo visual carregado, card completo aberto com dados/tarefas e busca por nome retornando o negócio correto. Nenhuma mensagem enviada ou dado comercial alterado na conferência.
+- API /health respondeu status ok durante e após a publicação.
