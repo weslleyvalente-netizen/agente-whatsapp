@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setMessageEvolutionId, updateMessageContent } from "./messages.js";
+import { setMessageEvolutionId, updateMessageContent, getRecentMessages } from "./messages.js";
 
 // Minimal fake covering .from("messages").update(...).eq("id", ...).select().single(),
 // same style as the inline fakes used elsewhere in this package's query tests.
@@ -70,4 +70,11 @@ it("registra o primeiro instante confirmado da cadência, preservando o eco e os
  await setMessageEvolutionId(db as any,"cadence","EVO");
  expect(row.metadata.low_intent_followup.confirmed_at).toBe(first);
  expect(row.metadata.source).toBe("automatic_followup");
+});
+
+it("o contexto da IA só inclui despedida efetivamente confirmada, sem a pendente/cancelada",async()=>{
+ const rows:any[]=[{id:"cancelled",evolution_message_id:"echo",metadata:{scheduled_ad_closure:{cancelled_at:"now"}}},{id:"pending",evolution_message_id:null,metadata:{scheduled_ad_closure:{batch_id:"batch"}}},{id:"confirmed",evolution_message_id:"EVO",metadata:{scheduled_ad_closure:{batch_id:"batch"}}},{id:"legacy",evolution_message_id:null,metadata:null}];
+ const q:any={select:()=>q,eq:()=>q,order:()=>q,limit:async()=>({data:structuredClone(rows),error:null})};
+ const messages=await getRecentMessages({from:()=>q} as any,"c");
+ expect(messages.map(m=>m.id)).toEqual(["legacy","confirmed"]);
 });

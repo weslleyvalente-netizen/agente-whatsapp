@@ -29,7 +29,9 @@ export async function getRecentMessages(
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data as Message[]).reverse();
+  // Scheduled closures are persisted before networking. A cancelled or
+  // unconfirmed farewell must not become a fictitious assistant turn.
+  return (data as Message[]).filter(m=>!m.metadata?.scheduled_ad_closure || (m.evolution_message_id && !m.metadata.scheduled_ad_closure.cancelled_at)).reverse();
 }
 
 export async function getLastContactMessage(client: SupabaseClient, conversationId: string) {

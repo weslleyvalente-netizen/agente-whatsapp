@@ -12,7 +12,7 @@ Um contato por posição, alternando grupos enquanto houver contatos de grupos d
 
 A lista aprovada fica em organizations.settings.scheduled_ad_closure_batch; scheduled_ad_closure_enabled controla novos envios, ausente=false. O texto é um snapshot do aprovado ao agendar; posteriores edições da despedida valem para novos atendimentos. Configurações mostra a quantidade/intervalo e permite pausar. Pausar interrompe novas tentativas, mas confirmações de uma tentativa já feita ainda podem concluir as tarefas.
 
-Antes do envio: recarrega configuração, todas as conversas/mensagens/tarefas do contato e o cadastro. Resposta, intervenção humana, handoff, negócio, alteração ou outra pendência impedem envio/conclusão. Cada mensagem é gravada somente quando a posição fica disponível, com metadata scheduled_ad_closure.batch_id. CAS persistente grava attempted_at e ajusta created_at para o instante do envio antes da chamada à Evolution: permite casar o eco de texto pela janela existente de 2 minutos. Mensagem cancelada não entra no casamento de eco. Papel agent, sem takeover ou handoff_events.
+Antes do envio: recarrega configuração, todas as conversas/mensagens/tarefas do contato e o cadastro. Resposta, intervenção humana, handoff, negócio, alteração ou outra pendência impedem envio/conclusão. Cada mensagem é gravada somente quando a posição fica disponível, com metadata scheduled_ad_closure.batch_id. CAS persistente grava attempted_at e ajusta created_at para o instante do envio antes da chamada à Evolution: permite casar o eco de texto pela janela existente de 2 minutos. Mensagem cancelada não entra no casamento de eco; pendente/cancelada não entra no contexto usado pela IA. Papel agent, sem takeover ou handoff_events.
 
 Fila send-message com attempts:1 e timeout de 30s para este tipo de envio. Redelivery, reinício ou perda do limitador Redis não fazem uma segunda tentativa após attempted_at. Timeout ou ausência de key.id mantêm tarefas abertas; não há retry automático. Eco confirmado ou resposta com id confirmam o envio. A rotina reconciliadora conclui tarefas com CAS de updated_at e evento completed com texto/id/lote/pendências resolvidas. Tarefas são preservadas, não excluídas. Recupera evento se houver falha após conclusão. Resposta/edição posterior conserva tarefas para revisão.
 
@@ -24,7 +24,7 @@ Configurações → Follow-up e despedida: texto editável (até 1000 caracteres
 
 ## Publicação e registro
 
-Sem migration: usa settings, metadata e eventos já existentes. 886 testes, tipos e build web passaram. Testes de seleção/agenda, confirmação, timeout, redelivery, janela/pausa, proteção das tarefas, recuperação de eventos e exclusão da cadência antiga. Publicar a branch após suítes, tipos e build web; verificar Success de API/worker/web e saúde. Nenhuma mensagem real é enviada como teste.
+Sem migration: usa settings, metadata e eventos já existentes. 887 testes, tipos e build web passaram. Testes de seleção/agenda, confirmação, timeout, redelivery, janela/pausa, proteção das tarefas, recuperação de eventos e exclusão da cadência antiga. Publicar a branch após suítes, tipos e build web; verificar Success de API/worker/web e saúde. Nenhuma mensagem real é enviada como teste.
 
 Script packages/database/scripts/schedule-ad-closure-batch.ts: dry-run por padrão, manifesto local com permissão 0600 e sem dados de CPF/telefone. --apply exige o manifesto e contagens esperadas; revalida todos os destinatários antes de atualizar settings com CAS. Registro não envia mensagem nem altera tarefa. Repetição do mesmo lote não duplica/reativa; recusa substituir lote existente.
 
@@ -41,3 +41,6 @@ node --env-file=.env --experimental-strip-types packages/database/scripts/schedu
 ```
 
 Após a janela, consultar metadata/evolution_message_id, task_events e tarefas restantes: confirmadas/concluídas, canceladas por resposta/alteração, não confirmadas e não iniciadas. Não reenviar as não confirmadas automaticamente. Para interromper, desligar Fila de despedidas agendada em Configurações. Rollback de código exige pausar a fila primeiro; não apagar mensagem/tarefa/evento e não ligar o fluxo antigo em lote.
+
+
+Verificação ampliada na raiz alcançou um checkout antigo em .claude/worktrees/helena-ia-crm-setembro e encontrou falha preexistente em apps/api/src/routes/costs/index.test.ts, buildSummary > folds usage-event costs into the same daily buckets as real messages (bucket esperado ausente). Esse checkout não faz parte desta branch nem foi alterado. As suítes dos cinco pacotes da versão atual foram executadas separadamente e passaram: 313 shared, 73 database, 116 runtime, 250 API e 135 worker (887). Tipos e build web passaram.
