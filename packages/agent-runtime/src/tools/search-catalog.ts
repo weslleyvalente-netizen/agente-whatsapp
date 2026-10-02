@@ -85,11 +85,26 @@ function searchableText(v: CatalogVehicle): string {
   return [v.modelo, v.marca, v.cor, v.descricao].filter(Boolean).join(" ");
 }
 
+// Prioritize model codes over incidental description words; X13 is not X130.
+function modelCodes(query: string): string[] {
+  return normalize(query).match(/\b[a-z]+-?\d+\b/g)?.map(collapse) ?? [];
+}
+
 export function filterVehicles(vehicles: CatalogVehicle[], query: string): CatalogVehicle[] {
   const q = normalize(query.trim());
   if (!q) return vehicles;
 
   const words = q.split(/\s+/);
+  const codes = modelCodes(q);
+  if (codes.length > 0) {
+    const related = vehicles.filter((v) => codes.every((code) =>
+      new RegExp(`${code}(?![0-9])`).test(collapse(v.modelo))
+    ));
+    const exact = related.filter((v) =>
+      matchesAllWords(searchableText(v), words) || matchesAllWordsCollapsed(searchableText(v), words)
+    );
+    return exact.length > 0 ? exact : related;
+  }
 
   const impliedTypes = new Set<CatalogVehicle["tipo"]>();
   for (const word of words) {
@@ -235,6 +250,11 @@ function diverseByType(ranked: CatalogVehicle[], limit: number): CatalogVehicle[
 export function buildCatalogSearchResult(vehicles: CatalogVehicle[], query: string): string {
   const matches = filterVehicles(vehicles, query);
   if (matches.length > 0) {
+    const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
+    const exact = matches.some((v) => matchesAllWords([v.modelo, v.marca, v.cor].filter(Boolean).join(" "), words));
+    if (modelCodes(query).length > 0 && !exact) {
+      return `Modelos relacionados a "${query}" — confirme a versão com a equipe antes de afirmar que é o mesmo modelo. A versão completa solicitada não foi confirmada no cadastro; não conclua indisponibilidade do modelo relacionado.\n${formatVehicleList(matches)}`;
+    }
     return formatVehicleList(matches);
   }
   const words = normalize(query.trim()).split(/\s+/).filter(Boolean);

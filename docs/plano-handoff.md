@@ -637,3 +637,11 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 
 - Publicação da correção autorizada: main/origin `70b4920`. EasyPanel Success em 02/10/2026 às 19:10:20 UTC (16:10:20 Brasília). API saudável às 19:11:53 UTC.
 - Conferência em produção: overlay acima das colunas; mouse e teclado abriram confirmação Interesse recebido → Qualificação. Ambas as confirmações foram canceladas, sem atualizar negócios.
+
+### Correção local — busca parcial do catálogo (02/10/2026)
+
+- Caso Adrielly: X13 Pro não retornava a X13 cadastrada por exigir todos os termos; descrições genéricas ocultavam o modelo no fallback.
+- Códigos de modelo agora priorizam candidatos relacionados, inclusive com categoria na consulta, sem confundir X13 com X130. Versões não cadastradas exigem confirmação explícita. Consulta de fotos permanece inalterada.
+- TDD: três regressões inicialmente falharam; 119 testes do runtime e verificação de tipos passaram após a correção. Leitura do catálogo real confirmou X13, R$ 11.900, como relacionada a X13 Pro.
+- Recomendação: cliente com interesse concreto deve ter card em Interesse recebido, mesmo sem escolha definitiva. Nenhum card ou dado de produção foi alterado nesta correção.
+- Branch codex/fix-catalog-partial-search; commit local, sem push ou deploy.

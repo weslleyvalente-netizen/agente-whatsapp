@@ -340,3 +340,24 @@ describe("buildCatalogSearchResult", () => {
     expect(result).toContain("HRV EX");
   });
 });
+
+
+describe("partial model-code search", () => {
+  const x13 = { id: 64, modelo: "Bicicleta Scooter Elétrica X13 Bike 1000w", marca: "Eletrica", ano: 2026, preco: 11900, imageUrl: null, tipo: "eletrico" as const };
+  const decoys = Array.from({ length: 6 }, (_, i) => ({ ...x13, id: i, modelo: `Bike JE-${i}`, descricao: "Produto com protetor e motor 1000w" }));
+  it("finds X13 despite an unregistered Pro modifier and descriptive decoys", () => {
+    expect(filterVehicles([...decoys, x13], "X13 Pro")).toEqual([x13]);
+    const result = buildCatalogSearchResult([...decoys, x13], "X13 Pro");
+    expect(result).toContain(x13.modelo);
+    expect(result).toContain("confirme a versão");
+    expect(result).not.toContain("Nenhum veículo encontrado");
+    expect(result).not.toContain("Bike JE-");
+  });
+  it("prioritizes a model code over a broad bike category", () => {
+    expect(filterVehicles([...decoys, x13], "bike X13 Pro")).toEqual([x13]);
+  });
+  it("does not substitute a different numeric model or fall back to the category", () => {
+    expect(filterVehicles([{ ...x13, modelo: "Bike X130" }], "X13 Pro")).toEqual([]);
+    expect(filterVehicles([...decoys, x13], "bike X99 Pro")).toEqual([]);
+  });
+});
