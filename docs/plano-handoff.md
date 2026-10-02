@@ -597,4 +597,12 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Usuário autorizou fila histórica em 03/10, 8h–18h Brasília, um contato por 15 minutos, concluindo tarefas após confirmação. Texto e espera da despedida contínua editáveis em Configurações → Follow-up e despedida; padrão de 1h após o segundo retorno confirmado.
 - Levantamento/manifesto: 20 contatos, 33 tarefas (11 LiberaCred, 7 consórcio, 2 exterior); Arthur incluído. Primeiro horário 8h, último previsto 12h45, sujeito ao tick e atrasos. Nenhum envio/conclusão durante o levantamento.
 - Branch codex/despedida-anuncios-agendada. Sem migration; lista revisada/snapshots em settings, CAS persistente antes da rede, attempts:1, timeout 30s, limitador por instância, cancelamento com resposta/alteração e recuperação por eco. Tarefas e eventos preservados. Pausa disponível; cadência contínua e outras automações não serão ativadas.
-- 886 testes, tipos e build web passaram. Runbook em docs/despedida-anuncios-agendada.md. Publicação/registro em andamento.
+- 887 testes dos cinco pacotes atuais, tipos e build web passaram. Runbook em docs/despedida-anuncios-agendada.md.
+
+### Despedida configurável e fila dos anúncios — publicação concluída (02/10/2026)
+- Main/origin publicados em b2093e5. EasyPanel Success: worker 00:55:20, API 00:55:30 e web 00:55:49 (Brasília). API /health ok às 00:57:47.
+- Campos verificados no site: mensagem aprovada editável, espera de 1h após o segundo retorno e controle de pausa da fila agendada.
+- Lote ad-closure-2026-10-03 registrado: 20 contatos e 33 tarefas, janela de 03/10 8h–18h, intervalo mínimo de 15 minutos. Última posição prevista 12h45, sujeita ao scanner/atrasos. scheduled_ad_closure_enabled ligado; sales_low_intent_cadence_enabled ausente/desligado.
+- Banco confirmado após publicação: 33 tarefas ainda abertas e nenhuma mensagem de despedida gravada. Nenhum envio real de teste, exclusão ou migration. Confirmação de entrega será verificada durante a janela aprovada; não havia mensagens novas após este deploy para comprovar resposta orgânica.
+- Suítes atuais: 887 testes aprovados, tipos e build web aprovados. Execução ampliada na raiz encontrou falha no teste de custos de um checkout antigo não alterado; detalhe no runbook.
+- Registro final salvo localmente sem push adicional para evitar redeploy apenas de documentação.
