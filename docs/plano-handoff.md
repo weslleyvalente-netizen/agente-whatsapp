@@ -626,3 +626,11 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Build final local e no servidor passaram. EasyPanel confirmou Success em 02/10/2026 às 18:52:29 UTC (15:52:29 Brasília).
 - Conferência em produção: novo visual carregado, card completo aberto com dados/tarefas e busca por nome retornando o negócio correto. Nenhuma mensagem enviada ou dado comercial alterado na conferência.
 - API /health respondeu status ok durante e após a publicação.
+
+
+### Correção do arraste no funil — 02/10/2026
+
+- Regressão do novo visual: a rolagem interna da coluna recortava o card e rolava horizontalmente durante o arraste. Aumentar z-index dentro da coluna não elimina o recorte.
+- Correção: DragOverlay renderizado por portal no body; origem preservada com opacidade e preview sem registrar outro draggable. Overlay removido ao cancelar ou soltar; confirmação comercial preservada.
+- Teste local com card fictício: antes, após nove movimentos para a direita, o centro permanecia em x=209 fora da coluna destino (348–648); depois, centro x≈407 sobre o destino e card visível. Mouse e teclado abriram a confirmação Interesse recebido → Qualificação. Cancelar removeu o preview; nenhuma escrita em negócio real.
+- Página temporária de teste removida antes da compilação e do commit.

@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
 import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState } from "@aula-agente/shared";
@@ -28,10 +29,22 @@ function OpportunityCard({
   onEdit: (opportunity: OpportunityWithContact) => void;
   onOpen: (opportunity: OpportunityWithContact) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: opportunity.id });
-  const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-    : undefined;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: opportunity.id });
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes}
+      className={`cursor-grab rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
+      onClick={() => !isDragging && onOpen(opportunity)}
+      onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
+      <OpportunityCardContent opportunity={opportunity} onEdit={onEdit}/>
+    </div>
+  );
+}
+
+// The overlay uses the same presentation without registering a second draggable.
+function OpportunityCardContent({ opportunity, onEdit }: {
+  opportunity: OpportunityWithContact;
+  onEdit?: (opportunity: OpportunityWithContact) => void;
+}) {
   const contactLabel = opportunity.wa_contacts?.name || opportunity.wa_contacts?.phone || "Contato desconhecido";
 
   const amount = opportunity.sale_amount ?? opportunity.credit_amount;
@@ -41,15 +54,12 @@ function OpportunityCard({
   const elapsed = minutes === null ? null : minutes < 1 ? "agora" : minutes < 60 ? `há ${minutes} min` : minutes < 1440 ? `há ${Math.floor(minutes / 60)} h` : `há ${Math.floor(minutes / 1440)} dias`;
   const initials = contactLabel.split(/\s+/).slice(0, 2).map(word => Array.from(word)[0]).join("").toUpperCase();
   return (
-    <div ref={setNodeRef} style={style} {...listeners} {...attributes}
-      className={`cursor-grab rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "relative z-10 opacity-70" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
-      onClick={() => !isDragging && onOpen(opportunity)}
-      onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
+    <>
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>
         <p className="min-w-0 flex-1 break-words font-semibold leading-7">{contactLabel}</p>
-        <button type="button" aria-label="Editar oportunidade" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(opportunity); }}><Pencil className="size-3.5"/></button>
+        {onEdit && <button type="button" aria-label="Editar oportunidade" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(opportunity); }}><Pencil className="size-3.5"/></button>}
       </div>
       {amount != null && <p className="mt-2 font-semibold tabular-nums"><span className="mr-2 text-xs font-normal text-muted-foreground">{opportunity.sale_amount != null ? "Preço" : "Crédito"}</span>{Number(amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>}
       {opportunity.sale_amount != null && opportunity.credit_amount != null && <p className="mt-1 text-xs text-muted-foreground">Crédito: {Number(opportunity.credit_amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>}
@@ -63,7 +73,7 @@ function OpportunityCard({
       </div>
       <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 className="size-3.5 shrink-0"/>{elapsed ? `Última interação ${elapsed}` : `Criado em ${new Date(opportunity.created_at).toLocaleDateString("pt-BR")}`}</p>
       {opportunity.sales_state?.readyForHuman && <p className="mt-2 text-xs text-muted-foreground">Etapa comercial: {FUNNEL_STAGE_LABELS[opportunity.stage] ?? opportunity.stage}</p>}
-    </div>
+    </>
   );
 }
 
@@ -112,11 +122,15 @@ export function OpportunityKanban({
   const [editing, setEditing] = useState<OpportunityWithContact | null>(null);
   const [selected, setSelected] = useState<OpportunityWithContact | null>(null);
   const draggedAt = useRef(0);
+  const [activeOpportunity, setActiveOpportunity] = useState<OpportunityWithContact | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
   const stages = queueMode ? Object.keys(SALES_QUEUE_LABELS).map(k=>`__queue_${k}`) : [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
 
   function handleDragEnd(event: DragEndEvent) {
     draggedAt.current = Date.now();
+    setActiveOpportunity(null);
     const opportunityId = String(event.active.id);
     const targetStage = event.over?.id as string | undefined;
     if (!targetStage || targetStage.startsWith("__")) return;
@@ -139,7 +153,13 @@ export function OpportunityKanban({
 
   return (
     <>
-      <DndContext sensors={sensors} onDragStart={() => { draggedAt.current = Date.now(); }} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors}
+        onDragStart={event => {
+          draggedAt.current = Date.now();
+          setActiveOpportunity(opportunities.find(o => o.id === String(event.active.id)) ?? null);
+        }}
+        onDragCancel={() => { draggedAt.current = Date.now(); setActiveOpportunity(null); }}
+        onDragEnd={handleDragEnd}>
         <div className="flex items-start gap-4 overflow-x-auto pb-4 [scrollbar-width:thin]">
           {stages.map((stage) => (
             <StageColumn
@@ -152,6 +172,14 @@ export function OpportunityKanban({
             />
           ))}
         </div>
+        {mounted && createPortal(
+          <DragOverlay zIndex={1000} dropAnimation={null}>
+            {activeOpportunity && <div aria-hidden="true" data-kanban-drag-overlay className={`pointer-events-none cursor-grabbing rounded-2xl border bg-card p-4 text-sm shadow-xl ${activeOpportunity.sales_state?.hot ? "border-orange-300" : "border-primary/40"}`}>
+              <OpportunityCardContent opportunity={activeOpportunity}/>
+            </div>}
+          </DragOverlay>,
+          document.body,
+        )}
       </DndContext>
       {selected && <OpportunityDetailDialog opportunity={opportunities.find(o => o.id === selected.id) ?? selected} onClose={() => setSelected(null)} onChanged={onChanged}/>}
       {pending && (
