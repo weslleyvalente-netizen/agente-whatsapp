@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTaskWithDedup, resolveAwaitingCustomerPendency } from "./tasks.js";
+import { createTaskWithDedup, resolveAwaitingCustomerPendency, resolveUnresponsiveTasksOnReply } from "./tasks.js";
 
 // A small in-memory fake covering exactly the chains this file's tests need:
 // select/eq/in/is/order/limit (awaitable directly, array result), single(),
@@ -416,4 +416,30 @@ it("preserva retorno que chega durante dedup com consolidação desligada",async
  const {client,tables}=makeFakeClient({tasks:[row],organizations:[org()],beforeUpdate:()=>{row.updated_at="new";row.consolidated_pendencies=[{...callback,type:"awaiting_customer_cpf",freeze_opportunity_id:undefined,description:"CPF",priority:"urgent"},callback]}});
  await createTaskWithDedup(client,{...baseInput,opportunity_id:"opp",type:"awaiting_customer_cpf"});
  expect((tables.tasks[0].consolidated_pendencies as Row[]).some(p=>p.freeze_opportunity_id==="opp")).toBe(true);
+});
+
+describe("customer reply resolves unresponsive pendencies",()=>{
+ const row=(overrides:Row={})=>({id:"t",organization_id:"org-1",contact_id:"contact-1",conversation_id:"c",type:"customer_unresponsive",status:"pending",created_at:"2026-10-02T12:00:00Z",updated_at:"stamp",consolidated_pendencies:[],...overrides});
+ const reply={organizationId:"org-1",contactId:"contact-1",conversationId:"c",role:"contact",createdAt:"2026-10-02T16:00:00Z",messageId:"reply"};
+ it("completes all older matching tasks idempotently",async()=>{
+  const {client,tables}=makeFakeClient({tasks:[row(),row({id:"t2"})]});
+  await resolveUnresponsiveTasksOnReply(client,reply);await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks.every(t=>t.status==="completed")).toBe(true);expect(tables.task_events).toHaveLength(2);
+ });
+ it("does not resolve on outbound messages, other conversations or newer tasks",async()=>{
+  const {client,tables}=makeFakeClient({tasks:[row(),row({id:"other",conversation_id:"other"}),row({id:"new",created_at:"2026-10-02T17:00:00Z"})]});
+  await resolveUnresponsiveTasksOnReply(client,{...reply,role:"human_agent"});expect(tables.task_events).toHaveLength(0);
+  await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks.filter(t=>t.status==="completed").map(t=>t.id)).toEqual(["t"]);
+ });
+ it("preserves other pendencies and promised dates",async()=>{
+  const remaining={type:"return_customer",description:"Retorno amanhã",priority:"normal",due_date:"2026-10-03",due_time:"08:00",added_at:"2026-10-02T12:00:00Z",reason:null};
+  const {client,tables}=makeFakeClient({tasks:[row({consolidated_pendencies:[{...remaining,type:"customer_unresponsive"},remaining]})]});
+  await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks[0]).toMatchObject({status:"pending",type:"return_customer",due_date:"2026-10-03",consolidated_pendencies:[remaining]});
+ });
+ it("preserves an unresponsive pendency added after the reply",async()=>{
+  const {client,tables}=makeFakeClient({tasks:[row({consolidated_pendencies:[{type:"customer_unresponsive",added_at:"2026-10-02T17:00:00Z",priority:"high",due_date:"2026-10-03",description:"Novo silêncio"}]})]});
+  await resolveUnresponsiveTasksOnReply(client,reply);expect(tables.tasks[0].status).toBe("pending");expect(tables.task_events).toHaveLength(0);
+ });
 });

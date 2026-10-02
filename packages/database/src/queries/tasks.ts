@@ -230,14 +230,19 @@ export async function resolveAwaitingCustomerPendency(
   taskId: string,
   resolvedType: TaskType,
   note: string,
-  conflictAttempt=0
+  conflictAttempt=0,
+  resolvedBefore?: string
 ): Promise<{ taskCompleted: boolean }> {
   const task = await getTaskById(client, taskId);
+  if (task.organization_id !== organizationId || !OPEN_TASK_STATUSES.includes(task.status)) return { taskCompleted: false };
   const pendencies = task.consolidated_pendencies ?? [];
-  const hasOthers = pendencies.filter((p) => p.type !== resolvedType).length > 0;
+  const cutoff = resolvedBefore ? Date.parse(resolvedBefore) : Infinity;
+  const removable = (p: TaskPendency) => p.type === resolvedType && (!resolvedBefore || Date.parse(p.added_at) < cutoff);
+  if (resolvedBefore && (pendencies.length > 0 ? !pendencies.some(removable) : task.type !== resolvedType || !(Date.parse(task.created_at) < cutoff))) return { taskCompleted: false };
+  const remaining = resolvedBefore ? pendencies.filter(p => !removable(p)) : removePendencyByType(pendencies, resolvedType);
+  const hasOthers = remaining.length > 0;
 
   if (hasOthers) {
-    const remaining = removePendencyByType(pendencies, resolvedType);
     const primary = pickPrimaryPendency(remaining)!;
     try { await updateTask(client, taskId, {
       type: primary.type,
@@ -249,7 +254,7 @@ export async function resolveAwaitingCustomerPendency(
       due_time: primary.due_time,
       consolidated_pendencies: remaining,
     },task.updated_at);
-    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1);throw error;}
+    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore);throw error;}
     await addTaskEvent(client, {
       task_id: taskId,
       organization_id: organizationId,
@@ -266,7 +271,7 @@ export async function resolveAwaitingCustomerPendency(
     completed_at: new Date().toISOString(),
     consolidated_pendencies: [],
   },task.updated_at);
-  }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1);throw error;}
+  }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore);throw error;}
   await addTaskEvent(client, {
     task_id: taskId,
     organization_id: organizationId,
@@ -276,6 +281,21 @@ export async function resolveAwaitingCustomerPendency(
     created_by_id: null,
   });
   return { taskCompleted: true };
+}
+
+/** Resolve silence only on a persisted inbound reply, even during human takeover. */
+export async function resolveUnresponsiveTasksOnReply(
+  client: SupabaseClient,
+  input: { organizationId: string; contactId: string; conversationId: string; role: string; createdAt: string; messageId: string }
+): Promise<void> {
+  if (input.role !== "contact" || !Number.isFinite(Date.parse(input.createdAt))) return;
+  const tasks = await getOpenTasksByContact(client, input.organizationId, input.contactId);
+  for (const task of tasks) {
+    if (task.conversation_id !== input.conversationId) continue;
+    if (task.type !== "customer_unresponsive" && !(task.consolidated_pendencies ?? []).some(p => p.type === "customer_unresponsive")) continue;
+    await resolveAwaitingCustomerPendency(client, input.organizationId, task.id, "customer_unresponsive",
+      `Cliente respondeu — pendência sem resposta resolvida. Mensagem: ${input.messageId}`, 0, input.createdAt);
+  }
 }
 
 // Fase 2, item 5(c): daily cap on new libera_cred_resumption tasks — counts

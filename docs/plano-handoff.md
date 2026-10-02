@@ -657,3 +657,11 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 Verificação da publicação ba7d3a9: worker Success 19:42:30 UTC, API Success 19:42:43 UTC; /health ok 19:44:06 UTC. Card de Adrielly criado pela rotina corrigida: f2285466-f089-4d57-aa61-bb7119fe1a35, vehicle_sale/interest_received, tarefa existente vinculada e preservada. Sem mensagens enviadas ou revisão em massa.
 
 Diagnóstico Josiel (62 99837-8953): retornou em 02/10 às 16:07 BRT prometendo resposta amanhã; tarefa return_customer para 03/10 correta. Card LiberaCred em plan_term_presented existente; qualification attendance_type consortium, modalidade ainda em avaliação. Tarefa customer_unresponsive high de hoje continua pending apesar da resposta; outra financing_followup para 05/10 e next_action_due_date 24/09 estão desatualizados. Nenhum registro desse contato foi alterado nesta consulta.
+
+### Correção local — silêncio resolvido pela resposta do cliente (02/10/2026)
+
+- Webhook resolve customer_unresponsive após persistir mensagem contact, antes dos bloqueios por takeover e IA desligada. Não resolve por mensagem humana/IA, eco ou webhook duplicado. Contatos ignorados permanecem fora desse fluxo.
+- Resolve todas as tarefas abertas da mesma organização/contato/conversa, somente pendências anteriores à resposta; revalida timestamp, status e organização em caso de concorrência. Preserva demais pendências e datas combinadas; registra mensagem de evidência em task_events. Sem migration, nova flag ou envio ao cliente.
+- TDD: quatro regressões falharam inicialmente; 78 testes database, 253 API e verificações de tipos passaram, incluindo integração em takeover/IA desligada e pendências consolidadas.
+- Correção pontual autorizada: Josiel, tarefa 61d78984-3583-48b6-acec-2de0812b3f40 concluída pela rotina usando última resposta real. Retorno 208e3400-1267-4f00-a2e1-85f5c72b1f48 preservado pending para 03/10. Outros contatos não alterados.
+- Branch codex/fix-resolve-unresponsive-replies: commit local sem push; automação geral ainda não implantada.

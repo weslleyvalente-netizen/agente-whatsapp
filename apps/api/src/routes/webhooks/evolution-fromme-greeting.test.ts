@@ -6,6 +6,7 @@ import evolutionWebhookRoutes from "./evolution.js";
 // webhookVerifyMiddleware skips verification entirely when unset.
 delete process.env.WEBHOOK_SECRET;
 
+const resolveUnresponsiveTasksOnReply = vi.fn().mockResolvedValue(undefined);
 const getInstanceByInstanceId = vi.fn();
 const updateConversation = vi.fn();
 const getIgnoredContact = vi.fn();
@@ -14,6 +15,7 @@ const getOrganizationById = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
+  resolveUnresponsiveTasksOnReply: (...args: unknown[]) => resolveUnresponsiveTasksOnReply(...args),
   getInstanceByInstanceId: (...args: unknown[]) => getInstanceByInstanceId(...args),
   updateConversation: (...args: unknown[]) => updateConversation(...args),
   getIgnoredContact: (...args: unknown[]) => getIgnoredContact(...args),
@@ -207,4 +209,23 @@ describe("evolution webhook — fromMe greeting filter (Fase 1)", () => {
 
     await app.close();
   });
+});
+
+describe("incoming reply task resolution",()=>{
+ for(const mode of ["takeover","ai_disabled"]){
+  it(`resolves persisted inbound replies even during ${mode}`,async()=>{
+   ensureConversation.mockResolvedValue({conversation:{...openConversation,is_human_takeover:mode==="takeover"},contact:{...contact,ai_disabled:mode==="ai_disabled"},isNew:false});
+   saveMessage.mockResolvedValue({id:"reply",role:"contact",created_at:"2026-10-02T16:00:00Z"});
+   const payload=fromMePayload("Amanhã retorno");payload.data.key.fromMe=false;
+   const app=await buildApp();const response=await app.inject({method:"POST",url:"/webhooks/evolution",payload});
+   expect(response.statusCode).toBe(200);expect(resolveUnresponsiveTasksOnReply).toHaveBeenCalledWith({},expect.objectContaining({organizationId:"org-1",conversationId:"conv-1",contactId:"contact-1",role:"contact",messageId:"reply"}));
+   expect(enqueueProcessMessage).not.toHaveBeenCalled();await app.close();
+  });
+ }
+ it("does not treat outbound or duplicate webhooks as new customer replies",async()=>{
+  const app=await buildApp();await app.inject({method:"POST",url:"/webhooks/evolution",payload:fromMePayload("Bom dia")});
+  expect(resolveUnresponsiveTasksOnReply).not.toHaveBeenCalled();
+  saveMessage.mockResolvedValue(null);const payload=fromMePayload("Ok");payload.data.key.fromMe=false;
+  await app.inject({method:"POST",url:"/webhooks/evolution",payload});expect(resolveUnresponsiveTasksOnReply).not.toHaveBeenCalled();await app.close();
+ });
 });

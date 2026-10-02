@@ -9,6 +9,7 @@ import {
 import type { GreetingFilterConfig } from "@aula-agente/shared";
 import {
   getAdminClient,
+  resolveUnresponsiveTasksOnReply,
   getInstanceByInstanceId,
   updateConversation,
   getIgnoredContact,
@@ -395,6 +396,16 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // never enqueued for the AI and never synced to the CRM.
       if (isIgnoredMinimalRecord) {
         return reply.status(200).send({ ok: true, messageId: message.id, skipped: "ignored_contact" });
+      }
+
+      // Independent of AI execution: a real customer reply resolves prior silence.
+      try {
+        await resolveUnresponsiveTasksOnReply(getAdminClient(), {
+          organizationId, contactId: contact.id, conversationId: conversation.id,
+          role: message.role, createdAt: message.created_at, messageId: message.id,
+        });
+      } catch (err) {
+        request.log.error({ err, conversationId: conversation.id }, "Failed to resolve unresponsive tasks after customer reply");
       }
 
       // If human takeover is active, don't enqueue for LLM processing
