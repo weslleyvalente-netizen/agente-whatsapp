@@ -614,3 +614,12 @@ Usuário autorizou seguir. Histórico remoto conferido: somente sales_marina_que
 - Ativação não faz backfill. Criação/avanço e tarefa qualificada passam a agir nos próximos eventos reais, respeitando evidência e resultado humano. Às 9h21:42 não havia nova entrada nem oportunidade atualizada desde a ativação; ponta a ponta orgânico ainda não comprovado nesta janela. Nenhuma mensagem de teste enviada.
 - 21 testes direcionados passaram (20 shared de fila/política, 1 database). Três flags confirmadas true no banco; cadência contínua segue ausente/desligada, fila de despedidas de 03/10 segue ligada e preservada, congelamento não ativado neste passo. Não houve conclusão/exclusão de tarefas ou alteração histórica de negócios pelo assistente.
 - Reorganização dos dados históricos permanece pendente de levantamento/contagens/aprovação próprios. Rollback: desligar fila para visão anterior; desligar qualified e pipeline para parar novas mutações, preservando registros. Registro salvo localmente sem push de documentação.
+
+
+### Visual do funil — 02/10/2026 (pronto para revisão, não publicado)
+
+- Referência visual: CRM Assis enviado pelo usuário; design aprovado.
+- Colunas suaves com marcador de cor, contador e rolagem; cards com nome, valores, produto, data, próxima ação e indicadores existentes.
+- Busca e filtros agrupados; pendências antigas e contatos a identificar abaixo do quadro principal.
+- Abertura do card completo, edição e mudança de etapa preservadas; nenhuma alteração de automação, flag ou banco.
+- Branch: `codex/visual-funil-marina`. Publicação depende de autorização.
