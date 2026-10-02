@@ -48,7 +48,7 @@ const baseOpportunity = {
 // directly against the Supabase client before delegating the actual
 // mutation to updateOpportunity/addOpportunityEvent — see
 // integrations/crm-sync.test.ts for the same from()-chain mocking style.
-function makeDb(opportunity: typeof baseOpportunity) {
+function makeDb(opportunity: Omit<typeof baseOpportunity,"operation"> & {operation:"vehicle_sale"|"financing"}) {
   const from = vi.fn((table: string) => {
     if (table !== "opportunities") throw new Error(`unexpected table ${table}`);
     return {
@@ -204,4 +204,20 @@ describe("markLost", () => {
     );
     expect(result.status).toBe("lost");
   });
+});
+
+describe('financing bank workflow',()=>{
+ beforeEach(()=>vi.resetAllMocks());
+ it('sets bank wait only when a human records submission',async()=>{
+  const financing={...baseOpportunity,operation:'financing' as const,stage:'awaiting_simulation'};
+  updateOpportunity.mockResolvedValue({...financing,stage:'bank_analysis'});
+  await changeStage(makeDb(financing),'opp-1','bank_analysis','Ficha enviada ao banco',actor);
+  expect(updateOpportunity).toHaveBeenCalledWith(expect.anything(),'opp-1',expect.objectContaining({waiting_on:'bank_or_admin'}));
+ });
+ it('returns a rejected financing to human action without marking lost',async()=>{
+  const financing={...baseOpportunity,operation:'financing' as const,stage:'bank_analysis'};
+  updateOpportunity.mockResolvedValue({...financing,stage:'financing_rejected'});
+  await changeStage(makeDb(financing),'opp-1','financing_rejected','Banco recusou análise',actor);
+  expect(updateOpportunity).toHaveBeenCalledWith(expect.anything(),'opp-1',expect.objectContaining({waiting_on:'team',next_action:'Combinar nova tentativa de financiamento'}));
+ });
 });

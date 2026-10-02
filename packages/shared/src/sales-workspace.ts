@@ -17,4 +17,4 @@ export function classifySalesCard(input: SalesCardInput) {
 export function sortNewestSalesCards<T extends { created_at: string; id: string }>(rows: T[]): T[] {
  return [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
 }
-export type SalesCardState = ReturnType<typeof classifySalesCard> & { handoffSummary: string | null; handedAt: string | null };
+export type SalesCardState = ReturnType<typeof classifySalesCard> & { handoffSummary: string | null; handedAt: string | null; tasks?: Array<{id:string;type:string;due_date:string;priority:string;consolidated_pendencies?:Array<{type:string;due_date:string;priority:string}>}> };

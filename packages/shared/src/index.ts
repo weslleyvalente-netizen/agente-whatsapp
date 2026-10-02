@@ -30,3 +30,5 @@ export * from "./opportunity-freeze.js";
 export * from "./opportunity-edit-values.js";
 
 export * from "./sales-pipeline-policy.js";
+
+export * from "./sales-queue.js";

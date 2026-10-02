@@ -26,7 +26,7 @@ const eventLabels: Record<string, string> = { created: "Oportunidade criada", st
 function Field({ label, value }: { label: string; value?: string | number | null }) { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-words text-sm">{value ?? "Não informado"}</dd></div>; }
 export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { opportunity: OpportunityWithContact; onClose: () => void; onChanged: () => void }) {
  const { currentOrg } = useOrganization();
- const workspaceEnabled = currentOrg?.settings.sales_workspace_enabled === true;
+ const workspaceEnabled = currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true;
  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
  const [chatOpen, setChatOpen] = useState(true);
  const [details, setDetails] = useState<Details | null>(null);

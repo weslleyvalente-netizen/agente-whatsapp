@@ -18,6 +18,8 @@ export interface Organization {
 
 export interface OrganizationSettings {
   sales_workspace_enabled?: boolean;
+  sales_action_queue_enabled?: boolean;
+  sales_qualified_handoff_task_enabled?: boolean;
   sales_auto_pipeline_enabled?: boolean;
   sales_opportunity_freeze_enabled?: boolean;
   sales_low_intent_cadence_enabled?: boolean;

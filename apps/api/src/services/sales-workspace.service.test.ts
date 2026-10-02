@@ -31,3 +31,15 @@ it("counts contact-only tasks without counting another business's task",async()=
  const {db}=database({tasks:[{opportunity_id:null,contact_id:"c"},{opportunity_id:"another",contact_id:"c"}],conversations:[],handoff_events:[]});
  const result=await enrichSalesWorkspace(db as any,"org",rows as any,true);expect(result[0].sales_state?.taskCount).toBe(1);
 });
+
+it('includes task priority and due dates for the operational queue',async()=>{
+ const {db}=database({tasks:[{id:'task',opportunity_id:'a',contact_id:'c',type:'run_quote',due_date:'2026-10-02',priority:'urgent'}],conversations:[],handoff_events:[]});
+ const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
+ expect(result[0].sales_state).toMatchObject({tasks:[{id:'task',type:'run_quote',priority:'urgent',due_date:'2026-10-02'}]});
+});
+
+it('keeps only tasks without an open business in the historical review queue',async()=>{
+ const {getSalesTasksWithoutOpenBusiness}=await import('./sales-workspace.service.js');
+ const {db}=database({opportunities:[{id:'a',contact_id:'linked'}],tasks:[{id:'one',opportunity_id:null,contact_id:'orphan',type:'other',due_date:'2026-10-02',created_at:'2026-10-01',status:'pending'},{id:'two',opportunity_id:null,contact_id:'linked'},{id:'three',opportunity_id:'closed',contact_id:'other',type:'other',due_date:'2026-10-02',created_at:'2026-10-01',status:'pending'}]});
+ expect((await getSalesTasksWithoutOpenBusiness(db as any,'org')).map(t=>t.id)).toEqual(['one','three']);
+});

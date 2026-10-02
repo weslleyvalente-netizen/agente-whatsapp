@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { DndContext, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
-import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, sortNewestSalesCards } from "@aula-agente/shared";
+import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState } from "@aula-agente/shared";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -104,7 +104,9 @@ function StageColumn({
   opportunities,
   onEdit,
   onOpen,
+  queueMode = false,
 }: {
+  queueMode?: boolean;
   stage: string;
   opportunities: OpportunityWithContact[];
   onEdit: (opportunity: OpportunityWithContact) => void;
@@ -115,10 +117,10 @@ function StageColumn({
     <div ref={setNodeRef} className="w-64 shrink-0">
       <Card>
         <CardHeader className="p-3">
-          <CardTitle className="text-sm">{stage === "__ready_for_marina" ? "Pronto para Marina" : FUNNEL_STAGE_LABELS[stage] ?? stage} <span className="text-muted-foreground">({opportunities.length})</span></CardTitle>
+          <CardTitle className="text-sm">{stage.startsWith("__queue_") ? SALES_QUEUE_LABELS[stage.slice(8) as SalesQueueGroup] : stage === "__ready_for_marina" ? "Pronto para Marina" : FUNNEL_STAGE_LABELS[stage] ?? stage} <span className="text-muted-foreground">({opportunities.length})</span></CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0">
-          {sortNewestSalesCards(opportunities).map((o) => (
+          {(queueMode ? sortSalesQueue(opportunities.map(o=>({...o,tasks:o.sales_state?.tasks})),new Date().toISOString()) : sortNewestSalesCards(opportunities)).map((o) => (
             <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} />
           ))}
         </CardContent>
@@ -132,24 +134,26 @@ export function OpportunityKanban({
   opportunities,
   onChanged,
   workspaceEnabled = false,
+  queueMode = false,
 }: {
   operation: Operation;
   opportunities: OpportunityWithContact[];
   onChanged: () => void;
   workspaceEnabled?: boolean;
+  queueMode?: boolean;
 }) {
   const [pending, setPending] = useState<{ opportunity: OpportunityWithContact; targetStage: string } | null>(null);
   const [editing, setEditing] = useState<OpportunityWithContact | null>(null);
   const [selected, setSelected] = useState<OpportunityWithContact | null>(null);
   const draggedAt = useRef(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
-  const stages = [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
+  const stages = queueMode ? Object.keys(SALES_QUEUE_LABELS).map(k=>`__queue_${k}`) : [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
 
   function handleDragEnd(event: DragEndEvent) {
     draggedAt.current = Date.now();
     const opportunityId = String(event.active.id);
     const targetStage = event.over?.id as string | undefined;
-    if (!targetStage || targetStage === "__ready_for_marina") return;
+    if (!targetStage || targetStage.startsWith("__")) return;
 
     const opportunity = opportunities.find((o) => o.id === opportunityId);
     if (!opportunity || opportunity.stage === targetStage) return;
@@ -175,7 +179,8 @@ export function OpportunityKanban({
             <StageColumn
               key={stage}
               stage={stage}
-              opportunities={opportunities.filter((o) => stage === "__ready_for_marina" ? o.sales_state?.readyForHuman : o.stage === stage && !o.sales_state?.readyForHuman)}
+              queueMode={queueMode}
+              opportunities={opportunities.filter((o) => queueMode ? stage === `__queue_${classifySalesQueue({...o,tasks:o.sales_state?.tasks},new Date().toISOString()).group}` : stage === "__ready_for_marina" ? o.sales_state?.readyForHuman : o.stage === stage && !o.sales_state?.readyForHuman)}
               onEdit={setEditing}
               onOpen={o => { if (Date.now() - draggedAt.current > 400) setSelected(o); }}
             />

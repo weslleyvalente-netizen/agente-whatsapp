@@ -23,9 +23,17 @@ export async function changeStage(
     throw new Error(`Estágio "${newStage}" não existe no funil "${opportunity.operation}"`);
   }
 
+  if(opportunity.operation==='financing' && actor.type!=='human' && ['bank_analysis','conditions_approved_negotiation','financing_rejected'].includes(newStage))throw new Error('Resultado bancário exige registro humano');
+  const financing = opportunity.operation==='financing' ? ({
+    bank_analysis:{waiting_on:'bank_or_admin' as const,next_action:'Aguardar resultado da análise bancária'},
+    conditions_approved_negotiation:{waiting_on:'team' as const,next_action:'Apresentar condições aprovadas e negociar'},
+    financing_rejected:{waiting_on:'team' as const,next_action:'Combinar nova tentativa de financiamento'},
+    awaiting_simulation:{waiting_on:'team' as const,next_action:'Rodar simulação de financiamento'},
+  } as Record<string,{waiting_on:WaitingOn;next_action:string}>)[newStage] : undefined;
   const updated = await updateOpportunity(db, opportunityId, {
     stage: newStage,
     last_progress_at: new Date().toISOString(),
+    ...financing,
   });
 
   await addOpportunityEvent(db, {

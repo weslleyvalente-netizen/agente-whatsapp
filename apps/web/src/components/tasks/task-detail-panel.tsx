@@ -284,6 +284,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const handleComplete = async () => {
     try {
       await apiFetch(`/tasks/${taskId}/complete`, { method: "POST" });
+      await fetchDetails();
       onTaskChanged();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao concluir tarefa");
@@ -294,6 +295,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
     if (!confirm("Cancelar esta tarefa?")) return;
     try {
       await apiFetch(`/tasks/${taskId}/cancel`, { method: "POST", body: JSON.stringify({}) });
+      await fetchDetails();
       onTaskChanged();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao cancelar tarefa");

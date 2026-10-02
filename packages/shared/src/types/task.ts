@@ -68,6 +68,7 @@ export type TaskEventType =
   | "rescheduled"
   | "completed"
   | "cancelled"
+  | "qualified_handoff"
   | "assigned"
   | "auto_followup_stage_1"
   | "auto_followup_stage_2"

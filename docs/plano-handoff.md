@@ -570,3 +570,13 @@ Deploy concluído: main fdb923d. EasyPanel confirmou Success para worker às 19:
 
 ### Teste após publicação — 01/10/2026, 17:34 BRT
 A pedido do usuário: busca no funil por nome e telefone validada; card completo abriu conversa lateral; os dois acessos ao editor foram conferidos sem salvar alterações. API health ok. Harness SQL isolado passou novamente (preservação CPF, idempotência, descongelamento, avanço monotônico e rollback atômico). Flags novas seguem null/desligadas. Banco registra 22 mensagens contact e 54 human_agent após restart, além de 1 agent com evolution_message_id confirmado às 17:18:44 BRT; essa mensagem agent é retomada de conversa antiga, portanto não comprova resposta a uma mensagem nova. Testes reais de congelamento/avanço e envio controlado ainda pendentes de ativação/contato controlado.
+
+
+### Fila única da Marina no Funil — implementação local (01/10/2026)
+- Aprovada a concentração da operação no Funil, respeitando conta compartilhada e preservando todas as tarefas. Branch codex/funil-fila-marina, base de71dcb; sem push, migration ou ativação.
+- Fila entre todos os funis: encaminhamentos, respostas, compromissos, pendências e ações; retornos futuros, banco/cliente e silêncio separados. Card grande mantém chat e tarefa executável. Pendências antigas sem negócio aberto ficam acessíveis no próprio Funil.
+- Financiamento: Aguardando simulação, análise, aprovado/reprovado; somente humano registra submissão e resultado. Cadastro completo + handoff pendente gera card/tarefa transacional no próximo horário, inclusive com responsável já configurado. Reutiliza tarefa, preserva pendências/prioridade/datas, registra consolidação e não duplica em repetição. Sem perda automática.
+- Migration nova 20261002023000_sales_marina_queue.sql apenas preparada. sales_action_queue_enabled e sales_qualified_handoff_task_enabled começam desligadas; criação automática depende de sales_auto_pipeline_enabled. Não há reparo histórico em lote.
+- Consulta read-only: 207 tarefas abertas, 147 sem opportunity_id, 71 customer_unresponsive, 143 sem negócio aberto associado. Nenhum registro modificado.
+- 856 testes, tipos, build web e SQL transacional local passaram. Flags novas confirmadas ausentes/desligadas em produção. Revisão independente: quatro achados corrigidos, incluindo proteção de resultado na troca de modalidade, cards sem tarefa, pendências consolidadas e painel atualizado após concluir.
+- Publicação/ativação e validação visual/controlada pendentes; runbook em docs/runbook-funil-fila-marina.md. Pedro continua caso de reparo histórico a revisar antes de apply; não é lead frio.

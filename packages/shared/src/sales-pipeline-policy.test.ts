@@ -20,3 +20,10 @@ it("não troca modalidade explicitamente recusada",()=>{expect(decide({customerT
 it("não considera oferta indisponível como proposta",()=>{expect(decide({customerText:"Quero consórcio",qualification:{product_model:"Fazer",target_installment_amount:500,term_months:12},agentText:"Não temos plano de 12 parcelas por R$ 500,00."})?.stage).toBe("qualification")});
 
 it("pergunta de orçamento não equivale a uma proposta",()=>{expect(decide({customerText:"Quero consórcio",qualification:{product_model:"Fazer",target_installment_amount:500,term_months:12},agentText:"Você quer um plano de 12 parcelas por R$ 500,00?"})?.stage).toBe("qualification")});
+
+it('routes a complete financing handoff to simulation even after a short acknowledgment',()=>{
+ expect(decide({customerText:'Ok',humanHandoff:true,qualification:{attendance_type:'financing',product_model:'CG160 Titan',cpf_encrypted:'encrypted',birth_date:'1990-01-01',has_driver_license:true,down_payment_amount:3000}})).toMatchObject({operation:'financing',stage:'awaiting_simulation'});
+});
+it('keeps incomplete financing in documentation without inventing bank results',()=>{
+ expect(decide({customerText:'Quero financiar',humanHandoff:true,qualification:{attendance_type:'financing',product_model:'CG160 Titan',down_payment_amount:0}})).toMatchObject({stage:'documentation'});
+});

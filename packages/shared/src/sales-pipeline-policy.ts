@@ -1,5 +1,5 @@
 import type {Operation} from "./types/opportunity.js";
-export interface PipelineInput {customerText:string;qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;}
+export interface PipelineInput {customerText:string;qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;}
 const normalize=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 export function decideSalesPipeline(input:PipelineInput):{operation:Operation;stage:string;explicitOperation:boolean}|null{
  const customer=normalize(input.customerText);const q=input.qualification??{};
@@ -35,6 +35,10 @@ export function decideSalesPipeline(input:PipelineInput):{operation:Operation;st
  if(/\b(?:quero|vou|vamos|gostaria de)\s+(?:fechar|aderir|avancar)|\bnegociar\b/.test(customer)){
   const decision:Partial<Record<Operation,string>>={consortium:"decision_negotiation",libera_cred:"decision_objections",vehicle_sale:"negotiation"};
   stage=decision[operation]??stage;
+ }
+ if(operation==='financing' && input.humanHandoff && interested){
+  const complete=!!q.cpf_encrypted && !!q.birth_date && typeof q.has_driver_license==='boolean' && typeof q.down_payment_amount==='number' && q.down_payment_amount>=0;
+  stage=complete?'awaiting_simulation':'documentation';
  }
  return {operation,stage,explicitOperation:explicit.length===1};
 }

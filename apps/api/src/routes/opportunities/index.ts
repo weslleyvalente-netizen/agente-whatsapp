@@ -28,7 +28,7 @@ import {
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
-import { enrichSalesWorkspace } from "../../services/sales-workspace.service.js";
+import { enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
 export default async function opportunityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -42,9 +42,17 @@ export default async function opportunityRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const [rows, organization] = await Promise.all([getOpportunitiesByOrganization(db, organizationId, request.query), getOrganizationById(db, organizationId)]);
-      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true);
+      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true);
     }
   );
+
+  app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/pending-tasks",async(request,reply)=>{
+    const orgId=request.params.organizationId;
+    if(!request.user.memberships.some(m=>m.organization_id===orgId))return reply.status(403).send({error:"Access denied"});
+    const db=getAdminClient();const org=await getOrganizationById(db,orgId);
+    if(org.settings.sales_action_queue_enabled!==true)return [];
+    return getSalesTasksWithoutOpenBusiness(db,orgId);
+  });
 
   app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/unidentified",async(request,reply)=>{
     const orgId=request.params.organizationId;
