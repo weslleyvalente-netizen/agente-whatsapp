@@ -22,3 +22,29 @@ describe("sales workspace", () => {
   expect(sortNewestSalesCards(rows).map(r => r.id)).toEqual(["new", "old"]); expect(rows[0].id).toBe("old");
  });
 });
+
+
+const now = '2026-10-04T15:00:00.000Z';
+const waitingForAi = {...base, latestRole:'contact', latestMessageAt:'2026-10-04T14:55:00.000Z'};
+describe('AI response overdue',()=>{
+ it('starts at five minutes after the latest contact message',()=>{
+  expect(classifySalesCard({...waitingForAi,latestMessageAt:'2026-10-04T14:55:00.001Z'},now).responseOverdue).toBe(false);
+  expect(classifySalesCard(waitingForAi,now)).toMatchObject({responseOverdue:true,customerReplied:true,humanPending:false});
+  expect(classifySalesCard({...waitingForAi,latestMessageAt:'2026-10-04T14:40:00.000Z'},now).responseOverdue).toBe(true);
+ });
+ it.each([
+  {latestRole:'agent'}, {latestRole:'human'}, {latestRole:null},
+  {isHumanTakeover:true}, {aiDisabled:true},
+  {handoff:{motivo:'cliente_pediu',resumo:null,first_human_reply_at:null}},
+  {status:'won'}, {status:'lost'}, {frozenUntil:'2026-10-05'}, {frozenUntil:'2026-10-03'},
+  {latestMessageAt:null}, {latestMessageAt:'invalid'}, {latestMessageAt:'2026-10-04T15:01:00.000Z'},
+ ])('does not flag a blocked or non-waiting card: %j',overrides=>{
+  expect(classifySalesCard({...waitingForAi,...overrides},now).responseOverdue).toBe(false);
+ });
+ it('does not treat an answered handoff as pending',()=>{
+  expect(classifySalesCard({...waitingForAi,handoff:{motivo:'cliente_pediu',resumo:null,first_human_reply_at:'2026-10-04T14:56:00.000Z'}},now).responseOverdue).toBe(true);
+ });
+ it('keeps legacy inputs valid without manufacturing an overdue response',()=>{
+  expect(classifySalesCard({...base,latestRole:'contact'},now)).toMatchObject({customerReplied:true,responseOverdue:false});
+ });
+});

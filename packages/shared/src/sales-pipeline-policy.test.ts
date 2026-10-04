@@ -35,3 +35,26 @@ it("não ressuscita recusa ou resolve ambiguidade",()=>{
  expect(decide({customerText:"Ok",customerHistory:["Quero bike","consórcio ou financiamento"],qualification:null})).toBeNull();
 });
 it("prioriza modalidade atual",()=>{expect(decide({customerText:"Quero consórcio",customerHistory:["Quero bike"],qualification:null})).toMatchObject({operation:"consortium"})});
+
+
+it('recovers Alessandro interest with a short noisy suffix after neutral replies',()=>{
+ expect(decide({customerText:'🤷‍♂️',customerHistory:['Tenho interesse em consórciobaadae','Moto'],qualification:null})).toMatchObject({operation:'consortium',stage:'interest_received',explicitOperation:false});
+});
+it.each(['consórciobaadae','Não quero consórciobaadae','Nem consórciobaadae','Tenho interesse em consórciobaadae ou financiamento','Tenho interesse em consorciologia'])('does not manufacture interest from %s',text=>{
+ expect(decide({customerText:'Ok',customerHistory:['Quero bike',text],qualification:null})).toBeNull();
+});
+it.each([
+ ['vehicle_sale','negotiation'],['consortium','decision_negotiation'],['libera_cred','decision_objections'],['contemplated_letter','compatible_letter_search'],
+] as const)('routes a verified commercial handoff for %s without inventing financial outcomes',(operation,stage)=>{
+ for(const humanHandoffMotive of ['negociacao_valor','proposta_pronta','cliente_pediu'])
+  expect(decide({customerText:'Ok',operation,qualification:null,humanHandoff:true,humanHandoffMotive})).toMatchObject({operation,stage});
+});
+it('requires a pending handoff and a supported commercial motive',()=>{
+ for(const handoff of [{humanHandoff:false,humanHandoffMotive:'proposta_pronta'},{humanHandoff:true,humanHandoffMotive:'reclamacao'},{humanHandoff:true}])
+  expect(decide({customerText:'Ok',operation:'consortium',qualification:null,...handoff})).toMatchObject({stage:'interest_received'});
+ expect(decide({customerText:'Ok',qualification:null,humanHandoff:true,humanHandoffMotive:'cliente_pediu'})).toBeNull();
+ expect(decide({customerText:'Não tenho mais interesse',operation:'consortium',qualification:null,humanHandoff:true,humanHandoffMotive:'proposta_pronta'})).toBeNull();
+});
+it('keeps an evidenced contemplated letter proposal when handing off',()=>{
+ expect(decide({customerText:'Ok',operation:'contemplated_letter',qualification:{credit_amount:10000},agentText:'A carta custa R$ 10.000,00.',humanHandoff:true,humanHandoffMotive:'proposta_pronta'})).toMatchObject({stage:'proposal_sent'});
+});

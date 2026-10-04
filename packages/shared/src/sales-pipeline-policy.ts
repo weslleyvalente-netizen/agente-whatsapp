@@ -1,8 +1,10 @@
 import type {Operation} from "./types/opportunity.js";
-export interface PipelineInput {customerText:string;customerHistory?:string[];qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;}
+export interface PipelineInput {customerText:string;customerHistory?:string[];qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;humanHandoffMotive?:string|null;}
 const normalize=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 export function decideSalesPipeline(input:PipelineInput):{operation:Operation;stage:string;explicitOperation:boolean}|null{
- const customer=normalize(input.customerText);const q=input.qualification??{};
+ // Repair only short repeated-letter noise after an explicit interest phrase.
+ // Do not turn arbitrary words beginning with consorcio into product intent.
+ const customer=normalize(input.customerText).replace(/\b(tenho interesse em|quero|gostaria de)\s+consorcio([a-z]{1,6})\b/g,(text,prefix:string,suffix:string)=>/([a-z])\1/.test(suffix)?`${prefix} consorcio`:text);const q=input.qualification??{};
  if(/nao (?:tenho|quero)(?: mais)? interesse|\bdesisti\b|ja comprei/.test(customer))return null;
  const positive=customer.replace(/\b(?:nao|nem)\s+(?:(?:quero|e|tenho interesse(?: em)?|gostaria de|preciso de)\s+)?(?:o |um |de |mais )?(?:financiamento|financiar|consorcio|libera\s*cred|carta contemplada|bike|bicicleta|a vista)\b/g," ");
  const signals:[Operation,boolean][]=[
@@ -46,6 +48,12 @@ export function decideSalesPipeline(input:PipelineInput):{operation:Operation;st
  if(/\b(?:quero|vou|vamos|gostaria de)\s+(?:fechar|aderir|avancar)|\bnegociar\b/.test(customer)){
   const decision:Partial<Record<Operation,string>>={consortium:"decision_negotiation",libera_cred:"decision_objections",vehicle_sale:"negotiation"};
   stage=decision[operation]??stage;
+ }
+ if(input.humanHandoff && ['negociacao_valor','proposta_pronta','cliente_pediu'].includes(input.humanHandoffMotive??'')){
+  const handoffStages:Partial<Record<Operation,string>>={vehicle_sale:'negotiation',consortium:'decision_negotiation',libera_cred:'decision_objections'};
+  stage=handoffStages[operation]??stage;
+  // A request for human help does not prove that a letter proposal was sent.
+  if(operation==='contemplated_letter' && stage!=='proposal_sent')stage='compatible_letter_search';
  }
  if(operation==='financing' && input.humanHandoff && interested){
   const complete=!!q.cpf_encrypted && !!q.birth_date && typeof q.has_driver_license==='boolean' && typeof q.down_payment_amount==='number' && q.down_payment_amount>=0;

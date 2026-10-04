@@ -27,7 +27,14 @@ export function enqueueProcessMessage(data: {
     // as "the" message to process anyway — it re-reads every pending
     // contact message from the DB — so replacing is safe even though only
     // the latest message's data survives here.
-    deduplication: { id: data.conversationId, replace: true },
+    // If a job is already active, retain only the latest incoming bubble
+    // for a new job after completion. Otherwise a stale reply discarded by
+    // the worker could leave pending messages with no job to process them.
+    deduplication: {
+      id: data.conversationId,
+      replace: true,
+      keepLastIfActive: true,
+    },
   });
 }
 

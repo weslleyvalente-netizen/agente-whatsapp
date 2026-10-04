@@ -40,17 +40,39 @@ describe("enqueueProcessMessage", () => {
       { conversationId: "conv-1", messageId: "msg-1", agentId: "agent-1", organizationId: "org-1" },
       expect.objectContaining({
         delay: expect.any(Number),
-        deduplication: { id: "conv-1", replace: true },
+        deduplication: { id: "conv-1", replace: true, keepLastIfActive: true },
       })
     );
+  });
+
+  it("requests latest-message retention for every enqueue during an active turn", async () => {
+    for (const messageId of ["msg-active", "msg-next", "msg-latest"]) {
+      await enqueueProcessMessage({
+        conversationId: "conv-1",
+        messageId,
+        agentId: "agent-1",
+        organizationId: "org-1",
+      });
+    }
+
+    expect(add.mock.calls.map(([, data]) => data.messageId)).toEqual([
+      "msg-active", "msg-next", "msg-latest",
+    ]);
+    for (const [, , options] of add.mock.calls) {
+      expect(options.deduplication).toEqual({
+        id: "conv-1",
+        replace: true,
+        keepLastIfActive: true,
+      });
+    }
   });
 
   it("dedupes by conversationId, not messageId, so two different conversations never collide", async () => {
     await enqueueProcessMessage({ conversationId: "conv-a", messageId: "msg-1", agentId: "agent-1", organizationId: "org-1" });
     await enqueueProcessMessage({ conversationId: "conv-b", messageId: "msg-2", agentId: "agent-1", organizationId: "org-1" });
 
-    expect(add.mock.calls[0][2].deduplication).toEqual({ id: "conv-a", replace: true });
-    expect(add.mock.calls[1][2].deduplication).toEqual({ id: "conv-b", replace: true });
+    expect(add.mock.calls[0][2].deduplication).toEqual({ id: "conv-a", replace: true, keepLastIfActive: true });
+    expect(add.mock.calls[1][2].deduplication).toEqual({ id: "conv-b", replace: true, keepLastIfActive: true });
   });
 });
 

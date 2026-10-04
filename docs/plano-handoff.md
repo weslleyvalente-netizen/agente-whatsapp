@@ -667,3 +667,15 @@ Diagnóstico Josiel (62 99837-8953): retornou em 02/10 às 16:07 BRT prometendo 
 - Branch codex/fix-resolve-unresponsive-replies: commit local sem push; automação geral ainda não implantada.
 
 Publicação autorizada da correção de silêncio: main/origin 0689c65. API EasyPanel Success em 02/10/2026 às 19:54:24 UTC (16:54:24 Brasília). Saúde HTTP confirmada após deploy. A resolução funciona nas novas respostas recebidas; sem revisão em massa das tarefas antigas. Josiel já corrigido pontualmente e retorno de 03/10 preservado.
+
+
+### Continuidade de atendimento e fila comercial — 04/10/2026 (local, não implantado)
+
+- Branch codex/fix-sales-attendance-continuity: retenção da última mensagem durante processamento ativo; recuperação limitada de resposta de espera indevida ou vazia, com histórico de ferramentas preservado e uso acumulado. Falha de recuperação não repete mutações; handoff confirmado não é duplicado. Perguntas informais de catálogo incluídas; agradecimentos e promessas futuras permanecem válidos.
+- Contexto operacional evita tratar updateQualification como resposta, prometer retirada imediata no financiamento ou pressionar CPF. Regras e preços publicados não substituídos. Playground rotula updateQualification/requestHuman/sendRegisteredImage como SIMULADO conforme registry sandbox.
+- Handoff comercial avança etapa por modalidade; mantém fila Pronto para Marina. Interesse explícito de consórcio com ruído curto reconhecido. Guardas existentes de resultados humanos/ambiguidade/congelamento mantidas.
+- Retornos automáticos vencidos podem receber resumo/prioridade/data atuais; alterações humanas, datas futuras, CPF, pendências internas, congelamento ativo e envio pendente preservados. Toda atualização de tarefa tem trava updated_at, inclusive atribuição/status sem refresh. Eventos mantêm contexto anterior.
+- Cards pequenos e completos avisam Resposta da IA pendente após cinco minutos, exceto takeover, IA desligada, handoff pendente, negócio encerrado ou freeze preenchido. Mensagem pede conferir conversa antes de responder; não envia nem assume automaticamente.
+- Verificação: 345 shared + 81 database + 205 runtime + 267 API + 135 worker = 1.033 testes passaram; compilações shared/database/queue/runtime, tipos API/worker/web e build Next.js passaram; diff sem erros. Testes com LLM e banco simulados, sem mensagens a clientes.
+- Redis de integração indisponível localmente. Fila testada pelo contrato de opções e revisão da implementação BullMQ instalada; validação ponta a ponta com Redis fica no deploy. Logs não comprovam a causa histórica do silêncio de Ediney. Nenhum reenvio histórico, alteração comercial em produção ou saneamento em massa nesta implementação.
+- Sem migration, flags novas ou ativação; commit local sem push/deploy. Plano e roteiro em docs/correcao-continuidade-atendimento.md.

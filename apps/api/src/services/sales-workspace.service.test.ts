@@ -3,12 +3,13 @@ import { enrichSalesWorkspace } from "./sales-workspace.service.js";
 const rows = [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01" }];
 function database(tables: Record<string, unknown[]>) {
  const scopes: unknown[][] = [];
+ const selections: unknown[][] = [];
  const db = { from: (table: string) => {
-  const q: any = { select: () => q, eq: (...args: unknown[]) => { scopes.push([table, ...args]); return q; }, in: () => q, is: () => q, order: () => q, limit: () => q,
+  const q: any = { select: (fields: string) => { selections.push([table,fields]); return q; }, eq: (...args: unknown[]) => { scopes.push([table, ...args]); return q; }, in: () => q, is: () => q, order: () => q, limit: () => q,
    range: (start: number, end: number) => Promise.resolve({ data: (tables[table] ?? (table === "opportunities" ? rows : [])).slice(start,end+1), error: null }) };
   return q;
  } };
- return { db, scopes };
+ return { db, scopes, selections };
 }
 describe("sales workspace enrichment", () => {
  it("does no operational reads when disabled", async () => {
@@ -42,4 +43,52 @@ it('keeps only tasks without an open business in the historical review queue',as
  const {getSalesTasksWithoutOpenBusiness}=await import('./sales-workspace.service.js');
  const {db}=database({opportunities:[{id:'a',contact_id:'linked'}],tasks:[{id:'one',opportunity_id:null,contact_id:'orphan',type:'other',due_date:'2026-10-02',created_at:'2026-10-01',status:'pending'},{id:'two',opportunity_id:null,contact_id:'linked'},{id:'three',opportunity_id:'closed',contact_id:'other',type:'other',due_date:'2026-10-02',created_at:'2026-10-01',status:'pending'}]});
  expect((await getSalesTasksWithoutOpenBusiness(db as any,'org')).map(t=>t.id)).toEqual(['one','three']);
+});
+
+
+const responseNow = '2026-10-04T15:00:00.000Z';
+const contactWaiting = {id:'v',contact_id:'c',last_message_at:'2026-10-04T14:59:00.000Z',is_human_takeover:false,wa_contacts:{ai_disabled:false},messages:[{role:'contact',created_at:'2026-10-04T14:55:00.000Z'}]};
+it('derives responseOverdue from the latest message timestamp and reads AI controls',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date(responseNow));
+ try {
+  const {db,selections}=database({conversations:[contactWaiting]});
+  const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
+  expect(result[0].sales_state).toMatchObject({responseOverdue:true,customerReplied:true});
+  expect(selections).toContainEqual(['conversations','id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,created_at)']);
+ } finally {vi.useRealTimers()}
+});
+it.each([
+ ['human takeover',{...contactWaiting,is_human_takeover:true},{}],
+ ['disabled AI',{...contactWaiting,wa_contacts:{ai_disabled:true}},{}],
+ ['disabled AI in an array relation',{...contactWaiting,wa_contacts:[{ai_disabled:true}]},{}],
+ ['recent contact message',{...contactWaiting,last_message_at:'2026-10-04T14:50:00.000Z',messages:[{role:'contact',created_at:'2026-10-04T14:59:00.000Z'}]},{}],
+ ['agent reply',{...contactWaiting,messages:[{role:'agent',created_at:'2026-10-04T14:50:00.000Z'}]},{}],
+ ['missing timestamp',{...contactWaiting,messages:[{role:'contact'}]},{}],
+ ['closed business',contactWaiting,{status:'won'}],
+ ['lost business',contactWaiting,{status:'lost'}],
+ ['frozen business',contactWaiting,{frozen_until:'2026-10-05'}],
+ ['expired freeze',contactWaiting,{frozen_until:'2026-10-03'}],
+] as const)('suppresses overdue for %s',async(_label,conversation,overrides)=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date(responseNow));
+ try {
+  const {db}=database({conversations:[conversation]});
+  const result=await enrichSalesWorkspace(db as any,'org',[{...rows[0],...overrides}] as any,true);
+  expect(result[0].sales_state?.responseOverdue).toBe(false);
+ } finally {vi.useRealTimers()}
+});
+it('suppresses overdue while a request_human is pending',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date(responseNow));
+ try {
+  const {db}=database({conversations:[contactWaiting],handoff_events:[{conversation_id:'v',motivo:'cliente_pediu',resumo:null,first_human_reply_at:null}]});
+  const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
+  expect(result[0].sales_state).toMatchObject({responseOverdue:false,humanPending:true});
+ } finally {vi.useRealTimers()}
+});
+it('uses the newest conversation for the contact',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date(responseNow));
+ try {
+  const {db}=database({conversations:[{...contactWaiting,last_message_at:'2026-10-04T14:55:00.000Z'},{...contactWaiting,id:'new',last_message_at:'2026-10-04T14:59:00.000Z',messages:[{role:'agent',created_at:'2026-10-04T14:59:00.000Z'}]}]});
+  const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
+  expect(result[0].sales_state).toMatchObject({responseOverdue:false,customerReplied:false});
+ } finally {vi.useRealTimers()}
 });

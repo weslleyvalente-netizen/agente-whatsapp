@@ -54,12 +54,12 @@ export async function getOpenOpportunitiesByContact(
 ) {
   const { data, error } = await client
     .from("opportunities")
-    .select("id, waiting_on, waiting_on_until")
+    .select("id, waiting_on, waiting_on_until, frozen_until")
     .eq("organization_id", organizationId)
     .eq("contact_id", contactId)
     .eq("status", "open");
   if (error) throw error;
-  return data as Array<{ id: string; waiting_on: string | null; waiting_on_until: string | null }>;
+  return data as Array<{ id: string; waiting_on: string | null; waiting_on_until: string | null; frozen_until: string | null }>;
 }
 
 // Fase 2, item 5: candidates for the LiberaCred resumption cadence — open

@@ -6,6 +6,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message, PlaygroundToolCall } from "@aula-agente/shared";
 import { formatDateTimeForPrompt, DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
+import { ATTENDANCE_CONTEXT, RECOVERY_INSTRUCTION, needsAttendanceAnswer, isGenericWaiting } from "./attendance-continuity.js";
 import { extractTokenUsage } from "./token-usage.js";
 
 interface RunAgentParams {
@@ -42,7 +43,10 @@ interface RunAgentResult {
   toolCallTrace: PlaygroundToolCall[];
 }
 
-const SANDBOXED_TOOL_NAMES = new Set(["createTask", "sendVehiclePhoto"]);
+// Keep this aligned with the mutation tools isolated by registry.ts in sandbox.
+const SANDBOXED_TOOL_NAMES = new Set([
+  "createTask", "sendVehiclePhoto", "updateQualification", "requestHuman", "sendRegisteredImage",
+]);
 
 export function extractToolCallTrace(
   steps: Array<{
@@ -110,7 +114,7 @@ export function buildDynamicContextBlock(now: Date, contactName?: string | null)
       `Se parecer nome de empresa, grupo, apelido genérico, ou não for claramente um nome de pessoa, ` +
       `não presuma e não use.`;
   }
-  return block;
+  return block + ATTENDANCE_CONTEXT;
 }
 
 export function buildSystemPrompt(basePrompt: string, now: Date): string {
@@ -183,6 +187,19 @@ export function buildFinalTurnMessage(currentMessage: Pick<Message, "role" | "co
   return { role: "user", content: currentMessage.content };
 }
 
+// Only acknowledge outcomes confirmed by the tool; never expose internal instructions.
+function handoffFallbackText(output: unknown): string {
+  if (typeof output === "string" && output.startsWith("Handoff registrado")) {
+    return /reabrir|fora do hor[aá]rio/i.test(output)
+      ? "Um consultor vai continuar o atendimento assim que o atendimento reabrir."
+      : "Um consultor vai continuar o atendimento a partir de agora.";
+  }
+  if (typeof output === "string" && output.startsWith("[SIMULADO]")) {
+    return "Na simulação, um consultor seria acionado para continuar o atendimento.";
+  }
+  return "Não consegui confirmar se foi possível acionar um consultor agora. Por favor, tente novamente em instantes.";
+}
+
 export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> {
   const { agent, messages, currentMessage, apiKey, organizationId, conversationId, instanceId, phone, contactId } =
     params;
@@ -213,23 +230,73 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
 
   const history = formatHistoryForLLM(messages);
 
+  const system = buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName);
+  const initialMessages = [...history, buildFinalTurnMessage(currentMessage)];
   const result = await generateText({
     model,
-    system: buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName),
-    messages: [...history, buildFinalTurnMessage(currentMessage)],
+    system,
+    messages: initialMessages,
     tools,
     stopWhen: stepCountIs(5), // Max tool calling iterations
     temperature: agent.temperature,
     maxOutputTokens: agent.max_tokens,
   });
 
+  let text = result.text;
+  const toolCallTrace = extractToolCallTrace(result.steps, params.sandbox ?? false);
+  const totals = extractTokenUsage(result.totalUsage ?? result.usage);
+  const originalHandoff = toolCallTrace.find((call) => call.tool_name === "requestHuman");
+  const photoSent = toolCallTrace.some((call) => ["sendVehiclePhoto", "sendRegisteredImage"].includes(call.tool_name) &&
+    typeof call.output === "string" && /^(?:(?:Foto|Imagem) enviada\.|\[SIMULADO\].*(?:foto|imagem))/i.test(call.output));
+  const needsAnswer = currentMessage.role === "contact" && needsAttendanceAnswer(currentMessage.content);
+  if (needsAnswer && (isGenericWaiting(text) || (!text.trim() && result.steps.length >= 5 && !photoSent))) {
+    // Reuse SDK assistant/tool history, but never repeat tool mutations on recovery.
+    let recoveryMessages: ModelMessage[] = [];
+    try {
+      const recovery = await generateText({
+        model,
+        system: [...system, { role: "system" as const, content: RECOVERY_INSTRUCTION }],
+        messages: [...initialMessages, ...result.response.messages],
+        temperature: agent.temperature,
+        maxOutputTokens: agent.max_tokens,
+      });
+      text = recovery.text;
+      recoveryMessages = recovery.response.messages;
+      const extra = extractTokenUsage(recovery.totalUsage ?? recovery.usage);
+      totals.inputTokens += extra.inputTokens;
+      totals.outputTokens += extra.outputTokens;
+      totals.cacheReadTokens += extra.cacheReadTokens;
+      totals.cacheWriteTokens += extra.cacheWriteTokens;
+    } catch {
+      // Original mutations already ran. Fall back without repeating them, and
+      // retain only reported usage: a failed generation supplies no token totals.
+      text = "";
+    }
+    if (!text.trim() || isGenericWaiting(text)) {
+      text = originalHandoff
+        ? handoffFallbackText(originalHandoff.output)
+        : "Não consegui esclarecer sua pergunta agora. Pode reformular o ponto que deseja esclarecer?";
+      if (!params.sandbox && !originalHandoff && tools.requestHuman?.execute) {
+        const input = { motivo: "fora_escopo", resumo: `Falha repetida em responder: ${currentMessage.content.slice(0, 500)}`, urgencia: "normal" };
+        let output: unknown;
+        try {
+          output = await tools.requestHuman.execute(input, {
+            toolCallId: "attendance-continuity-handoff",
+            context: undefined,
+            messages: [...initialMessages, ...result.response.messages, ...recoveryMessages],
+          });
+        } catch {
+          // Retain the attempted call without leaking exception details to the customer.
+          output = { error: "requestHuman execution failed" };
+        }
+        toolCallTrace.push({ tool_name: "requestHuman", input, output, mode: "real", executed_at: new Date().toISOString() });
+        text = handoffFallbackText(output);
+      }
+    }
+  }
   const latencyMs = Date.now() - startTime;
-
-  const toolCalls = result.steps
-    .flatMap((step) => step.toolCalls || [])
-    .map((tc) => tc.toolName);
-
-  const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = extractTokenUsage(result.usage);
+  const toolCalls = toolCallTrace.map((call) => call.tool_name);
+  const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = totals;
   const cacheStatus = deriveCacheStatus(cacheReadTokens, cacheWriteTokens);
 
   console.log(
@@ -238,7 +305,7 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   );
 
   return {
-    text: result.text,
+    text,
     model: agent.model,
     inputTokens,
     outputTokens,
@@ -247,6 +314,6 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     cacheStatus,
     latencyMs,
     toolCalls,
-    toolCallTrace: extractToolCallTrace(result.steps, params.sandbox ?? false),
+    toolCallTrace,
   };
 }

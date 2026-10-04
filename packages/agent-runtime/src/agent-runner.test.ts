@@ -79,7 +79,7 @@ describe("buildSystemPrompt", () => {
   it("appends the current date and time, in pt-BR, São Paulo time, after the base prompt", () => {
     const now = new Date("2026-07-24T17:32:00.000Z"); // 14:32 in São Paulo (UTC-3)
     const result = buildSystemPrompt("Você é a Helena.", now);
-    expect(result).toBe("Você é a Helena.\n\nData e hora atual: sexta-feira, 24 de julho de 2026 às 14:32");
+    expect(result).toContain("Você é a Helena.\n\nData e hora atual: sexta-feira, 24 de julho de 2026 às 14:32");
   });
 });
 
@@ -183,6 +183,14 @@ describe("extractToolCallTrace", () => {
     expect(trace.find((t) => t.tool_name === "createTask")?.mode).toBe("simulated");
   });
 
+  it.each(["createTask", "sendVehiclePhoto", "updateQualification", "requestHuman", "sendRegisteredImage"])("reports %s simulation only in sandbox", (toolName) => {
+    const steps = [{
+      toolCalls: [{ toolCallId: "s", toolName, input: { test: true } }],
+      toolResults: [{ toolCallId: "s", output: "[SIMULADO] resultado" }],
+    }];
+    expect(extractToolCallTrace(steps, true)[0]).toMatchObject({ tool_name: toolName, mode: "simulated", output: "[SIMULADO] resultado" });
+    expect(extractToolCallTrace(steps, false)[0].mode).toBe("real");
+  });
   it("returns an empty array when no step made any tool call", () => {
     expect(extractToolCallTrace([{ toolCalls: [], toolResults: [] }], false)).toEqual([]);
   });

@@ -49,6 +49,7 @@ function OpportunityCardContent({ opportunity, onEdit }: {
 
   const amount = opportunity.sale_amount ?? opportunity.credit_amount;
   const date = opportunity.frozen_until ?? opportunity.next_action_due_date;
+  const responseOverdue = opportunity.status === "open" && !opportunity.frozen_until && opportunity.sales_state?.responseOverdue;
   const interaction = opportunity.last_interaction_at && new Date(opportunity.last_interaction_at).getTime();
   const minutes = interaction && Number.isFinite(interaction) ? Math.max(0, Math.floor((Date.now() - interaction) / 60000)) : null;
   const elapsed = minutes === null ? null : minutes < 1 ? "agora" : minutes < 60 ? `há ${minutes} min` : minutes < 1440 ? `há ${Math.floor(minutes / 60)} h` : `há ${Math.floor(minutes / 1440)} dias`;
@@ -68,7 +69,8 @@ function OpportunityCardContent({ opportunity, onEdit }: {
       {opportunity.next_action && <p className="mt-3 line-clamp-2 text-xs leading-relaxed" title={opportunity.next_action}>Próxima ação: {opportunity.next_action}</p>}
       <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
         {opportunity.sales_state?.humanPending && <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-primary"><UserCheck className="size-3.5"/>Atendimento pendente</span>}
-        {opportunity.sales_state?.customerReplied && <span title="A última mensagem da conversa é do cliente; pode ser uma resposta antiga" className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1"><MessageCircle className="size-3.5"/>Cliente respondeu</span>}
+        {responseOverdue && <span title="Confira a conversa antes de responder para evitar duplicidade" className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950 dark:text-amber-200"><Clock3 className="size-3.5"/>Resposta da IA pendente</span>}
+        {opportunity.sales_state?.customerReplied && !responseOverdue && <span title="A última mensagem da conversa é do cliente; pode ser uma resposta antiga" className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1"><MessageCircle className="size-3.5"/>Cliente respondeu</span>}
         {!!opportunity.sales_state?.taskCount && <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1"><ListChecks className="size-3.5"/>{opportunity.sales_state.taskCount} {opportunity.sales_state.taskCount === 1 ? "tarefa" : "tarefas"}</span>}
       </div>
       <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 className="size-3.5 shrink-0"/>{elapsed ? `Última interação ${elapsed}` : `Criado em ${new Date(opportunity.created_at).toLocaleDateString("pt-BR")}`}</p>

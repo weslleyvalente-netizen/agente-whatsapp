@@ -6,11 +6,13 @@ import {
   createHandoffEvent,
   getOrganizationById,
   getOpenTasksByConversation,
+  getTaskEvents,
   updateTask,
   addTaskEvent,
   getOpenOpportunitiesByContact,
   createTaskWithDedup,
 } from "@aula-agente/database";
+import { buildHandoffTaskRefresh } from "../handoff-task-refresh.js";
 import { getSendMessageQueue } from "@aula-agente/queue";
 import {
   HANDOFF_MOTIVOS,
@@ -40,15 +42,25 @@ async function reassignOpenTasksToHuman(
   db: ReturnType<typeof getAdminClient>,
   organizationId: string,
   conversationId: string,
-  assigneeId: string | null
+  assigneeId: string | null,
+  refresh?: {resumo:string;start:number;end:number;contactId:string}
 ) {
   const openTasks = await getOpenTasksByConversation(db, organizationId, conversationId);
+  const opportunities = refresh ? await getOpenOpportunitiesByContact(db, organizationId, refresh.contactId) : [];
+  const now=new Date();
+  const today=toISODateInTimeZone(now);
   await Promise.all(
     openTasks.map(async (task) => {
-      await updateTask(db, task.id, {
+      const frozen=opportunities.some(o=>o.frozen_until && o.frozen_until>today && (!task.opportunity_id || o.id===task.opportunity_id));
+      const events=refresh && !frozen ? await getTaskEvents(db,task.id):[];
+      const changes=refresh && !frozen ? buildHandoffTaskRefresh(task,refresh.resumo,now,refresh.start,refresh.end,events):null;
+      const updates = {
+        ...changes,
         ...(assigneeId ? { assignee_type: "human" as const, assignee_id: assigneeId } : {}),
-        status: task.status === "pending" ? "in_progress" : task.status,
-      });
+        status: task.status === "pending" ? "in_progress" as const : task.status,
+      };
+      await updateTask(db,task.id,updates,task.updated_at);
+      if(changes) await addTaskEvent(db,{task_id:task.id,organization_id:task.organization_id,event_type:"rescheduled",note:`Novo encaminhamento: ${refresh!.resumo}. Contexto anterior: ${task.description}. Vencimento anterior: ${task.due_date}.`,created_by_type:"ai",created_by_id:null});
       await addTaskEvent(db, {
         task_id: task.id,
         organization_id: task.organization_id,
@@ -135,7 +147,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         });
 
         try {
-          await reassignOpenTasksToHuman(db, context.organizationId, context.conversationId, assigneeId);
+          await reassignOpenTasksToHuman(db, context.organizationId, context.conversationId, assigneeId,
+            org.settings.sales_qualified_handoff_task_enabled===true && ["cliente_pediu","proposta_pronta","negociacao_valor"].includes(motivo) ? {resumo,start:context.businessHoursStartHour,end:context.businessHoursEndHour,contactId:context.contactId}:undefined);
         } catch (err) {
           console.error("requestHuman tool: failed to reassign open tasks:", err);
         }
