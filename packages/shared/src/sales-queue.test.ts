@@ -38,3 +38,21 @@ it('does not hide a qualified pendency behind the silent primary type',()=>{
 it('respects a due callback before the fallback action for a bank result',()=>{
  expect(classifySalesQueue({...base,stage:'financing_rejected',waiting_on:'team',tasks:[{type:'scheduled_callback',priority:'urgent',due_date:'2026-10-02'}]},now).group).toBe('due_today');
 });
+describe('ordenação por interesse',()=>{
+ const overdue=(id:string,stage:string,due:string,extra:any={})=>({...base,id,stage,tasks:[{type:'run_quote',priority:'normal',due_date:due}],...extra});
+ it('lead avançado vem antes do vencido há mais tempo',()=>{
+  const cold=overdue('cold','interest_received','2026-08-01');
+  const warm=overdue('warm','simulation_sent','2026-09-28');
+  expect(sortSalesQueue([cold,warm],now).map(x=>x.id)).toEqual(['warm','cold']);
+ });
+ it('lead quente vem antes de estágio mais avançado',()=>{
+  const hot=overdue('hot','qualification','2026-09-20',{sales_state:{...base.sales_state,hot:true}});
+  const deep=overdue('deep','decision_negotiation','2026-09-20');
+  expect(sortSalesQueue([deep,hot],now).map(x=>x.id)).toEqual(['hot','deep']);
+ });
+ it('mesmo estágio: interação mais recente primeiro',()=>{
+  const a=overdue('old','qualification','2026-09-01',{last_interaction_at:'2026-09-02T10:00:00Z'});
+  const b=overdue('recent','qualification','2026-09-20',{last_interaction_at:'2026-10-01T10:00:00Z'});
+  expect(sortSalesQueue([a,b],now).map(x=>x.id)).toEqual(['recent','old']);
+ });
+});

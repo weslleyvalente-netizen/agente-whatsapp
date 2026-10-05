@@ -679,3 +679,13 @@ Publicação autorizada da correção de silêncio: main/origin 0689c65. API Eas
 - Verificação: 345 shared + 81 database + 205 runtime + 267 API + 135 worker = 1.033 testes passaram; compilações shared/database/queue/runtime, tipos API/worker/web e build Next.js passaram; diff sem erros. Testes com LLM e banco simulados, sem mensagens a clientes.
 - Redis de integração indisponível localmente. Fila testada pelo contrato de opções e revisão da implementação BullMQ instalada; validação ponta a ponta com Redis fica no deploy. Logs não comprovam a causa histórica do silêncio de Ediney. Nenhum reenvio histórico, alteração comercial em produção ou saneamento em massa nesta implementação.
 - Sem migration, flags novas ou ativação; commit local sem push/deploy. Plano e roteiro em docs/correcao-continuidade-atendimento.md.
+
+
+### Publicação — continuidade de atendimento (04/10/2026)
+
+- Publicação autorizada pelo usuário. Branch enviada e integrada por fast-forward; main/origin no commit ce2cf59. Nenhuma migration, alteração de flag ou publicação de rascunho.
+- EasyPanel confirmou Success: worker 11:19:59 UTC (8h19m59 BRT), API 11:20:11 UTC (8h20m11 BRT), web 11:21:38 UTC (8h21m38 BRT). Logs de build conferidos na interface.
+- API /health ok após os três deploys, às 11:22:47 UTC. sales_action_queue_enabled, sales_auto_pipeline_enabled e sales_qualified_handoff_task_enabled confirmadas true como antes.
+- Banco: últimos 30 minutos na conferência das 11:19:30 UTC tinham uma entrada contact e seis mensagens agent, todas com evolution_message_id. Esses envios antecedem a troca de versão; às 11:21:49 UTC ainda não havia mensagens contact/agent posteriores ao deploy. Não alegar validação orgânica da nova versão nessa janela. Nenhum teste enviado a cliente, revisão em massa ou reenvio histórico.
+- Conferência do CRM em produção: funil carregado; aviso Resposta da IA pendente visível no card pequeno e no card completo, incluindo orientação para evitar duplicidade. Card de Elissin_xit aberto e fechado apenas para leitura; nenhuma mensagem enviada ou dado editado.
+- Inicialização do worker conferida nos logs do EasyPanel: process-message, send-message, process-document, takeover-timeout e stale-conversation-followup iniciados; registro de cinco workers inicializados com sucesso, sem erro de inicialização observado.

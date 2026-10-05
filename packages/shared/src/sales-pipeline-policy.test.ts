@@ -58,3 +58,13 @@ it('requires a pending handoff and a supported commercial motive',()=>{
 it('keeps an evidenced contemplated letter proposal when handing off',()=>{
  expect(decide({customerText:'Ok',operation:'contemplated_letter',qualification:{credit_amount:10000},agentText:'A carta custa R$ 10.000,00.',humanHandoff:true,humanHandoffMotive:'proposta_pronta'})).toMatchObject({stage:'proposal_sent'});
 });
+const adClick="[Cliente veio de um anúncio: Consórcio Yamaha — Fazer 250]\nComo funciona o consórcio da Yamaha Fazer FZ25?";
+it("clique de anúncio sozinho não cria nem avança negócio",()=>{
+ expect(decide({customerText:adClick,qualification:null})).toBeNull();
+});
+it("texto do anúncio no histórico não conta como interesse digitado",()=>{
+ expect(decide({customerText:"sim",customerHistory:[adClick],qualification:null})).toBeNull();
+});
+it("mensagem real depois do anúncio cria negócio normalmente",()=>{
+ expect(decide({customerText:"Quero consórcio da Fazer",customerHistory:[adClick],qualification:null})).toMatchObject({operation:"consortium",stage:"interest_received"});
+});

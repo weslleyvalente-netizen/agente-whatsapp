@@ -48,3 +48,20 @@ describe('AI response overdue',()=>{
   expect(classifySalesCard({...base,latestRole:'contact'},now)).toMatchObject({customerReplied:true,responseOverdue:false});
  });
 });
+describe("resposta do cliente que merece atenção",()=>{
+ const n="2026-10-05T12:00:00.000Z";const c={...base,latestRole:"contact",latestMessageAt:"2026-10-05T11:00:00.000Z"};
+ it("mensagem curta de cortesia não conta",()=>{
+  for(const latestContent of ["ok","Obrigado!","👍","blz","valeu"])expect(classifySalesCard({...c,latestContent},n).customerReplied).toBe(false);
+ });
+ it("pergunta ou mensagem com substância conta",()=>{
+  expect(classifySalesCard({...c,latestContent:"qual o valor da parcela?"},n).customerReplied).toBe(true);
+  expect(classifySalesCard({...c,latestContent:"Tenho 3 mil de entrada e quero fechar"},n).customerReplied).toBe(true);
+  expect(classifySalesCard({...c,latestContent:"[audio]"},n).customerReplied).toBe(true);
+ });
+ it("resposta com mais de 24h não conta",()=>{
+  expect(classifySalesCard({...c,latestContent:"qual o valor?",latestMessageAt:"2026-10-03T11:00:00.000Z"},n).customerReplied).toBe(false);
+ });
+ it("texto de clique de anúncio não conta",()=>{
+  expect(classifySalesCard({...c,latestContent:"[Cliente veio de um anúncio: X]\nComo funciona o consórcio?"},n).customerReplied).toBe(false);
+ });
+});
