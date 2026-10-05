@@ -54,7 +54,7 @@ it('derives responseOverdue from the latest message timestamp and reads AI contr
   const {db,selections}=database({conversations:[contactWaiting]});
   const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
   expect(result[0].sales_state).toMatchObject({responseOverdue:true,customerReplied:true});
-  expect(selections).toContainEqual(['conversations','id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,created_at)']);
+  expect(selections).toContainEqual(['conversations','id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)']);
  } finally {vi.useRealTimers()}
 });
 it.each([
@@ -90,5 +90,13 @@ it('uses the newest conversation for the contact',async()=>{
   const {db}=database({conversations:[{...contactWaiting,last_message_at:'2026-10-04T14:55:00.000Z'},{...contactWaiting,id:'new',last_message_at:'2026-10-04T14:59:00.000Z',messages:[{role:'agent',created_at:'2026-10-04T14:59:00.000Z'}]}]});
   const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
   expect(result[0].sales_state).toMatchObject({responseOverdue:false,customerReplied:false});
+ } finally {vi.useRealTimers()}
+});
+it('does not flag a courtesy-only customer message as a reply to answer',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date(responseNow));
+ try {
+  const {db}=database({conversations:[{...contactWaiting,messages:[{role:'contact',content:'Obrigado!',created_at:'2026-10-04T14:55:00.000Z'}]}]} as any);
+  const result=await enrichSalesWorkspace(db as any,'org',rows as any,true);
+  expect(result[0].sales_state).toMatchObject({customerReplied:false});
  } finally {vi.useRealTimers()}
 });

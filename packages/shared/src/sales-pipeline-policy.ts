@@ -1,7 +1,12 @@
 import type {Operation} from "./types/opportunity.js";
 export interface PipelineInput {customerText:string;customerHistory?:string[];qualification:Record<string,unknown>|null;operation?:Operation;agentText?:string;humanHandoff?:boolean;humanHandoffMotive?:string|null;}
+/** Click-to-WhatsApp ads prepend this marker; the text after it is pre-filled by the ad, not typed interest. */
+export const isAdClickMessage=(text:string|null|undefined)=>(text??"").startsWith("[Cliente veio de um anúncio:");
 const normalize=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
-export function decideSalesPipeline(input:PipelineInput):{operation:Operation;stage:string;explicitOperation:boolean}|null{
+export function decideSalesPipeline(rawInput:PipelineInput):{operation:Operation;stage:string;explicitOperation:boolean}|null{
+ // An ad click alone is a hint, never evidence of interest: wait for a real customer message.
+ if(isAdClickMessage(rawInput.customerText))return null;
+ const input={...rawInput,customerHistory:(rawInput.customerHistory??[]).filter(t=>!isAdClickMessage(t))};
  // Repair only short repeated-letter noise after an explicit interest phrase.
  // Do not turn arbitrary words beginning with consorcio into product intent.
  const customer=normalize(input.customerText).replace(/\b(tenho interesse em|quero|gostaria de)\s+consorcio([a-z]{1,6})\b/g,(text,prefix:string,suffix:string)=>/([a-z])\1/.test(suffix)?`${prefix} consorcio`:text);const q=input.qualification??{};
