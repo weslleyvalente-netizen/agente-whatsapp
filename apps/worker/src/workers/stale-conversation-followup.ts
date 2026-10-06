@@ -7,6 +7,7 @@ import {
   decideFollowupGate,
   shouldConsiderAutomaticFollowup,
   shouldFlagStalledNegotiation,
+  shouldAlertStalledNegotiation,
   isWithinBusinessHours,
   toISODateInTimeZone,
 } from "@aula-agente/shared";
@@ -28,6 +29,7 @@ import {
   getTaskEvents,
   hasOpportunitySignalTask,
   getOpenOpportunitiesByContact,
+  getStalledNegotiationEvidence,
   createTaskWithDedup,
   updateConversation,
   addTaskEvent,
@@ -88,6 +90,9 @@ async function runStalledNegotiationCheck(
       // task every ~15-30 min forever for the same still-stale
       // conversation the instant a human dismissed it.
       if (!shouldFlagStalledNegotiation(priorTask?.created_at ?? null, row.last_message_at)) continue;
+      // Only real, advanced negotiations deserve a human alert: a price the AI
+      // merely collected from a lead that never engaged is not one.
+      if (!shouldAlertStalledNegotiation(await getStalledNegotiationEvidence(db, org.id, row.conversation_id, row.contact_id))) continue;
 
       const daysStale = Math.round((Date.now() - new Date(row.last_message_at).getTime()) / 86_400_000);
       const formattedAmount = row.sale_amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
@@ -99,7 +104,7 @@ async function runStalledNegotiationCheck(
         type: "stalled_negotiation",
         description: `Negociação de R$ ${formattedAmount} parada há ${daysStale} dias, sem mensagem de nenhum lado.`,
         reason: `Sem atividade há ${daysStale} dias numa negociação já precificada.`,
-        priority: "urgent",
+        priority: "high",
         due_date: toISODateInTimeZone(new Date()),
         created_by_type: "ai",
         created_by_id: null,
