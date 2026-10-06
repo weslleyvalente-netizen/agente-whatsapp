@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDashboardSummary, buildPendingHandoffs, buildTodayPriorityList } from "./index.js";
+import { buildDashboardSummary, buildPendingHandoffs, buildTodayPriorityList, splitTodayList } from "./index.js";
 import { DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS } from "@aula-agente/shared";
 import type { OpenTaskWithScoreInputs } from "@aula-agente/database";
 
@@ -185,8 +185,8 @@ describe("buildTodayPriorityList (visão \"Hoje\" — Fase 2, item 4)", () => {
 
   it("scores a plain task with no opportunity using only priority/due-date/waiting_on-null", () => {
     const result = buildTodayPriorityList([row()], new Set(), today, DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, 10);
-    // normal(0) + today(8) + waiting_on-null baseline(5) = 13
-    expect(result[0].score).toBe(13);
+    // normal(0) + today(10) + waiting_on-null baseline(5) = 15
+    expect(result[0].score).toBe(15);
   });
 
   it("ranks an urgent, unanswered-handoff task above a routine one", () => {
@@ -251,5 +251,17 @@ describe("buildTodayPriorityList (visão \"Hoje\" — Fase 2, item 4)", () => {
     const result = buildTodayPriorityList(rows, new Set(), today, DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS, 10);
     expect(result).toHaveLength(10);
     expect(result[0].taskId).toBe("task-7");
+  });
+});
+
+describe("splitTodayList", () => {
+  it("keeps today's workload at the limit and counts the reserve", () => {
+    const ranked = Array.from({ length: 40 }, (_, i) => i);
+    expect(splitTodayList(ranked, 15)).toMatchObject({ reserveCount: 25 });
+    expect(splitTodayList(ranked, 15).items).toEqual(ranked.slice(0, 15));
+  });
+  it("has no reserve when everything fits and falls back to the default on a bad limit", () => {
+    expect(splitTodayList([1, 2, 3], 15)).toEqual({ items: [1, 2, 3], reserveCount: 0 });
+    expect(splitTodayList(Array.from({ length: 30 }, (_, i) => i), 0).items).toHaveLength(15);
   });
 });

@@ -14,7 +14,7 @@ export interface TaskPriorityScoreInput {
   // null when there's no linked opportunity.
   stagePosition: number | null;
   stageCount: number | null;
-  // Days since the linked opportunity's last_progress_at (fallback
+  // Days since the linked opportunity's last_progress_at (scored by recency) (fallback
   // last_interaction_at/created_at), or null when there's no opportunity.
   daysStalled: number | null;
   waitingOn: WaitingOn | null;
@@ -31,8 +31,9 @@ export interface TaskPriorityScoreWeights {
   opportunityValueMaxPoints: number;
   opportunityValueCapAmount: number;
   stageMaxPoints: number;
-  daysStalledMaxPoints: number;
-  daysStalledCapDays: number;
+  // Recent activity on the linked opportunity scores higher; cold leads get 0.
+  recencyMaxPoints: number;
+  recencyCapDays: number;
   waitingOnCustomerOrNull: number;
   waitingOnInternal: number;
   waitingOnScheduledFuture: number;
@@ -46,12 +47,13 @@ export interface TaskPriorityScoreWeights {
 // of real usage of the "Hoje" view shows what actually needs bumping.
 export const DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS: TaskPriorityScoreWeights = {
   priority: { urgent: 20, high: 10, normal: 0, low: -5 },
-  dueDateBucket: { overdue: 15, today: 8, upcoming: 0 },
+  // A task due today is fresher than one that has been overdue for weeks.
+  dueDateBucket: { overdue: 5, today: 10, upcoming: 0 },
   opportunityValueMaxPoints: 20,
   opportunityValueCapAmount: 50_000,
   stageMaxPoints: 15,
-  daysStalledMaxPoints: 20,
-  daysStalledCapDays: 30,
+  recencyMaxPoints: 20,
+  recencyCapDays: 14,
   waitingOnCustomerOrNull: 5,
   waitingOnInternal: 15,
   waitingOnScheduledFuture: -15,
@@ -72,10 +74,12 @@ function scoreStage(position: number | null, count: number | null, weights: Task
   return ratio * weights.stageMaxPoints;
 }
 
-function scoreDaysStalled(days: number | null, weights: TaskPriorityScoreWeights): number {
+// `days` is the time since the opportunity last moved. The more recent, the
+// more points: a lead that stopped weeks ago must not outrank an active one.
+function scoreRecency(days: number | null, weights: TaskPriorityScoreWeights): number {
   if (days === null) return 0;
-  const ratio = Math.min(days, weights.daysStalledCapDays) / weights.daysStalledCapDays;
-  return ratio * weights.daysStalledMaxPoints;
+  const ratio = 1 - Math.min(Math.max(days, 0), weights.recencyCapDays) / weights.recencyCapDays;
+  return ratio * weights.recencyMaxPoints;
 }
 
 function scoreWaitingOn(
@@ -100,7 +104,7 @@ export function computeTaskPriorityScore(
     weights.dueDateBucket[input.dueDateBucket] +
     scoreOpportunityValue(input.opportunityValue, weights) +
     scoreStage(input.stagePosition, input.stageCount, weights) +
-    scoreDaysStalled(input.daysStalled, weights) +
+    scoreRecency(input.daysStalled, weights) +
     scoreWaitingOn(input.waitingOn, input.waitingOnUntil, input.todayISODate, weights) +
     (input.qualificationUrgency ? weights.qualificationUrgency[input.qualificationUrgency] : 0) +
     (input.hasUnansweredHandoff ? weights.handoffUnanswered : 0)

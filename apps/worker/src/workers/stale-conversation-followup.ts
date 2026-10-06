@@ -41,6 +41,7 @@ import { runLowIntentCadenceCheck } from "./low-intent-followup.js";
 import { runLiberaCredResumptionCheck } from "./libera-cred-resumption.js";
 
 import {runScheduledAdClosureCheck} from "./scheduled-ad-closure.js";
+import {runSilenceRetirementCheck} from "./silence-retirement.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -206,6 +207,7 @@ export function startStaleConversationFollowupWorker() {
 
       for (const org of organizations) {
         const scheduledClosures = await runScheduledAdClosureCheck(db, org);
+        try { await runSilenceRetirementCheck(db, org); } catch (err) { console.error(`Stale-conversation-followup: silence retirement failed for org ${org.id}:`, err); }
         stalledFlagged += await runStalledNegotiationCheck(db, org);
 
         const agents = await getAgentsByOrganization(db, org.id);

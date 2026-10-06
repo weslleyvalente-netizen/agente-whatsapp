@@ -27,6 +27,11 @@ export interface OrganizationSettings {
   sales_low_intent_final_delay_hours?: number;
   sales_low_intent_closing_message?: string;
   scheduled_ad_closure_enabled?: boolean;
+  // Cancela, uma vez por dia, tarefas automáticas de silêncio que não precisam de atendimento humano. Desligada por padrão.
+  silence_task_auto_retire_enabled?: boolean;
+  silence_task_auto_retire_days?: number;
+  // Tamanho da lista "Hoje"; o restante fica na reserva. Padrão 15.
+  today_list_limit?: number;
   scheduled_ad_closure_batch?: import('../ad-closure.js').ScheduledAdClosureBatch;
   max_documents: number;
   max_agents: number;

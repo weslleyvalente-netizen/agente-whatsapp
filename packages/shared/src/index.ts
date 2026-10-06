@@ -34,3 +34,4 @@ export * from "./sales-pipeline-policy.js";
 export * from "./sales-queue.js";
 
 export * from './ad-closure.js';
+export * from './silence-retirement.js';

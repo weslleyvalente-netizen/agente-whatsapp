@@ -22,3 +22,4 @@ export * from "./opportunity-freeze.js";
 export * from "./sales-pipeline.js";
 
 export * from "./ad-closure.js";
+export * from "./silence-retirement.js";
