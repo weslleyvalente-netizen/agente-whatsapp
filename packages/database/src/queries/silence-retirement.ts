@@ -40,3 +40,14 @@ export async function retireSilenceTask(db: SupabaseClient, organizationId: stri
  await addTaskEvent(db, {task_id: task.id, organization_id: organizationId, event_type: "cancelled", note: JSON.stringify({source: "silence_auto_retire", reason}), created_by_type: "ai", created_by_id: null});
  return true;
 }
+
+/** Evidence for deciding whether a stale priced conversation is a real stalled negotiation. */
+export async function getStalledNegotiationEvidence(db: SupabaseClient, organizationId: string, conversationId: string, contactId: string): Promise<import("@aula-agente/shared").StalledNegotiationEvidence> {
+ const [customer, human, opportunities] = await Promise.all([
+  db.from("messages").select("content").eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("role", "contact").order("created_at", {ascending: false}).limit(50),
+  db.from("messages").select("id", {count: "exact", head: true}).eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("role", "human_agent"),
+  db.from("opportunities").select("stage").eq("organization_id", organizationId).eq("contact_id", contactId).eq("status", "open"),
+ ]);
+ for (const r of [customer, human, opportunities]) if (r.error) throw r.error;
+ return {customerMessages: (customer.data ?? []).map(m => m.content ?? ""), humanMessageCount: human.count ?? 0, openOpportunityStages: (opportunities.data ?? []).map(o => o.stage)};
+}
