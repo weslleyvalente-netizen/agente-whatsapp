@@ -25,7 +25,14 @@ import {
 } from "@aula-agente/shared";
 import { authMiddleware } from "../../middleware/auth.js";
 
-const TODAY_LIST_LIMIT = 10;
+// Default size of the "Hoje" list; the rest waits in the reserve (org setting today_list_limit).
+const TODAY_LIST_LIMIT = 15;
+
+/** Splits the score-ordered list into today's workload and the reserve. Completing an item pulls the next one in. */
+export function splitTodayList<T>(ranked: T[], limit: number): { items: T[]; reserveCount: number } {
+  const size = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TODAY_LIST_LIMIT;
+  return { items: ranked.slice(0, size), reserveCount: Math.max(0, ranked.length - size) };
+}
 
 const WINDOW_DAYS = 7;
 const MAX_URGENT = 20;
@@ -324,9 +331,9 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         : DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS;
 
       const todayISODate = toISODateInTimeZone(new Date());
-      const items = buildTodayPriorityList(rows, unansweredHandoffConversationIds, todayISODate, weights, TODAY_LIST_LIMIT);
+      const ranked = buildTodayPriorityList(rows, unansweredHandoffConversationIds, todayISODate, weights, Number.POSITIVE_INFINITY);
 
-      return { items };
+      return splitTodayList(ranked, org.settings.today_list_limit ?? TODAY_LIST_LIMIT);
     }
   );
 

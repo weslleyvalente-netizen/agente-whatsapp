@@ -41,8 +41,8 @@ describe("computeTaskPriorityScore", () => {
   });
 
   it("weighs due date bucket", () => {
-    expect(computeTaskPriorityScore(baseInput({ dueDateBucket: "overdue" }))).toBe(15 + WAITING_ON_NULL_BASELINE);
-    expect(computeTaskPriorityScore(baseInput({ dueDateBucket: "today" }))).toBe(8 + WAITING_ON_NULL_BASELINE);
+    expect(computeTaskPriorityScore(baseInput({ dueDateBucket: "overdue" }))).toBe(5 + WAITING_ON_NULL_BASELINE);
+    expect(computeTaskPriorityScore(baseInput({ dueDateBucket: "today" }))).toBe(10 + WAITING_ON_NULL_BASELINE);
   });
 
   it("scales opportunity value up to the cap", () => {
@@ -69,10 +69,17 @@ describe("computeTaskPriorityScore", () => {
     expect(computeTaskPriorityScore(baseInput({ stagePosition: 0, stageCount: 1 }))).toBe(WAITING_ON_NULL_BASELINE);
   });
 
-  it("scales days stalled up to the cap", () => {
-    expect(computeTaskPriorityScore(baseInput({ daysStalled: 15 }))).toBe(10 + WAITING_ON_NULL_BASELINE);
-    expect(computeTaskPriorityScore(baseInput({ daysStalled: 30 }))).toBe(20 + WAITING_ON_NULL_BASELINE);
-    expect(computeTaskPriorityScore(baseInput({ daysStalled: 90 }))).toBe(20 + WAITING_ON_NULL_BASELINE);
+  it("scores recent activity higher and gives cold leads nothing", () => {
+    expect(computeTaskPriorityScore(baseInput({ daysStalled: 0 }))).toBe(20 + WAITING_ON_NULL_BASELINE);
+    expect(computeTaskPriorityScore(baseInput({ daysStalled: 7 }))).toBe(10 + WAITING_ON_NULL_BASELINE);
+    expect(computeTaskPriorityScore(baseInput({ daysStalled: 14 }))).toBe(WAITING_ON_NULL_BASELINE);
+    expect(computeTaskPriorityScore(baseInput({ daysStalled: 90 }))).toBe(WAITING_ON_NULL_BASELINE);
+  });
+
+  it("ranks an active lead above a stale one with an older overdue task", () => {
+    const active = computeTaskPriorityScore(baseInput({ dueDateBucket: "today", daysStalled: 1 }));
+    const cold = computeTaskPriorityScore(baseInput({ dueDateBucket: "overdue", daysStalled: 40 }));
+    expect(active).toBeGreaterThan(cold);
   });
 
   it("weighs waiting_on customer the same as null", () => {
@@ -127,7 +134,7 @@ describe("computeTaskPriorityScore", () => {
         hasUnansweredHandoff: true,
       })
     );
-    expect(score).toBe(20 + 15 + 20 + 15 + 20 + 15 + 15 + 25);
+    expect(score).toBe(20 + 5 + 20 + 15 + 0 + 15 + 15 + 25);
   });
 
   it("respects an explicit weights override without mutating the default", () => {

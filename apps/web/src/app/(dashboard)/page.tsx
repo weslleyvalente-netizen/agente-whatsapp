@@ -107,13 +107,14 @@ export default function HomePage() {
   // Fase 2, item 4 — visão "Hoje": top-10 por score, à parte do resumo
   // acima (endpoints diferentes, não precisa bloquear um no outro).
   const [today, setToday] = useState<TodayItem[] | null>(null);
+  const [reserveCount, setReserveCount] = useState(0);
   const [actingTaskId, setActingTaskId] = useState<string | null>(null);
   const [followupItem, setFollowupItem] = useState<TodayItem | null>(null);
 
   const fetchToday = () => {
     if (!currentOrg) return;
     apiFetch(`/organizations/${currentOrg.id}/dashboard/today`)
-      .then((data) => setToday(data.items))
+      .then((data) => { setToday(data.items); setReserveCount(data.reserveCount ?? 0); })
       .catch(() => setToday([]));
   };
 
@@ -132,6 +133,8 @@ export default function HomePage() {
     try {
       await apiFetch(`/tasks/${taskId}/complete`, { method: "POST" });
       setToday((prev) => prev?.filter((t) => t.taskId !== taskId) ?? prev);
+      // Pull the next-ranked task in from the reserve.
+      fetchToday();
     } catch {
       // best-effort UI action — nothing else to show, item just stays put
     } finally {
@@ -284,6 +287,7 @@ export default function HomePage() {
       <Card>
         <CardHeader>
           <CardTitle>Hoje</CardTitle>
+          {reserveCount > 0 && <p className="text-xs text-muted-foreground">+{reserveCount} na reserva — entram conforme você conclui as de cima.</p>}
         </CardHeader>
         <CardContent>
           {today === null ? (
