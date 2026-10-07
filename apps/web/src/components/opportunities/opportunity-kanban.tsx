@@ -61,7 +61,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
   const initials = contactLabel.split(/\s+/).slice(0, 2).map(word => Array.from(word)[0]).join("").toUpperCase();
   return (
     <>
-      {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
+      {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>

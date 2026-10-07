@@ -12,6 +12,7 @@ export function AssignmentHistory({ contactId }: { contactId: string }) {
   const [rows, setRows] = useState<LeadAssignment[] | null>(null);
   const [reps, setReps] = useState<SalesRep[]>([]);
   useEffect(() => {
+    setRows(null);
     if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) return;
     Promise.all([apiFetch(`/organizations/${currentOrg.id}/contacts/${contactId}/lead-assignments`), apiFetch(`/organizations/${currentOrg.id}/sales-reps`)])
       .then(([h, r]) => { setRows(h); setReps(r); }).catch(() => setRows([]));

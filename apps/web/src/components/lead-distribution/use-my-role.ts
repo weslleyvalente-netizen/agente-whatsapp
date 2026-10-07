@@ -3,12 +3,13 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useOrganization } from "@/providers/organization-provider";
 
-/** Papel do usuário logado na organização atual (owner | admin | agent), lido de organization_members. */
+/** Sem chamadas de rede quando lead_distribution_enabled não é true. Papel do usuário logado na organização atual (owner | admin | agent), lido de organization_members. */
 export function useMyRole(): { userId: string | null; role: string | null } {
   const { currentOrg } = useOrganization();
+  const enabled = currentOrg?.settings.lead_distribution_enabled === true;
   const [state, setState] = useState<{ userId: string | null; role: string | null }>({ userId: null, role: null });
   useEffect(() => {
-    if (!currentOrg) return;
+    if (!currentOrg || !enabled) { setState(s => (s.userId === null && s.role === null ? s : { userId: null, role: null })); return; }
     const supabase = createClient();
     let cancelled = false;
     supabase.auth.getUser().then(async ({ data }) => {
@@ -18,6 +19,6 @@ export function useMyRole(): { userId: string | null; role: string | null } {
       if (!cancelled) setState({ userId: uid, role: (m?.role as string | undefined) ?? null });
     });
     return () => { cancelled = true; };
-  }, [currentOrg]);
+  }, [currentOrg, enabled]);
   return state;
 }

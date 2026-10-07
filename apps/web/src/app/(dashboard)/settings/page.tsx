@@ -65,10 +65,13 @@ export default function SettingsPage() {
 
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [leadError, setLeadError] = useState<string | null>(null);
 
   async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    setSavingWorkspace(true); setWorkspaceError(null);
+    const isLead = flag.startsWith("lead_distribution");
+    const setErr = isLead ? setLeadError : setWorkspaceError;
+    setSavingWorkspace(true); setErr(null);
     try {
       const client = createClient();
       const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
@@ -79,7 +82,7 @@ export default function SettingsPage() {
       if (error) throw error;
       if (!data) throw new Error("As configurações mudaram. Atualize a página e tente novamente.");
       await refetch();
-    } catch (err) { setWorkspaceError((err as Error).message); } finally { setSavingWorkspace(false); }
+    } catch (err) { setErr((err as Error).message); } finally { setSavingWorkspace(false); }
   }
 
 
@@ -101,8 +104,8 @@ export default function SettingsPage() {
   async function saveSlaMinutes() {
     if (!currentOrg || savingSla) return;
     const minutes = Number(slaMinutes);
-    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 240) { setWorkspaceError("O prazo de resposta deve ser um número inteiro entre 5 e 240 minutos."); return; }
-    setSavingSla(true); setWorkspaceError(null);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 240) { setLeadError("O prazo de resposta deve ser um número inteiro entre 5 e 240 minutos."); return; }
+    setSavingSla(true); setLeadError(null);
     try {
       const client = createClient();
       const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
@@ -113,7 +116,7 @@ export default function SettingsPage() {
       if (error) throw error;
       if (!data) throw new Error("As configurações mudaram. Atualize a página e tente novamente.");
       await refetch();
-    } catch (err) { setWorkspaceError((err as Error).message); } finally { setSavingSla(false); }
+    } catch (err) { setLeadError((err as Error).message); } finally { setSavingSla(false); }
   }
 
   async function changeRepAvailability(rep: SalesRep, availability: SalesRepAvailability) {
@@ -717,7 +720,7 @@ export default function SettingsPage() {
               {repsError && <p role="alert" className="text-sm text-destructive">{repsError}</p>}
             </div>
           )}
-          {workspaceError && <p role="alert" className="text-sm text-destructive">{workspaceError}</p>}
+          {leadError && <p role="alert" className="text-sm text-destructive">{leadError}</p>}
           <p className="text-xs text-muted-foreground">O calendário comercial padrão é segunda a sexta, 08:00–18:00. Para atender aos sábados, configure <code>business_calendar</code> (janela de sábado).</p>
         </CardContent>
       </Card>

@@ -19,8 +19,11 @@ export function ExceptionsPanel() {
   const [target, setTarget] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
+  const [forbidden, setForbidden] = useState(false);
+  const enabled = currentOrg?.settings.lead_distribution_enabled === true;
+
   const load = useCallback(async () => {
-    if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) return;
+    if (!currentOrg || !enabled) { setItems(null); setAlerts([]); return; }
     try {
       const [ex, al, r] = await Promise.all([
         apiFetch(`/organizations/${currentOrg.id}/lead-assignments/exceptions`),
@@ -28,9 +31,16 @@ export function ExceptionsPanel() {
         apiFetch(`/organizations/${currentOrg.id}/sales-reps`),
       ]);
       setItems(ex); setAlerts(al); setReps(r);
-    } catch { setItems(null); }
-  }, [currentOrg]);
-  useEffect(() => { load(); const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
+    } catch (err) {
+      setItems(null); setAlerts([]);
+      if ((err as { status?: number }).status === 403) setForbidden(true);
+    }
+  }, [currentOrg, enabled]);
+  useEffect(() => { setForbidden(false); }, [currentOrg?.id]);
+  useEffect(() => {
+    if (!enabled || forbidden) { setItems(null); setAlerts([]); return; }
+    load(); const t = setInterval(load, 60_000); return () => clearInterval(t);
+  }, [load, enabled, forbidden]);
 
   if (!items) return null;
   const assign = async (a: LeadAssignment) => {

@@ -112,6 +112,9 @@ export default function InboxPage() {
   const matchesTab = (c: any) => {
     switch (filterTab) {
       case "mine":
+        // Fase 1: filtro de tela; isolamento forte é a fase 2 (RLS)
+        // Vendedor com a distribuição ligada: as dele ou sem responsável.
+        if (distributionOn && myRole === "agent") return userId !== null && (c.assigned_to === userId || c.assigned_to == null);
         return userId !== null && c.assigned_to === userId;
       case "agent":
         return !c.is_human_takeover && !c.wa_contacts?.ai_disabled;
