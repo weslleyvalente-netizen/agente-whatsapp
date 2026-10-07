@@ -36,3 +36,4 @@ export * from "./sales-queue.js";
 export * from './ad-closure.js';
 export * from './silence-retirement.js';
 export * from './stalled-negotiation.js';
+export * from './throttle.js';
