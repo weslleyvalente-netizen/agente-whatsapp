@@ -181,6 +181,7 @@ export const QUEUE_NAMES = {
   SEND_MESSAGE: "send-message",
   PROCESS_DOCUMENT: "process-document",
   TAKEOVER_TIMEOUT: "takeover-timeout",
+  LEAD_SLA: "lead-sla",
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
 } as const;
 
