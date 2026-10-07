@@ -7,20 +7,27 @@ beforeEach(async () => { db = await createTestDb(["20261007120000_lead_distribut
 
 async function insertAssignment(orgId: string, h: Awaited<ReturnType<typeof seedHandoff>>, repId: string, extra: Record<string, unknown> = {}) {
   const row = {
-    chain_id: crypto.randomUUID(), reason: "round_robin", status: "pending", sla_due_at: inMinutes(15), ...extra,
+    chain_id: crypto.randomUUID(), reason: "round_robin", status: "pending", sla_due_at: inMinutes(15), previous_assignment_id: null, ...extra,
   };
   return (await db.query<{ id: string }>(
-    `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,sla_due_at,strategy_version)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,'round_robin_v1') returning id`,
-    [orgId, row.chain_id, h.handoffId, h.contactId, h.conversationId, repId, row.reason, row.status, row.sla_due_at])).rows[0].id;
+    `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,sla_due_at,strategy_version,previous_assignment_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,'round_robin_v1',$10) returning id`,
+    [orgId, row.chain_id, h.handoffId, h.contactId, h.conversationId, repId, row.reason, row.status, row.sla_due_at, row.previous_assignment_id])).rows[0].id;
 }
 
 describe("lead_assignments schema", () => {
   it("permite uma única atribuição ativa por conversa", async () => {
     const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
     const h = await seedHandoff(db, org);
-    await insertAssignment(org, h, a.repId);
-    await expect(insertAssignment(org, h, b.repId)).rejects.toThrow();
+    const first = await insertAssignment(org, h, a.repId);
+    await expect(insertAssignment(org, h, b.repId, { previous_assignment_id: first })).rejects.toThrow(/one_active_per_conversation/);
+  });
+
+  it("rejeita segunda linha do mesmo handoff sem previous_assignment_id", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    await insertAssignment(org, h, a.repId, { status: "expired" });
+    await expect(insertAssignment(org, h, b.repId)).rejects.toThrow(/one_chain_per_handoff/);
   });
 
   it("impede o mesmo vendedor duas vezes na mesma cadeia automática", async () => {
@@ -28,14 +35,14 @@ describe("lead_assignments schema", () => {
     const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
     const first = await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
     expect(first).toBeTruthy();
-    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "sla_redistribution" })).rejects.toThrow();
+    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "sla_redistribution", previous_assignment_id: first })).rejects.toThrow(/one_rep_per_chain/);
   });
 
   it("permite repetir o vendedor em atribuição manual (decisão do gestor)", async () => {
     const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
     const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
-    await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
-    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "manual" })).resolves.toBeTruthy();
+    const first = await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
+    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "manual", previous_assignment_id: first })).resolves.toBeTruthy();
   });
 
   it("exige rep_id nulo exatamente quando o estado é exceção", async () => {
@@ -84,7 +91,7 @@ describe("imutabilidade do histórico", () => {
     const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
     const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
     const one = await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
-    const two = await insertAssignment(org, h, b.repId, { chain_id: chain, reason: "sla_redistribution" });
+    const two = await insertAssignment(org, h, b.repId, { chain_id: chain, reason: "sla_redistribution", previous_assignment_id: one });
     await db.query("update public.lead_assignments set next_assignment_id=$2 where id=$1", [one, two]);
     await expect(db.query("update public.lead_assignments set next_assignment_id=$2 where id=$1", [one, one])).rejects.toThrow(/imut/i);
   });
