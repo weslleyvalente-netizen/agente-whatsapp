@@ -10,31 +10,51 @@ vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
 import Fastify from "fastify";
 import routes from "./index.js";
 
-async function app(role: string, userId = "u1") {
+async function app(role: string, userId = "u1", orgId = "org") {
   const f = Fastify();
-  f.addHook("preHandler", async (req: any) => { req.user = { id: userId, email: "x", memberships: [{ organization_id: "org", role }] }; req.userRole = role; });
+  f.addHook("preHandler", async (req: any) => { req.user = { id: userId, email: "x", memberships: [{ organization_id: orgId, role }] }; req.userRole = role; });
   await f.register(routes);
   return f;
 }
 beforeEach(() => { vi.clearAllMocks(); m.assignmentOrg.value = "org"; m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } }); });
 
 describe("PATCH availability", () => {
+  const ORG = "22222222-2222-4222-8222-222222222222";
+  const REP = "33333333-3333-4333-8333-333333333333";
+  const OTHER = "44444444-4444-4444-8444-444444444444";
+  const url = (org = ORG, rep = REP) => `/organizations/${org}/sales-reps/${rep}/availability`;
   it("vendedor muda o próprio estado", async () => {
-    m.getSalesRepByUser.mockResolvedValue({ id: "rep1", user_id: "u1" });
-    m.setRepAvailability.mockResolvedValue({ id: "rep1", availability: "paused" });
-    const res = await (await app("agent")).inject({ method: "PATCH", url: "/organizations/org/sales-reps/rep1/availability", payload: { availability: "paused" } });
+    m.getSalesRepByUser.mockResolvedValue({ id: REP, user_id: "u1" });
+    m.setRepAvailability.mockResolvedValue({ id: REP, availability: "paused" });
+    const res = await (await app("agent", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "paused" } });
     expect(res.statusCode).toBe(200);
-    expect(m.setRepAvailability).toHaveBeenCalledWith(expect.anything(), { organizationId: "org", repId: "rep1", availability: "paused" });
+    expect(m.setRepAvailability).toHaveBeenCalledWith(expect.anything(), { organizationId: ORG, repId: REP, availability: "paused" });
   });
   it("vendedor não muda o estado de outro; gestor muda", async () => {
-    m.getSalesRepByUser.mockResolvedValue({ id: "repX", user_id: "u1" });
-    expect((await (await app("agent")).inject({ method: "PATCH", url: "/organizations/org/sales-reps/rep1/availability", payload: { availability: "out" } })).statusCode).toBe(403);
-    m.setRepAvailability.mockResolvedValue({ id: "rep1" });
-    expect((await (await app("admin")).inject({ method: "PATCH", url: "/organizations/org/sales-reps/rep1/availability", payload: { availability: "out" } })).statusCode).toBe(200);
+    m.getSalesRepByUser.mockResolvedValue({ id: OTHER, user_id: "u1" });
+    expect((await (await app("agent", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "out" } })).statusCode).toBe(403);
+    m.setRepAvailability.mockResolvedValue({ id: REP });
+    expect((await (await app("admin", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "out" } })).statusCode).toBe(200);
   });
   it("recusa valor inválido", async () => {
-    const res = await (await app("admin")).inject({ method: "PATCH", url: "/organizations/org/sales-reps/rep1/availability", payload: { availability: "ferias" } });
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "ferias" } });
     expect(res.statusCode).toBe(400);
+  });
+  it("repId ou organizationId que não são UUID devolvem 400 sem tocar no banco", async () => {
+    expect((await (await app("admin", "u1", ORG)).inject({ method: "PATCH", url: url(ORG, "rep1"), payload: { availability: "out" } })).statusCode).toBe(400);
+    expect((await (await app("admin", "u1", "org")).inject({ method: "PATCH", url: url("org", REP), payload: { availability: "out" } })).statusCode).toBe(400);
+    expect(m.setRepAvailability).not.toHaveBeenCalled();
+    expect(m.getSalesRepByUser).not.toHaveBeenCalled();
+  });
+  it("vendedor inexistente devolve 404 em vez de 500", async () => {
+    m.setRepAvailability.mockRejectedValue({ code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" });
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "out" } });
+    expect(res.statusCode).toBe(404);
+  });
+  it("outro erro do banco continua 500", async () => {
+    m.setRepAvailability.mockRejectedValue({ code: "XX000", message: "boom" });
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "PATCH", url: url(), payload: { availability: "out" } });
+    expect(res.statusCode).toBe(500);
   });
 });
 

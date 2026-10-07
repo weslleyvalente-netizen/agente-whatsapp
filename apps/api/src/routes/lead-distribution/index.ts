@@ -23,6 +23,7 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { organizationId: string; repId: string } }>("/organizations/:organizationId/sales-reps/:repId/availability", async (request, reply) => {
     const { organizationId, repId } = request.params;
+    if (!uuid.safeParse(organizationId).success || !uuid.safeParse(repId).success) return reply.status(400).send({ error: "id inválido" });
     const role = roleIn(request, organizationId);
     if (!role) return reply.status(403).send({ error: "Access denied" });
     const body = z.object({ availability: z.enum(SALES_REP_AVAILABILITIES) }).safeParse(request.body);
@@ -32,7 +33,14 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
       const own = await getSalesRepByUser(db, organizationId, request.user.id);
       if (!own || own.id !== repId) return reply.status(403).send({ error: "Você só pode alterar a sua própria disponibilidade" });
     }
-    return setRepAvailability(db, { organizationId, repId, availability: body.data.availability });
+    try {
+      return await setRepAvailability(db, { organizationId, repId, availability: body.data.availability });
+    } catch (err) {
+      // .single() sem linha (vendedor inexistente nesta organização) → PGRST116.
+      if ((err as { code?: string }).code === "PGRST116") return reply.status(404).send({ error: "Vendedor não encontrado" });
+      request.log.error({ err, organizationId, repId }, "Failed to update sales rep availability");
+      return reply.status(500).send({ error: "Erro ao alterar a disponibilidade" });
+    }
   });
 
   app.post<{ Params: { id: string }; Querystring: { organizationId?: string } }>("/lead-assignments/:id/accept", async (request, reply) => {
