@@ -10,6 +10,10 @@ export type LeadAssignmentReason = (typeof LEAD_ASSIGNMENT_REASONS)[number];
 export const LEAD_EXCEPTION_REASONS = ["no_available_rep", "all_reps_sla_breached", "invalid_existing_owner", "distribution_error", "manual_review"] as const;
 export type LeadExceptionReason = (typeof LEAD_EXCEPTION_REASONS)[number];
 
+// 'redistribute': lead novo do rodízio (redistribui ao estourar o SLA). 'alert': dono existente/manual (só alerta).
+export const LEAD_SLA_ACTIONS = ["redistribute", "alert"] as const;
+export type LeadSlaAction = (typeof LEAD_SLA_ACTIONS)[number];
+
 export const LEAD_ACCEPTED_VIA = ["button", "first_message", "phone_echo", "admin"] as const;
 export type LeadAcceptedVia = (typeof LEAD_ACCEPTED_VIA)[number];
 
@@ -48,6 +52,7 @@ export interface LeadAssignment {
   handoff_at: string;
   sla_due_at: string | null;
   sla_breached: boolean;
+  sla_action: LeadSlaAction;
   redistribution_reason: string | null;
   accepted_at: string | null;
   accepted_via: LeadAcceptedVia | null;

@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
+import type { LeadSlaAction } from "@aula-agente/shared";
 import { describeSla } from "./format";
 
-export interface CardAssignment { id: string; rep_id: string | null; rep_name: string | null; status: "pending" | "accepted"; sla_due_at: string | null; sla_action: "redistribute" | "alert"; sla_breached: boolean; assigned_at: string; accepted_at: string | null }
+export interface CardAssignment { id: string; rep_id: string | null; rep_name: string | null; status: "pending" | "accepted"; sla_due_at: string | null; sla_action: LeadSlaAction; sla_breached: boolean; assigned_at: string; accepted_at: string | null }
 
 export function AssignmentBadge({ assignment, canAccept, onAccepted }: { assignment: CardAssignment; canAccept: boolean; onAccepted: () => void }) {
   const { currentOrg } = useOrganization();
