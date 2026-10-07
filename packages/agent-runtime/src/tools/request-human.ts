@@ -11,8 +11,10 @@ import {
   addTaskEvent,
   getOpenOpportunitiesByContact,
   createTaskWithDedup,
+  distributeLeadForHandoff,
 } from "@aula-agente/database";
 import { buildHandoffTaskRefresh } from "../handoff-task-refresh.js";
+import { safeDistribute } from "../handoff-distribution.js";
 import { getSendMessageQueue } from "@aula-agente/queue";
 import {
   HANDOFF_MOTIVOS,
@@ -136,7 +138,7 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           ...(assigneeId ? { assigned_to: assigneeId } : {}),
         });
 
-        await createHandoffEvent(db, {
+        const handoffEvent = await createHandoffEvent(db, {
           organization_id: context.organizationId,
           conversation_id: context.conversationId,
           trigger_type: "request_human",
@@ -152,6 +154,14 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         } catch (err) {
           console.error("requestHuman tool: failed to reassign open tasks:", err);
         }
+
+        // Rodízio (flag lead_distribution_enabled): define o responsável depois do handoff e das tarefas,
+        // sobrescrevendo o responsável padrão quando a distribuição está ligada.
+        await safeDistribute(distributeLeadForHandoff, db, {
+          organizationId: context.organizationId,
+          conversationId: context.conversationId,
+          handoffEventId: handoffEvent.id,
+        });
 
         const notifyPhone = org.settings.handoff_notification_phone ?? null;
         if (notifyPhone) {

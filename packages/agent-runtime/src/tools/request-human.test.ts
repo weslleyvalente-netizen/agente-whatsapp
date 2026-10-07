@@ -10,6 +10,7 @@ const getTaskEvents = vi.fn();
 const addTaskEvent = vi.fn();
 const getOpenOpportunitiesByContact = vi.fn();
 const createTaskWithDedup = vi.fn();
+const distributeLeadForHandoff = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -22,6 +23,7 @@ vi.mock("@aula-agente/database", () => ({
   addTaskEvent: (...args: unknown[]) => addTaskEvent(...args),
   getOpenOpportunitiesByContact: (...args: unknown[]) => getOpenOpportunitiesByContact(...args),
   createTaskWithDedup: (...args: unknown[]) => createTaskWithDedup(...args),
+  distributeLeadForHandoff: (...args: unknown[]) => distributeLeadForHandoff(...args),
 }));
 
 const addToSendQueue = vi.fn();
@@ -55,6 +57,31 @@ beforeEach(() => {
   createHandoffEvent.mockResolvedValue({ id: "handoff-1" });
   getOpenOpportunitiesByContact.mockResolvedValue([]);
   createTaskWithDedup.mockResolvedValue({ task: { id: "task-1", title: "Outro" }, wasUpdated: false });
+  distributeLeadForHandoff.mockResolvedValue(null);
+});
+
+describe("createRequestHumanTool lead distribution", () => {
+  it("chama a distribuição com o id do handoff recém-criado", async () => {
+    const toolDef = createRequestHumanTool(context);
+    await toolDef.execute!(baseInput, {} as never);
+
+    expect(distributeLeadForHandoff).toHaveBeenCalledWith({}, {
+      organizationId: "org-1",
+      conversationId: "conv-1",
+      handoffEventId: "handoff-1",
+    });
+  });
+
+  it("mantém o handoff quando a distribuição falha", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    distributeLeadForHandoff.mockRejectedValue(new Error("rpc down"));
+
+    const toolDef = createRequestHumanTool(context);
+    const result = await toolDef.execute!(baseInput, {} as never);
+
+    expect(result).toContain("Handoff registrado");
+    expect(updateConversation).toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ is_human_takeover: true }));
+  });
 });
 
 describe("createRequestHumanTool", () => {
