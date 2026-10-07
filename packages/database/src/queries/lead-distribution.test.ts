@@ -1,7 +1,8 @@
 // packages/database/src/queries/lead-distribution.test.ts
 import { describe, expect, it, vi } from "vitest";
 import {
-  acceptAssignment, computeSlaDueAt, distributeLeadForHandoff, recordHumanMessage, redistributeAssignment,
+  acceptAssignment, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
+  recordDistributionError, recordHumanMessage, redistributeAssignment,
 } from "./lead-distribution.js";
 
 vi.mock("./organizations.js", () => ({ getOrganizationById: vi.fn() }));
@@ -78,5 +79,46 @@ describe("RPC wrappers", () => {
     const b = rpcDb("a");
     await recordHumanMessage(b.db, { organizationId: "o", conversationId: "c", at: new Date("2026-10-05T12:00:00Z"), authorUserId: null, via: "phone_echo" });
     expect(b.rpc).toHaveBeenCalledWith("record_human_message", { p_organization_id: "o", p_conversation_id: "c", p_at: "2026-10-05T12:00:00.000Z", p_author: null, p_via: "phone_echo" });
+  });
+});
+
+/** Cadeia do supabase-js: cada filtro devolve a própria consulta; o resultado sai em maybeSingle()/await. */
+const queryDb = (result: { data: unknown; error: unknown }) => {
+  const calls: Array<[string, unknown[]]> = [];
+  const q: any = {};
+  for (const m of ["select", "eq", "in", "is", "limit"]) q[m] = (...args: unknown[]) => { calls.push([m, args]); return q; };
+  q.maybeSingle = () => Promise.resolve(result);
+  q.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => Promise.resolve(result).then(resolve, reject);
+  const from = vi.fn().mockReturnValue(q);
+  return { db: { from } as any, from, calls };
+};
+
+describe("consultas usadas pelo requestHuman (C1)", () => {
+  it("getActiveAssignmentRepUserId devolve o usuário do vendedor da atribuição ativa da conversa", async () => {
+    const { db, from, calls } = queryDb({ data: { rep_id: "r1", sales_reps: { user_id: "u1" } }, error: null });
+    expect(await getActiveAssignmentRepUserId(db, "o", "c")).toBe("u1");
+    expect(from).toHaveBeenCalledWith("lead_assignments");
+    expect(calls).toEqual(expect.arrayContaining([["eq", ["organization_id", "o"]], ["eq", ["conversation_id", "c"]], ["in", ["status", ["pending", "accepted"]]]]));
+  });
+  it("getActiveAssignmentRepUserId devolve null sem atribuição ativa e propaga erro", async () => {
+    expect(await getActiveAssignmentRepUserId(queryDb({ data: null, error: null }).db, "o", "c")).toBeNull();
+    await expect(getActiveAssignmentRepUserId(queryDb({ data: null, error: { message: "x" } }).db, "o", "c")).rejects.toEqual({ message: "x" });
+  });
+  it("hasOpenDistributionException procura exceção não resolvida da conversa", async () => {
+    const yes = queryDb({ data: [{ id: "e1" }], error: null });
+    expect(await hasOpenDistributionException(yes.db, "o", "c")).toBe(true);
+    expect(yes.calls).toEqual(expect.arrayContaining([["eq", ["organization_id", "o"]], ["eq", ["conversation_id", "c"]], ["eq", ["status", "exception"]], ["is", ["resolved_at", null]]]));
+    expect(await hasOpenDistributionException(queryDb({ data: [], error: null }).db, "o", "c")).toBe(false);
+  });
+});
+
+describe("recordDistributionError (I2)", () => {
+  it("chama record_distribution_error com os parâmetros", async () => {
+    const { db, rpc } = rpcDb("exc-1");
+    expect(await recordDistributionError(db, { organizationId: "o", conversationId: "c", handoffEventId: "h", message: "boom" })).toBe("exc-1");
+    expect(rpc).toHaveBeenCalledWith("record_distribution_error", { p_organization_id: "o", p_conversation_id: "c", p_handoff_event_id: "h", p_message: "boom" });
+  });
+  it("propaga o erro (quem chama decide engolir)", async () => {
+    await expect(recordDistributionError(rpcDb(null, { message: "down" }).db, { organizationId: "o", conversationId: "c", handoffEventId: "h", message: "m" })).rejects.toEqual({ message: "down" });
   });
 });

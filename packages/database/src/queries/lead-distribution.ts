@@ -30,6 +30,35 @@ export async function distributeLeadForHandoff(
   return (data as string | null) ?? null;
 }
 
+/** Usuário do vendedor da atribuição ativa (pendente/aceita) da conversa, ou null. */
+export async function getActiveAssignmentRepUserId(db: SupabaseClient, organizationId: string, conversationId: string): Promise<string | null> {
+  const { data, error } = await db.from("lead_assignments").select("rep_id, sales_reps(user_id)")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).in("status", ["pending", "accepted"]).maybeSingle();
+  if (error) throw error;
+  const rep = (data as { sales_reps?: { user_id?: string } | Array<{ user_id?: string }> | null } | null)?.sales_reps;
+  return (Array.isArray(rep) ? rep[0]?.user_id : rep?.user_id) ?? null;
+}
+
+/** A conversa está na fila de exceções do gestor (exceção ainda não resolvida)? */
+export async function hasOpenDistributionException(db: SupabaseClient, organizationId: string, conversationId: string): Promise<boolean> {
+  const { data, error } = await db.from("lead_assignments").select("id")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("status", "exception").is("resolved_at", null).limit(1);
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Registra a exceção distribution_error (idempotente por handoff; no-op com a flag desligada). */
+export async function recordDistributionError(
+  db: SupabaseClient,
+  p: { organizationId: string; conversationId: string; handoffEventId: string; message: string }
+): Promise<string | null> {
+  const { data, error } = await db.rpc("record_distribution_error", {
+    p_organization_id: p.organizationId, p_conversation_id: p.conversationId, p_handoff_event_id: p.handoffEventId, p_message: p.message,
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
 export async function listExpiredAssignments(db: SupabaseClient, limit = 50) {
   const { data, error } = await db.from("lead_assignments").select("id, organization_id")
     .eq("status", "pending").eq("sla_action", "redistribute").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);

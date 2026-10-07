@@ -12,6 +12,9 @@ import {
   getOpenOpportunitiesByContact,
   createTaskWithDedup,
   distributeLeadForHandoff,
+  getActiveAssignmentRepUserId,
+  hasOpenDistributionException,
+  recordDistributionError,
 } from "@aula-agente/database";
 import { buildHandoffTaskRefresh } from "../handoff-task-refresh.js";
 import { safeDistribute } from "../handoff-distribution.js";
@@ -117,6 +120,29 @@ async function createFallbackTaskIfUnrouted(
   }
 }
 
+type DistributionMode = "off" | "shadow" | "real";
+
+/**
+ * Responsável depois da distribuição real: o vendedor da atribuição ativa; ninguém se a conversa caiu na fila de
+ * exceções; o responsável padrão (como hoje) só quando não há linha de distribuição (ex.: handoff anterior à ativação).
+ * Nunca lança: na dúvida, não grava ninguém (não devolve o lead ao responsável padrão por engano).
+ */
+async function resolveDistributedAssignee(
+  db: ReturnType<typeof getAdminClient>,
+  context: RequestHumanToolContext,
+  defaultAssigneeId: string | null
+): Promise<{ assigneeId: string | null; alreadyAssigned: boolean }> {
+  try {
+    const repUserId = await getActiveAssignmentRepUserId(db, context.organizationId, context.conversationId);
+    if (repUserId) return { assigneeId: repUserId, alreadyAssigned: true };
+    if (await hasOpenDistributionException(db, context.organizationId, context.conversationId)) return { assigneeId: null, alreadyAssigned: false };
+    return { assigneeId: defaultAssigneeId, alreadyAssigned: false };
+  } catch (err) {
+    console.error("requestHuman tool: failed to read the lead distribution outcome (no assignee written):", err);
+    return { assigneeId: null, alreadyAssigned: false };
+  }
+}
+
 export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
   return tool({
     description:
@@ -131,11 +157,28 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         const db = getAdminClient();
         const org = await getOrganizationById(db, context.organizationId);
         const assigneeId = org.settings.default_handoff_assignee_id ?? null;
+        const mode: DistributionMode = org.settings.lead_distribution_enabled === true ? "real"
+          : org.settings.lead_distribution_shadow_enabled === true ? "shadow" : "off";
+        const refresh = org.settings.sales_qualified_handoff_task_enabled===true && ["cliente_pediu","proposta_pronta","negociacao_valor"].includes(motivo) ? {resumo,start:context.businessHoursStartHour,end:context.businessHoursEndHour,contactId:context.contactId}:undefined;
+        const reassign = async (to: string | null) => {
+          try {
+            await reassignOpenTasksToHuman(db, context.organizationId, context.conversationId, to, refresh);
+          } catch (err) {
+            console.error("requestHuman tool: failed to reassign open tasks:", err);
+          }
+        };
+        const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
+          organizationId: context.organizationId,
+          conversationId: context.conversationId,
+          handoffEventId,
+        }, mode === "off" ? undefined : recordDistributionError);
 
+        // Com a distribuição (real ou sombra) ligada, o responsável padrão NÃO pode ser gravado antes dela:
+        // resolve_current_owner leria esse assigned_to recém-escrito como "dono atual" e todo lead viraria existing_owner.
         await updateConversation(db, context.conversationId, {
           is_human_takeover: true,
           human_takeover_at: new Date().toISOString(),
-          ...(assigneeId ? { assigned_to: assigneeId } : {}),
+          ...(mode === "off" && assigneeId ? { assigned_to: assigneeId } : {}),
         });
 
         const handoffEvent = await createHandoffEvent(db, {
@@ -148,20 +191,22 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           criado_por: "ia",
         });
 
-        try {
-          await reassignOpenTasksToHuman(db, context.organizationId, context.conversationId, assigneeId,
-            org.settings.sales_qualified_handoff_task_enabled===true && ["cliente_pediu","proposta_pronta","negociacao_valor"].includes(motivo) ? {resumo,start:context.businessHoursStartHour,end:context.businessHoursEndHour,contactId:context.contactId}:undefined);
-        } catch (err) {
-          console.error("requestHuman tool: failed to reassign open tasks:", err);
+        if (mode === "off") {
+          // Exatamente como antes da distribuição de leads (a chamada abaixo é um no-op com a flag desligada).
+          await reassign(assigneeId);
+          await distribute(handoffEvent.id);
+        } else if (mode === "shadow") {
+          // A sombra decide sobre a conversa ainda limpa; o comportamento real (responsável padrão) segue igual a hoje.
+          await distribute(handoffEvent.id);
+          if (assigneeId) await updateConversation(db, context.conversationId, { assigned_to: assigneeId });
+          await reassign(assigneeId);
+        } else {
+          await distribute(handoffEvent.id);
+          const routed = await resolveDistributedAssignee(db, context, assigneeId);
+          // Com atribuição ativa, _lead_apply_effects já gravou conversations.assigned_to.
+          if (routed.assigneeId && !routed.alreadyAssigned) await updateConversation(db, context.conversationId, { assigned_to: routed.assigneeId });
+          await reassign(routed.assigneeId);
         }
-
-        // Rodízio (flag lead_distribution_enabled): define o responsável depois do handoff e das tarefas,
-        // sobrescrevendo o responsável padrão quando a distribuição está ligada.
-        await safeDistribute(distributeLeadForHandoff, db, {
-          organizationId: context.organizationId,
-          conversationId: context.conversationId,
-          handoffEventId: handoffEvent.id,
-        });
 
         const notifyPhone = org.settings.handoff_notification_phone ?? null;
         if (notifyPhone) {
