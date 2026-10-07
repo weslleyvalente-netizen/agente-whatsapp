@@ -30,7 +30,7 @@ Distribuir cada novo lead qualificado pela Mariana entre os vendedores ativos de
 | Estratégia | Rodízio automático, Marina → Márcio → Marina → Márcio |
 | Fonte do próximo | `lead_distribution_state` é a **única** fonte do ponteiro do rodízio |
 | Assumir | Botão **Assumir lead** ou primeira mensagem humana, o que vier primeiro |
-| SLA | 15 minutos úteis; a varredura roda a cada 1 minuto |
+| SLA | 15 minutos úteis; a varredura roda a cada 1 minuto. **Redistribui só lead novo do rodízio.** Cliente com dono existente (e atribuição manual) mantém o dono: só medição e alerta, sem redistribuição automática |
 | Vai e volta | Cada vendedor recebe o mesmo handoff no máximo uma vez; depois, fila de exceções |
 | Histórico | Imutável, nunca apagado |
 | Isolamento | Aplicação (API e tela) na fase 1; RLS na fase 2 |
@@ -67,7 +67,7 @@ Uma linha por organização. É a trava da atribuição atômica (`SELECT ... FO
 - Identidade: `id`, `organization_id`, `chain_id` (um por handoff; agrupa as tentativas), `handoff_event_id`.
 - Alvo: `contact_id`, `conversation_id`, `opportunity_id` (nulo), `rep_id` (nulo em exceção).
 - Atribuição: `reason` (`round_robin` | `existing_owner` | `sla_redistribution` | `manual` | `bulk_reassignment` | `exception`), `assigned_at`, `previous_assignment_id`, `next_assignment_id`.
-- SLA: `sla_due_at`, `sla_breached` (booleano), `redistribution_reason`.
+- SLA: `sla_due_at`, `sla_breached` (booleano), `sla_action` (`redistribute` para lead novo do rodízio; `alert` para dono existente e atribuição manual: só alerta, nunca redistribui), `redistribution_reason`.
 - Marcos de tempo: `handoff_at`, `assigned_at`, `accepted_at`, `accepted_via` (`button` | `first_message` | `phone_echo`), `first_human_message_at`, `first_human_message_by`.
 - Estado: `status` (`pending` | `accepted` | `expired` | `redistributed` | `exception`). `expired` é a atribuição que **estourou o SLA** e foi substituída; `redistributed` é a que foi substituída por reatribuição do gestor (manual ou em lote); `exception` é a linha sem vendedor.
 - Exceção: `exception_reason`, `resolved_at`, `resolved_by`, `resolution`.
@@ -155,13 +155,13 @@ O prazo é calculado **na atribuição** e gravado em `sla_due_at`. Alterar o ca
 
 ### 6.3 Varredura de SLA
 - Fila nova `lead-sla` (BullMQ), job repetido a cada **1 minuto**.
-- Consulta barata e indexada: `status = pending AND sla_due_at <= now()`.
-- Para cada atribuição vencida o worker calcula o novo `sla_due_at` e chama `redistribute_assignment(id, novo_sla)`. A função trava a linha, confere se ainda está `pending` e vencida (segura contra dois workers) e então:
+- **Redistribuição (`sla_action = 'redistribute'`, só lead novo do rodízio):** consulta indexada `status = pending AND sla_action = 'redistribute' AND sla_due_at <= now()`. Para cada vencida o worker calcula o novo `sla_due_at` e chama `redistribute_assignment(id, novo_sla)`, que trava a linha, confere se ainda está `pending` e vencida (segura contra dois workers) e então:
   - marca a atual como `expired` com `sla_breached = true` e `redistribution_reason`;
-  - cria a nova atribuição ao outro vendedor `available` que ainda não recebeu aquela cadeia (`reason = sla_redistribution`), ligada à anterior em `previous_assignment_id` e `next_assignment_id`;
+  - cria a nova atribuição ao outro vendedor `available` que ainda não recebeu aquela cadeia (`reason = sla_redistribution`), ligada à anterior;
   - se não existir vendedor elegível, cria exceção `all_reps_sla_breached`.
+- **Alerta (`sla_action = 'alert'`, dono existente e atribuição manual):** o cliente **não muda de vendedor**. Cada varredura chama `flag_sla_alerts()`, que marca `sla_breached = true` nas atribuições `pending` já vencidas. O card mostra o atraso em vermelho e o gestor vê a lista de alertas. Um cliente que já pertence à Marina não passa ao Márcio só porque ela demorou 15 minutos.
 - A redistribuição é interna: o cliente não recebe mensagem por causa dela.
-- Resultado prático: a redistribuição acontece em até cerca de 1 minuto depois do vencimento real, e não até 15 minutos depois.
+- Resultado prático: redistribuição em até cerca de 1 minuto depois do vencimento real, e não até 15 minutos depois.
 
 ### 6.4 KPIs de tempo
 Todos calculáveis por uma view `lead_response_metrics` a partir dos marcos acima:
@@ -224,6 +224,21 @@ Políticas de RLS por vendedor em `conversations`, `messages`, `tasks`, `opportu
 3. **Janela do último responsável:** 30 dias; atividade comercial relevante atualiza `last_commercial_activity_at`.
 4. **Aviso de exceção:** painel e contador na fase 1; sem e-mail nem push.
 5. **`out`:** não redistribui nada automaticamente; só afasta o vendedor dos novos leads. Redistribuição em massa é ação administrativa separada.
+
+## 11A. Modo sombra (shadow) antes da ativação
+
+Flag `lead_distribution_shadow_enabled` (ignorada quando `lead_distribution_enabled` está ligada). Com ela ligada, cada handoff roda a **mesma lógica de decisão** da distribuição real (função `_lead_decide`, compartilhada, sem cópia), mas:
+- **não** cria atribuição, não altera conversa, negócio nem tarefas, e não move o ponteiro real do rodízio;
+- registra a decisão em `lead_distribution_shadow_log` (quem receberia, motivo, exceção, ponteiro antes e depois, `sla_due_at` que seria usado), idempotente por `handoff_event_id`;
+- usa um ponteiro próprio (`shadow_last_rotation_order`) para simular a alternância sem tocar no real.
+
+Limitação conhecida: como o modo sombra não grava dono, um segundo handoff do mesmo cliente durante a simulação aparece como `round_robin` (não como `existing_owner` simulado); o dono existente só é reconhecido quando já existia antes. Serve para validar alternância, dono existente real, calendário e prazo, e exceções. A redistribuição por SLA não é simulada: valida-se com os primeiros leads reais e `lead_sla_minutes` reduzido (runbook).
+
+## 11B. Dívida técnica explícita (fase de RLS e isolamento por vendedor)
+
+- O isolamento por vendedor da fase 1 é de **aplicação**: inbox, realtime e página de tarefas leem direto do Supabase e só têm filtro de tela. Não é garantia do banco.
+- A visibilidade é a versão **branda**: o vendedor não vê o que pertence claramente ao outro vendedor; lead sem dono e carteira antiga continuam visíveis. Não se migra a carteira antiga nesta fase.
+- Etapa futura própria: saneamento e migração da carteira, endurecimento do isolamento (RLS em `conversations`, `messages`, `tasks`, `opportunities` e dependentes, revisão do realtime) e atividade comercial além de mensagem humana (mudança de etapa e tarefa concluída **não** atualizam `last_commercial_activity_at` por decisão desta fase).
 
 ## 12. Ativação e reversão
 
