@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Distribuir cada novo handoff qualificado da Mariana entre Marina e Márcio em rodízio 50/50, com dono persistido, SLA de 15 minutos úteis, redistribuição automática, fila de exceções e histórico imutável.
+**Goal:** Distribuir cada novo handoff qualificado da Mariana entre Marina e Márcio em rodízio 50/50, com dono persistido, SLA de 15 minutos úteis (redistribui só lead novo; dono existente só gera alerta), fila de exceções, histórico imutável e um modo sombra para validar antes de ativar.
 
 **Architecture:** Funções atômicas no Postgres (`distribute_lead`, `redistribute_assignment`, `record_human_message`, `accept_assignment`, `manual_assign`) guardam o estado do rodízio em `lead_distribution_state` e todo o histórico em `lead_assignments`. A aplicação calcula o prazo (`sla_due_at`) com um calendário comercial puro e testável em `packages/shared`. Um job do BullMQ roda a cada 60 s e redistribui atribuições vencidas. API e telas filtram por vendedor; a flag `lead_distribution_enabled` fica desligada até tudo estar pronto.
 
@@ -17,6 +17,9 @@
 - **Nenhuma redistribuição em massa.** Marcar um vendedor `out` não move lead algum. Não existe função de reatribuição em lote neste plano (ação administrativa separada, fora de escopo). O valor `bulk_reassignment` do campo `reason` fica reservado.
 - Rodízio 50/50: `lead_distribution_state.last_rotation_order` é a **única** fonte de "quem é o próximo". `sales_reps.last_assigned_at` é só auditoria.
 - SLA padrão **15 minutos úteis** (`lead_sla_minutes`); varredura a cada **60 segundos** (fila `lead-sla`).
+- **A redistribuição automática por SLA vale só para lead novo do rodízio** (`sla_action = 'redistribute'`). Cliente com dono existente e atribuição manual (`sla_action = 'alert'`) **mantém o dono**: só medição e alerta (`sla_breached`), nunca redistribuição automática.
+- **Modo sombra** (`lead_distribution_shadow_enabled`): roda a mesma decisão (`_lead_decide`) sem escrever atribuição, sem tocar conversa, negócio, tarefas nem o ponteiro real; só registra em `lead_distribution_shadow_log`. Ignorado quando `lead_distribution_enabled` está ligada.
+- `last_commercial_activity_at` é atualizada **só por mensagem humana**; mudança de etapa e tarefa concluída **não** atualizam (decisão da fase 1).
 - Fuso `America/Sao_Paulo`. Calendário padrão: segunda a sexta 08:00–18:00; sábado e domingo fechados; tudo configurável em `business_calendar`. Nunca fixar sábado na lógica.
 - `lead_assignments` é **imutável**: nunca `DELETE`; campos protegidos nunca mudam.
 - Cada vendedor recebe o mesmo handoff **no máximo uma vez** por cadeia automática (índice único no banco).
@@ -28,9 +31,9 @@
 
 ## Decisões tomadas ao planejar (leia antes de implementar)
 
-1. **Visibilidade do vendedor no legado.** A spec diz "vendedor vê só os próprios leads". Como a base antiga não é redistribuída e hoje o dono costuma ser a conta compartilhada, aplicar isso à risca faria a Marina perder de vista a carteira atual na ativação. Por isso, na fase 1, o filtro **esconde apenas leads cujo dono é outro vendedor** (`sales_reps`); leads sem dono, com dono legado (que não é vendedor) ou dela continuam visíveis. Isso é uma interpretação mais branda da spec e está sinalizada ao usuário na entrega.
-2. **Tarefas e inbox** são lidos direto do Supabase pelo web; nesta fase eles só ganham filtro "Minhas" na **tela** (sem garantia de banco). As rotas da API que filtram de verdade são: lista de negócios, tarefas sem negócio, "Hoje", detalhes de negócio e detalhes de tarefa.
-3. **SLA vale para toda atribuição**, inclusive `existing_owner`.
+1. **Visibilidade do vendedor no legado (aprovada pelo usuário).** O filtro **esconde apenas leads cujo dono é outro vendedor** (`sales_reps`); leads sem dono, com dono legado (que não é vendedor) ou dela continuam visíveis. A carteira antiga não é migrada nesta fase; saneamento e endurecimento ficam para uma etapa específica (dívida técnica registrada na spec, seção 11B).
+2. **Tarefas e inbox** são lidos direto do Supabase pelo web; nesta fase eles só ganham filtro "Minhas" na **tela** (sem garantia de banco). Isso é **dívida técnica explícita** para a fase de RLS/isolamento (spec 11B); não ampliar o escopo agora. As rotas da API que filtram de verdade são: lista de negócios, tarefas sem negócio, "Hoje", detalhes de negócio e detalhes de tarefa.
+3. **SLA com duas ações (decisão do usuário):** lead novo do rodízio → redistribui ao estourar; dono existente e atribuição manual → só alerta e mede, nunca redistribui sozinho.
 4. **Mensagem de saudação curta pelo celular** ("Bom dia", já filtrada como `fromMe_greeting_filtered`) **não assume** o lead.
 5. **Concorrência:** PGlite é conexão única, então não dá para provar a corrida real em teste. A segurança vem de `SELECT ... FOR UPDATE` em `lead_distribution_state` e dos índices únicos, que **são** testados.
 
@@ -43,6 +46,8 @@ Entradas e falhas que a spec implica mas nenhuma task testaria sozinha. Cada uma
 3. **Zero vendedores cadastrados** com a flag ligada: exceção `no_available_rep`; o `requestHuman` nunca falha por causa da distribuição. Testes nas Tasks 4 e 7.
 4. **Mensagem humana de quem não é o vendedor atribuído** (admin) registra `first_human_message_by` mas não assume o lead. Teste na Task 5.
 5. **Dois handoffs do mesmo evento** (reprocessamento) não criam duas atribuições. Teste na Task 4.
+6. **Cliente que já é da Marina e estoura o prazo** não passa ao Márcio; recebe só alerta. Testes na Task 5.
+7. **Modo sombra** não altera nenhum dado real nem o ponteiro do rodízio, e é idempotente por handoff. Testes na Task 5A.
 
 ---
 
@@ -55,7 +60,8 @@ Entradas e falhas que a spec implica mas nenhuma task testaria sozinha. Cada uma
 | `packages/shared/src/types/organization.ts` (mod.) | Chaves novas em `OrganizationSettings` |
 | `supabase/migrations/20261007120000_lead_distribution_schema.sql` (novo) | Tabelas, colunas, índices, gatilho de imutabilidade, view, RLS de leitura |
 | `supabase/migrations/20261007120100_lead_distribution_assign.sql` (novo) | `resolve_current_owner`, `distribute_lead` |
-| `supabase/migrations/20261007120200_lead_distribution_lifecycle.sql` (novo) | `redistribute_assignment`, `accept_assignment`, `record_human_message`, `manual_assign` |
+| `supabase/migrations/20261007120200_lead_distribution_lifecycle.sql` (novo) | `redistribute_assignment`, `accept_assignment`, `record_human_message`, `manual_assign`, `flag_sla_alerts` |
+| `supabase/migrations/20261007120300_lead_distribution_shadow.sql` (novo) | `distribute_lead_shadow` (modo sombra) |
 | `packages/database/src/sql/*.test.ts` + `fixture.ts` (novos) | Testes de SQL em PGlite |
 | `packages/database/src/queries/lead-distribution.ts` (novo) | Funções TypeScript sobre as RPCs e leituras |
 | `packages/agent-runtime/src/handoff-distribution.ts` (novo) | `safeDistribute`: chama a distribuição sem nunca quebrar o handoff |
@@ -733,6 +739,20 @@ describe("lead_assignments schema", () => {
   });
 });
 
+describe("sla_action", () => {
+  it("padrão redistribute, aceita alert, rejeita outro valor e é imutável", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const id = await insertAssignment(org, h, a.repId);
+    expect((await db.query<any>("select sla_action from public.lead_assignments where id=$1", [id])).rows[0].sla_action).toBe("redistribute");
+    await expect(db.query("update public.lead_assignments set sla_action='alert' where id=$1", [id])).rejects.toThrow(/imut/i);
+    const h2 = await seedHandoff(db, org);
+    await expect(db.query(
+      `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,sla_action,strategy_version)
+       values ($1,gen_random_uuid(),$2,$3,$4,$5,'round_robin','pending',now(),'tanto-faz','round_robin_v1')`,
+      [org, h2.handoffId, h2.contactId, h2.conversationId, a.repId])).rejects.toThrow();
+  });
+});
+
 describe("imutabilidade do histórico", () => {
   it("rejeita DELETE e mudança de campos protegidos", async () => {
     const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
@@ -817,8 +837,30 @@ CREATE TABLE public.sales_reps (
 CREATE TABLE public.lead_distribution_state (
   organization_id uuid PRIMARY KEY REFERENCES public.organizations(id) ON DELETE CASCADE,
   last_rotation_order integer NOT NULL DEFAULT 0,
+  -- Ponteiro próprio do modo sombra: simula a alternância sem tocar no real.
+  shadow_last_rotation_order integer NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE public.lead_distribution_shadow_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  handoff_event_id uuid NOT NULL UNIQUE REFERENCES public.handoff_events(id),
+  conversation_id uuid NOT NULL REFERENCES public.conversations(id),
+  contact_id uuid NOT NULL REFERENCES public.wa_contacts(id),
+  would_rep_id uuid REFERENCES public.sales_reps(id),
+  would_rep_name text,
+  reason text NOT NULL,
+  exception_reason text,
+  pointer_before integer NOT NULL,
+  pointer_after integer NOT NULL,
+  sla_due_at timestamptz,
+  sla_action text,
+  handed_at timestamptz NOT NULL,
+  context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX lead_distribution_shadow_log_org ON public.lead_distribution_shadow_log (organization_id, created_at DESC);
 
 CREATE TABLE public.lead_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -835,6 +877,8 @@ CREATE TABLE public.lead_assignments (
   handoff_at timestamptz NOT NULL,
   sla_due_at timestamptz,
   sla_breached boolean NOT NULL DEFAULT false,
+  -- 'redistribute': lead novo do rodízio (redistribui ao estourar). 'alert': dono existente ou atribuição manual (só alerta, nunca redistribui).
+  sla_action text NOT NULL DEFAULT 'redistribute' CHECK (sla_action IN ('redistribute','alert')),
   redistribution_reason text,
   accepted_at timestamptz,
   accepted_via text CHECK (accepted_via IN ('button','first_message','phone_echo','admin')),
@@ -861,7 +905,8 @@ CREATE UNIQUE INDEX lead_assignments_one_active_per_conversation ON public.lead_
 CREATE UNIQUE INDEX lead_assignments_one_rep_per_chain ON public.lead_assignments (chain_id, rep_id) WHERE rep_id IS NOT NULL AND reason IN ('round_robin','existing_owner','sla_redistribution');
 -- Idempotência: um handoff abre uma única cadeia.
 CREATE UNIQUE INDEX lead_assignments_one_chain_per_handoff ON public.lead_assignments (handoff_event_id) WHERE previous_assignment_id IS NULL;
-CREATE INDEX lead_assignments_sla_due ON public.lead_assignments (sla_due_at) WHERE status = 'pending';
+CREATE INDEX lead_assignments_sla_due ON public.lead_assignments (sla_due_at) WHERE status = 'pending' AND sla_action = 'redistribute';
+CREATE INDEX lead_assignments_sla_alert_due ON public.lead_assignments (sla_due_at) WHERE status = 'pending' AND sla_action = 'alert' AND NOT sla_breached;
 CREATE INDEX lead_assignments_open_exceptions ON public.lead_assignments (organization_id) WHERE status = 'exception' AND resolved_at IS NULL;
 CREATE INDEX lead_assignments_contact ON public.lead_assignments (organization_id, contact_id, assigned_at DESC);
 
@@ -880,6 +925,7 @@ BEGIN
      OR NEW.handoff_at IS DISTINCT FROM OLD.handoff_at
      OR NEW.previous_assignment_id IS DISTINCT FROM OLD.previous_assignment_id
      OR NEW.strategy_version IS DISTINCT FROM OLD.strategy_version
+     OR NEW.sla_action IS DISTINCT FROM OLD.sla_action
      OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'lead_assignments é imutável: campo protegido';
   END IF;
@@ -896,6 +942,8 @@ CREATE TRIGGER lead_assignments_guard_delete BEFORE DELETE ON public.lead_assign
 ALTER TABLE public.sales_reps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.lead_distribution_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.lead_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lead_distribution_shadow_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY lead_distribution_shadow_log_select ON public.lead_distribution_shadow_log FOR SELECT USING (organization_id IN (SELECT public.get_user_org_ids()));
 CREATE POLICY sales_reps_select ON public.sales_reps FOR SELECT USING (organization_id IN (SELECT public.get_user_org_ids()));
 CREATE POLICY lead_distribution_state_select ON public.lead_distribution_state FOR SELECT USING (organization_id IN (SELECT public.get_user_org_ids()));
 CREATE POLICY lead_assignments_select ON public.lead_assignments FOR SELECT USING (organization_id IN (SELECT public.get_user_org_ids()));
@@ -937,7 +985,8 @@ git commit -m "feat(distribution): schema, immutability trigger and PGlite harne
   - `public._lead_owner_check(p_org uuid, p_user uuid) RETURNS TABLE(rep_id uuid, state text)` onde `state ∈ {'not_rep','valid','out','invalid'}`
   - `public.resolve_current_owner(p_org uuid, p_contact uuid, p_conversation uuid, p_lookback_days integer) RETURNS TABLE(rep_id uuid, outcome text)` onde `outcome ∈ {'found','none','conflict','invalid'}`
   - `public._lead_apply_effects(p_org uuid, p_conversation uuid, p_contact uuid, p_user uuid) RETURNS uuid` (devolve o id do negócio ligado, se houver um só)
-  - `public.distribute_lead(p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamptz, p_context jsonb DEFAULT '{}') RETURNS uuid` (id da atribuição; `NULL` se a flag estiver desligada ou o handoff for anterior à ativação)
+  - `public._lead_decide(p_org uuid, p_conversation uuid, p_contact uuid, p_last_order integer, p_lookback integer) RETURNS TABLE(rep_id uuid, reason text, exception_reason text)` (decisão pura de leitura, **compartilhada com o modo sombra**; `reason ∈ {'existing_owner','round_robin','exception'}`)
+  - `public.distribute_lead(p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamptz, p_context jsonb DEFAULT '{}') RETURNS uuid` (id da atribuição; `NULL` se a flag estiver desligada ou o handoff for anterior à ativação). Grava `sla_action = 'alert'` para `existing_owner` e `'redistribute'` para `round_robin`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1030,6 +1079,17 @@ describe("distribute_lead: efeitos, contexto e idempotência", () => {
     const first = await distribute(org, h);
     const again = (await db.query<any>("insert into public.handoff_events(organization_id,conversation_id) values ($1,$2) returning id", [org, h.conversationId])).rows[0].id;
     expect(await distribute(org, { conversationId: h.conversationId, handoffId: again })).toBe(first);
+  });
+});
+
+describe("distribute_lead: ação do SLA", () => {
+  it("lead novo do rodízio redistribui; dono existente só alerta", async () => {
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); const marcio = await seedRep(db, org, "Márcio", 2);
+    const novo = await row((await distribute(org, await seedHandoff(db, org)))!);
+    expect(novo).toMatchObject({ reason: "round_robin", sla_action: "redistribute" });
+    const h = await seedHandoff(db, org);
+    await db.query("insert into public.opportunities(organization_id,contact_id,owner_id) values ($1,$2,$3)", [org, h.contactId, marcio.userId]);
+    expect(await row((await distribute(org, h))!)).toMatchObject({ reason: "existing_owner", sla_action: "alert" });
   });
 });
 
@@ -1190,12 +1250,31 @@ BEGIN
   RETURN opp_id;
 END $$;
 
+-- Decisão compartilhada entre a distribuição real e o modo sombra (uma só lógica, sem cópia).
+-- Devolve: rep_id (ou NULL), reason ('existing_owner' | 'round_robin' | 'exception') e exception_reason.
+CREATE FUNCTION public._lead_decide(p_org uuid, p_conversation uuid, p_contact uuid, p_last_order integer, p_lookback integer)
+RETURNS TABLE(rep_id uuid, reason text, exception_reason text) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE o record; r public.sales_reps;
+BEGIN
+  SELECT * INTO o FROM public.resolve_current_owner(p_org, p_contact, p_conversation, p_lookback);
+  IF o.outcome = 'found' THEN RETURN QUERY SELECT o.rep_id, 'existing_owner'::text, NULL::text; RETURN; END IF;
+  IF o.outcome = 'conflict' THEN RETURN QUERY SELECT NULL::uuid, 'exception'::text, 'manual_review'::text; RETURN; END IF;
+  IF o.outcome = 'invalid' THEN RETURN QUERY SELECT NULL::uuid, 'exception'::text, 'invalid_existing_owner'::text; RETURN; END IF;
+  -- Rodízio: primeiro disponível depois do ponteiro; se não houver, volta ao início.
+  SELECT x.* INTO r FROM public.sales_reps x
+   WHERE x.organization_id = p_org AND x.availability = 'available'
+     AND EXISTS (SELECT 1 FROM public.organization_members m WHERE m.organization_id = x.organization_id AND m.user_id = x.user_id)
+   ORDER BY (x.rotation_order > p_last_order) DESC, x.rotation_order LIMIT 1;
+  IF r.id IS NULL THEN RETURN QUERY SELECT NULL::uuid, 'exception'::text, 'no_available_rep'::text; RETURN; END IF;
+  RETURN QUERY SELECT r.id, 'round_robin'::text, NULL::text;
+END $$;
+
 CREATE FUNCTION public.distribute_lead(p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamptz, p_context jsonb DEFAULT '{}'::jsonb)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   s jsonb; h public.handoff_events; c public.conversations; st public.lead_distribution_state;
-  existing uuid; chain uuid := gen_random_uuid(); owner record; rep public.sales_reps;
-  lookback integer; reason text; exc text; new_id uuid; opp_id uuid; user_id uuid;
+  existing uuid; chain uuid := gen_random_uuid(); d record; rep public.sales_reps;
+  lookback integer; new_id uuid; opp_id uuid;
 BEGIN
   SELECT settings INTO s FROM public.organizations WHERE id = p_organization_id;
   IF s IS NULL OR s->>'lead_distribution_enabled' IS DISTINCT FROM 'true' THEN RETURN NULL; END IF;
@@ -1214,47 +1293,36 @@ BEGIN
 
   SELECT * INTO c FROM public.conversations WHERE id = p_conversation_id AND organization_id = p_organization_id;
   lookback := COALESCE(NULLIF(s->>'owner_lookback_days', '')::integer, 30);
-  SELECT * INTO owner FROM public.resolve_current_owner(p_organization_id, c.contact_id, c.id, lookback);
+  SELECT * INTO d FROM public._lead_decide(p_organization_id, c.id, c.contact_id, st.last_rotation_order, lookback);
 
-  IF owner.outcome = 'found' THEN
-    SELECT * INTO rep FROM public.sales_reps WHERE id = owner.rep_id; reason := 'existing_owner';
-  ELSIF owner.outcome = 'conflict' THEN exc := 'manual_review';
-  ELSIF owner.outcome = 'invalid' THEN exc := 'invalid_existing_owner';
-  ELSE
-    -- Rodízio: primeiro disponível depois do ponteiro; se não houver, volta ao início.
-    SELECT r.* INTO rep FROM public.sales_reps r
-     WHERE r.organization_id = p_organization_id AND r.availability = 'available'
-       AND EXISTS (SELECT 1 FROM public.organization_members m WHERE m.organization_id = r.organization_id AND m.user_id = r.user_id)
-     ORDER BY (r.rotation_order > st.last_rotation_order) DESC, r.rotation_order LIMIT 1;
-    IF rep.id IS NULL THEN exc := 'no_available_rep';
-    ELSE
-      reason := 'round_robin';
-      UPDATE public.lead_distribution_state SET last_rotation_order = rep.rotation_order, updated_at = now() WHERE organization_id = p_organization_id;
-      UPDATE public.sales_reps SET last_assigned_at = now() WHERE id = rep.id;
-    END IF;
-  END IF;
-
-  IF exc IS NOT NULL THEN
+  IF d.exception_reason IS NOT NULL THEN
     INSERT INTO public.lead_assignments (organization_id, chain_id, handoff_event_id, contact_id, conversation_id, rep_id, reason, status, handoff_at, exception_reason,
                                          origin_source, operation, product_model, strategy_version)
-    VALUES (p_organization_id, chain, p_handoff_event_id, c.contact_id, c.id, NULL, 'exception', 'exception', h.handed_at, exc,
+    VALUES (p_organization_id, chain, p_handoff_event_id, c.contact_id, c.id, NULL, 'exception', 'exception', h.handed_at, d.exception_reason,
             p_context->>'origin_source', p_context->>'operation', p_context->>'product_model', 'round_robin_v1')
     RETURNING id INTO new_id;
     RETURN new_id;
   END IF;
 
+  SELECT * INTO rep FROM public.sales_reps WHERE id = d.rep_id;
+  IF d.reason = 'round_robin' THEN
+    UPDATE public.lead_distribution_state SET last_rotation_order = rep.rotation_order, updated_at = now() WHERE organization_id = p_organization_id;
+    UPDATE public.sales_reps SET last_assigned_at = now() WHERE id = rep.id;
+  END IF;
+
   opp_id := public._lead_apply_effects(p_organization_id, c.id, c.contact_id, rep.user_id);
-  INSERT INTO public.lead_assignments (organization_id, chain_id, handoff_event_id, contact_id, conversation_id, opportunity_id, rep_id, reason, status, handoff_at, sla_due_at,
+  INSERT INTO public.lead_assignments (organization_id, chain_id, handoff_event_id, contact_id, conversation_id, opportunity_id, rep_id, reason, status, handoff_at, sla_due_at, sla_action,
                                        origin_source, operation, product_model, strategy_version)
-  VALUES (p_organization_id, chain, p_handoff_event_id, c.contact_id, c.id, opp_id, rep.id, reason, 'pending', h.handed_at, p_sla_due_at,
+  VALUES (p_organization_id, chain, p_handoff_event_id, c.contact_id, c.id, opp_id, rep.id, d.reason, 'pending', h.handed_at, p_sla_due_at,
+          CASE WHEN d.reason = 'existing_owner' THEN 'alert' ELSE 'redistribute' END,
           p_context->>'origin_source', p_context->>'operation', p_context->>'product_model', 'round_robin_v1')
   RETURNING id INTO new_id;
   RETURN new_id;
 END $$;
 
-REVOKE ALL ON FUNCTION public._lead_owner_check(uuid, uuid), public.resolve_current_owner(uuid, uuid, uuid, integer),
+REVOKE ALL ON FUNCTION public._lead_owner_check(uuid, uuid), public.resolve_current_owner(uuid, uuid, uuid, integer), public._lead_decide(uuid, uuid, uuid, integer, integer),
   public._lead_apply_effects(uuid, uuid, uuid, uuid), public.distribute_lead(uuid, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public._lead_owner_check(uuid, uuid), public.resolve_current_owner(uuid, uuid, uuid, integer),
+GRANT EXECUTE ON FUNCTION public._lead_owner_check(uuid, uuid), public.resolve_current_owner(uuid, uuid, uuid, integer), public._lead_decide(uuid, uuid, uuid, integer, integer),
   public._lead_apply_effects(uuid, uuid, uuid, uuid), public.distribute_lead(uuid, uuid, uuid, timestamptz, jsonb) TO service_role;
 ```
 
@@ -1284,7 +1352,8 @@ git commit -m "feat(distribution): owner precedence and atomic distribute_lead"
   - `public.redistribute_assignment(p_assignment_id uuid, p_new_sla_due_at timestamptz) RETURNS uuid` (id da nova atribuição ou da exceção; `NULL` se não estava vencida/pendente)
   - `public.accept_assignment(p_assignment_id uuid, p_actor uuid, p_actor_is_admin boolean) RETURNS boolean`
   - `public.record_human_message(p_organization_id uuid, p_conversation_id uuid, p_at timestamptz, p_author uuid, p_via text) RETURNS uuid` (`p_via ∈ {'panel','phone_echo'}`; `NULL` se não há atribuição ativa)
-  - `public.manual_assign(p_organization_id uuid, p_conversation_id uuid, p_rep_id uuid, p_actor uuid, p_sla_due_at timestamptz) RETURNS uuid`
+  - `public.manual_assign(p_organization_id uuid, p_conversation_id uuid, p_rep_id uuid, p_actor uuid, p_sla_due_at timestamptz) RETURNS uuid` (grava `sla_action = 'alert'`: reatribuição do gestor não é desfeita por SLA)
+  - `public.flag_sla_alerts() RETURNS integer` (marca `sla_breached` nas atribuições `alert` pendentes e vencidas; devolve quantas)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1356,6 +1425,43 @@ describe("redistribute_assignment", () => {
     const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2, "paused");
     const created = await redistribute(await distribute(org, await seedHandoff(db, org), past()));
     expect(await row(created!)).toMatchObject({ status: "exception", exception_reason: "all_reps_sla_breached" });
+  });
+});
+
+describe("dono existente: sem redistribuição automática, só alerta", () => {
+  it("cliente que já é da Marina e estoura o prazo continua com a Marina", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    await db.query("insert into public.opportunities(organization_id,contact_id,owner_id) values ($1,$2,$3)", [org, h.contactId, marina.userId]);
+    const id = await distribute(org, h, past());
+    expect(await row(id)).toMatchObject({ reason: "existing_owner", sla_action: "alert" });
+    expect(await redistribute(id)).toBeNull();
+    expect((await row(id)).status).toBe("pending");
+    expect((await db.query<any>("select assigned_to from public.conversations where id=$1", [h.conversationId])).rows[0].assigned_to).toBe(marina.userId);
+  });
+
+  it("flag_sla_alerts marca o atraso sem mudar de vendedor e é idempotente", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    await db.query("insert into public.opportunities(organization_id,contact_id,owner_id) values ($1,$2,$3)", [org, h.contactId, marina.userId]);
+    const id = await distribute(org, h, past());
+    expect((await db.query<any>("select public.flag_sla_alerts() as n")).rows[0].n).toBe(1);
+    expect(await row(id)).toMatchObject({ sla_breached: true, status: "pending", display_name: "Marina" });
+    expect((await db.query<any>("select public.flag_sla_alerts() as n")).rows[0].n).toBe(0);
+  });
+
+  it("não marca alerta antes de vencer, nem em lead novo do rodízio", async () => {
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1);
+    await distribute(org, await seedHandoff(db, org), past()); // round_robin vencido: é redistribuído, não alertado
+    expect((await db.query<any>("select public.flag_sla_alerts() as n")).rows[0].n).toBe(0);
+  });
+
+  it("reatribuição manual do gestor também não é desfeita por SLA", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org); await distribute(org, h); const adminId = await uuid(db);
+    const id = (await db.query<any>("select public.manual_assign($1,$2,$3,$4,$5) as id", [org, h.conversationId, marina.repId, adminId, past()])).rows[0].id;
+    expect(await row(id)).toMatchObject({ reason: "manual", sla_action: "alert" });
+    expect(await redistribute(id)).toBeNull();
   });
 });
 
@@ -1497,7 +1603,8 @@ BEGIN
   -- Mesma ordem de travas de distribute_lead: estado da organização primeiro, depois a linha.
   PERFORM 1 FROM public.lead_distribution_state WHERE organization_id = org FOR UPDATE;
   SELECT * INTO a FROM public.lead_assignments WHERE id = p_assignment_id FOR UPDATE;
-  IF a.status <> 'pending' OR a.sla_due_at IS NULL OR a.sla_due_at > now() THEN RETURN NULL; END IF;
+  -- Só lead novo do rodízio é redistribuído; dono existente e atribuição manual ('alert') nunca mudam de vendedor sozinhos.
+  IF a.status <> 'pending' OR a.sla_action <> 'redistribute' OR a.sla_due_at IS NULL OR a.sla_due_at > now() THEN RETURN NULL; END IF;
 
   SELECT * INTO cur FROM public.sales_reps WHERE id = a.rep_id;
   SELECT r.* INTO nxt FROM public.sales_reps r
@@ -1598,18 +1705,28 @@ BEGIN
     UPDATE public.lead_assignments SET status = 'redistributed', redistribution_reason = 'manual' WHERE id = prev.id;
   END IF;
   opp_id := public._lead_apply_effects(p_organization_id, p_conversation_id, prev.contact_id, rep.user_id);
-  INSERT INTO public.lead_assignments (organization_id, chain_id, handoff_event_id, contact_id, conversation_id, opportunity_id, rep_id, reason, status, handoff_at, sla_due_at,
+  INSERT INTO public.lead_assignments (organization_id, chain_id, handoff_event_id, contact_id, conversation_id, opportunity_id, rep_id, reason, status, handoff_at, sla_due_at, sla_action,
                                        previous_assignment_id, origin_source, operation, product_model, strategy_version)
-  VALUES (p_organization_id, prev.chain_id, prev.handoff_event_id, prev.contact_id, prev.conversation_id, opp_id, rep.id, 'manual', 'pending', prev.handoff_at, p_sla_due_at,
+  VALUES (p_organization_id, prev.chain_id, prev.handoff_event_id, prev.contact_id, prev.conversation_id, opp_id, rep.id, 'manual', 'pending', prev.handoff_at, p_sla_due_at, 'alert',
           prev.id, prev.origin_source, prev.operation, prev.product_model, prev.strategy_version)
   RETURNING id INTO new_id;
   UPDATE public.lead_assignments SET next_assignment_id = new_id WHERE id = prev.id;
   RETURN new_id;
 END $$;
 
-REVOKE ALL ON FUNCTION public.redistribute_assignment(uuid, timestamptz), public.accept_assignment(uuid, uuid, boolean),
+-- Alerta de SLA para quem não é redistribuído (dono existente e atribuição manual): só marca; o vendedor continua o mesmo.
+CREATE FUNCTION public.flag_sla_alerts() RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE n integer;
+BEGIN
+  UPDATE public.lead_assignments SET sla_breached = true
+   WHERE status = 'pending' AND sla_action = 'alert' AND sla_due_at <= now() AND NOT sla_breached;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+
+REVOKE ALL ON FUNCTION public.redistribute_assignment(uuid, timestamptz), public.accept_assignment(uuid, uuid, boolean), public.flag_sla_alerts(),
   public.record_human_message(uuid, uuid, timestamptz, uuid, text), public.manual_assign(uuid, uuid, uuid, uuid, timestamptz) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.redistribute_assignment(uuid, timestamptz), public.accept_assignment(uuid, uuid, boolean),
+GRANT EXECUTE ON FUNCTION public.redistribute_assignment(uuid, timestamptz), public.accept_assignment(uuid, uuid, boolean), public.flag_sla_alerts(),
   public.record_human_message(uuid, uuid, timestamptz, uuid, text), public.manual_assign(uuid, uuid, uuid, uuid, timestamptz) TO service_role;
 ```
 
@@ -1627,6 +1744,152 @@ git commit -m "feat(distribution): SLA redistribution, acceptance, human-message
 
 ---
 
+### Task 5A: Modo sombra (shadow): decide e registra, sem alterar nada
+
+**Files:**
+- Create: `supabase/migrations/20261007120300_lead_distribution_shadow.sql`
+- Create: `packages/database/src/sql/lead-distribution-shadow.test.ts`
+- Modify: `packages/database/src/sql/harness.ts` (incluir a migration nova na lista padrão de `createTestDb`)
+- Modify: `packages/shared/src/types/organization.ts` (chave `lead_distribution_shadow_enabled?: boolean;`)
+
+**Interfaces:**
+- Consumes: `_lead_decide` (Task 4), `lead_distribution_shadow_log` e `shadow_last_rotation_order` (Task 3).
+- Produces (SQL): `public.distribute_lead_shadow(p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamptz, p_context jsonb DEFAULT '{}') RETURNS uuid` (id do registro em `lead_distribution_shadow_log`; `NULL` se o modo sombra estiver desligado ou a distribuição real estiver ligada). **Nunca** escreve em `lead_assignments`, `conversations`, `opportunities`, `tasks` nem em `last_rotation_order`/`sales_reps.last_assigned_at`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// packages/database/src/sql/lead-distribution-shadow.test.ts
+import { beforeEach, describe, expect, it } from "vitest";
+import { createTestDb, inMinutes, seedHandoff, seedOrg, seedRep } from "./harness.js";
+
+let db: Awaited<ReturnType<typeof createTestDb>>;
+beforeEach(async () => { db = await createTestDb(); });
+
+const shadow = async (org: string, h: { conversationId: string; handoffId: string }) =>
+  (await db.query<{ id: string | null }>("select public.distribute_lead_shadow($1,$2,$3,$4,'{}'::jsonb) as id", [org, h.conversationId, h.handoffId, inMinutes(15)])).rows[0].id;
+const log = async (id: string) => (await db.query<any>("select * from public.lead_distribution_shadow_log where id=$1", [id])).rows[0];
+const SHADOW = { lead_distribution_shadow_enabled: true };
+
+describe("distribute_lead_shadow", () => {
+  it("registra quem receberia, alternando Marina → Márcio → Marina, sem alterar nada real", async () => {
+    const org = await seedOrg(db, SHADOW); await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const names: string[] = [];
+    const handoffs = [];
+    for (let i = 0; i < 3; i++) { const h = await seedHandoff(db, org); handoffs.push(h); names.push((await log((await shadow(org, h))!)).would_rep_name); }
+    expect(names).toEqual(["Marina", "Márcio", "Marina"]);
+    // nada real foi tocado
+    expect((await db.query<any>("select count(*)::int as n from public.lead_assignments")).rows[0].n).toBe(0);
+    expect((await db.query<any>("select count(*)::int as n from public.conversations where assigned_to is not null")).rows[0].n).toBe(0);
+    const st = (await db.query<any>("select last_rotation_order, shadow_last_rotation_order from public.lead_distribution_state")).rows[0];
+    expect(st).toEqual({ last_rotation_order: 0, shadow_last_rotation_order: 1 });
+    expect((await db.query<any>("select count(*)::int as n from public.sales_reps where last_assigned_at is not null")).rows[0].n).toBe(0);
+  });
+
+  it("não toca conversa, negócio nem tarefas", async () => {
+    const org = await seedOrg(db, SHADOW); await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org);
+    const opp = (await db.query<any>("insert into public.opportunities(organization_id,contact_id) values ($1,$2) returning id", [org, h.contactId])).rows[0].id;
+    await db.query("insert into public.tasks(organization_id,contact_id,status) values ($1,$2,'pending')", [org, h.contactId]);
+    await shadow(org, h);
+    expect((await db.query<any>("select owner_id, owner_assigned_at from public.opportunities where id=$1", [opp])).rows[0]).toEqual({ owner_id: null, owner_assigned_at: null });
+    expect((await db.query<any>("select assignee_id from public.tasks")).rows[0].assignee_id).toBeNull();
+    expect((await db.query<any>("select assigned_to, assigned_at from public.conversations where id=$1", [h.conversationId])).rows[0]).toEqual({ assigned_to: null, assigned_at: null });
+  });
+
+  it("usa a mesma decisão da real: dono existente, pausado, exceção e prazo registrado", async () => {
+    const org = await seedOrg(db, SHADOW); await seedRep(db, org, "Marina", 1, "paused"); const marcio = await seedRep(db, org, "Márcio", 2);
+    const owned = await seedHandoff(db, org);
+    await db.query("insert into public.opportunities(organization_id,contact_id,owner_id) values ($1,$2,$3)", [org, owned.contactId, marcio.userId]);
+    expect(await log((await shadow(org, owned))!)).toMatchObject({ would_rep_name: "Márcio", reason: "existing_owner", sla_action: "alert" });
+    expect(await log((await shadow(org, await seedHandoff(db, org)))!)).toMatchObject({ would_rep_name: "Márcio", reason: "round_robin", sla_action: "redistribute", pointer_before: 0, pointer_after: 2 });
+    await db.query("update public.sales_reps set availability='paused'");
+    expect(await log((await shadow(org, await seedHandoff(db, org)))!)).toMatchObject({ would_rep_id: null, reason: "exception", exception_reason: "no_available_rep" });
+    expect((await log((await shadow(org, await seedHandoff(db, org)))!)).sla_due_at).not.toBeNull();
+  });
+
+  it("é idempotente por handoff", async () => {
+    const org = await seedOrg(db, SHADOW); await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    expect(await shadow(org, h)).toBe(await shadow(org, h));
+    expect((await db.query<any>("select shadow_last_rotation_order from public.lead_distribution_state")).rows[0].shadow_last_rotation_order).toBe(1);
+  });
+
+  it("não faz nada com o modo sombra desligado nem com a distribuição real ligada", async () => {
+    const off = await seedOrg(db, {}); await seedRep(db, off, "Marina", 1);
+    expect(await shadow(off, await seedHandoff(db, off))).toBeNull();
+    const live = await seedOrg(db, { lead_distribution_enabled: true, lead_distribution_shadow_enabled: true }); await seedRep(db, live, "Marina", 1);
+    expect(await shadow(live, await seedHandoff(db, live))).toBeNull();
+    expect((await db.query<any>("select count(*)::int as n from public.lead_distribution_shadow_log")).rows[0].n).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pnpm --filter @aula-agente/database exec vitest run src/sql/lead-distribution-shadow.test.ts`
+Expected: FAIL (função inexistente).
+
+- [ ] **Step 3: Write the migration and wire the harness**
+
+```sql
+-- supabase/migrations/20261007120300_lead_distribution_shadow.sql
+-- Modo sombra: decide como a distribuição real decidiria, registra, e não altera nada real.
+CREATE FUNCTION public.distribute_lead_shadow(p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamptz, p_context jsonb DEFAULT '{}'::jsonb)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE s jsonb; h public.handoff_events; c public.conversations; st public.lead_distribution_state; existing uuid; d record;
+        rep public.sales_reps; lookback integer; before integer; after integer; new_id uuid;
+BEGIN
+  SELECT settings INTO s FROM public.organizations WHERE id = p_organization_id;
+  IF s IS NULL OR s->>'lead_distribution_shadow_enabled' IS DISTINCT FROM 'true' OR s->>'lead_distribution_enabled' = 'true' THEN RETURN NULL; END IF;
+  SELECT * INTO h FROM public.handoff_events WHERE id = p_handoff_event_id AND organization_id = p_organization_id AND conversation_id = p_conversation_id;
+  IF h.id IS NULL THEN RAISE EXCEPTION 'Handoff inexistente para esta conversa'; END IF;
+
+  INSERT INTO public.lead_distribution_state (organization_id) VALUES (p_organization_id) ON CONFLICT DO NOTHING;
+  SELECT * INTO st FROM public.lead_distribution_state WHERE organization_id = p_organization_id FOR UPDATE;
+  SELECT id INTO existing FROM public.lead_distribution_shadow_log WHERE handoff_event_id = p_handoff_event_id;
+  IF existing IS NOT NULL THEN RETURN existing; END IF;
+
+  SELECT * INTO c FROM public.conversations WHERE id = p_conversation_id AND organization_id = p_organization_id;
+  lookback := COALESCE(NULLIF(s->>'owner_lookback_days', '')::integer, 30);
+  before := st.shadow_last_rotation_order; after := before;
+  SELECT * INTO d FROM public._lead_decide(p_organization_id, c.id, c.contact_id, before, lookback);
+  IF d.rep_id IS NOT NULL THEN
+    SELECT * INTO rep FROM public.sales_reps WHERE id = d.rep_id;
+    IF d.reason = 'round_robin' THEN
+      after := rep.rotation_order;
+      UPDATE public.lead_distribution_state SET shadow_last_rotation_order = after, updated_at = now() WHERE organization_id = p_organization_id;
+    END IF;
+  END IF;
+
+  INSERT INTO public.lead_distribution_shadow_log (organization_id, handoff_event_id, conversation_id, contact_id, would_rep_id, would_rep_name, reason, exception_reason,
+                                                   pointer_before, pointer_after, sla_due_at, sla_action, handed_at, context)
+  VALUES (p_organization_id, p_handoff_event_id, c.id, c.contact_id, d.rep_id, rep.display_name, d.reason, d.exception_reason, before, after, p_sla_due_at,
+          CASE WHEN d.rep_id IS NULL THEN NULL WHEN d.reason = 'existing_owner' THEN 'alert' ELSE 'redistribute' END, h.handed_at, COALESCE(p_context, '{}'::jsonb))
+  RETURNING id INTO new_id;
+  RETURN new_id;
+END $$;
+
+REVOKE ALL ON FUNCTION public.distribute_lead_shadow(uuid, uuid, uuid, timestamptz, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.distribute_lead_shadow(uuid, uuid, uuid, timestamptz, jsonb) TO service_role;
+```
+
+Em `harness.ts`, acrescente `"20261007120300_lead_distribution_shadow.sql"` ao fim da lista padrão de `createTestDb`. Em `organization.ts`, junto das demais chaves de distribuição, adicione `lead_distribution_shadow_enabled?: boolean;`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pnpm --filter @aula-agente/database exec vitest run src/sql && pnpm --filter @aula-agente/shared exec tsc --noEmit`
+Expected: PASS em todos os arquivos de SQL.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add supabase/migrations/20261007120300_lead_distribution_shadow.sql packages/database/src/sql packages/shared/src/types/organization.ts
+git commit -m "feat(distribution): shadow mode that decides and logs without changing anything"
+```
+
+---
+
 ### Task 6: Camada de acesso a dados em TypeScript
 
 **Files:**
@@ -1638,8 +1901,10 @@ git commit -m "feat(distribution): SLA redistribution, acceptance, human-message
 - Consumes: RPCs das Tasks 4/5; `resolveBusinessCalendar`, `addBusinessMinutes`, `DEFAULT_LEAD_SLA_MINUTES` da Task 1/2; `getOrganizationById` (já existe em `./organizations.js`).
 - Produces (todas recebem `db: SupabaseClient` primeiro):
   - `computeSlaDueAt(settings: OrganizationSettings, from: Date): Date` (nunca lança: calendário inválido cai no padrão)
-  - `distributeLeadForHandoff(db, p: {organizationId: string; conversationId: string; handoffEventId: string; context?: DistributionContext; now?: Date}): Promise<string | null>`
-  - `listExpiredAssignments(db, limit?: number): Promise<Array<{id: string; organization_id: string}>>`
+  - `distributeLeadForHandoff(db, p: {organizationId: string; conversationId: string; handoffEventId: string; context?: DistributionContext; now?: Date}): Promise<string | null>` (real quando `lead_distribution_enabled`; senão, se `lead_distribution_shadow_enabled`, chama `distribute_lead_shadow`; senão `null`)
+  - `listExpiredAssignments(db, limit?: number): Promise<Array<{id: string; organization_id: string}>>` (só `sla_action = 'redistribute'`)
+  - `flagSlaAlerts(db): Promise<number>`
+  - `listSlaAlerts(db, orgId): Promise<LeadAssignment[]>` (pendentes, `sla_action = 'alert'` e `sla_breached`)
   - `redistributeAssignment(db, id: string, newSlaDueAt: Date): Promise<string | null>`
   - `acceptAssignment(db, p: {assignmentId: string; actorUserId: string; actorIsAdmin: boolean}): Promise<boolean>`
   - `recordHumanMessage(db, p: {organizationId: string; conversationId: string; at: Date; authorUserId: string | null; via: "panel" | "phone_echo"}): Promise<string | null>`
@@ -1683,7 +1948,21 @@ describe("computeSlaDueAt", () => {
 });
 
 describe("distributeLeadForHandoff", () => {
-  it("não chama o banco com a flag desligada", async () => {
+  it("modo sombra: chama distribute_lead_shadow quando só a sombra está ligada", async () => {
+    vi.mocked(getOrganizationById).mockResolvedValue({ settings: { lead_distribution_shadow_enabled: true } } as any);
+    const { db, rpc } = rpcDb("shadow-1");
+    const id = await distributeLeadForHandoff(db, { organizationId: "o", conversationId: "c", handoffEventId: "h", now: new Date("2026-10-05T12:00:00Z") });
+    expect(id).toBe("shadow-1");
+    expect(rpc).toHaveBeenCalledWith("distribute_lead_shadow", expect.objectContaining({ p_handoff_event_id: "h", p_sla_due_at: "2026-10-05T12:15:00.000Z" }));
+  });
+  it("com a real ligada, ignora a sombra", async () => {
+    vi.mocked(getOrganizationById).mockResolvedValue({ settings: { lead_distribution_enabled: true, lead_distribution_shadow_enabled: true } } as any);
+    const { db, rpc } = rpcDb("real-1");
+    await distributeLeadForHandoff(db, { organizationId: "o", conversationId: "c", handoffEventId: "h" });
+    expect(rpc).toHaveBeenCalledWith("distribute_lead", expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith("distribute_lead_shadow", expect.anything());
+  });
+  it("não chama o banco com tudo desligado", async () => {
     vi.mocked(getOrganizationById).mockResolvedValue({ settings: {} } as any);
     const { db, rpc } = rpcDb();
     expect(await distributeLeadForHandoff(db, { organizationId: "o", conversationId: "c", handoffEventId: "h" })).toBeNull();
@@ -1751,9 +2030,11 @@ export async function distributeLeadForHandoff(
   p: { organizationId: string; conversationId: string; handoffEventId: string; context?: DistributionContext; now?: Date }
 ): Promise<string | null> {
   const org = await getOrganizationById(db, p.organizationId);
-  if (org.settings.lead_distribution_enabled !== true) return null;
+  const live = org.settings.lead_distribution_enabled === true;
+  if (!live && org.settings.lead_distribution_shadow_enabled !== true) return null;
   const due = computeSlaDueAt(org.settings, p.now ?? new Date());
-  const { data, error } = await db.rpc("distribute_lead", {
+  // Modo sombra decide e registra (lead_distribution_shadow_log) sem alterar nada real.
+  const { data, error } = await db.rpc(live ? "distribute_lead" : "distribute_lead_shadow", {
     p_organization_id: p.organizationId, p_conversation_id: p.conversationId, p_handoff_event_id: p.handoffEventId,
     p_sla_due_at: due.toISOString(), p_context: p.context ?? {},
   });
@@ -1763,9 +2044,22 @@ export async function distributeLeadForHandoff(
 
 export async function listExpiredAssignments(db: SupabaseClient, limit = 50) {
   const { data, error } = await db.from("lead_assignments").select("id, organization_id")
-    .eq("status", "pending").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
+    .eq("status", "pending").eq("sla_action", "redistribute").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
   if (error) throw error;
   return (data ?? []) as Array<{ id: string; organization_id: string }>;
+}
+
+export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
+  const { data, error } = await db.rpc("flag_sla_alerts");
+  if (error) throw error;
+  return typeof data === "number" ? data : 0;
+}
+
+export async function listSlaAlerts(db: SupabaseClient, organizationId: string): Promise<LeadAssignment[]> {
+  const { data, error } = await db.from("lead_assignments").select("*").eq("organization_id", organizationId)
+    .eq("status", "pending").eq("sla_action", "alert").eq("sla_breached", true).order("sla_due_at");
+  if (error) throw error;
+  return (data ?? []) as LeadAssignment[];
 }
 
 export async function redistributeAssignment(db: SupabaseClient, id: string, newSlaDueAt: Date): Promise<string | null> {
@@ -1980,8 +2274,8 @@ git commit -m "feat(distribution): distribute lead after requestHuman handoff, n
 - Modify: `apps/worker/src/index.ts` (registrar o worker)
 
 **Interfaces:**
-- Consumes: `listExpiredAssignments`, `redistributeAssignment`, `computeSlaDueAt` (Task 6); `getOrganizationById`.
-- Produces: `runLeadSlaSweep(db, now?: Date): Promise<{checked: number; redistributed: number; exceptions: number}>`; `startLeadSlaWorker()`.
+- Consumes: `listExpiredAssignments`, `redistributeAssignment`, `flagSlaAlerts`, `computeSlaDueAt` (Task 6); `getOrganizationById`.
+- Produces: `runLeadSlaSweep(db, now?: Date): Promise<{checked: number; redistributed: number; alerted: number}>` (redistribui só `sla_action = 'redistribute'` e sinaliza alertas dos demais); `startLeadSlaWorker()`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1989,7 +2283,7 @@ git commit -m "feat(distribution): distribute lead after requestHuman handoff, n
 // apps/worker/src/workers/lead-sla.test.ts
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
-  listExpiredAssignments: vi.fn(), redistributeAssignment: vi.fn(), getOrganizationById: vi.fn(),
+  listExpiredAssignments: vi.fn(), redistributeAssignment: vi.fn(), getOrganizationById: vi.fn(), flagSlaAlerts: vi.fn(),
   computeSlaDueAt: vi.fn((_s: unknown, from: Date) => new Date(from.getTime() + 15 * 60_000)),
 }));
 vi.mock("@aula-agente/database", () => m);
@@ -2001,12 +2295,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } });
   m.redistributeAssignment.mockResolvedValue("new-id");
+  m.flagSlaAlerts.mockResolvedValue(0);
 });
 
 describe("runLeadSlaSweep", () => {
   it("não faz nada quando não há atribuições vencidas", async () => {
     m.listExpiredAssignments.mockResolvedValue([]);
-    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, exceptions: 0 });
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 0 });
     expect(m.redistributeAssignment).not.toHaveBeenCalled();
   });
 
@@ -2029,6 +2324,21 @@ describe("runLeadSlaSweep", () => {
     m.listExpiredAssignments.mockResolvedValue([{ id: "a1", organization_id: "o" }]);
     m.redistributeAssignment.mockResolvedValue(null);
     expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ redistributed: 0 });
+  });
+
+  it("sinaliza os alertas de dono existente sem redistribuir ninguém", async () => {
+    m.listExpiredAssignments.mockResolvedValue([]);
+    m.flagSlaAlerts.mockResolvedValue(2);
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 2 });
+    expect(m.redistributeAssignment).not.toHaveBeenCalled();
+  });
+
+  it("um erro nos alertas não impede a redistribuição", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.flagSlaAlerts.mockRejectedValue(new Error("db"));
+    m.listExpiredAssignments.mockResolvedValue([{ id: "a1", organization_id: "o" }]);
+    expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ redistributed: 1, alerted: 0 });
+    log.mockRestore();
   });
 
   it("um erro em uma atribuição não impede as seguintes", async () => {
@@ -2066,7 +2376,7 @@ import { Worker } from "bullmq";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES, type OrganizationSettings } from "@aula-agente/shared";
 import { getLeadSlaQueue, getRedisConnection } from "@aula-agente/queue";
-import { computeSlaDueAt, getAdminClient, getOrganizationById, listExpiredAssignments, redistributeAssignment } from "@aula-agente/database";
+import { computeSlaDueAt, flagSlaAlerts, getAdminClient, getOrganizationById, listExpiredAssignments, redistributeAssignment } from "@aula-agente/database";
 
 const SWEEP_EVERY_MS = 60_000;
 
@@ -2075,6 +2385,9 @@ const SWEEP_EVERY_MS = 60_000;
  * se ela ainda estiver pendente e vencida, então dois workers (ou um reinício) nunca duplicam a redistribuição.
  */
 export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
+  // Dono existente e atribuição manual não são redistribuídos: só ganham o alerta de atraso.
+  let alerted = 0;
+  try { alerted = await flagSlaAlerts(db); } catch (err) { console.error("Lead SLA sweep: flagging alerts failed", err); }
   const expired = await listExpiredAssignments(db);
   const settingsByOrg = new Map<string, Partial<OrganizationSettings>>();
   let redistributed = 0;
@@ -2089,13 +2402,13 @@ export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
       console.error("Lead SLA sweep: redistribution failed", item.id, err);
     }
   }
-  return { checked: expired.length, redistributed, exceptions: 0 };
+  return { checked: expired.length, redistributed, alerted };
 }
 
 export function startLeadSlaWorker() {
   const worker = new Worker(QUEUE_NAMES.LEAD_SLA, async () => {
     const result = await runLeadSlaSweep(getAdminClient());
-    if (result.redistributed) console.log(`Lead SLA: ${result.redistributed} lead(s) redistribuído(s)`);
+    if (result.redistributed || result.alerted) console.log(`Lead SLA: ${result.redistributed} redistribuído(s), ${result.alerted} alerta(s) de atraso`);
   }, { connection: getRedisConnection(), concurrency: 1 });
   getLeadSlaQueue().upsertJobScheduler("lead-sla-scheduler", { every: SWEEP_EVERY_MS }, { name: "sweep-lead-sla" });
   worker.on("failed", (job, err) => console.error(`Lead SLA job ${job?.id} failed:`, err.message));
@@ -2281,6 +2594,7 @@ git commit -m "feat(distribution): first human message accepts the lead (panel a
     - `PATCH /organizations/:organizationId/sales-reps/:repId/availability` body `{availability}`; o vendedor muda só o próprio; gestor muda qualquer um
     - `POST /lead-assignments/:id/accept` → `{ accepted: boolean }`
     - `GET /organizations/:organizationId/lead-assignments/exceptions` (gestor) → `LeadAssignment[]`
+    - `GET /organizations/:organizationId/lead-assignments/sla-alerts` (gestor) → `LeadAssignment[]` (atrasos de resposta de clientes que já têm dono; sem redistribuição)
     - `POST /organizations/:organizationId/lead-assignments/manual` (gestor) body `{conversationId, repId}` → `{ assignmentId }`
     - `GET /organizations/:organizationId/contacts/:contactId/lead-assignments` → histórico (respeita visibilidade)
   - `enrichSalesWorkspace(...)` ganha o 5º parâmetro opcional `leadDistribution?: { enabled: boolean; viewer: LeadVisibility }`; cada card recebe `lead_assignment: { id, rep_id, rep_name, status, sla_due_at, assigned_at, accepted_at } | null`.
@@ -2322,7 +2636,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   getAdminClient: vi.fn(() => ({})), getOrganizationById: vi.fn(), getSalesRepByUser: vi.fn(), listSalesReps: vi.fn(),
   setRepAvailability: vi.fn(), acceptAssignment: vi.fn(), listOpenExceptions: vi.fn(), manualAssignLead: vi.fn(),
-  listAssignmentsForContact: vi.fn(), computeSlaDueAt: vi.fn(() => new Date("2026-10-05T12:15:00Z")),
+  listAssignmentsForContact: vi.fn(), listSlaAlerts: vi.fn(), computeSlaDueAt: vi.fn(() => new Date("2026-10-05T12:15:00Z")),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
@@ -2368,6 +2682,14 @@ describe("accept", () => {
     m.acceptAssignment.mockRejectedValue({ message: "Somente o vendedor atribuído (ou um admin) pode assumir o lead" });
     const res = await (await app("agent")).inject({ method: "POST", url: "/lead-assignments/11111111-1111-4111-8111-111111111111/accept?organizationId=org" });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("alertas de SLA (gestor)", () => {
+  it("só gestor lê os atrasos de carteira", async () => {
+    expect((await (await app("agent")).inject({ method: "GET", url: "/organizations/org/lead-assignments/sla-alerts" })).statusCode).toBe(403);
+    m.listSlaAlerts.mockResolvedValue([{ id: "s1" }]);
+    expect((await (await app("admin")).inject({ method: "GET", url: "/organizations/org/lead-assignments/sla-alerts" })).json()).toEqual([{ id: "s1" }]);
   });
 });
 
@@ -2446,7 +2768,7 @@ import { z } from "zod";
 import { SALES_REP_AVAILABILITIES } from "@aula-agente/shared";
 import {
   acceptAssignment, computeSlaDueAt, getAdminClient, getOrganizationById, getSalesRepByUser, listAssignmentsForContact,
-  listOpenExceptions, listSalesReps, manualAssignLead, setRepAvailability,
+  listOpenExceptions, listSalesReps, listSlaAlerts, manualAssignLead, setRepAvailability,
 } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { isManager, resolveLeadVisibility } from "../../lib/lead-visibility.js";
@@ -2496,6 +2818,12 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
     const role = roleIn(request, request.params.organizationId);
     if (!role || !isManager(role)) return reply.status(403).send({ error: "Somente gestores veem a fila de exceções" });
     return listOpenExceptions(getAdminClient(), request.params.organizationId);
+  });
+
+  app.get<{ Params: { organizationId: string } }>("/organizations/:organizationId/lead-assignments/sla-alerts", async (request, reply) => {
+    const role = roleIn(request, request.params.organizationId);
+    if (!role || !isManager(role)) return reply.status(403).send({ error: "Somente gestores veem os alertas de SLA" });
+    return listSlaAlerts(getAdminClient(), request.params.organizationId);
   });
 
   app.post<{ Params: { organizationId: string } }>("/organizations/:organizationId/lead-assignments/manual", async (request, reply) => {
@@ -2552,7 +2880,7 @@ e, **no final**, antes de devolver o resultado (`return rows.map(...)`), guarde 
   if (!leadDistribution?.enabled) return enriched;
   const [reps, active] = await Promise.all([
     readAll(() => db.from("sales_reps").select("id,user_id,display_name").eq("organization_id", organizationId).order("id")),
-    readAll(() => db.from("lead_assignments").select("id,contact_id,rep_id,status,sla_due_at,assigned_at,accepted_at").eq("organization_id", organizationId).in("status", ["pending", "accepted"]).order("id")),
+    readAll(() => db.from("lead_assignments").select("id,contact_id,rep_id,status,sla_due_at,sla_action,sla_breached,assigned_at,accepted_at").eq("organization_id", organizationId).in("status", ["pending", "accepted"]).order("id")),
   ]);
   const repNames = new Map(reps.map((r: any) => [r.id, r.display_name]));
   const repUsers = new Set<string>(reps.map((r: any) => r.user_id));
@@ -2561,7 +2889,7 @@ e, **no final**, antes de devolver o resultado (`return rows.map(...)`), guarde 
     .filter((o: any) => isLeadVisible(leadDistribution.viewer, o.owner_id, repUsers))
     .map((o: any) => {
       const a: any = byContact.get(o.contact_id);
-      return { ...o, lead_assignment: a ? { id: a.id, rep_id: a.rep_id, rep_name: repNames.get(a.rep_id) ?? null, status: a.status, sla_due_at: a.sla_due_at, assigned_at: a.assigned_at, accepted_at: a.accepted_at } : null };
+      return { ...o, lead_assignment: a ? { id: a.id, rep_id: a.rep_id, rep_name: repNames.get(a.rep_id) ?? null, status: a.status, sla_due_at: a.sla_due_at, sla_action: a.sla_action, sla_breached: a.sla_breached, assigned_at: a.assigned_at, accepted_at: a.accepted_at } : null };
     });
 ```
 
@@ -2702,7 +3030,7 @@ import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
 import { describeSla } from "./format";
 
-export interface CardAssignment { id: string; rep_id: string | null; rep_name: string | null; status: "pending" | "accepted"; sla_due_at: string | null; assigned_at: string; accepted_at: string | null }
+export interface CardAssignment { id: string; rep_id: string | null; rep_name: string | null; status: "pending" | "accepted"; sla_due_at: string | null; sla_action: "redistribute" | "alert"; sla_breached: boolean; assigned_at: string; accepted_at: string | null }
 
 export function AssignmentBadge({ assignment, canAccept, onAccepted }: { assignment: CardAssignment; canAccept: boolean; onAccepted: () => void }) {
   const { currentOrg } = useOrganization();
@@ -2723,7 +3051,9 @@ export function AssignmentBadge({ assignment, canAccept, onAccepted }: { assignm
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-2 py-1 text-xs">
       <span className="font-medium">{assignment.rep_name ?? "Sem vendedor"}</span>
       {assignment.status === "accepted" && <span className="text-muted-foreground">assumido</span>}
-      {sla && <span className={sla.overdue ? "text-destructive" : "text-muted-foreground"}>Prazo: {sla.label}</span>}
+      {sla && (assignment.sla_action === "alert"
+        ? <span className={sla.overdue ? "text-destructive" : "text-muted-foreground"}>{sla.overdue ? `Atraso de resposta · ${sla.label}` : `Responder em ${sla.label}`} (cliente da carteira)</span>
+        : <span className={sla.overdue ? "text-destructive" : "text-muted-foreground"}>Prazo: {sla.label}</span>)}
       {assignment.status === "pending" && canAccept && <Button size="sm" disabled={busy} onClick={accept}>Assumir lead</Button>}
       {error && <span role="alert" className="text-destructive">{error}</span>}
     </div>
@@ -2739,7 +3069,7 @@ import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import type { LeadAssignment, SalesRep } from "@aula-agente/shared";
 
-const REASONS: Record<string, string> = { round_robin: "Rodízio", existing_owner: "Já tinha vendedor", sla_redistribution: "SLA estourado", manual: "Reatribuição manual", bulk_reassignment: "Reatribuição em lote", exception: "Exceção" };
+const REASONS: Record<string, string> = { round_robin: "Rodízio", existing_owner: "Já tinha vendedor (cliente da carteira)", sla_redistribution: "SLA estourado", manual: "Reatribuição manual", bulk_reassignment: "Reatribuição em lote", exception: "Exceção" };
 const when = (v: string | null) => v ? new Date(v).toLocaleString("pt-BR") : "—";
 
 export function AssignmentHistory({ contactId }: { contactId: string }) {
@@ -2787,6 +3117,7 @@ const REASONS: Record<string, string> = {
 export function ExceptionsPanel() {
   const { currentOrg } = useOrganization();
   const [items, setItems] = useState<LeadAssignment[] | null>(null);
+  const [alerts, setAlerts] = useState<LeadAssignment[]>([]);
   const [reps, setReps] = useState<SalesRep[]>([]);
   const [target, setTarget] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -2794,8 +3125,12 @@ export function ExceptionsPanel() {
   const load = useCallback(async () => {
     if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) return;
     try {
-      const [ex, r] = await Promise.all([apiFetch(`/organizations/${currentOrg.id}/lead-assignments/exceptions`), apiFetch(`/organizations/${currentOrg.id}/sales-reps`)]);
-      setItems(ex); setReps(r);
+      const [ex, al, r] = await Promise.all([
+        apiFetch(`/organizations/${currentOrg.id}/lead-assignments/exceptions`),
+        apiFetch(`/organizations/${currentOrg.id}/lead-assignments/sla-alerts`),
+        apiFetch(`/organizations/${currentOrg.id}/sales-reps`),
+      ]);
+      setItems(ex); setAlerts(al); setReps(r);
     } catch { setItems(null); }
   }, [currentOrg]);
   useEffect(() => { load(); const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
@@ -2822,6 +3157,13 @@ export function ExceptionsPanel() {
         </div>
       ))}
       {error && <p role="alert" className="mt-2 text-destructive">{error}</p>}
+      {alerts.length > 0 && (
+        <div className="mt-4 border-t pt-3" aria-label="Atrasos de resposta na carteira">
+          <h3 className="font-medium">Atrasos de resposta (clientes que já têm vendedor) <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{alerts.length}</span></h3>
+          <p className="text-xs text-muted-foreground">Estes clientes continuam com o mesmo vendedor; não há redistribuição automática.</p>
+          {alerts.map(a => <p key={a.id} className="mt-1">{reps.find(r => r.id === a.rep_id)?.display_name ?? "—"} · prazo vencido em {new Date(a.sla_due_at ?? a.assigned_at).toLocaleString("pt-BR")}</p>)}
+        </div>
+      )}
     </section>
   );
 }
@@ -2833,7 +3175,7 @@ export function ExceptionsPanel() {
 2. **Detalhe do lead** (`opportunity-detail-dialog.tsx`): dentro da coluna direita, depois da seção "Histórico", adicione `<AssignmentHistory contactId={opportunity.contact_id} />`.
 3. **Página do funil** (`opportunities/page.tsx`): renderize `<ExceptionsPanel />` logo acima do `<section aria-label="Busca e filtros do funil">`.
 4. **Seletor de disponibilidade**: em `user-nav.tsx` (ou no cabeçalho do `app-sidebar.tsx`, onde já existe `user`), renderize `<AvailabilitySelect userId={user.id} />`.
-5. **Configurações → Distribuição** (`settings/page.tsx`): ao lado dos outros interruptores do funil, adicione um card com (a) o interruptor `lead_distribution_enabled`, que ao **ligar** grava também `lead_distribution_activated_at: new Date().toISOString()` (mesmo padrão de `sales_low_intent_cadence_started_at` na função `toggleWorkspace`); (b) campo numérico `lead_sla_minutes` (padrão 15, mínimo 5, máximo 240); (c) lista de vendedores (via `GET .../sales-reps`) com o estado de cada um editável pelo gestor; (d) texto: "O calendário comercial padrão é segunda a sexta, 08:00–18:00. Para atender aos sábados, configure `business_calendar` (janela de sábado)." — o editor do calendário fica fora desta fase; o valor padrão é aplicado.
+5. **Configurações → Distribuição** (`settings/page.tsx`): ao lado dos outros interruptores do funil, adicione um card com (a0) o interruptor **"Modo de teste (simulação)"** `lead_distribution_shadow_enabled`, com o texto "Calcula quem receberia cada lead e registra, sem alterar nada. Use antes de ativar."; (a) o interruptor `lead_distribution_enabled`, que ao **ligar** grava também `lead_distribution_activated_at: new Date().toISOString()` (mesmo padrão de `sales_low_intent_cadence_started_at` na função `toggleWorkspace`); (b) campo numérico `lead_sla_minutes` (padrão 15, mínimo 5, máximo 240); (c) lista de vendedores (via `GET .../sales-reps`) com o estado de cada um editável pelo gestor; (d) texto: "O calendário comercial padrão é segunda a sexta, 08:00–18:00. Para atender aos sábados, configure `business_calendar` (janela de sábado)." — o editor do calendário fica fora desta fase; o valor padrão é aplicado.
 6. **Filtro "Minhas"** (tarefas e inbox): em `tasks/page.tsx` e `inbox/page.tsx`, quando `currentOrg.settings.lead_distribution_enabled === true` e o papel do usuário for `agent`, aplique por padrão o filtro "Minhas" (responsável = usuário, ou sem responsável de vendedor), como o inbox já faz com `assigned_to === userId` (linhas 103-107). Deixe o comentário `// Fase 1: filtro de tela; isolamento forte é a fase 2 (RLS)` no ponto.
 
 - [ ] **Step 4: Verify**
@@ -2862,7 +3204,7 @@ git commit -m "feat(distribution): SLA badge, accept button, history, exceptions
 
 Spec: docs/superpowers/specs/2026-10-07-lead-distribution-design.md
 
-## Antes de ligar
+## Antes de ligar (modo sombra e depois a distribuição real)
 1. Migrations aplicadas (`supabase migration list` deve mostrar as três de 20261007 como aplicadas). Só aplicar com autorização: `supabase db push`.
 2. Deploy de API, worker e web concluído e saudável. O log do worker mostra "Lead-sla worker started (runs every 60 s)".
 3. A flag `lead_distribution_enabled` está ausente/false: nada mudou para os usuários.
@@ -2872,14 +3214,29 @@ Spec: docs/superpowers/specs/2026-10-07-lead-distribution-design.md
      ('<org>', '<user_marina>', 'Marina', 1), ('<org>', '<user_marcio>', 'Márcio', 2);
 6. Conferir o calendário comercial (padrão segunda a sexta 08:00–18:00). Se houver atendimento aos sábados, gravar `settings.business_calendar` com uma janela de sábado (ex.: 08:00–12:00).
 
+## Modo sombra (obrigatório antes de ligar)
+1. Configurações → Distribuição → ligar **"Modo de teste (simulação)"** (`lead_distribution_shadow_enabled`). Nada real muda: cada handoff novo só gera uma linha em `lead_distribution_shadow_log` com quem receberia e por quê.
+2. Deixe rodar com handoffs reais por alguns dias (mínimo sugerido: 20 handoffs ou 2 dias úteis).
+3. Valide com as consultas abaixo. Critérios para ligar a distribuição real:
+   - **Alternância:** entre os `round_robin`, Marina e Márcio ficam dentro de ±1 um do outro.
+   - **Dono existente:** os `existing_owner` apontam o vendedor que de fato já atende aquele cliente; nenhum cliente da Marina aparece indo ao Márcio.
+   - **Calendário e prazo:** `sla_due_at` nunca cai de madrugada, no domingo, em feriado ou período fechado. Um handoff às 17:50 de sexta aparece com prazo na segunda de manhã.
+   - **Exceções:** só aparecem `no_available_rep` quando de fato não havia vendedor disponível; nenhum `invalid_existing_owner` ou `manual_review` inesperado (investigar cada um).
+4. Limitação do modo sombra: como ele não grava dono, o segundo handoff do mesmo cliente durante a simulação aparece como `round_robin`. Isso é esperado.
+5. Consultas:
+   - Quem receberia: `select would_rep_name, reason, exception_reason, sla_action, sla_due_at, handed_at from lead_distribution_shadow_log order by created_at desc;`
+   - Alternância: `select would_rep_name, count(*) from lead_distribution_shadow_log where reason='round_robin' group by 1;`
+   - Exceções: `select exception_reason, count(*) from lead_distribution_shadow_log where reason='exception' group by 1;`
+6. Se algo falhar, desligar o modo sombra, corrigir e repetir. Sem a validação aprovada **não ligar** `lead_distribution_enabled`.
+
 ## Ligar
-Configurações → Distribuição → ligar. O sistema grava `lead_distribution_activated_at`; só handoffs a partir daí entram. A base existente NÃO é redistribuída.
+Desligue o modo sombra e ligue a distribuição em Configurações → Distribuição. O sistema grava `lead_distribution_activated_at`; só handoffs a partir daí entram. A base existente NÃO é redistribuída.
 
 ## Validar com handoffs reais (um de cada tipo)
 - Rodízio: dois handoffs seguidos vão a vendedores diferentes; o card mostra o vendedor e a contagem regressiva.
 - Assumir: o botão "Assumir lead" ou a primeira mensagem do vendedor registram `accepted_at`; a mensagem da Mariana NÃO assume.
-- SLA: um lead não assumido é redistribuído ao outro vendedor em até ~1 minuto depois do vencimento (dentro do horário comercial).
-- Dono existente: cliente que já é do Márcio volta para ele, sem andar o rodízio.
+- SLA (lead novo do rodízio): um lead não assumido é redistribuído ao outro vendedor em até ~1 minuto depois do vencimento (dentro do horário comercial). Para testar sem esperar 15 minutos, reduza `lead_sla_minutes` para 5 num teste controlado e volte para 15 depois.
+- Dono existente: cliente que já é do Márcio volta para ele, sem andar o rodízio. Se ele passar do prazo, o card mostra "Atraso de resposta" e o gestor vê o alerta, mas o cliente **continua com o Márcio** (não há redistribuição automática).
 - Exceção: com os dois pausados, o handoff aparece em "Leads sem responsável".
 - Pausar: um vendedor Pausado não recebe novos leads e mantém os atuais. Fora da distribuição não move nenhum lead.
 
@@ -2891,8 +3248,10 @@ Configurações → Distribuição → ligar. O sistema grava `lead_distribution
 ## Reversão
 Desligar `lead_distribution_enabled` em Configurações → Distribuição. O histórico permanece, os leads continuam com seus donos e o `requestHuman` volta a usar o responsável padrão de handoff. Nenhum dado é apagado.
 
-## Limites conhecidos (fase 1)
-- O isolamento por vendedor é da aplicação (API e telas), não do banco. Inbox, realtime e a página de tarefas leem direto do Supabase e só têm filtro de tela. Fase 2: RLS por vendedor, com spec própria.
+## Limites conhecidos e dívida técnica explícita (fase 1)
+- O isolamento por vendedor é da aplicação (API e telas), não do banco. Inbox, realtime e a página de tarefas leem direto do Supabase e só têm filtro de tela. Etapa futura própria: RLS por vendedor, com spec própria.
+- A visibilidade é a versão branda: o vendedor não vê o que pertence claramente ao outro vendedor; lead sem dono e carteira antiga continuam visíveis. A migração/saneamento da carteira antiga e o endurecimento do isolamento ficam para uma etapa específica.
+- `last_commercial_activity_at` só é atualizada por mensagem humana; mudança de etapa e tarefa concluída não atualizam (decisão da fase 1).
 - Reatribuição em lote da carteira não existe (ação administrativa futura e explícita).
 - Aviso de exceção é só painel e contador (sem e-mail ou push).
 ```
@@ -2945,10 +3304,13 @@ Depois abra o PR (descrição: o que muda, a flag desligada, as 3 migrations pen
 | §3 estados (`out` não move lead) | 5 (teste "marcar out não move"), nenhuma função de lote |
 | §9 telas | 11 |
 | §10 preparação futura | 2 (`pickRep` com contexto), 3 (colunas reservadas), 4 (`p_context`) |
+| §11A modo sombra | 5A, 6, 11, 12 |
+| §11B dívida técnica | 12 (runbook) e decisões 1 e 2 |
+| §6.3 SLA só redistribui lead novo; dono existente só alerta | 4, 5, 6, 8, 10, 11 |
 | §12 ativação/reversão | 12 |
 | §13 testes | em todas as tasks |
 
-Lacuna conhecida e declarada: `last_commercial_activity_at` é atualizada por **mensagem humana** (em `record_human_message`, Task 5, com teste). **Mudança de etapa e tarefa concluída pelo dono** também seriam atividade comercial relevante, mas tocam fluxos existentes (`opportunity.service`, `task.service`); ficam como follow-up explícito no PR da Task 12, não omitidos em silêncio.
+Decisão registrada: `last_commercial_activity_at` é atualizada **só por mensagem humana** (em `record_human_message`, Task 5, com teste). Mudança de etapa e tarefa concluída **não** atualizam, por decisão do usuário nesta fase (dívida registrada no runbook e na spec 11B).
 
 **2. Placeholder scan:** nenhum "TBD/TODO". Os pontos em que o plano manda localizar um trecho existente (linhas de `request-human.ts`, `message-send.service.ts`, `evolution.ts`, `opportunity-kanban.tsx`, `user-nav.tsx`) trazem o código exato a inserir e a âncora textual; só o encaixe visual (qual prop do kanban recarrega a lista) depende de ler o arquivo no momento.
 
