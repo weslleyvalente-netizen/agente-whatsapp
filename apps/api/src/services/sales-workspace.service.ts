@@ -1,4 +1,5 @@
 import { getAdminClient } from "@aula-agente/database";
+import { isLeadVisible, type LeadVisibility } from "../lib/lead-visibility.js";
 import { isSubstantiveCustomerMessage, classifySalesCard, classifySalesQueue, sortSalesQueue, type Opportunity, type SalesCardState } from "@aula-agente/shared";
 
 // Every query is organization-scoped; pagination avoids PostgREST's default row cap.
@@ -11,7 +12,7 @@ async function readAll(query: () => any): Promise<any[]> {
   if (!data || data.length < 500) return rows;
  }
 }
-export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[], enabled: boolean): Promise<Array<T & {sales_state?: SalesCardState}>> {
+export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[], enabled: boolean, leadDistribution?: { enabled: boolean; viewer: LeadVisibility }): Promise<Array<T & {sales_state?: SalesCardState; lead_assignment?: unknown}>> {
  if (!enabled || !rows.length) return rows;
  const [conversations, handoffs, tasks, openBusinesses] = await Promise.all([
   readAll(() => db.from("conversations").select("id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)").eq("organization_id", organizationId).in("status", ["open", "waiting"]).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})),
@@ -30,11 +31,25 @@ export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType
   else if (t.contact_id) contactTaskCounts.set(t.contact_id,(contactTaskCounts.get(t.contact_id) ?? 0)+1);
  }
  const now = new Date().toISOString();
- return rows.map(o => {
+ const enriched = rows.map(o => {
   const c = latest.get(o.contact_id); const h = o.status === "open" ? pending.get(c?.id) ?? null : null;
   const contact = Array.isArray(c?.wa_contacts) ? c.wa_contacts[0] : c?.wa_contacts;
   return {...o,sales_state:{...classifySalesCard({openOpportunityCount:counts.get(o.contact_id) ?? 0,handoff:h,latestRole:c?.messages?.[0]?.role ?? null,latestMessageAt:c?.messages?.[0]?.created_at ?? null,latestContent:c?.messages?.[0]?.content ?? null,isHumanTakeover:c?.is_human_takeover,aiDisabled:contact?.ai_disabled,status:o.status,frozenUntil:o.frozen_until,taskCount:(taskCounts.get(o.id) ?? 0) + (contactTaskCounts.get(o.contact_id) ?? 0)},now),handoffSummary:h?.resumo ?? null,handedAt:h?.handed_at ?? null,tasks:tasks.filter(t=>t.opportunity_id===o.id || !t.opportunity_id && t.contact_id===o.contact_id).map(t=>({id:t.id,type:t.type,due_date:t.due_date,priority:t.priority,consolidated_pendencies:(t.consolidated_pendencies??[]).map((p:any)=>({type:p.type,due_date:p.due_date,priority:p.priority}))}))}};
  });
+ if (!leadDistribution?.enabled) return enriched;
+ const [reps, active] = await Promise.all([
+  readAll(() => db.from("sales_reps").select("id,user_id,display_name").eq("organization_id", organizationId).order("id")),
+  readAll(() => db.from("lead_assignments").select("id,contact_id,rep_id,status,sla_due_at,sla_action,sla_breached,assigned_at,accepted_at").eq("organization_id", organizationId).in("status", ["pending", "accepted"]).order("id")),
+ ]);
+ const repNames = new Map(reps.map((r: any) => [r.id, r.display_name]));
+ const repUsers = new Set<string>(reps.map((r: any) => r.user_id));
+ const byContact = new Map(active.map((a: any) => [a.contact_id, a]));
+ return enriched
+  .filter((o: any) => isLeadVisible(leadDistribution.viewer, o.owner_id, repUsers))
+  .map((o: any) => {
+   const a: any = byContact.get(o.contact_id);
+   return { ...o, lead_assignment: a ? { id: a.id, rep_id: a.rep_id, rep_name: repNames.get(a.rep_id) ?? null, status: a.status, sla_due_at: a.sla_due_at, sla_action: a.sla_action, sla_breached: a.sla_breached, assigned_at: a.assigned_at, accepted_at: a.accepted_at } : null };
+  });
 }
 
 /** Old tasks without an open business stay accessible without historical writes. */

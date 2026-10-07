@@ -100,3 +100,21 @@ it('does not flag a courtesy-only customer message as a reply to answer',async()
   expect(result[0].sales_state).toMatchObject({customerReplied:false});
  } finally {vi.useRealTimers()}
 });
+
+describe("lead distribution on cards", () => {
+  it("anexa a atribuição ativa e esconde o lead que pertence a outro vendedor", async () => {
+    const { db } = database({
+      conversations: [], handoff_events: [], tasks: [],
+      opportunities: [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01", owner_id: "marcio-user" }],
+      sales_reps: [{ id: "r1", user_id: "marina-user", display_name: "Marina" }, { id: "r2", user_id: "marcio-user", display_name: "Márcio" }],
+      lead_assignments: [{ id: "x", contact_id: "c", rep_id: "r2", status: "pending", sla_due_at: "2026-10-05T12:15:00Z", assigned_at: "2026-10-05T12:00:00Z", accepted_at: null }],
+    });
+    const rows = [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01", owner_id: "marcio-user" }];
+    const asManager = await enrichSalesWorkspace(db as any, "org", rows as any, true, { enabled: true, viewer: { mode: "all" } });
+    expect(asManager[0]).toMatchObject({ lead_assignment: { id: "x", rep_name: "Márcio", status: "pending" } });
+    const asMarina = await enrichSalesWorkspace(db as any, "org", rows as any, true, { enabled: true, viewer: { mode: "own", userId: "marina-user" } });
+    expect(asMarina).toEqual([]);
+    const off = await enrichSalesWorkspace(db as any, "org", rows as any, true);
+    expect(off).toHaveLength(1); // sem o parâmetro (flag desligada) nada muda
+  });
+});

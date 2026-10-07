@@ -27,6 +27,8 @@ import {
   updateOpportunityFields,
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
+import { resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { canViewLead } from "../../lib/lead-access.js";
 
 import { enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
@@ -42,7 +44,10 @@ export default async function opportunityRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const [rows, organization] = await Promise.all([getOpportunitiesByOrganization(db, organizationId, request.query), getOrganizationById(db, organizationId)]);
-      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true);
+      const leadDistributionEnabled = organization.settings.lead_distribution_enabled === true;
+      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled });
+      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true,
+        leadDistributionEnabled ? { enabled: true, viewer } : undefined);
     }
   );
 
@@ -91,7 +96,9 @@ export default async function opportunityRoutes(app: FastifyInstance) {
   app.get<{ Params: { opportunityId: string }; Querystring: { revealCpf?: string } }>("/opportunities/:opportunityId/details", async (request, reply) => {
     const db = getAdminClient();
     const opportunity = await getOpportunityById(db, request.params.opportunityId);
-    if (!request.user.memberships.some(m => m.organization_id === opportunity.organization_id)) return reply.status(403).send({ error: "Access denied" });
+    const detailMembership = request.user.memberships.find(m => m.organization_id === opportunity.organization_id);
+    if (!detailMembership) return reply.status(403).send({ error: "Access denied" });
+    if (!(await canViewLead(db, opportunity.organization_id, detailMembership.role, request.user.id, opportunity.owner_id))) return reply.status(403).send({ error: "Este lead pertence a outro vendedor" });
     const customer = await getContactById(db, opportunity.contact_id);
     if (customer.organization_id !== opportunity.organization_id) return reply.status(403).send({ error: "Access denied" });
     const { data: conversation, error } = await db.from("conversations").select("id,last_message_at,status").eq("organization_id", opportunity.organization_id).eq("contact_id", opportunity.contact_id).order("last_message_at", { ascending: false }).limit(1).maybeSingle();

@@ -7,6 +7,7 @@ import {
   getRecentMessages,
   getPendingHandoffs,
   getOrganizationById,
+  listSalesReps,
   getOpenTasksWithScoreInputs,
   getFollowupMetrics,
   type OpenTaskWithScoreInputs,
@@ -24,6 +25,7 @@ import {
   type TaskPriorityScoreWeights,
 } from "@aula-agente/shared";
 import { authMiddleware } from "../../middleware/auth.js";
+import { isLeadVisible, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 
 // Default size of the "Hoje" list; the rest waits in the reserve (org setting today_list_limit).
 const TODAY_LIST_LIMIT = 15;
@@ -331,7 +333,13 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         : DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS;
 
       const todayISODate = toISODateInTimeZone(new Date());
-      const ranked = buildTodayPriorityList(rows, unansweredHandoffConversationIds, todayISODate, weights, Number.POSITIVE_INFINITY);
+      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: org.settings.lead_distribution_enabled === true });
+      let visibleRows = rows;
+      if (viewer.mode === "own") {
+        const repUsers = new Set((await listSalesReps(db, organizationId)).map(r => r.user_id));
+        visibleRows = rows.filter(row => isLeadVisible(viewer, (row.opportunity as { owner_id?: string | null } | null)?.owner_id ?? row.task.assignee_id, repUsers));
+      }
+      const ranked = buildTodayPriorityList(visibleRows, unansweredHandoffConversationIds, todayISODate, weights, Number.POSITIVE_INFINITY);
 
       return splitTodayList(ranked, org.settings.today_list_limit ?? TODAY_LIST_LIMIT);
     }

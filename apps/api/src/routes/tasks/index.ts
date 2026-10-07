@@ -25,6 +25,7 @@ import {
   setFollowupSuggestion,
   incrementFollowupRegenerationCount,
 } from "@aula-agente/database";
+import { canViewLead } from "../../lib/lead-access.js";
 import { resolveApiKey, generateTaskFollowupSuggestion } from "@aula-agente/agent-runtime";
 import {
   completeTask,
@@ -74,6 +75,7 @@ export default async function taskRoutes(app: FastifyInstance) {
     const task = await getTaskById(db, request.params.taskId);
     const membership = request.user.memberships.find((m) => m.organization_id === task.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+    if (!(await canViewLead(db, task.organization_id, membership.role, request.user.id, task.assignee_id))) return reply.status(403).send({ error: "Este lead pertence a outro vendedor" });
 
     const conversation = task.conversation_id ? await getConversationById(db, task.conversation_id) : null;
     const qualification = task.conversation_id
