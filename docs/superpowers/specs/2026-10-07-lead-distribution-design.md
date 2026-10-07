@@ -1,6 +1,6 @@
 # Distribuição de leads entre vendedores (rodízio) — Design
 
-Data: 07/10/2026. Status: aguardando revisão. Vendedores: Marina e Márcio. Mariana é a IA que qualifica.
+Data: 07/10/2026. Status: **aprovada** em 07/10/2026 (com os ajustes da seção 11). Vendedores: Marina e Márcio. Mariana é a IA que qualifica.
 
 ## 1. Objetivo e escopo
 
@@ -41,11 +41,11 @@ Distribuir cada novo lead qualificado pela Mariana entre os vendedores ativos de
 
 | Estado | Recebe novos leads | Mantém clientes já atribuídos | Leads pendentes (ainda não assumidos) |
 |---|---|---|---|
-| `available` | sim | sim | seguem com ele |
+| `available` | sim | sim | seguem com ele até o SLA |
 | `paused` | **não** | **sim** | seguem com ele até o SLA |
-| `out` | **não** | podem ser redistribuídos | redistribuídos na hora (`rep_out`) |
+| `out` | **não** | sim, **sem redistribuição automática** | seguem com ele até o SLA |
 
-Ao marcar `out`, só os leads **pendentes** (sem aceite) são redistribuídos automaticamente. A carteira já assumida não é movida em massa: o próximo handoff de cada cliente passa pelo rodízio, e o gestor tem uma ação de reatribuição em lote. O vendedor muda o próprio estado; owner e admin mudam o de qualquer um.
+**Marcar um vendedor como `out` não move nenhum lead.** Nem a carteira assumida nem os pendentes são redistribuídos automaticamente: os pendentes seguem a regra normal do SLA (se não assumir no prazo, vão para o outro vendedor). A única consequência é que um cliente cujo responsável está `out` e que gere um **novo handoff** pode voltar ao rodízio (seção 5.2). A redistribuição em massa da carteira é uma **ação administrativa separada e explícita** do gestor, nunca um efeito colateral da mudança de estado. O vendedor muda o próprio estado; owner e admin mudam o de qualquer um.
 
 ## 4. Modelo de dados (migration única, atrás da flag)
 
@@ -66,10 +66,10 @@ Uma linha por organização. É a trava da atribuição atômica (`SELECT ... FO
 ### 4.3 `lead_assignments` (livro de histórico, só acrescenta)
 - Identidade: `id`, `organization_id`, `chain_id` (um por handoff; agrupa as tentativas), `handoff_event_id`.
 - Alvo: `contact_id`, `conversation_id`, `opportunity_id` (nulo), `rep_id` (nulo em exceção).
-- Atribuição: `reason` (`round_robin` | `existing_owner` | `sla_redistribution` | `rep_out` | `manual` | `exception`), `assigned_at`, `previous_assignment_id`, `next_assignment_id`.
+- Atribuição: `reason` (`round_robin` | `existing_owner` | `sla_redistribution` | `manual` | `bulk_reassignment` | `exception`), `assigned_at`, `previous_assignment_id`, `next_assignment_id`.
 - SLA: `sla_due_at`, `sla_breached` (booleano), `redistribution_reason`.
 - Marcos de tempo: `handoff_at`, `assigned_at`, `accepted_at`, `accepted_via` (`button` | `first_message` | `phone_echo`), `first_human_message_at`, `first_human_message_by`.
-- Estado: `status` (`pending` | `accepted` | `expired` | `redistributed` | `exception`). `expired` é a atribuição que **estourou o SLA** e foi substituída; `redistributed` é a que foi substituída por outro motivo (`rep_out` ou reatribuição do gestor); `exception` é a linha sem vendedor.
+- Estado: `status` (`pending` | `accepted` | `expired` | `redistributed` | `exception`). `expired` é a atribuição que **estourou o SLA** e foi substituída; `redistributed` é a que foi substituída por reatribuição do gestor (manual ou em lote); `exception` é a linha sem vendedor.
 - Exceção: `exception_reason`, `resolved_at`, `resolved_by`, `resolution`.
 - Contexto copiado no momento da atribuição, para análises futuras: `origin_source`, `operation`, `product_model`, `strategy_version`.
 
@@ -87,7 +87,7 @@ Uma linha por organização. É a trava da atribuição atômica (`SELECT ... FO
 ### 4.5 Configurações da organização
 - `lead_distribution_enabled` e `lead_distribution_activated_at`: só handoffs com `handed_at >= activated_at` entram.
 - `lead_sla_minutes` (padrão 15).
-- `owner_lookback_days` (padrão 30): janela do passo 3 da precedência de dono (seção 5.2).
+- `owner_lookback_days` (padrão 30, aprovado): janela do passo 3 da precedência de dono (seção 5.2). Atividade comercial relevante (mensagem humana do dono, mudança de etapa, tarefa concluída pelo dono) atualiza `opportunities.last_commercial_activity_at` e mantém a carteira dentro da janela.
 - `business_calendar` (seção 6.2).
 
 ## 5. Fluxo de atribuição
@@ -103,7 +103,7 @@ Quando há informação conflitante, vale a primeira regra que encontrar um **ve
 3. **Último responsável válido:** responsável da atribuição mais recente do contato, **apenas dentro de `owner_lookback_days`** e só se não for de um negócio fechado, ganho ou perdido há mais tempo que a janela. Negócios antigos não mantêm o cliente preso para sempre.
 
 Casos de borda:
-- Dono encontrado com estado `out`, ou usuário que já não é vendedor: ignorado, e o lead entra no rodízio.
+- Dono encontrado com estado `out`, ou usuário que já não é vendedor: ignorado **apenas para este novo handoff**, e o lead entra no rodízio. Nada é movido em massa.
 - Dois negócios abertos com donos diferentes: exceção `manual_review`.
 - Dono encontrado mas inválido de forma que não se resolve (por exemplo, vendedor removido da organização com negócio aberto): exceção `invalid_existing_owner`.
 - Quando o dono é reutilizado, o rodízio **não avança** (`reason = existing_owner`).
@@ -127,15 +127,24 @@ Cria uma linha `status = exception` com `exception_reason = no_available_rep`. O
 ### 6.1 Assumir
 - `POST /lead-assignments/:id/accept`: só o vendedor atribuído ou um admin.
 - Primeira mensagem humana enviada ao cliente (envio pelo painel) também assume.
-- Mensagem enviada pelo celular e recebida pelo eco do WhatsApp conta como primeira mensagem humana e assume em nome do vendedor atribuído (`phone_echo`). *Ponto aberto na seção 11.*
+- Mensagem enviada pelo celular (eco `fromMe` do WhatsApp) conta como primeira mensagem humana e assume em nome do vendedor atribuído (`phone_echo`), **somente quando a identificação for confiável** (ver 6.1.1).
 - O aceite grava `accepted_at` e `accepted_via` e para o relógio do SLA.
+
+#### 6.1.1 Identificação confiável de ação humana
+Só é "primeira mensagem humana" a mensagem que **não** tenha sido gerada pelo sistema. Não contam, e nunca assumem o lead nem preenchem `first_human_message_at`:
+- respostas da Mariana (role `agent`) e mensagens enviadas por qualquer worker (follow-ups automáticos, cadência de 1h/23h, despedidas, avisos de handoff);
+- templates e mídias automáticas (fotos de catálogo, áudios gerados);
+- ecos `fromMe` de mensagens que o próprio sistema acabou de enviar. O sistema já grava o id da Evolution (`evolution_message_id`) em toda mensagem enviada por ele, e o eco correspondente é descartado por esse id (comportamento existente de deduplicação de eco);
+- mensagens humanas de quem **não** é o vendedor atribuído (um admin, por exemplo, registra `first_human_message_by` mas só assume em nome do atribuído se for o painel dele; eco de celular não identifica autor e só assume quando a conversa tem o vendedor atribuído como único responsável).
+
+Critério técnico: a mensagem precisa ter `role = human_agent` e origem humana comprovada (envio pelo painel com usuário autenticado, ou eco `fromMe` sem `evolution_message_id` conhecido do sistema). Há testes específicos para cada exclusão acima (seção 13).
 
 ### 6.2 Calendário comercial
 O helper atual `isWithinBusinessHours` usa `America/Sao_Paulo`, mas considera **somente a hora do dia**: não conhece domingos, dias não úteis nem períodos fechados. Por isso a spec cria um calendário novo, sem alterar o helper dos follow-ups.
 
 `business_calendar` (configuração da organização):
 - `timeZone` (padrão `America/Sao_Paulo`).
-- `weekly`: janelas por dia da semana (padrão segunda a sexta, 08:00–18:00; domingo sempre fechado).
+- `weekly`: janelas por dia da semana, **totalmente configurável**. Padrão: segunda a sexta 08:00–18:00, sábado e domingo fechados. Se houver atendimento comercial aos sábados, configura-se uma janela própria (por exemplo 08:00–12:00); nada é fixo na lógica.
 - `closedDates`: datas fechadas (feriados) e `closedPeriods`: períodos fechados com motivo.
 
 Funções puras e testáveis em `packages/shared`:
@@ -208,12 +217,13 @@ Políticas de RLS por vendedor em `conversations`, `messages`, `tasks`, `opportu
 - Prioridade por origem: o `origin_source` já é gravado em cada atribuição; uma tabela de regras só será criada quando a regra existir.
 - Proteção e expiração de carteira: `owner_assigned_at`, `last_commercial_activity_at` e `assigned_at` já ficam gravados.
 
-## 11. Pontos abertos para confirmar
+## 11. Decisões finais sobre os pontos abertos
 
-1. **Sábado:** o calendário padrão é segunda a sexta, 08:00–18:00. Se vocês atendem aos sábados, basta configurar `weekly`.
-2. **Eco do celular:** mensagem enviada pelo celular assume o lead em nome do vendedor atribuído. Confirmar que é isso que se quer.
-3. **`owner_lookback_days`:** padrão de 30 dias para o passo 3 da precedência do dono.
-4. **Aviso de exceção:** na fase 1 é só painel e contador; e-mail ou push fica para depois.
+1. **Sábado:** calendário configurável; sábado fechado por padrão, com janela própria se houver atendimento.
+2. **Celular:** a primeira mensagem humana do vendedor atribuído assume e preenche `accepted_at`, desde que a identificação seja confiável (6.1.1), com testes específicos.
+3. **Janela do último responsável:** 30 dias; atividade comercial relevante atualiza `last_commercial_activity_at`.
+4. **Aviso de exceção:** painel e contador na fase 1; sem e-mail nem push.
+5. **`out`:** não redistribui nada automaticamente; só afasta o vendedor dos novos leads. Redistribuição em massa é ação administrativa separada.
 
 ## 12. Ativação e reversão
 
@@ -226,7 +236,8 @@ Políticas de RLS por vendedor em `conversations`, `messages`, `tasks`, `opportu
 ## 13. Testes
 
 - **Funções puras:** `pickRep` (alternância, pular pausado e fora, empate, ponteiro) e `addBusinessMinutes` / `isBusinessOpen` (madrugada, domingo, feriado, período fechado, início fora do expediente, calendário inválido).
-- **SQL em PGlite:** dois handoffs simultâneos recebem vendedores distintos; idempotência por `handoff_event_id`; precedência do dono (negócio aberto > conversa > último responsável dentro da janela; negócio antigo não prende); `out` devolve ao rodízio; histórico imutável (`DELETE` e campos protegidos rejeitados); índice `(chain_id, rep_id)` impede vai e volta; exceções com cada motivo; redistribuição por SLA mantém o ponteiro consistente.
+- **SQL em PGlite:** dois handoffs simultâneos recebem vendedores distintos; idempotência por `handoff_event_id`; precedência do dono (negócio aberto > conversa > último responsável dentro da janela; negócio antigo não prende); dono `out` em um novo handoff volta ao rodízio e **nenhum lead é movido** ao marcar `out`; histórico imutável (`DELETE` e campos protegidos rejeitados); índice `(chain_id, rep_id)` impede vai e volta; exceções com cada motivo; redistribuição por SLA mantém o ponteiro consistente.
+- **Identificação de ação humana (6.1.1):** resposta da Mariana, follow-up automático, cadência, despedida, template, mídia automática, eco de mensagem enviada pelo próprio sistema (mesmo `evolution_message_id`) e mensagem de outro humano **não** assumem o lead nem preenchem `first_human_message_at`; mensagem do painel pelo vendedor atribuído e eco de celular legítimo assumem.
 - **Worker:** a varredura processa vencidos, ignora não vencidos, é segura com dois workers e gera exceção quando ninguém é elegível.
 - **API:** vendedor só enxerga os próprios leads, gestor vê todos, aceite só pelo vendedor atribuído ou admin.
 - **Validação manual pós-deploy:** cartão com contagem regressiva, botão **Assumir lead**, histórico e painel de exceções.
@@ -237,6 +248,6 @@ Políticas de RLS por vendedor em `conversations`, `messages`, `tasks`, `opportu
 |---|---|
 | Isolamento só de aplicação | Registrado como limite; fase 2 de RLS com spec própria |
 | Calendário mal configurado empurra prazos | Limite de varredura e valores padrão válidos; teste de calendário inválido |
-| Eco do celular assume lead indevidamente | Ponto aberto 2; `accepted_via = phone_echo` permite auditar e ajustar |
+| Eco do celular assume lead indevidamente | Regra de origem humana comprovada (6.1.1), testes específicos e `accepted_via = phone_echo` para auditar |
 | Redistribuição inesperada | Só ocorre após SLA vencido; tudo registrado no histórico imutável |
 | Dois workers redistribuindo o mesmo lead | Trava de linha e conferência de estado dentro da função |
