@@ -1,0 +1,105 @@
+// packages/database/src/sql/lead-distribution-schema.test.ts
+import { beforeEach, describe, expect, it } from "vitest";
+import { createTestDb, inMinutes, seedHandoff, seedOrg, seedRep } from "./harness.js";
+
+let db: Awaited<ReturnType<typeof createTestDb>>;
+beforeEach(async () => { db = await createTestDb(["20261007120000_lead_distribution_schema.sql"]); });
+
+async function insertAssignment(orgId: string, h: Awaited<ReturnType<typeof seedHandoff>>, repId: string, extra: Record<string, unknown> = {}) {
+  const row = {
+    chain_id: crypto.randomUUID(), reason: "round_robin", status: "pending", sla_due_at: inMinutes(15), ...extra,
+  };
+  return (await db.query<{ id: string }>(
+    `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,sla_due_at,strategy_version)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,'round_robin_v1') returning id`,
+    [orgId, row.chain_id, h.handoffId, h.contactId, h.conversationId, repId, row.reason, row.status, row.sla_due_at])).rows[0].id;
+}
+
+describe("lead_assignments schema", () => {
+  it("permite uma única atribuição ativa por conversa", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    await insertAssignment(org, h, a.repId);
+    await expect(insertAssignment(org, h, b.repId)).rejects.toThrow();
+  });
+
+  it("impede o mesmo vendedor duas vezes na mesma cadeia automática", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
+    const first = await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
+    expect(first).toBeTruthy();
+    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "sla_redistribution" })).rejects.toThrow();
+  });
+
+  it("permite repetir o vendedor em atribuição manual (decisão do gestor)", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
+    await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
+    await expect(insertAssignment(org, h, a.repId, { chain_id: chain, reason: "manual" })).resolves.toBeTruthy();
+  });
+
+  it("exige rep_id nulo exatamente quando o estado é exceção", async () => {
+    const org = await seedOrg(db); const h = await seedHandoff(db, org);
+    await expect(db.query(
+      `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,strategy_version)
+       values ($1,gen_random_uuid(),$2,$3,$4,null,'exception','pending',now(),'round_robin_v1')`,
+      [org, h.handoffId, h.contactId, h.conversationId])).rejects.toThrow();
+  });
+});
+
+describe("sla_action", () => {
+  it("padrão redistribute, aceita alert, rejeita outro valor e é imutável", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const id = await insertAssignment(org, h, a.repId);
+    expect((await db.query<any>("select sla_action from public.lead_assignments where id=$1", [id])).rows[0].sla_action).toBe("redistribute");
+    await expect(db.query("update public.lead_assignments set sla_action='alert' where id=$1", [id])).rejects.toThrow(/imut/i);
+    const h2 = await seedHandoff(db, org);
+    await expect(db.query(
+      `insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,handoff_at,sla_action,strategy_version)
+       values ($1,gen_random_uuid(),$2,$3,$4,$5,'round_robin','pending',now(),'tanto-faz','round_robin_v1')`,
+      [org, h2.handoffId, h2.contactId, h2.conversationId, a.repId])).rejects.toThrow();
+  });
+});
+
+describe("imutabilidade do histórico", () => {
+  it("rejeita DELETE e mudança de campos protegidos", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org); const id = await insertAssignment(org, h, a.repId);
+    await expect(db.query("delete from public.lead_assignments where id=$1", [id])).rejects.toThrow(/imut/i);
+    await expect(db.query("update public.lead_assignments set rep_id=$2 where id=$1", [id, b.repId])).rejects.toThrow(/imut/i);
+    await expect(db.query("update public.lead_assignments set reason='manual' where id=$1", [id])).rejects.toThrow(/imut/i);
+    await expect(db.query("update public.lead_assignments set assigned_at=now() - interval '1 day' where id=$1", [id])).rejects.toThrow(/imut/i);
+    await expect(db.query("update public.lead_assignments set handoff_at=now() where id=$1", [id])).rejects.toThrow(/imut/i);
+  });
+
+  it("permite avançar o estado e registrar aceite", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const id = await insertAssignment(org, h, a.repId);
+    await db.query("update public.lead_assignments set status='accepted', accepted_at=now(), accepted_via='button' where id=$1", [id]);
+    const row = (await db.query<any>("select status, accepted_via from public.lead_assignments where id=$1", [id])).rows[0];
+    expect(row).toMatchObject({ status: "accepted", accepted_via: "button" });
+  });
+
+  it("next_assignment_id só pode ser preenchido uma vez", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1); const b = await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org); const chain = crypto.randomUUID();
+    const one = await insertAssignment(org, h, a.repId, { chain_id: chain, status: "expired" });
+    const two = await insertAssignment(org, h, b.repId, { chain_id: chain, reason: "sla_redistribution" });
+    await db.query("update public.lead_assignments set next_assignment_id=$2 where id=$1", [one, two]);
+    await expect(db.query("update public.lead_assignments set next_assignment_id=$2 where id=$1", [one, one])).rejects.toThrow(/imut/i);
+  });
+});
+
+describe("lead_response_metrics", () => {
+  it("calcula os três intervalos de tempo", async () => {
+    const org = await seedOrg(db); const a = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); const id = await insertAssignment(org, h, a.repId);
+    await db.query(
+      `update public.lead_assignments set accepted_at = assigned_at + interval '120 seconds', accepted_via='button', status='accepted',
+         first_human_message_at = assigned_at + interval '300 seconds' where id=$1`, [id]);
+    const m = (await db.query<any>("select * from public.lead_response_metrics where assignment_id=$1", [id])).rows[0];
+    expect(m.assigned_to_accepted_seconds).toBe(120);
+    expect(m.assigned_to_first_human_seconds).toBe(300);
+    expect(m.handoff_to_first_human_seconds).toBeGreaterThanOrEqual(300);
+  });
+});
