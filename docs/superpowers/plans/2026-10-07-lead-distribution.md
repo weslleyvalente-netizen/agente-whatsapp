@@ -47,7 +47,7 @@ Entradas e falhas que a spec implica mas nenhuma task testaria sozinha. Cada uma
 4. **Mensagem humana de quem não é o vendedor atribuído** (admin) registra `first_human_message_by` mas não assume o lead. Teste na Task 5.
 5. **Dois handoffs do mesmo evento** (reprocessamento) não criam duas atribuições. Teste na Task 4.
 6. **Cliente que já é da Marina e estoura o prazo** não passa ao Márcio; recebe só alerta. Testes na Task 5.
-7. **Modo sombra** não altera nenhum dado real nem o ponteiro do rodízio, e é idempotente por handoff. Testes na Task 5A.
+7. **Modo sombra** não altera nenhum dado real nem o ponteiro do rodízio, e é idempotente por handoff. Testes na Task 14.
 
 ---
 
@@ -1744,7 +1744,7 @@ git commit -m "feat(distribution): SLA redistribution, acceptance, human-message
 
 ---
 
-### Task 5A: Modo sombra (shadow): decide e registra, sem alterar nada
+### Task 14: Modo sombra (shadow): decide e registra, sem alterar nada
 
 **Files:**
 - Create: `supabase/migrations/20261007120300_lead_distribution_shadow.sql`
@@ -3304,7 +3304,7 @@ Depois abra o PR (descrição: o que muda, a flag desligada, as 3 migrations pen
 | §3 estados (`out` não move lead) | 5 (teste "marcar out não move"), nenhuma função de lote |
 | §9 telas | 11 |
 | §10 preparação futura | 2 (`pickRep` com contexto), 3 (colunas reservadas), 4 (`p_context`) |
-| §11A modo sombra | 5A, 6, 11, 12 |
+| §11A modo sombra | 14, 6, 11, 12 |
 | §11B dívida técnica | 12 (runbook) e decisões 1 e 2 |
 | §6.3 SLA só redistribui lead novo; dono existente só alerta | 4, 5, 6, 8, 10, 11 |
 | §12 ativação/reversão | 12 |
