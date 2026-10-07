@@ -38,10 +38,10 @@ CREATE TABLE public.lead_distribution_state (
 CREATE TABLE public.lead_distribution_shadow_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-  handoff_event_id uuid NOT NULL UNIQUE REFERENCES public.handoff_events(id),
-  conversation_id uuid NOT NULL REFERENCES public.conversations(id),
-  contact_id uuid NOT NULL REFERENCES public.wa_contacts(id),
-  would_rep_id uuid REFERENCES public.sales_reps(id),
+  handoff_event_id uuid NOT NULL UNIQUE REFERENCES public.handoff_events(id) ON DELETE CASCADE,
+  conversation_id uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES public.wa_contacts(id) ON DELETE CASCADE,
+  would_rep_id uuid REFERENCES public.sales_reps(id) ON DELETE SET NULL,
   would_rep_name text,
   reason text NOT NULL,
   exception_reason text,
@@ -55,9 +55,10 @@ CREATE TABLE public.lead_distribution_shadow_log (
 );
 CREATE INDEX lead_distribution_shadow_log_org ON public.lead_distribution_shadow_log (organization_id, created_at DESC);
 
+-- Histórico imutável (sem DELETE): por desenho, apagar organização/agente/instância/contato com histórico de distribuição é bloqueado.
 CREATE TABLE public.lead_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL REFERENCES public.organizations(id),
   chain_id uuid NOT NULL,
   handoff_event_id uuid NOT NULL REFERENCES public.handoff_events(id),
   contact_id uuid NOT NULL REFERENCES public.wa_contacts(id),
@@ -119,6 +120,12 @@ BEGIN
      OR NEW.previous_assignment_id IS DISTINCT FROM OLD.previous_assignment_id
      OR NEW.strategy_version IS DISTINCT FROM OLD.strategy_version
      OR NEW.sla_action IS DISTINCT FROM OLD.sla_action
+     OR NEW.opportunity_id IS DISTINCT FROM OLD.opportunity_id
+     OR NEW.sla_due_at IS DISTINCT FROM OLD.sla_due_at
+     OR NEW.exception_reason IS DISTINCT FROM OLD.exception_reason
+     OR NEW.origin_source IS DISTINCT FROM OLD.origin_source
+     OR NEW.operation IS DISTINCT FROM OLD.operation
+     OR NEW.product_model IS DISTINCT FROM OLD.product_model
      OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'lead_assignments é imutável: campo protegido';
   END IF;

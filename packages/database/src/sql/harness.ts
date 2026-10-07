@@ -14,7 +14,7 @@ export async function createTestDb(files: string[] = [
   await db.exec(FIXTURE_SQL);
   for (const file of files) {
     let sql: string;
-    try { sql = readFileSync(new URL(file, MIGRATIONS), "utf8"); } catch { continue; } // tasks 4 e 5 criam os demais arquivos
+    try { sql = readFileSync(new URL(file, MIGRATIONS), "utf8"); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; throw e; } // tasks 4 e 5 criam os demais arquivos
     await db.exec(sql);
   }
   return db;
