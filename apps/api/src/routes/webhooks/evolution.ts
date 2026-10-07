@@ -25,6 +25,7 @@ import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
+import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
@@ -308,6 +309,15 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         const org = await getOrganizationById(db, organizationId);
         const greetingFilterConfig = resolveGreetingFilterConfig(org.settings);
         const skipTakeover = shouldSkipTakeoverForGreeting(content, isFirstTakeover, greetingFilterConfig);
+
+        await trackFirstHumanMessage(db, {
+          organizationId,
+          conversationId: conversation.id,
+          role: "human_agent",
+          source: "phone_echo",
+          metadata: null,
+          greetingFiltered: skipTakeover,
+        });
 
         if (skipTakeover) {
           try {

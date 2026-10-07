@@ -10,6 +10,7 @@ import type { Conversation, Message } from "@aula-agente/shared";
 import { saveMessage } from "./message.service.js";
 import { handleConversationTakeover } from "./task.service.js";
 import { enqueueSendMessage } from "../lib/queue.js";
+import { trackFirstHumanMessage } from "./lead-human-message.js";
 
 export interface SendPanelMessageParams {
   conversation: Conversation;
@@ -92,6 +93,16 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
   } catch (err) {
     console.error(`Failed to mark first human reply for conversation ${conversation.id}:`, err);
   }
+
+  // Rodízio: a primeira mensagem humana do vendedor atribuído assume o lead e marca a primeira resposta.
+  await trackFirstHumanMessage(db, {
+    organizationId: conversation.organization_id,
+    conversationId: conversation.id,
+    role: message.role,
+    source: "panel",
+    actorUserId,
+    metadata: metadata ?? null,
+  });
 
   const instance = await getInstanceById(db, conversation.evolution_instance_id);
   const contact = (conversation as unknown as { wa_contacts: { phone: string } }).wa_contacts;
