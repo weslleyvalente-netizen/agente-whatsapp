@@ -10,6 +10,8 @@ export async function createTestDb(files: string[] = [
   "20261007120100_lead_distribution_assign.sql",
   "20261007120200_lead_distribution_lifecycle.sql",
   "20261007120300_lead_distribution_shadow.sql",
+  "20261007120400_lead_distribution_fixes.sql",
+  "20261007120500_lead_distribution_sales_pipeline.sql",
 ]) {
   const db = new PGlite();
   await db.exec(FIXTURE_SQL);

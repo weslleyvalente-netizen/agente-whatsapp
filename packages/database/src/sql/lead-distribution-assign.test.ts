@@ -48,7 +48,8 @@ describe("distribute_lead: efeitos, contexto e idempotência", () => {
     await db.query("insert into public.tasks(organization_id,contact_id,status) values ($1,$2,'pending')", [org, h.contactId]);
     const id = (await distribute(org, h))!;
     const a = await row(id);
-    expect(a).toMatchObject({ reason: "round_robin", status: "pending", opportunity_id: opp, operation: null });
+    // I4: sem contexto explícito, operation/product_model vêm do único negócio aberto (colunas imutáveis, gravadas na criação).
+    expect(a).toMatchObject({ reason: "round_robin", status: "pending", opportunity_id: opp, operation: "consortium", product_model: "Fazer 250", origin_source: null });
     const conv = (await db.query<any>("select assigned_to, assigned_at from public.conversations where id=$1", [h.conversationId])).rows[0];
     expect(conv.assigned_to).toBe(marina.userId); expect(conv.assigned_at).not.toBeNull();
     const o = (await db.query<any>("select owner_id, owner_assigned_at from public.opportunities where id=$1", [opp])).rows[0];
@@ -80,12 +81,19 @@ describe("distribute_lead: efeitos, contexto e idempotência", () => {
     expect(await distribute(org, await seedHandoff(db, org, "2026-10-07T13:00:00Z"))).not.toBeNull();
   });
 
-  it("segundo handoff enquanto há atribuição ativa devolve a mesma atribuição", async () => {
-    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+  it("segundo handoff enquanto há atribuição ativa (pendente) devolve a mesma atribuição sem mexer em nada", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
     const h = await seedHandoff(db, org);
+    await db.query("insert into public.tasks(organization_id,contact_id,status) values ($1,$2,'pending')", [org, h.contactId]);
     const first = await distribute(org, h);
+    const convBefore = (await db.query<any>("select assigned_to, assigned_at from public.conversations where id=$1", [h.conversationId])).rows[0];
+    const tasksBefore = (await db.query<any>("select id, assignee_id, assignee_type, status from public.tasks where contact_id=$1 order by id", [h.contactId])).rows;
     const again = (await db.query<any>("insert into public.handoff_events(organization_id,conversation_id) values ($1,$2) returning id", [org, h.conversationId])).rows[0].id;
     expect(await distribute(org, { conversationId: h.conversationId, handoffId: again })).toBe(first);
+    expect(convBefore.assigned_to).toBe(marina.userId);
+    expect((await db.query<any>("select assigned_to, assigned_at from public.conversations where id=$1", [h.conversationId])).rows[0]).toEqual(convBefore);
+    expect((await db.query<any>("select id, assignee_id, assignee_type, status from public.tasks where contact_id=$1 order by id", [h.contactId])).rows).toEqual(tasksBefore);
+    expect((await db.query<any>("select last_rotation_order from public.lead_distribution_state")).rows[0].last_rotation_order).toBe(1);
   });
 });
 
