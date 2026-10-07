@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isUnread } from "@aula-agente/shared";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
 
 type FilterTab = "all" | "mine" | "agent" | "others" | "attention";
 
@@ -34,6 +35,17 @@ export default function InboxPage() {
   const [readMap, setReadMap] = useState<Map<string, string>>(new Map());
 
   const selectedId = searchParams.get("id");
+
+  // Fase 1: filtro de tela; isolamento forte é a fase 2 (RLS)
+  // Com a distribuição ligada, o vendedor (papel agent) abre a caixa já em "Minhas".
+  const { role: myRole } = useMyRole();
+  const distributionOn = currentOrg?.settings.lead_distribution_enabled === true;
+  const [defaultedToMine, setDefaultedToMine] = useState(false);
+  useEffect(() => {
+    if (defaultedToMine || !distributionOn || myRole !== "agent") return;
+    setDefaultedToMine(true);
+    setFilterTab("mine");
+  }, [defaultedToMine, distributionOn, myRole]);
 
   useEffect(() => {
     const supabase = createClient();

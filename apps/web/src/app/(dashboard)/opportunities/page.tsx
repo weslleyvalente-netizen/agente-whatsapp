@@ -15,6 +15,7 @@ import { OpportunityDetailDialog } from "@/components/opportunities/opportunity-
 import { ChatPanel } from "@/components/inbox/chat-panel";
 import { Dialog,DialogContent,DialogHeader,DialogTitle } from "@/components/ui/dialog";
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
+import { ExceptionsPanel } from "@/components/lead-distribution/exceptions-panel";
 import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 
 export default function OpportunitiesPage() {
@@ -99,6 +100,7 @@ export default function OpportunitiesPage() {
       </div>
       {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()} onTaskClosed={id=>setOrphanTasks(prev=>prev.filter(t=>t.id!==id))}/>}
       {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open)setUnidentifiedSelected(null)}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>setUnidentifiedSelected(null)} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
+      <ExceptionsPanel />
       <section aria-label="Busca e filtros do funil" className="space-y-3 rounded-2xl border bg-card p-4">
       <div className="flex flex-wrap items-center gap-2"><Input className="min-w-48 flex-1 rounded-full" aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" onClick={() => setQuery("")}>Limpar busca</Button>}</div>
       {searching && <p className="text-sm text-muted-foreground">Busca em todos os funis e situações, incluindo ganhos e perdidos.</p>}

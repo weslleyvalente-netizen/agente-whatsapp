@@ -10,6 +10,7 @@ import { Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
+import { AssignmentBadge, type CardAssignment } from "../lead-distribution/assignment-badge";
 
 // Contact name/phone is embedded server-side (getOpportunitiesByOrganization
 // joins wa_contacts) — the type from @aula-agente/shared is the bare table
@@ -17,6 +18,7 @@ import { OpportunityEditDialog } from "@/components/opportunities/opportunity-ed
 // shared domain type for a display-only concern.
 export type OpportunityWithContact = Opportunity & {
   sales_state?: SalesCardState;
+  lead_assignment?: CardAssignment | null;
   wa_contacts: { name: string | null; phone: string } | null;
 };
 
@@ -24,10 +26,12 @@ function OpportunityCard({
   opportunity,
   onEdit,
   onOpen,
+  onChanged,
 }: {
   opportunity: OpportunityWithContact;
   onEdit: (opportunity: OpportunityWithContact) => void;
   onOpen: (opportunity: OpportunityWithContact) => void;
+  onChanged: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: opportunity.id });
   return (
@@ -35,15 +39,16 @@ function OpportunityCard({
       className={`cursor-grab rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
       onClick={() => !isDragging && onOpen(opportunity)}
       onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
-      <OpportunityCardContent opportunity={opportunity} onEdit={onEdit}/>
+      <OpportunityCardContent opportunity={opportunity} onEdit={onEdit} onChanged={onChanged}/>
     </div>
   );
 }
 
 // The overlay uses the same presentation without registering a second draggable.
-function OpportunityCardContent({ opportunity, onEdit }: {
+function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
   opportunity: OpportunityWithContact;
   onEdit?: (opportunity: OpportunityWithContact) => void;
+  onChanged?: () => void;
 }) {
   const contactLabel = opportunity.wa_contacts?.name || opportunity.wa_contacts?.phone || "Contato desconhecido";
 
@@ -56,6 +61,7 @@ function OpportunityCardContent({ opportunity, onEdit }: {
   const initials = contactLabel.split(/\s+/).slice(0, 2).map(word => Array.from(word)[0]).join("").toUpperCase();
   return (
     <>
+      {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>
@@ -84,6 +90,7 @@ function StageColumn({
   opportunities,
   onEdit,
   onOpen,
+  onChanged,
   queueMode = false,
 }: {
   queueMode?: boolean;
@@ -91,6 +98,7 @@ function StageColumn({
   opportunities: OpportunityWithContact[];
   onEdit: (opportunity: OpportunityWithContact) => void;
   onOpen: (opportunity: OpportunityWithContact) => void;
+  onChanged: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
   const label = stage.startsWith("__queue_") ? SALES_QUEUE_LABELS[stage.slice(8) as SalesQueueGroup] : stage === "__ready_for_marina" ? "Pronto para Marina" : FUNNEL_STAGE_LABELS[stage] ?? stage;
@@ -100,7 +108,7 @@ function StageColumn({
     <section ref={setNodeRef} aria-label={label} className={`w-[300px] shrink-0 rounded-2xl bg-muted/45 p-3 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
       <div className="mb-4 flex min-h-9 items-center gap-2 px-1"><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span></div>
       <div className="max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin]">
-        {sorted.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen}/>)}
+        {sorted.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged}/>)}
         {!sorted.length && <p className="rounded-xl border border-dashed p-5 text-center text-xs leading-relaxed text-muted-foreground">Nenhum negócio nesta etapa</p>}
       </div>
     </section>
@@ -170,6 +178,7 @@ export function OpportunityKanban({
               queueMode={queueMode}
               opportunities={opportunities.filter((o) => queueMode ? stage === `__queue_${classifySalesQueue({...o,tasks:o.sales_state?.tasks},new Date().toISOString()).group}` : stage === "__ready_for_marina" ? o.sales_state?.readyForHuman : o.stage === stage && !o.sales_state?.readyForHuman)}
               onEdit={setEditing}
+              onChanged={onChanged}
               onOpen={o => { if (Date.now() - draggedAt.current > 400) setSelected(o); }}
             />
           ))}

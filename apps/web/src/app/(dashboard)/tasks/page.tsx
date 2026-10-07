@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TaskWithRelations } from "@/components/tasks/task-card";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
 
 const TABS: Array<{ id: TaskBucket; label: string }> = [
   { id: "today", label: "Hoje" },
@@ -44,6 +45,18 @@ export default function TasksPage() {
   const [tab, setTab] = useState<TaskBucket>("today");
   const [loading, setLoading] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  // Fase 1: filtro de tela; isolamento forte é a fase 2 (RLS)
+  // Com a distribuição ligada, o vendedor (papel agent) vê por padrão só as tarefas
+  // dele ou sem responsável humano definido; pode desligar o filtro "Minhas".
+  const { userId: myUserId, role: myRole } = useMyRole();
+  const [mineOverride, setMineOverride] = useState<boolean | null>(null);
+  const isSeller = currentOrg?.settings.lead_distribution_enabled === true && myRole === "agent" && !!myUserId;
+  const onlyMine = isSeller && (mineOverride ?? true);
+  const visibleTasks = useMemo(
+    () => (onlyMine ? tasks.filter(t => !t.assignee_id || t.assignee_id === myUserId) : tasks),
+    [tasks, onlyMine, myUserId],
+  );
 
   const fetchTasks = useCallback(async () => {
     if (!currentOrg) return;
@@ -130,13 +143,13 @@ export default function TasksPage() {
 
   const bucketed = useMemo(() => {
     const groups: Record<TaskBucket, TaskWithRelations[]> = { today: [], overdue: [], upcoming: [], done: [] };
-    for (const task of tasks) {
+    for (const task of visibleTasks) {
       groups[resolveTaskBucket(task, today)].push(task);
     }
     return groups;
-  }, [tasks, today]);
+  }, [visibleTasks, today]);
 
-  const summary = useMemo(() => computeTaskSummary(tasks, today), [tasks, today]);
+  const summary = useMemo(() => computeTaskSummary(visibleTasks, today), [visibleTasks, today]);
 
   if (loading || !currentOrg) return <div>Carregando...</div>;
 
@@ -177,6 +190,18 @@ export default function TasksPage() {
       </div>
 
       <div className="flex gap-1.5">
+        {isSeller && (
+          <button
+            onClick={() => setMineOverride(!onlyMine)}
+            aria-pressed={onlyMine}
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+              onlyMine ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-accent"
+            )}
+          >
+            Minhas
+          </button>
+        )}
         {TABS.map((t) => (
           <button
             key={t.id}
