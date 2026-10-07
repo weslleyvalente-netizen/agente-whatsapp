@@ -118,3 +118,21 @@ describe("lead distribution on cards", () => {
     expect(off).toHaveLength(1); // sem o parâmetro (flag desligada) nada muda
   });
 });
+
+describe("lead distribution with the workspace flags off", () => {
+  it("ainda esconde o lead de outro vendedor e mantém legado/sem dono", async () => {
+    const { db } = database({
+      sales_reps: [{ id: "r1", user_id: "marina-user", display_name: "Marina" }, { id: "r2", user_id: "marcio-user", display_name: "Márcio" }],
+      lead_assignments: [],
+    });
+    const r = [
+      { id: "a", contact_id: "c1", status: "open", created_at: "2026-10-01", owner_id: "marcio-user" },
+      { id: "b", contact_id: "c2", status: "open", created_at: "2026-10-01", owner_id: null },
+      { id: "c", contact_id: "c3", status: "open", created_at: "2026-10-01", owner_id: "legado" },
+    ];
+    const out = await enrichSalesWorkspace(db as any, "org", r as any, false, { enabled: true, viewer: { mode: "own", userId: "marina-user" } });
+    expect(out.map((o: any) => o.id)).toEqual(["b", "c"]);
+    expect(out[0]).toMatchObject({ lead_assignment: null });
+    expect((out[0] as any).sales_state).toBeUndefined();
+  });
+});

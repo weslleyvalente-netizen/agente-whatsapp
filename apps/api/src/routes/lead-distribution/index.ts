@@ -37,11 +37,15 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string }; Querystring: { organizationId?: string } }>("/lead-assignments/:id/accept", async (request, reply) => {
     if (!uuid.safeParse(request.params.id).success) return reply.status(400).send({ error: "id inválido" });
-    const organizationId = request.query.organizationId ?? "";
-    const role = roleIn(request, organizationId);
+    // O parâmetro organizationId é ignorado para autorização: vale a organização real da atribuição.
+    const db = getAdminClient();
+    const { data: found, error: findError } = await db.from("lead_assignments").select("organization_id").eq("id", request.params.id).maybeSingle();
+    if (findError) return reply.status(500).send({ error: "Erro ao buscar a atribuição" });
+    if (!found) return reply.status(404).send({ error: "Atribuição não encontrada" });
+    const role = roleIn(request, found.organization_id);
     if (!role) return reply.status(403).send({ error: "Access denied" });
     try {
-      const accepted = await acceptAssignment(getAdminClient(), { assignmentId: request.params.id, actorUserId: request.user.id, actorIsAdmin: isManager(role) });
+      const accepted = await acceptAssignment(db, { assignmentId: request.params.id, actorUserId: request.user.id, actorIsAdmin: isManager(role) });
       return { accepted };
     } catch (err) {
       const message = (err as { message?: string }).message ?? "Erro ao assumir o lead";
@@ -79,6 +83,7 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { organizationId: string; contactId: string } }>("/organizations/:organizationId/contacts/:contactId/lead-assignments", async (request, reply) => {
     const { organizationId, contactId } = request.params;
+    if (!uuid.safeParse(organizationId).success || !uuid.safeParse(contactId).success) return reply.status(400).send({ error: "id inválido" });
     const role = roleIn(request, organizationId);
     if (!role) return reply.status(403).send({ error: "Access denied" });
     const db = getAdminClient();

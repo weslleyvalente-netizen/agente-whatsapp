@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
-  getAdminClient: vi.fn(() => ({})), getOrganizationById: vi.fn(), getSalesRepByUser: vi.fn(), listSalesReps: vi.fn(),
+  assignmentOrg: { value: "org" as string | null },
+  getAdminClient: vi.fn(() => ({ from: () => { const c: any = { select: () => c, eq: () => c, maybeSingle: async () => ({ data: m.assignmentOrg.value ? { organization_id: m.assignmentOrg.value } : null, error: null }) }; return c; } })), getOrganizationById: vi.fn(), getSalesRepByUser: vi.fn(), listSalesReps: vi.fn(),
   setRepAvailability: vi.fn(), acceptAssignment: vi.fn(), listOpenExceptions: vi.fn(), manualAssignLead: vi.fn(),
   listAssignmentsForContact: vi.fn(), listSlaAlerts: vi.fn(), computeSlaDueAt: vi.fn(() => new Date("2026-10-05T12:15:00Z")),
 }));
@@ -15,7 +16,7 @@ async function app(role: string, userId = "u1") {
   await f.register(routes);
   return f;
 }
-beforeEach(() => { vi.clearAllMocks(); m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } }); });
+beforeEach(() => { vi.clearAllMocks(); m.assignmentOrg.value = "org"; m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } }); });
 
 describe("PATCH availability", () => {
   it("vendedor muda o próprio estado", async () => {
@@ -48,6 +49,83 @@ describe("accept", () => {
     m.acceptAssignment.mockRejectedValue({ message: "Somente o vendedor atribuído (ou um admin) pode assumir o lead" });
     const res = await (await app("agent")).inject({ method: "POST", url: "/lead-assignments/11111111-1111-4111-8111-111111111111/accept?organizationId=org" });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("accept: isolamento entre organizações", () => {
+  const url = "/lead-assignments/11111111-1111-4111-8111-111111111111/accept?organizationId=org";
+  it("admin de outra org não aceita a atribuição (ignora o parâmetro da query)", async () => {
+    m.assignmentOrg.value = "other";
+    const res = await (await app("admin")).inject({ method: "POST", url });
+    expect(res.statusCode).toBe(403);
+    expect(m.acceptAssignment).not.toHaveBeenCalled();
+  });
+  it("id desconhecido devolve 404", async () => {
+    m.assignmentOrg.value = null;
+    const res = await (await app("admin")).inject({ method: "POST", url });
+    expect(res.statusCode).toBe(404);
+    expect(m.acceptAssignment).not.toHaveBeenCalled();
+  });
+  it("membro da org correta, mesmo sem query, aceita", async () => {
+    m.acceptAssignment.mockResolvedValue(true);
+    const res = await (await app("admin")).inject({ method: "POST", url: "/lead-assignments/11111111-1111-4111-8111-111111111111/accept" });
+    expect(res.json()).toEqual({ accepted: true });
+    expect(m.acceptAssignment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ actorIsAdmin: true }));
+  });
+});
+
+describe("não membro", () => {
+  it("é barrado nas rotas de leitura e de gestor", async () => {
+    const f = Fastify();
+    f.addHook("preHandler", async (req: any) => { req.user = { id: "u9", email: "x", memberships: [{ organization_id: "outra", role: "owner" }] }; });
+    await f.register(routes);
+    for (const url of ["/organizations/org/sales-reps", "/organizations/org/lead-assignments/exceptions", "/organizations/org/lead-assignments/sla-alerts"]) {
+      expect((await f.inject({ method: "GET", url })).statusCode).toBe(403);
+    }
+    expect((await f.inject({ method: "POST", url: "/organizations/org/lead-assignments/manual", payload: { conversationId: "11111111-1111-4111-8111-111111111111", repId: "22222222-2222-4222-8222-222222222222" } })).statusCode).toBe(403);
+  });
+  it("membro lê a lista de vendedores", async () => {
+    m.listSalesReps.mockResolvedValue([{ id: "r" }]);
+    expect((await (await app("agent")).inject({ method: "GET", url: "/organizations/org/sales-reps" })).json()).toEqual([{ id: "r" }]);
+  });
+});
+
+describe("histórico do contato", () => {
+  const ORG = "33333333-3333-4333-8333-333333333333", C = "44444444-4444-4444-8444-444444444444";
+  const url = `/organizations/${ORG}/contacts/${C}/lead-assignments`;
+  const f = async (role: string) => {
+    const x = Fastify();
+    x.addHook("preHandler", async (req: any) => { req.user = { id: "marina-user", email: "x", memberships: [{ organization_id: ORG, role }] }; });
+    await x.register(routes); return x;
+  };
+  const reps = [{ id: "r1", user_id: "marina-user" }, { id: "r2", user_id: "marcio-user" }];
+  beforeEach(() => { m.listSalesReps.mockResolvedValue(reps); });
+  it("esconde o histórico do lead de outro vendedor", async () => {
+    m.listAssignmentsForContact.mockResolvedValue([{ id: "h", rep_id: "r2" }]);
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toEqual([]);
+  });
+  it("mostra o próprio, o sem dono e o de quem já passou pelo vendedor", async () => {
+    m.listAssignmentsForContact.mockResolvedValue([{ id: "h", rep_id: "r1" }]);
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toHaveLength(1);
+    m.listAssignmentsForContact.mockResolvedValue([]);
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toEqual([]);
+    m.listAssignmentsForContact.mockResolvedValue([{ id: "a", rep_id: "r1" }, { id: "b", rep_id: "r2" }]);
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toHaveLength(2);
+  });
+  it("sem linha em sales_reps, o histórico de outro vendedor segue oculto", async () => {
+    m.listSalesReps.mockResolvedValue([{ id: "r2", user_id: "marcio-user" }]);
+    m.listAssignmentsForContact.mockResolvedValue([{ id: "h", rep_id: "r2" }]);
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toEqual([]);
+  });
+  it("flag desligada ou gestor veem tudo", async () => {
+    m.listAssignmentsForContact.mockResolvedValue([{ id: "h", rep_id: "r2" }]);
+    m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: false } });
+    expect((await (await f("agent")).inject({ method: "GET", url })).json()).toHaveLength(1);
+    m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } });
+    expect((await (await f("admin")).inject({ method: "GET", url })).json()).toHaveLength(1);
+  });
+  it("recusa ids que não são uuid", async () => {
+    expect((await (await f("agent")).inject({ method: "GET", url: `/organizations/${ORG}/contacts/xx/lead-assignments` })).statusCode).toBe(400);
   });
 });
 

@@ -10,7 +10,7 @@ import {
   markOpportunityLostSchema,
 } from "@aula-agente/shared";
 import {
-  freezeOpportunity, getUnidentifiedSalesContacts,
+  freezeOpportunity, getUnidentifiedSalesContacts, listSalesReps,
   getAdminClient,
   getOrganizationById,
   createOpportunity,
@@ -27,7 +27,7 @@ import {
   updateOpportunityFields,
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
-import { resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { isLeadVisible, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canViewLead } from "../../lib/lead-access.js";
 
 import { enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
@@ -53,10 +53,15 @@ export default async function opportunityRoutes(app: FastifyInstance) {
 
   app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/pending-tasks",async(request,reply)=>{
     const orgId=request.params.organizationId;
-    if(!request.user.memberships.some(m=>m.organization_id===orgId))return reply.status(403).send({error:"Access denied"});
+    const member=request.user.memberships.find(m=>m.organization_id===orgId);
+    if(!member)return reply.status(403).send({error:"Access denied"});
     const db=getAdminClient();const org=await getOrganizationById(db,orgId);
     if(org.settings.sales_action_queue_enabled!==true)return [];
-    return getSalesTasksWithoutOpenBusiness(db,orgId);
+    const tasks=await getSalesTasksWithoutOpenBusiness(db,orgId);
+    const viewer=resolveLeadVisibility({role:member.role,userId:request.user.id,leadDistributionEnabled:org.settings.lead_distribution_enabled===true});
+    if(viewer.mode==="all")return tasks;
+    const repUsers=new Set((await listSalesReps(db,orgId)).map(r=>r.user_id));
+    return tasks.filter((t:any)=>isLeadVisible(viewer,t.assignee_id,repUsers));
   });
 
   app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/unidentified",async(request,reply)=>{
