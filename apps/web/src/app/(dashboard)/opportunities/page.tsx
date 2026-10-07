@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
-import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, sortNewestSalesCards } from "@aula-agente/shared";
+import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, sortNewestSalesCards, trailingThrottle } from "@aula-agente/shared";
 import type { Operation, Task } from "@aula-agente/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,11 @@ export default function OpportunitiesPage() {
     if (showLoading) setError(null);
     setRefreshError(null);
     try {
-      const data = await apiFetch(`/organizations/${currentOrg.id}/opportunities${searching ? "" : `?status=${status}`}`);
-      setOpportunities(data);
-      if(currentOrg.settings.sales_action_queue_enabled===true)setOrphanTasks(await apiFetch(`/organizations/${currentOrg.id}/opportunities/pending-tasks`));else setOrphanTasks([]);
-      if(currentOrg.settings.sales_auto_pipeline_enabled===true)setUnidentified(await apiFetch(`/organizations/${currentOrg.id}/opportunities/unidentified`));
-      else setUnidentified([]);
+      // The three lists are independent: fetch them in parallel and show each as soon as it arrives.
+      const jobs: Promise<unknown>[] = [apiFetch(`/organizations/${currentOrg.id}/opportunities${searching ? "" : `?status=${status}`}`).then(setOpportunities)];
+      if (currentOrg.settings.sales_action_queue_enabled === true) jobs.push(apiFetch(`/organizations/${currentOrg.id}/opportunities/pending-tasks`).then(setOrphanTasks)); else setOrphanTasks([]);
+      if (currentOrg.settings.sales_auto_pipeline_enabled === true) jobs.push(apiFetch(`/organizations/${currentOrg.id}/opportunities/unidentified`).then(setUnidentified)); else setUnidentified([]);
+      await Promise.all(jobs);
     } catch (err) {
       if (showLoading) setError((err as Error).message);
       else setRefreshError((err as Error).message);
@@ -77,12 +77,19 @@ export default function OpportunitiesPage() {
     fetchOpportunities(true);
   }, [fetchOpportunities]);
 
+  // Background refreshes (timer and realtime) are throttled and skipped while the tab is hidden:
+  // every conversation update used to trigger three full scans of the organization.
+  const fetchRef = useRef(fetchOpportunities);
+  useEffect(() => { fetchRef.current = fetchOpportunities; }, [fetchOpportunities]);
+  const refreshQuietly = useMemo(() => trailingThrottle(() => { if (!document.hidden) fetchRef.current(); }, 15000), []);
+  useEffect(() => () => refreshQuietly.cancel(), [refreshQuietly]);
+
   useEffect(() => {
     if (!currentOrg?.settings.sales_workspace_enabled && !currentOrg?.settings.sales_action_queue_enabled) return;
-    const timer = setInterval(() => { fetchOpportunities(); }, 30000);
+    const timer = setInterval(refreshQuietly, 30000);
     return () => clearInterval(timer);
-  }, [currentOrg, fetchOpportunities]);
-  useRealtime({ table: "conversations", filter: currentOrg ? `organization_id=eq.${currentOrg.id}` : undefined, onUpdate: () => { fetchOpportunities(); }, enabled: currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true });
+  }, [currentOrg, refreshQuietly]);
+  useRealtime({ table: "conversations", filter: currentOrg ? `organization_id=eq.${currentOrg.id}` : undefined, onUpdate: refreshQuietly, enabled: currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true });
 
   return (
     <div className="space-y-5">
@@ -90,7 +97,7 @@ export default function OpportunitiesPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Funil de vendas</h1><p className="mt-1 text-sm text-muted-foreground">Clientes, conversas e próximas ações em um só lugar.</p></div>
         <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
       </div>
-      {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()}/>}
+      {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()} onTaskClosed={id=>setOrphanTasks(prev=>prev.filter(t=>t.id!==id))}/>}
       {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open)setUnidentifiedSelected(null)}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>setUnidentifiedSelected(null)} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
       <section aria-label="Busca e filtros do funil" className="space-y-3 rounded-2xl border bg-card p-4">
       <div className="flex flex-wrap items-center gap-2"><Input className="min-w-48 flex-1 rounded-full" aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" onClick={() => setQuery("")}>Limpar busca</Button>}</div>

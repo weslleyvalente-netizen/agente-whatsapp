@@ -53,6 +53,7 @@ interface TaskDetails {
     due_date: string;
     due_time: string | null;
     conversation_id: string | null;
+    followup_suggested_message?: string | null;
   };
   customer: { id: string; name: string | null; phone: string } | null;
   conversation: { id: string; lastMessageAt: string } | null;
@@ -148,10 +149,12 @@ interface TaskDetailPanelProps {
   organizationId: string;
   onClose: () => void;
   onTaskChanged: () => void;
+  /** Called as soon as the task is completed or cancelled, so lists can drop it without waiting for a reload. */
+  onTaskClosed?: (taskId: string) => void;
   embedded?: boolean;
 }
 
-export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged, embedded = false }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskChanged, onTaskClosed, embedded = false }: TaskDetailPanelProps) {
   const router = useRouter();
   const [details, setDetails] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -230,7 +233,9 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
       setFollowupUnavailable(true);
       return;
     }
-    fetchFollowupSuggestion();
+    // Only reuse a suggestion that already exists (cheap). A new one calls the
+    // model (and may transcribe audio), so it waits for the user's click.
+    if (details.task.followup_suggested_message) fetchFollowupSuggestion();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details?.task.status]);
 
@@ -284,8 +289,9 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
   const handleComplete = async () => {
     try {
       await apiFetch(`/tasks/${taskId}/complete`, { method: "POST" });
-      await fetchDetails();
+      onTaskClosed?.(taskId);
       onTaskChanged();
+      await fetchDetails();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao concluir tarefa");
     }
@@ -295,8 +301,9 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
     if (!confirm("Cancelar esta tarefa?")) return;
     try {
       await apiFetch(`/tasks/${taskId}/cancel`, { method: "POST", body: JSON.stringify({}) });
-      await fetchDetails();
+      onTaskClosed?.(taskId);
       onTaskChanged();
+      await fetchDetails();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Erro ao cancelar tarefa");
     }
@@ -433,6 +440,12 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                       : "Nenhum toque pendente — o cliente respondeu por último. "}
                     {followupTouch.touchCount} toque(s) sem resposta.
                   </p>
+                )}
+                {!followupLoaded && !followupLoading && !followupError && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Nenhuma sugestão gerada ainda.</p>
+                    <Button size="sm" onClick={() => fetchFollowupSuggestion()}>Gerar sugestão de mensagem</Button>
+                  </div>
                 )}
                 {followupLoading && !followupText && (
                   <p className="text-sm text-muted-foreground">Gerando sugestão...</p>
