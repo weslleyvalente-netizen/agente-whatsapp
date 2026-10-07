@@ -48,11 +48,11 @@ BEGIN
   SELECT * INTO a FROM public.lead_assignments WHERE id = p_assignment_id FOR UPDATE;
   IF a.id IS NULL OR a.status <> 'pending' THEN RETURN false; END IF;
   SELECT * INTO rep FROM public.sales_reps WHERE id = a.rep_id;
-  IF NOT p_actor_is_admin AND p_actor IS DISTINCT FROM rep.user_id THEN
+  IF NOT COALESCE(p_actor_is_admin, false) AND p_actor IS DISTINCT FROM rep.user_id THEN
     RAISE EXCEPTION 'Somente o vendedor atribuído (ou um admin) pode assumir o lead';
   END IF;
   UPDATE public.lead_assignments
-     SET status = 'accepted', accepted_at = now(), accepted_via = CASE WHEN p_actor_is_admin AND p_actor IS DISTINCT FROM rep.user_id THEN 'admin' ELSE 'button' END
+     SET status = 'accepted', accepted_at = now(), accepted_via = CASE WHEN COALESCE(p_actor_is_admin, false) AND p_actor IS DISTINCT FROM rep.user_id THEN 'admin' ELSE 'button' END
    WHERE id = a.id;
   RETURN true;
 END $$;
@@ -63,11 +63,18 @@ CREATE FUNCTION public.record_human_message(p_organization_id uuid, p_conversati
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE a public.lead_assignments; rep public.sales_reps; conv_user uuid; may_accept boolean := false;
 BEGIN
-  IF p_via NOT IN ('panel','phone_echo') THEN RAISE EXCEPTION 'Origem inválida'; END IF;
+  IF p_via IS NULL OR p_via NOT IN ('panel','phone_echo') THEN RAISE EXCEPTION 'Origem inválida'; END IF;
   SELECT * INTO a FROM public.lead_assignments
    WHERE organization_id = p_organization_id AND conversation_id = p_conversation_id AND status IN ('pending','accepted') FOR UPDATE;
   IF a.id IS NULL THEN RETURN NULL; END IF;
   SELECT * INTO rep FROM public.sales_reps WHERE id = a.rep_id;
+  -- Mensagem anterior à atribuição ativa (ex.: eco atrasado do vendedor anterior após redistribuição) não pertence a esta linha:
+  -- só a atividade comercial é registrada, sem marco de primeira resposta nem aceite.
+  IF p_at < a.assigned_at THEN
+    UPDATE public.opportunities SET last_commercial_activity_at = GREATEST(COALESCE(last_commercial_activity_at, p_at), p_at)
+     WHERE organization_id = p_organization_id AND contact_id = a.contact_id AND status = 'open';
+    RETURN a.id;
+  END IF;
   IF a.first_human_message_at IS NULL THEN
     UPDATE public.lead_assignments SET first_human_message_at = p_at, first_human_message_by = p_author WHERE id = a.id;
   END IF;
@@ -102,6 +109,9 @@ BEGIN
   IF rep.availability = 'out' THEN RAISE EXCEPTION 'Vendedor fora da distribuição'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.organization_members m WHERE m.organization_id = p_organization_id AND m.user_id = rep.user_id) THEN
     RAISE EXCEPTION 'Vendedor não é mais membro da organização';
+  END IF;
+  IF p_rep_id = prev.rep_id AND prev.status IN ('pending','accepted') THEN
+    RAISE EXCEPTION 'Lead já está com este vendedor';
   END IF;
 
   IF prev.status = 'exception' THEN

@@ -52,6 +52,8 @@ describe("redistribute_assignment", () => {
     const id = await distribute(org, await seedHandoff(db, org), past());
     await db.query("select public.accept_assignment($1,$2,false)", [id, marina.userId]);
     expect(await redistribute(id)).toBeNull();
+    expect(await redistribute(id)).toBeNull();
+    expect((await row(id)).status).toBe("accepted");
   });
 
   it("segunda chamada sobre a mesma atribuição vencida não cria duplicata", async () => {
@@ -93,13 +95,17 @@ describe("dono existente: sem redistribuição automática, só alerta", () => {
   it("não marca alerta antes de vencer, nem em lead novo do rodízio", async () => {
     const org = await seedOrg(db); await seedRep(db, org, "Marina", 1);
     await distribute(org, await seedHandoff(db, org), past()); // round_robin vencido: é redistribuído, não alertado
+    const h = await seedHandoff(db, org); // dono existente com prazo ainda não vencido
+    await db.query("insert into public.opportunities(organization_id,contact_id,owner_id) values ($1,$2,$3)", [org, h.contactId, (await db.query<any>("select user_id from public.sales_reps where organization_id=$1", [org])).rows[0].user_id]);
+    const ok = await distribute(org, h, inMinutes(30));
+    expect((await row(ok)).sla_action).toBe("alert");
     expect((await db.query<any>("select public.flag_sla_alerts() as n")).rows[0].n).toBe(0);
   });
 
   it("reatribuição manual do gestor também não é desfeita por SLA", async () => {
-    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); const marcio = await seedRep(db, org, "Márcio", 2);
     const h = await seedHandoff(db, org); await distribute(org, h); const adminId = await uuid(db);
-    const id = (await db.query<any>("select public.manual_assign($1,$2,$3,$4,$5) as id", [org, h.conversationId, marina.repId, adminId, past()])).rows[0].id;
+    const id = (await db.query<any>("select public.manual_assign($1,$2,$3,$4,$5) as id", [org, h.conversationId, marcio.repId, adminId, past()])).rows[0].id;
     expect(await row(id)).toMatchObject({ reason: "manual", sla_action: "alert" });
     expect(await redistribute(id)).toBeNull();
   });
@@ -114,6 +120,12 @@ describe("accept_assignment", () => {
     await db.query("select public.accept_assignment($1,$2,true)", [id, adminId]);
     expect(await row(id)).toMatchObject({ status: "accepted", accepted_via: "admin" });
     expect(marina.userId).toBeTruthy();
+  });
+
+  it("flag de admin nulo não abre exceção: ator fora da atribuição é recusado", async () => {
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); const marcio = await seedRep(db, org, "Márcio", 2);
+    const id = await distribute(org, await seedHandoff(db, org));
+    await expect(db.query("select public.accept_assignment($1,$2,null)", [id, marcio.userId])).rejects.toThrow(/Somente o vendedor/);
   });
 
   it("aceite do vendedor registra o botão e a hora", async () => {
@@ -164,9 +176,10 @@ describe("record_human_message", () => {
   it("só a primeira mensagem conta; as seguintes não alteram o marco", async () => {
     const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1);
     const h = await seedHandoff(db, org); const id = await distribute(org, h);
-    await record(org, h.conversationId, marina.userId, "panel", "2026-10-07T12:00:00Z");
-    await record(org, h.conversationId, marina.userId, "panel", "2026-10-07T13:00:00Z");
-    expect((await row(id)).first_human_message_at.toISOString()).toBe("2026-10-07T12:00:00.000Z");
+    const t1 = new Date(Date.now() + 60_000).toISOString(), t2 = new Date(Date.now() + 120_000).toISOString();
+    await record(org, h.conversationId, marina.userId, "panel", t1);
+    await record(org, h.conversationId, marina.userId, "panel", t2);
+    expect((await row(id)).first_human_message_at.toISOString()).toBe(t1);
   });
 
   it("mensagem humana atualiza last_commercial_activity_at do negócio aberto (mantém a carteira)", async () => {
@@ -174,9 +187,36 @@ describe("record_human_message", () => {
     const h = await seedHandoff(db, org);
     const opp = (await db.query<any>("insert into public.opportunities(organization_id,contact_id) values ($1,$2) returning id", [org, h.contactId])).rows[0].id;
     await distribute(org, h);
-    await record(org, h.conversationId, marina.userId, "panel", "2026-10-07T12:00:00Z");
+    const t1 = new Date(Date.now() + 60_000).toISOString();
+    await record(org, h.conversationId, marina.userId, "panel", t1);
     const o = (await db.query<any>("select last_commercial_activity_at from public.opportunities where id=$1", [opp])).rows[0];
-    expect(o.last_commercial_activity_at.toISOString()).toBe("2026-10-07T12:00:00.000Z");
+    expect(o.last_commercial_activity_at.toISOString()).toBe(t1);
+  });
+
+  it("eco atrasado do vendedor anterior (anterior à atribuição ativa) não assume nem marca a nova linha, mas mantém a carteira", async () => {
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    const opp = (await db.query<any>("insert into public.opportunities(organization_id,contact_id) values ($1,$2) returning id", [org, h.contactId])).rows[0].id;
+    const next = (await redistribute(await distribute(org, h, past())))!; // Marina -> Márcio
+    const early = new Date(Date.now() - 30_000).toISOString();
+    expect(await record(org, h.conversationId, null, "phone_echo", early)).toBe(next);
+    expect(await row(next)).toMatchObject({ status: "pending", accepted_at: null, first_human_message_at: null, first_human_message_by: null });
+    const o = (await db.query<any>("select last_commercial_activity_at from public.opportunities where id=$1", [opp])).rows[0];
+    expect(o.last_commercial_activity_at.toISOString()).toBe(early);
+  });
+
+  it("mensagem atrasada do painel pelo vendedor anterior não marca first_human_message_by na nova linha", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1); await seedRep(db, org, "Márcio", 2);
+    const h = await seedHandoff(db, org);
+    const next = (await redistribute(await distribute(org, h, past())))!;
+    await record(org, h.conversationId, marina.userId, "panel", new Date(Date.now() - 30_000).toISOString());
+    expect(await row(next)).toMatchObject({ status: "pending", first_human_message_at: null, first_human_message_by: null });
+  });
+
+  it("p_via nulo ou inválido é recusado", async () => {
+    const org = await seedOrg(db); const h = await seedHandoff(db, org);
+    await expect(db.query("select public.record_human_message($1,$2,now(),null,null)", [org, h.conversationId])).rejects.toThrow(/inválida/);
+    await expect(db.query("select public.record_human_message($1,$2,now(),null,'sms')", [org, h.conversationId])).rejects.toThrow(/inválida/);
   });
 
   it("sem atribuição ativa devolve NULL (feature desligada ou conversa antiga)", async () => {
@@ -210,6 +250,26 @@ describe("manual_assign", () => {
     await expect(db.query("select public.manual_assign($1,$2,$3,$4,$5)", [org, h.conversationId, out.repId, adminId, inMinutes(15)])).rejects.toThrow(/fora/i);
     const lone = await seedHandoff(db, org);
     await expect(db.query("select public.manual_assign($1,$2,$3,$4,$5)", [org, lone.conversationId, out.repId, adminId, inMinutes(15)])).rejects.toThrow(/sem atribui/i);
+  });
+});
+
+describe("manual_assign (validações)", () => {
+  const manual = (org: string, conv: string, rep: string, actor: string) =>
+    db.query("select public.manual_assign($1,$2,$3,$4,$5)", [org, conv, rep, actor, inMinutes(15)]);
+
+  it("recusa reatribuir ao vendedor que já está com o lead", async () => {
+    const org = await seedOrg(db); const marina = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); await distribute(org, h);
+    await expect(manual(org, h.conversationId, marina.repId, await uuid(db))).rejects.toThrow(/já está com este vendedor/);
+  });
+
+  it("recusa vendedor que deixou de ser membro e vendedor de outra organização", async () => {
+    const org = await seedOrg(db); await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org); await distribute(org, h);
+    const ex = await seedRep(db, org, "Ex", 2, "available", false);
+    await expect(manual(org, h.conversationId, ex.repId, await uuid(db))).rejects.toThrow(/não é mais membro/);
+    const other = await seedOrg(db); const stranger = await seedRep(db, other, "Outro", 1);
+    await expect(manual(org, h.conversationId, stranger.repId, await uuid(db))).rejects.toThrow(/inexistente/);
   });
 });
 
