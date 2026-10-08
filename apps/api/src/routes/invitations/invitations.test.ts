@@ -76,11 +76,23 @@ describe("POST /organizations/:id/invitations", () => {
     expect(f.inserts).toHaveLength(0);
   });
 
-  it("quando a pessoa já tem login, não devolve link e avisa", async () => {
-    const f = fakeDb({ generateLink: async () => ({ data: null, error: { code: "email_exists", message: "A user with this email address has already been registered" } }) });
+  it("quando a pessoa já tem login, devolve um link de redefinição de senha que conclui o convite", async () => {
+    const calls: string[] = [];
+    const f = fakeDb({ generateLink: (async (args: any) => {
+      calls.push(args.type);
+      if (args.type === "invite") return { data: null, error: { code: "email_exists", message: "A user with this email address has already been registered" } };
+      return { data: { properties: { hashed_token: "RECOVERY1" } }, error: null };
+    }) as any });
     state.db = f.db;
     const res = await invite(await app("admin"), { email: "a@x.com" });
-    expect(res.json()).toMatchObject({ inviteLink: null, userExists: true });
+    expect(res.json()).toMatchObject({ userExists: true, inviteLink: "https://app.test/accept-invite?token_hash=RECOVERY1&type=recovery" });
+    expect(calls).toEqual(["invite", "recovery"]);
+  });
+
+  it("se nem o link de recuperação puder ser gerado, avisa sem link", async () => {
+    const f = fakeDb({ generateLink: (async () => ({ data: null, error: { code: "email_exists", message: "already registered" } })) as any });
+    state.db = f.db;
+    expect((await invite(await app("admin"), { email: "a@x.com" })).json()).toMatchObject({ inviteLink: null, userExists: true });
   });
 
   it("usa WEB_APP_URL quando definida e falha com clareza sem nenhuma URL", async () => {
