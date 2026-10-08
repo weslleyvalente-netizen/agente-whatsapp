@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLeadVisible, resolveLeadVisibility } from "./lead-visibility.js";
+import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "./lead-visibility.js";
 
 describe("resolveLeadVisibility", () => {
   it("gestor (owner/admin) vê tudo", () => {
@@ -21,5 +21,14 @@ describe("isLeadVisible", () => {
   it("legado sem dono ou com dono que não é vendedor continua visível (decisão de planejamento 1)", () => {
     expect(isLeadVisible({ mode: "own", userId: "marina" }, null, reps)).toBe(true);
     expect(isLeadVisible({ mode: "own", userId: "marina" }, "conta-compartilhada", reps)).toBe(true);
+  });
+});
+
+describe("isSellerFilterEnabled", () => {
+  it("vale com distribuição OU isolamento ligados", () => {
+    expect(isSellerFilterEnabled({ lead_distribution_enabled: true })).toBe(true);
+    expect(isSellerFilterEnabled({ seller_isolation_enabled: true })).toBe(true);
+    expect(isSellerFilterEnabled({})).toBe(false);
+    expect(isSellerFilterEnabled(undefined)).toBe(false);
   });
 });

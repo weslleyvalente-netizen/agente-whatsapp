@@ -6,7 +6,7 @@ import {
   listOpenExceptions, listSalesReps, listSlaAlerts, manualAssignLead, setRepAvailability,
 } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
-import { isManager, resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { isManager, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 
 const uuid = z.string().uuid();
 
@@ -97,7 +97,7 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
     const db = getAdminClient();
     const org = await getOrganizationById(db, organizationId);
     const history = await listAssignmentsForContact(db, organizationId, contactId);
-    const visibility = resolveLeadVisibility({ role, userId: request.user.id, leadDistributionEnabled: org.settings.lead_distribution_enabled === true });
+    const visibility = resolveLeadVisibility({ role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
     if (visibility.mode === "own") {
       const reps = await listSalesReps(db, organizationId);
       const mine = reps.find(r => r.user_id === visibility.userId);

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 const m = vi.hoisted(() => ({
-  role: { value: "agent" }, flag: { value: true },
+  role: { value: "agent" }, flag: { value: true }, isoOnly: { value: false },
   getOpportunityById: vi.fn(), getContactById: vi.fn(), getQualificationByConversationId: vi.fn(), getOpportunityEvents: vi.fn(), getOpenTasksByContact: vi.fn(),
   getOrganizationById: vi.fn(), listSalesReps: vi.fn(), getSalesTasksWithoutOpenBusiness: vi.fn(),
 }));
@@ -12,8 +12,8 @@ import routes from "./index.js";
 const reps = [{ user_id: "marina-user" }, { user_id: "marcio-user" }];
 async function get(url: string) { const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "GET", url }); await app.close(); return r; }
 beforeEach(() => {
-  vi.clearAllMocks(); m.role.value = "agent"; m.flag.value = true;
-  m.getOrganizationById.mockImplementation(async () => ({ settings: { lead_distribution_enabled: m.flag.value, sales_action_queue_enabled: true } }));
+  vi.clearAllMocks(); m.role.value = "agent"; m.flag.value = true; m.isoOnly.value = false;
+  m.getOrganizationById.mockImplementation(async () => ({ settings: m.isoOnly.value ? { seller_isolation_enabled: m.flag.value, sales_action_queue_enabled: true } : { lead_distribution_enabled: m.flag.value, sales_action_queue_enabled: true } }));
   m.listSalesReps.mockResolvedValue(reps);
   m.getContactById.mockResolvedValue({ id: "c", organization_id: "org-1", name: "Ana", phone: "1" });
   m.getOpportunityEvents.mockResolvedValue([]); m.getOpenTasksByContact.mockResolvedValue([]);
@@ -39,5 +39,21 @@ describe("pending-tasks visibility", () => {
   it("gestor e flag desligada veem tudo", async () => {
     m.role.value = "owner"; expect((await get("/organizations/org-1/opportunities/pending-tasks")).json()).toHaveLength(4);
     m.role.value = "agent"; m.flag.value = false; expect((await get("/organizations/org-1/opportunities/pending-tasks")).json()).toHaveLength(4);
+  });
+});
+describe("somente seller_isolation_enabled ligado (sem distribuição)", () => {
+  beforeEach(() => { m.isoOnly.value = true; });
+  it("detalhe: vendedor não vê o lead de outro vendedor", async () => {
+    m.getOpportunityById.mockResolvedValue({ id: "o", organization_id: "org-1", contact_id: "c", owner_id: "marcio-user" });
+    expect((await get("/opportunities/o/details")).statusCode).toBe(403);
+  });
+  it("pending-tasks: filtra tarefas de outro vendedor", async () => {
+    m.getSalesTasksWithoutOpenBusiness.mockResolvedValue([{ id: "t1", assignee_id: "marcio-user" }, { id: "t2", assignee_id: "marina-user" }, { id: "t3", assignee_id: null }]);
+    expect((await get("/organizations/org-1/opportunities/pending-tasks")).json().map((t: any) => t.id)).toEqual(["t2", "t3"]);
+  });
+  it("interruptor desligado: nada restrito", async () => {
+    m.flag.value = false;
+    m.getOpportunityById.mockResolvedValue({ id: "o", organization_id: "org-1", contact_id: "c", owner_id: "marcio-user" });
+    expect((await get("/opportunities/o/details")).statusCode).toBe(200);
   });
 });

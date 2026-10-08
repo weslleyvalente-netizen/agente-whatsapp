@@ -25,7 +25,7 @@ import {
   type TaskPriorityScoreWeights,
 } from "@aula-agente/shared";
 import { authMiddleware } from "../../middleware/auth.js";
-import { isLeadVisible, resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 
 // Default size of the "Hoje" list; the rest waits in the reserve (org setting today_list_limit).
 const TODAY_LIST_LIMIT = 15;
@@ -333,7 +333,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
         : DEFAULT_TASK_PRIORITY_SCORE_WEIGHTS;
 
       const todayISODate = toISODateInTimeZone(new Date());
-      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: org.settings.lead_distribution_enabled === true });
+      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
       let visibleRows = rows;
       if (viewer.mode === "own") {
         const repUsers = new Set((await listSalesReps(db, organizationId)).map(r => r.user_id));
