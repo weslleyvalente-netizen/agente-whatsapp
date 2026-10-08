@@ -21,6 +21,7 @@ export function AssignSelect({
 }: AssignSelectProps) {
   const [members, setMembers] = useState<Array<{ user_id: string; role: string }>>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -37,10 +38,16 @@ export function AssignSelect({
 
   const handleAssign = async (userId: string) => {
     const supabase = createClient();
-    await supabase
+    setError(null);
+    // select() permite detectar 0 linhas: com o isolamento por vendedor o banco ignora (sem erro) a conversa que o usuário não vê.
+    const { data, error: updateError } = await supabase
       .from("conversations")
       .update({ assigned_to: userId === "none" ? null : userId })
-      .eq("id", conversationId);
+      .eq("id", conversationId)
+      .select("id");
+    if (updateError || !data || data.length === 0) {
+      setError("Não foi possível atribuir a conversa. Somente o gestor passa uma conversa para outro vendedor.");
+    }
     onUpdate();
   };
 
@@ -51,6 +58,7 @@ export function AssignSelect({
   };
 
   return (
+    <div className="space-y-1">
     <Select value={assignedTo || "none"} onValueChange={(v) => v && handleAssign(v)}>
       <SelectTrigger className={triggerClassName}>
         <SelectValue placeholder="Atribuir a...">
@@ -66,5 +74,7 @@ export function AssignSelect({
         ))}
       </SelectContent>
     </Select>
+    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
