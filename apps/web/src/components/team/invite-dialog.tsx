@@ -77,10 +77,14 @@ export function InviteDialog({ onInvited }: InviteDialogProps) {
           <div className="space-y-3">
             {inviteLink ? (
               <>
-                <p className="text-sm">Convite criado para <strong>{invitedEmail}</strong>. Envie este link para a pessoa (por exemplo, pelo WhatsApp). Ela define a própria senha e entra na organização.</p>
+                <p className="text-sm">
+                  {userExists
+                    ? <><strong>{invitedEmail}</strong> já tinha um acesso. Envie este link para a pessoa definir uma nova senha e concluir o convite.</>
+                    : <>Convite criado para <strong>{invitedEmail}</strong>. Envie este link para a pessoa (por exemplo, pelo WhatsApp). Ela define a própria senha e entra na organização.</>}
+                </p>
                 <Input readOnly value={inviteLink} onFocus={(e) => e.currentTarget.select()} aria-label="Link de convite" />
                 <Button onClick={copy} className="w-full">{copied ? "Link copiado" : "Copiar link"}</Button>
-                <p className="text-xs text-muted-foreground">O link vale uma única vez e o convite expira em 7 dias. Trate-o como uma senha: só quem recebe deve abri-lo.</p>
+                <p className="text-xs text-muted-foreground">O link vale uma única vez e o convite expira em 7 dias. Trate-o como uma senha: só quem recebe deve abri-lo. Abra o link uma vez só e conclua a senha na mesma tela.</p>
               </>
             ) : (
               <p className="text-sm"><strong>{invitedEmail}</strong> já tem login. Convite registrado: é só a pessoa entrar no CRM com o e-mail e a senha dela; ela passa a fazer parte da organização automaticamente.</p>

@@ -28,10 +28,12 @@ export default function AcceptInvitePage() {
     const supabase = createClient();
     const params = new URLSearchParams(window.location.search);
     const tokenHash = params.get("token_hash");
+    // Links for new people are "invite"; for people who already have a login they are "recovery".
+    const type = params.get("type") === "recovery" ? "recovery" : "invite";
 
     (async () => {
       if (tokenHash) {
-        const { error: verifyError } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: "invite" });
+        const { error: verifyError } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
         if (verifyError) { setStatus("invalid"); return; }
         window.history.replaceState(null, "", "/accept-invite");
         setStatus("ready");

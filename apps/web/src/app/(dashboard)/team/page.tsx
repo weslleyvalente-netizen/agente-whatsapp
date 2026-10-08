@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api";
 import { MembersList } from "@/components/team/members-list";
 import { InviteDialog } from "@/components/team/invite-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +13,7 @@ export default function TeamPage() {
   const { currentOrg } = useOrganization();
   const [members, setMembers] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
+  const [emails, setEmails] = useState<Record<string, string>>({});
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [currentUserRole, setCurrentUserRole] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,14 @@ export default function TeamPage() {
     setMembers(membersList);
     setInvitations(invitationsResult.data || []);
 
+    // Members only store a user id; the API resolves the e-mail so the list shows who each person is.
+    try {
+      const display: Array<{ user_id: string; email: string }> = await apiFetch(`/organizations/${currentOrg.id}/members/display`);
+      setEmails(Object.fromEntries(display.map(d => [d.user_id, d.email])));
+    } catch {
+      setEmails({});
+    }
+
     const myMembership = membersList.find((m: any) => m.user_id === user!.id);
     setCurrentUserRole(myMembership?.role || "agent");
 
@@ -69,6 +79,7 @@ export default function TeamPage() {
         <CardContent>
           <MembersList
             members={members}
+            emails={emails}
             currentUserId={currentUserId}
             currentUserRole={currentUserRole}
             onRefresh={fetchData}

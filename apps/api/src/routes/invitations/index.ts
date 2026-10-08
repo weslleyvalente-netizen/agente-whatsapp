@@ -44,21 +44,23 @@ export default async function invitationRoutes(app: FastifyInstance) {
       invitationId = inserted.data.id;
     }
 
+    const buildLink = (tokenHash: string, type: "invite" | "recovery") =>
+      `${appUrl}/accept-invite?token_hash=${encodeURIComponent(tokenHash)}&type=${type}`;
+
     const link = await db.auth.admin.generateLink({ type: "invite", email });
     if (link.error) {
-      // The person already has a login: nothing to send; the invitation is accepted when they sign in.
-      if ((link.error as { code?: string }).code === "email_exists" || /already|registered|exists/i.test(link.error.message ?? "")) {
-        return { invitationId, inviteLink: null, userExists: true };
-      }
-      return reply.status(500).send({ error: "Falha ao gerar o link de convite" });
+      const exists = (link.error as { code?: string }).code === "email_exists" || /already|registered|exists/i.test(link.error.message ?? "");
+      if (!exists) return reply.status(500).send({ error: "Falha ao gerar o link de convite" });
+      // The person already has a login (for example the first link was opened but the password was never set):
+      // a single-use password-reset link lets them choose a password; the invitation is accepted right after.
+      const recovery = await db.auth.admin.generateLink({ type: "recovery", email });
+      const recoveryHash = recovery.data?.properties?.hashed_token;
+      if (recovery.error || !recoveryHash) return { invitationId, inviteLink: null, userExists: true };
+      return { invitationId, userExists: true, inviteLink: buildLink(recoveryHash, "recovery") };
     }
     const tokenHash = link.data?.properties?.hashed_token;
     if (!tokenHash) return reply.status(500).send({ error: "Link de convite indisponível" });
-    return {
-      invitationId,
-      userExists: false,
-      inviteLink: `${appUrl}/accept-invite?token_hash=${encodeURIComponent(tokenHash)}&type=invite`,
-    };
+    return { invitationId, userExists: false, inviteLink: buildLink(tokenHash, "invite") };
   });
 
   // The signed-in user joins every organization that has a pending, unexpired invitation for their e-mail.

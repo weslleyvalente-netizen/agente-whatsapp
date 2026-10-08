@@ -18,12 +18,14 @@ interface Member {
 
 interface MembersListProps {
   members: Member[];
+  /** user_id -> e-mail, resolved by the API; falls back to the id prefix. */
+  emails?: Record<string, string>;
   currentUserId: string;
   currentUserRole: string;
   onRefresh: () => void;
 }
 
-export function MembersList({ members, currentUserId, currentUserRole, onRefresh }: MembersListProps) {
+export function MembersList({ members, emails = {}, currentUserId, currentUserRole, onRefresh }: MembersListProps) {
   const canManage = currentUserRole === "owner" || currentUserRole === "admin";
 
   const handleRoleChange = async (memberId: string, newRole: string) => {
@@ -52,11 +54,11 @@ export function MembersList({ members, currentUserId, currentUserRole, onRefresh
           <div key={member.id} className="flex items-center justify-between rounded-md border p-3">
             <div className="flex items-center gap-3">
               <Avatar className="h-8 w-8">
-                <AvatarFallback>{member.user_id.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarFallback>{(emails[member.user_id] ?? member.user_id).slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
               <div>
                 <p className="text-sm font-medium">
-                  {member.user_id.slice(0, 8)}...
+                  {emails[member.user_id] ?? `${member.user_id.slice(0, 8)}...`}
                   {isCurrentUser && " (voce)"}
                 </p>
                 <p className="text-xs text-muted-foreground">
