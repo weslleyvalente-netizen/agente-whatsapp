@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # scripts/build-seller-isolation-sql.sh
-# Junta as 3 migrations de isolamento por vendedor em um arquivo único, em uma transação,
+# Junta as 4 migrations de isolamento por vendedor em um arquivo único, em uma transação,
 # e registra as versões no histórico do Supabase CLI. Para colar no SQL Editor do Supabase.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT="${1:-/tmp/seller-isolation-migrations.sql}"
 FILES=$(ls supabase/migrations/20261008120*_seller_isolation_*.sql | sort)
 {
-  echo "-- Isolamento por vendedor (RLS): 3 migrations em UMA transação (tudo ou nada)."
+  echo "-- Isolamento por vendedor (RLS): 4 migrations em UMA transação (tudo ou nada)."
   echo "-- Só restringe quando organizations.settings.seller_isolation_enabled = 'true'; aplicar não muda nada sozinho."
   echo "begin;"
   for f in $FILES; do echo; echo "-- ===== $(basename "$f") ====="; cat "$f"; done

@@ -41,6 +41,8 @@ Desligar o interruptor (tela ou `update organizations set settings = settings ||
 ## Lacunas aceitas (continuam por organização)
 `conversation_metrics`, `task_followup_sends` e `ai_usage_events` não foram isoladas: um vendedor ainda pode ler esses agregados/registros da organização inteira pelo banco. Aceito nesta fase (não expõem o conteúdo das conversas); tratar em fase própria se necessário.
 
+As rotas de escrita da API (editar/ganhar/perder negócio, editar/concluir tarefa, enviar follow-up, qualificação) usam a chave de serviço e só checam a organização: só conseguem agir sobre o lead de outro vendedor quem souber o ID, que as listas já não mostram. Só `PATCH /conversations/:id` e `POST /messages/send` foram protegidas por vendedor. Fechar as demais em fase própria.
+
 ## Comportamentos a saber
 - Um **vendedor não consegue passar uma conversa/negócio dele para outro vendedor** (a linha sairia da visão dele). Só o gestor transfere entre vendedores. O vendedor pode soltar (deixar sem dono) e pegar o que está sem dono.
 - Durante o modo sombra da distribuição, leads novos têm dono "legado" (conta compartilhada) e ficam visíveis aos dois vendedores.
