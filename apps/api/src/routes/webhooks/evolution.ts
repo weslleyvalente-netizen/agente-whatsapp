@@ -25,6 +25,7 @@ import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage } from "../../lib/queue.js";
+import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 
@@ -308,6 +309,17 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         const org = await getOrganizationById(db, organizationId);
         const greetingFilterConfig = resolveGreetingFilterConfig(org.settings);
         const skipTakeover = shouldSkipTakeoverForGreeting(content, isFirstTakeover, greetingFilterConfig);
+
+        // Aceite do lead (distribuição): a saudação curta nunca assume, mesmo com o takeover já ativo — o requestHuman
+        // sempre liga o takeover antes, então isFirstTakeover não serve aqui. O takeover acima segue como antes.
+        await trackFirstHumanMessage(db, {
+          organizationId,
+          conversationId: conversation.id,
+          role: "human_agent",
+          source: "phone_echo",
+          metadata: null,
+          greetingFiltered: isGreetingOrShortConfirmation(content, greetingFilterConfig),
+        });
 
         if (skipTakeover) {
           try {

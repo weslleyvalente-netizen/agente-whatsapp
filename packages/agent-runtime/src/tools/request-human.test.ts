@@ -10,6 +10,10 @@ const getTaskEvents = vi.fn();
 const addTaskEvent = vi.fn();
 const getOpenOpportunitiesByContact = vi.fn();
 const createTaskWithDedup = vi.fn();
+const distributeLeadForHandoff = vi.fn();
+const getActiveAssignmentRepUserId = vi.fn();
+const hasOpenDistributionException = vi.fn();
+const recordDistributionError = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -22,6 +26,10 @@ vi.mock("@aula-agente/database", () => ({
   addTaskEvent: (...args: unknown[]) => addTaskEvent(...args),
   getOpenOpportunitiesByContact: (...args: unknown[]) => getOpenOpportunitiesByContact(...args),
   createTaskWithDedup: (...args: unknown[]) => createTaskWithDedup(...args),
+  distributeLeadForHandoff: (...args: unknown[]) => distributeLeadForHandoff(...args),
+  getActiveAssignmentRepUserId: (...args: unknown[]) => getActiveAssignmentRepUserId(...args),
+  hasOpenDistributionException: (...args: unknown[]) => hasOpenDistributionException(...args),
+  recordDistributionError: (...args: unknown[]) => recordDistributionError(...args),
 }));
 
 const addToSendQueue = vi.fn();
@@ -55,6 +63,34 @@ beforeEach(() => {
   createHandoffEvent.mockResolvedValue({ id: "handoff-1" });
   getOpenOpportunitiesByContact.mockResolvedValue([]);
   createTaskWithDedup.mockResolvedValue({ task: { id: "task-1", title: "Outro" }, wasUpdated: false });
+  distributeLeadForHandoff.mockResolvedValue(null);
+  getActiveAssignmentRepUserId.mockResolvedValue(null);
+  hasOpenDistributionException.mockResolvedValue(false);
+  recordDistributionError.mockResolvedValue(null);
+});
+
+describe("createRequestHumanTool lead distribution", () => {
+  it("chama a distribuição com o id do handoff recém-criado", async () => {
+    const toolDef = createRequestHumanTool(context);
+    await toolDef.execute!(baseInput, {} as never);
+
+    expect(distributeLeadForHandoff).toHaveBeenCalledWith({}, {
+      organizationId: "org-1",
+      conversationId: "conv-1",
+      handoffEventId: "handoff-1",
+    });
+  });
+
+  it("mantém o handoff quando a distribuição falha", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    distributeLeadForHandoff.mockRejectedValue(new Error("rpc down"));
+
+    const toolDef = createRequestHumanTool(context);
+    const result = await toolDef.execute!(baseInput, {} as never);
+
+    expect(result).toContain("Handoff registrado");
+    expect(updateConversation).toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ is_human_takeover: true }));
+  });
 });
 
 describe("createRequestHumanTool", () => {
@@ -336,4 +372,100 @@ describe("handoff refresh guards", () => {
   await createRequestHumanTool(context).execute!(baseInput,{} as never);
   expect(updateTask.mock.calls[0][2]).toHaveProperty("due_date","2026-10-03");
  });
+});
+
+// C1 (revisão final): o responsável padrão gravado ANTES da distribuição virava "dono atual" em resolve_current_owner,
+// então todo lead ia para o responsável padrão (existing_owner) e o rodízio nunca andava.
+describe("requestHuman: ordem das escritas por modo de distribuição", () => {
+  const openTask = { id: "task-1", organization_id: "org-1", status: "pending", updated_at: "v1" };
+  let order: string[];
+  beforeEach(() => {
+    order = [];
+    updateConversation.mockImplementation(async (_db, _id, patch: Record<string, unknown>) => { order.push("assigned_to" in patch ? `conversation.assigned_to=${patch.assigned_to}` : "conversation.takeover"); });
+    createHandoffEvent.mockImplementation(async () => { order.push("handoff_event"); return { id: "handoff-1" }; });
+    distributeLeadForHandoff.mockImplementation(async () => { order.push("distribute"); return "assign-1"; });
+    getOpenTasksByConversation.mockResolvedValue([openTask]);
+    updateTask.mockImplementation(async (_db, _id, patch: Record<string, unknown>) => { order.push(`task.assignee=${patch.assignee_id ?? "none"}`); return { id: "task-1" }; });
+  });
+  const settings = (extra: Record<string, unknown>) => getOrganizationById.mockResolvedValue({ id: "org-1", settings: { default_handoff_assignee_id: "user-42", ...extra } });
+  const run = () => createRequestHumanTool(context).execute!(baseInput, {} as never);
+
+  it("modo desligado: exatamente como hoje (responsável padrão gravado junto com o takeover, tarefas antes da distribuição)", async () => {
+    settings({});
+    await run();
+    expect(order).toEqual(["conversation.assigned_to=user-42", "handoff_event", "task.assignee=user-42", "distribute"]);
+    expect(getActiveAssignmentRepUserId).not.toHaveBeenCalled();
+    expect(hasOpenDistributionException).not.toHaveBeenCalled();
+  });
+
+  it("modo desligado: uma falha na chamada (no-op) não tenta registrar distribution_error", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    settings({});
+    distributeLeadForHandoff.mockRejectedValue(new Error("org lookup failed"));
+    expect(await run()).toContain("Handoff registrado");
+    expect(recordDistributionError).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it("modo sombra: a sombra decide sobre a conversa limpa; depois o responsável padrão é aplicado como hoje", async () => {
+    settings({ lead_distribution_shadow_enabled: true });
+    await run();
+    expect(order).toEqual(["conversation.takeover", "handoff_event", "distribute", "conversation.assigned_to=user-42", "task.assignee=user-42"]);
+    expect(getActiveAssignmentRepUserId).not.toHaveBeenCalled();
+  });
+
+  it("modo real com atribuição ativa: conversa e tarefas ficam com o vendedor distribuído (nunca com o padrão)", async () => {
+    settings({ lead_distribution_enabled: true });
+    getActiveAssignmentRepUserId.mockResolvedValue("rep-user");
+    await run();
+    // A distribuição (_lead_apply_effects) já gravou conversations.assigned_to; o requestHuman não sobrescreve.
+    expect(order).toEqual(["conversation.takeover", "handoff_event", "distribute", "task.assignee=rep-user"]);
+    expect(getActiveAssignmentRepUserId).toHaveBeenCalledWith({}, "org-1", "conv-1");
+    expect(order).not.toContain("conversation.assigned_to=user-42");
+  });
+
+  it("modo real com exceção: fica sem responsável (está na fila do gestor)", async () => {
+    settings({ lead_distribution_enabled: true });
+    hasOpenDistributionException.mockResolvedValue(true);
+    await run();
+    expect(order).toEqual(["conversation.takeover", "handoff_event", "distribute", "task.assignee=none"]);
+    expect(updateTask.mock.calls[0][2]).not.toHaveProperty("assignee_id");
+  });
+
+  it("modo real sem linha de distribuição (ex.: handoff anterior à ativação): responsável padrão como hoje, depois da distribuição", async () => {
+    settings({ lead_distribution_enabled: true });
+    distributeLeadForHandoff.mockImplementation(async () => { order.push("distribute"); return null; });
+    await run();
+    expect(order).toEqual(["conversation.takeover", "handoff_event", "distribute", "conversation.assigned_to=user-42", "task.assignee=user-42"]);
+  });
+
+  it("modo real: falha na distribuição registra distribution_error e o handoff segue", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    settings({ lead_distribution_enabled: true });
+    distributeLeadForHandoff.mockRejectedValue(new Error("deadlock"));
+    hasOpenDistributionException.mockResolvedValue(true); // a linha distribution_error recém-gravada
+    const result = await run();
+    expect(recordDistributionError).toHaveBeenCalledWith({}, { organizationId: "org-1", conversationId: "conv-1", handoffEventId: "handoff-1", message: "deadlock" });
+    expect(result).toContain("Handoff registrado");
+    expect(order).not.toContain("conversation.assigned_to=user-42");
+    log.mockRestore();
+  });
+
+  it("modo real: falha ao consultar a atribuição não derruba o handoff nem grava o responsável padrão", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    settings({ lead_distribution_enabled: true });
+    getActiveAssignmentRepUserId.mockRejectedValue(new Error("db blip"));
+    const result = await run();
+    expect(result).toContain("Handoff registrado");
+    expect(order).toEqual(["conversation.takeover", "handoff_event", "distribute", "task.assignee=none"]);
+    log.mockRestore();
+  });
+
+  it("modo real: o aviso interno e a tarefa de fallback continuam iguais (baseados na configuração)", async () => {
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_notification_phone: "5511888880000" } });
+    getActiveAssignmentRepUserId.mockResolvedValue("rep-user");
+    await run();
+    expect(addToSendQueue).toHaveBeenCalledWith("send-message", expect.objectContaining({ phone: "5511888880000" }));
+    expect(createTaskWithDedup).not.toHaveBeenCalled();
+  });
 });

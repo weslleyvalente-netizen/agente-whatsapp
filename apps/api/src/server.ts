@@ -15,6 +15,7 @@ import agentImageRoutes from "./routes/agent-config/images.js";
 import conversationRoutes from "./routes/conversations/index.js";
 import invitationRoutes from "./routes/invitations/index.js";
 import opportunityRoutes from "./routes/opportunities/index.js";
+import leadDistributionRoutes from "./routes/lead-distribution/index.js";
 
 const server = Fastify({ logger: true });
 
@@ -48,6 +49,7 @@ server.register(agentImageRoutes);
 server.register(conversationRoutes);
 server.register(opportunityRoutes);
 server.register(invitationRoutes);
+server.register(leadDistributionRoutes);
 
 // Start
 const start = async () => {

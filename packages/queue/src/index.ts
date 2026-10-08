@@ -5,6 +5,7 @@ export {
   getProcessDocumentQueue,
   getTakeoverTimeoutQueue,
   getStaleConversationFollowupQueue,
+  getLeadSlaQueue,
 } from "./queues.js";
 export type {
   ProcessMessageJobData,

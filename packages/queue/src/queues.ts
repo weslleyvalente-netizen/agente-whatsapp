@@ -69,6 +69,12 @@ export function getTakeoverTimeoutQueue() {
   return takeoverTimeoutQueue;
 }
 
+let leadSlaQueue: Queue<{}> | undefined;
+export function getLeadSlaQueue() {
+  if (!leadSlaQueue) leadSlaQueue = new Queue<{}>(QUEUE_NAMES.LEAD_SLA, { connection: getRedisConnection() });
+  return leadSlaQueue;
+}
+
 export function getStaleConversationFollowupQueue() {
   if (!staleConversationFollowupQueue) {
     staleConversationFollowupQueue = new Queue<StaleConversationFollowupJobData>(

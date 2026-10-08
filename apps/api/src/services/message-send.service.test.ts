@@ -9,7 +9,9 @@ const {
   markFirstHumanReply,
   handleConversationTakeover,
   enqueueSendMessage,
+  recordHumanMessage,
 } = vi.hoisted(() => ({
+  recordHumanMessage: vi.fn().mockResolvedValue("assign-1"),
   saveMessage: vi.fn(),
   updateConversation: vi.fn().mockResolvedValue(undefined),
   getInstanceById: vi.fn(),
@@ -28,7 +30,14 @@ vi.mock("@aula-agente/database", () => ({
   createHandoffEvent,
   getOpenHandoffEvent,
   markFirstHumanReply,
+  recordHumanMessage,
 }));
+// Espião sobre a implementação real: verifica a chamada e também o filtro de origem humana de verdade.
+vi.mock("./lead-human-message.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lead-human-message.js")>();
+  return { trackFirstHumanMessage: vi.fn(actual.trackFirstHumanMessage) };
+});
+import { trackFirstHumanMessage } from "./lead-human-message.js";
 vi.mock("./task.service.js", () => ({ handleConversationTakeover }));
 vi.mock("../lib/queue.js", () => ({ enqueueSendMessage }));
 
@@ -158,5 +167,33 @@ describe("sendPanelMessage", () => {
     await sendPanelMessage({ conversation: baseConversation, content: "Oi", actorUserId: "user-1" });
 
     expect(enqueueSendMessage).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+});
+
+describe("sendPanelMessage — primeira mensagem humana (distribuição de leads)", () => {
+  // saveMessage devolve a linha gravada (role incluso); o papel vem dela.
+  beforeEach(() => { saveMessage.mockResolvedValue({ id: "msg-1", role: "human_agent" }); });
+
+  it("chama trackFirstHumanMessage com papel, autor e metadata, e o aceite vai como 'panel' do autor", async () => {
+    await sendPanelMessage({ conversation: baseConversation, content: "Oi, sou a Marina", actorUserId: "user-1" });
+    expect(trackFirstHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({
+      organizationId: "org-1", conversationId: "conv-1", role: "human_agent", source: "panel", actorUserId: "user-1", metadata: null,
+    }));
+    expect(recordHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ organizationId: "org-1", conversationId: "conv-1", authorUserId: "user-1", via: "panel" }));
+  });
+
+  it("mensagem de follow-up de tarefa (metadata source=task_followup) ainda conta como humana", async () => {
+    await sendPanelMessage({ conversation: baseConversation, content: "Passando para lembrar", actorUserId: "user-1", metadata: { source: "task_followup" } });
+    expect(trackFirstHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ metadata: { source: "task_followup" }, actorUserId: "user-1" }));
+    expect(recordHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ authorUserId: "user-1", via: "panel" }));
+  });
+
+  it("falha ao registrar não derruba o envio", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    recordHumanMessage.mockRejectedValueOnce(new Error("rpc down"));
+    const result = await sendPanelMessage({ conversation: baseConversation, content: "Oi", actorUserId: "user-1" });
+    expect(result.message.id).toBe("msg-1");
+    expect(enqueueSendMessage).toHaveBeenCalled();
+    log.mockRestore();
   });
 });
