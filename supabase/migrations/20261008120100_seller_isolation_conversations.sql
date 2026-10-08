@@ -7,14 +7,14 @@ DROP POLICY IF EXISTS "conversations_insert" ON public.conversations;
 DROP POLICY IF EXISTS "conversations_update" ON public.conversations;
 DROP POLICY IF EXISTS "conversations_delete" ON public.conversations;
 CREATE POLICY "conversations_select" ON public.conversations FOR SELECT
-  USING (organization_id IN (SELECT get_user_org_ids()) AND public.seller_can_see(organization_id, assigned_to));
+  USING (organization_id IN (SELECT get_user_org_ids()) AND (assigned_to IS NULL OR assigned_to = (SELECT auth.uid()) OR (organization_id, assigned_to) NOT IN (SELECT h.organization_id, h.user_id FROM public.seller_hidden_owners() h)));
 CREATE POLICY "conversations_insert" ON public.conversations FOR INSERT
-  WITH CHECK (organization_id IN (SELECT get_user_org_ids()) AND public.seller_can_see(organization_id, assigned_to));
+  WITH CHECK (organization_id IN (SELECT get_user_org_ids()) AND (assigned_to IS NULL OR assigned_to = (SELECT auth.uid()) OR (organization_id, assigned_to) NOT IN (SELECT h.organization_id, h.user_id FROM public.seller_hidden_owners() h)));
 CREATE POLICY "conversations_update" ON public.conversations FOR UPDATE
-  USING (organization_id IN (SELECT get_user_org_ids()) AND public.seller_can_see(organization_id, assigned_to))
-  WITH CHECK (organization_id IN (SELECT get_user_org_ids()) AND public.seller_can_see(organization_id, assigned_to));
+  USING (organization_id IN (SELECT get_user_org_ids()) AND (assigned_to IS NULL OR assigned_to = (SELECT auth.uid()) OR (organization_id, assigned_to) NOT IN (SELECT h.organization_id, h.user_id FROM public.seller_hidden_owners() h)))
+  WITH CHECK (organization_id IN (SELECT get_user_org_ids()) AND (assigned_to IS NULL OR assigned_to = (SELECT auth.uid()) OR (organization_id, assigned_to) NOT IN (SELECT h.organization_id, h.user_id FROM public.seller_hidden_owners() h)));
 CREATE POLICY "conversations_delete" ON public.conversations FOR DELETE
-  USING (organization_id IN (SELECT get_user_org_ids()) AND public.seller_can_see(organization_id, assigned_to));
+  USING (organization_id IN (SELECT get_user_org_ids()) AND (assigned_to IS NULL OR assigned_to = (SELECT auth.uid()) OR (organization_id, assigned_to) NOT IN (SELECT h.organization_id, h.user_id FROM public.seller_hidden_owners() h)));
 
 -- Dependentes diretos da conversa: a subconsulta em conversations herda o RLS acima (só enxerga conversas visíveis).
 DO $$

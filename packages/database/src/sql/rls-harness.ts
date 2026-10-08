@@ -8,6 +8,7 @@ export const RLS_MIGRATIONS = [
   "20261008120000_seller_isolation_functions.sql",
   "20261008120100_seller_isolation_conversations.sql",
   "20261008120200_seller_isolation_opportunities.sql",
+  "20261008120300_seller_isolation_lead_assignments.sql",
 ];
 
 export async function createRlsDb(files: string[] = RLS_MIGRATIONS) {
@@ -19,7 +20,7 @@ export async function createRlsDb(files: string[] = RLS_MIGRATIONS) {
     catch (err: any) { if (err?.code === "ENOENT") continue; throw err; } // as próximas tasks criam os arquivos
     await db.exec(sql);
   }
-  await db.exec("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, anon, service_role;");
+  await db.exec("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;");
   return db;
 }
 type Db = Awaited<ReturnType<typeof createRlsDb>>;

@@ -20,12 +20,13 @@ CREATE TABLE public.opportunities (id uuid PRIMARY KEY DEFAULT gen_random_uuid()
 CREATE TABLE public.opportunity_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), opportunity_id uuid NOT NULL REFERENCES public.opportunities(id) ON DELETE CASCADE, event_type text NOT NULL DEFAULT 'created');
 CREATE TABLE public.tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), contact_id uuid NOT NULL REFERENCES public.wa_contacts(id) ON DELETE CASCADE, conversation_id uuid REFERENCES public.conversations(id) ON DELETE SET NULL, opportunity_id uuid REFERENCES public.opportunities(id) ON DELETE SET NULL, assignee_id uuid, status text NOT NULL DEFAULT 'pending');
 CREATE TABLE public.task_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), task_id uuid NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE, event_type text NOT NULL DEFAULT 'created');
+CREATE TABLE public.lead_assignments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), contact_id uuid NOT NULL REFERENCES public.wa_contacts(id), conversation_id uuid NOT NULL REFERENCES public.conversations(id), rep_id uuid REFERENCES public.sales_reps(id), status text NOT NULL DEFAULT 'accepted');
 CREATE INDEX idx_messages_conversation ON public.messages(conversation_id);
 
 CREATE FUNCTION public.get_user_org_ids() RETURNS SETOF uuid LANGUAGE sql SECURITY DEFINER STABLE AS $$ SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid() $$;
 
 DO $$ DECLARE t text; BEGIN
-  FOREACH t IN ARRAY ARRAY['organizations','organization_members','sales_reps','wa_contacts','conversations','messages','conversation_notes','conversation_reads','conversation_qualifications','conversation_qualification_events','handoff_events','opportunities','opportunity_events','tasks','task_events'] LOOP
+  FOREACH t IN ARRAY ARRAY['organizations','organization_members','sales_reps','wa_contacts','conversations','messages','conversation_notes','conversation_reads','conversation_qualifications','conversation_qualification_events','handoff_events','opportunities','opportunity_events','tasks','task_events','lead_assignments'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;
   -- Políticas "por organização" de hoje (00008 loop, 00011, 00020, 00025, 00028).
@@ -48,6 +49,7 @@ DO $$ DECLARE t text; BEGIN
   EXECUTE 'CREATE POLICY "handoff_events_select" ON public.handoff_events FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))';
   EXECUTE 'CREATE POLICY "handoff_events_insert" ON public.handoff_events FOR INSERT WITH CHECK (organization_id IN (SELECT get_user_org_ids()))';
   EXECUTE 'CREATE POLICY "handoff_events_update" ON public.handoff_events FOR UPDATE USING (organization_id IN (SELECT get_user_org_ids()))';
+  EXECUTE 'CREATE POLICY "lead_assignments_select" ON public.lead_assignments FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))';
   EXECUTE 'CREATE POLICY "organizations_select" ON public.organizations FOR SELECT USING (id IN (SELECT get_user_org_ids()))';
   EXECUTE 'CREATE POLICY "org_members_select" ON public.organization_members FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))';
   EXECUTE 'CREATE POLICY "sales_reps_select" ON public.sales_reps FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))';
