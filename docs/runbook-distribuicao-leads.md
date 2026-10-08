@@ -13,6 +13,18 @@ Spec: docs/superpowers/specs/2026-10-07-lead-distribution-design.md
 6. Conferir o calendário comercial (padrão segunda a sexta 08:00–18:00). Se houver atendimento aos sábados, gravar `settings.business_calendar` com uma janela de sábado (ex.: 08:00–12:00).
 7. Ao ligar `lead_distribution_enabled` pela tela, o sistema grava `lead_distribution_activated_at`; se a flag for ligada por SQL, grave `lead_distribution_activated_at` junto, senão handoffs antigos entram.
 
+## Carga da carteira existente (uma vez, antes do modo sombra)
+Regra do negócio: **toda a carteira que já existe fica com a Marina; só lead novo entra no rodízio.**
+1. Convide Marina e Márcio como membros `agent` (tela Equipe) e espere os dois aceitarem.
+2. Cadastre os dois em `sales_reps` (passo 5 de "Antes de ligar"), com `rotation_order` 1 (Marina) e 2 (Márcio).
+3. Simule (somente leitura), a partir da raiz do repositório:
+   `node --env-file=.env --experimental-strip-types packages/database/scripts/assign-legacy-leads.ts --organization=<id> --rep-user=<user_id da Marina>`
+   Confira as contagens (oportunidades abertas, conversas, tarefas) antes de gravar.
+4. Grave só depois de conferir e com a migration 20261007120000 aplicada:
+   `... --rep-user=<user_id da Marina> --apply --confirm=<id da organização>`
+   O script só altera onde não há dono vendedor (vazio ou conta compartilhada), não cria atribuições nem SLA, e registra um evento `owner_changed` por oportunidade. Use `--only-active` para limitar às conversas `open`/`waiting`.
+5. Um cliente antigo que voltar com um novo handoff continua com a Marina (dono existente); quem nunca teve dono entra no rodízio.
+
 ## Modo sombra (obrigatório antes de ligar)
 1. Configurações → Distribuição → ligar **"Modo de teste (simulação)"** (`lead_distribution_shadow_enabled`). Nada real muda: cada handoff novo só gera uma linha em `lead_distribution_shadow_log` com quem receberia e por quê.
 2. Deixe rodar com handoffs reais por alguns dias (mínimo sugerido: 20 handoffs ou 2 dias úteis).
