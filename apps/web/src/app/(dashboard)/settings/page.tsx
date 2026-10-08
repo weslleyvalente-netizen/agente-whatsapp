@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Eye, EyeOff, Save, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact } from "@aula-agente/shared";
+import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact, SalesRep, SalesRepAvailability } from "@aula-agente/shared";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
 import {
   DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
   DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES,
@@ -64,21 +65,67 @@ export default function SettingsPage() {
 
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    setSavingWorkspace(true); setWorkspaceError(null);
+    const isLead = flag.startsWith("lead_distribution");
+    const setErr = isLead ? setLeadError : setWorkspaceError;
+    setSavingWorkspace(true); setErr(null);
     try {
       const client = createClient();
       const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
       if (readError) throw readError;
-      let query = client.from("organizations").update({ settings: { ...org.settings, [flag]: enabled, ...(flag === "sales_low_intent_cadence_enabled" && enabled ? { sales_low_intent_cadence_started_at: new Date().toISOString() } : {}) } }).eq("id", currentOrg.id);
+      let query = client.from("organizations").update({ settings: { ...org.settings, [flag]: enabled, ...(flag === "sales_low_intent_cadence_enabled" && enabled ? { sales_low_intent_cadence_started_at: new Date().toISOString() } : {}), ...(flag === "lead_distribution_enabled" && enabled ? { lead_distribution_activated_at: new Date().toISOString() } : {}) } }).eq("id", currentOrg.id);
       query = org.settings == null ? query.is("settings", null) : query.eq("settings", JSON.stringify(org.settings));
       const { data, error } = await query.select("id").maybeSingle();
       if (error) throw error;
       if (!data) throw new Error("As configurações mudaram. Atualize a página e tente novamente.");
       await refetch();
-    } catch (err) { setWorkspaceError((err as Error).message); } finally { setSavingWorkspace(false); }
+    } catch (err) { setErr((err as Error).message); } finally { setSavingWorkspace(false); }
+  }
+
+
+  // Distribuição de leads (rodízio entre vendedores)
+  const { role: myRole } = useMyRole();
+  const isManager = myRole === "owner" || myRole === "admin";
+  const [slaMinutes, setSlaMinutes] = useState("15");
+  const [savingSla, setSavingSla] = useState(false);
+  const [reps, setReps] = useState<SalesRep[]>([]);
+  const [repsError, setRepsError] = useState<string | null>(null);
+  useEffect(() => {
+    setSlaMinutes(String(currentOrg?.settings.lead_sla_minutes ?? 15));
+  }, [currentOrg?.id, currentOrg?.settings.lead_sla_minutes]);
+  useEffect(() => {
+    if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) { setReps([]); return; }
+    apiFetch(`/organizations/${currentOrg.id}/sales-reps`).then((r: SalesRep[]) => setReps(r)).catch(() => setReps([]));
+  }, [currentOrg]);
+
+  async function saveSlaMinutes() {
+    if (!currentOrg || savingSla) return;
+    const minutes = Number(slaMinutes);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 240) { setLeadError("O prazo de resposta deve ser um número inteiro entre 5 e 240 minutos."); return; }
+    setSavingSla(true); setLeadError(null);
+    try {
+      const client = createClient();
+      const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
+      if (readError) throw readError;
+      let query = client.from("organizations").update({ settings: { ...org.settings, lead_sla_minutes: minutes } }).eq("id", currentOrg.id);
+      query = org.settings == null ? query.is("settings", null) : query.eq("settings", JSON.stringify(org.settings));
+      const { data, error } = await query.select("id").maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("As configurações mudaram. Atualize a página e tente novamente.");
+      await refetch();
+    } catch (err) { setLeadError((err as Error).message); } finally { setSavingSla(false); }
+  }
+
+  async function changeRepAvailability(rep: SalesRep, availability: SalesRepAvailability) {
+    if (!currentOrg) return;
+    setRepsError(null);
+    try {
+      const updated: SalesRep = await apiFetch(`/organizations/${currentOrg.id}/sales-reps/${rep.id}/availability`, { method: "PATCH", body: JSON.stringify({ availability }) });
+      setReps(prev => prev.map(r => r.id === rep.id ? updated : r));
+    } catch (err) { setRepsError((err as Error).message); }
   }
 
   // Fase 2 — triagem de tarefas
@@ -648,6 +695,33 @@ export default function SettingsPage() {
             <Save className="mr-2 h-4 w-4" />
             {savingGreeting ? "Salvando..." : "Salvar"}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Distribuição</CardTitle><CardDescription>Rodízio de novos leads entre os vendedores, com prazo de resposta.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-shadow">Modo de teste (simulação)</Label><Switch id="lead-dist-shadow" checked={currentOrg?.settings.lead_distribution_shadow_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_shadow_enabled")}/></div>
+          <p className="text-xs text-muted-foreground">Calcula quem receberia cada lead e registra, sem alterar nada. Use antes de ativar.</p>
+          <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-enabled">Distribuição de leads ativa</Label><Switch id="lead-dist-enabled" checked={currentOrg?.settings.lead_distribution_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_enabled")}/></div>
+          <div className="flex items-end gap-3"><div className="space-y-1"><Label htmlFor="lead-sla-minutes">Prazo para o vendedor assumir (minutos)</Label><Input id="lead-sla-minutes" type="number" min={5} max={240} className="w-32" value={slaMinutes} onChange={e => setSlaMinutes(e.target.value)}/></div><Button size="sm" disabled={savingSla} onClick={saveSlaMinutes}>Salvar prazo</Button></div>
+          {currentOrg?.settings.lead_distribution_enabled === true && (
+            <div className="space-y-2" aria-label="Vendedores">
+              <p className="text-sm font-medium">Vendedores</p>
+              {!reps.length && <p className="text-sm text-muted-foreground">Nenhum vendedor cadastrado.</p>}
+              {reps.map(r => (
+                <div key={r.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span>{r.display_name}</span>
+                  {isManager
+                    ? <select aria-label={`Estado de ${r.display_name}`} className="rounded border bg-background p-1" value={r.availability} onChange={e => changeRepAvailability(r, e.target.value as SalesRepAvailability)}><option value="available">Disponível</option><option value="paused">Pausado</option><option value="out">Fora da distribuição</option></select>
+                    : <span className="text-muted-foreground">{r.availability === "available" ? "Disponível" : r.availability === "paused" ? "Pausado" : "Fora da distribuição"}</span>}
+                </div>
+              ))}
+              {repsError && <p role="alert" className="text-sm text-destructive">{repsError}</p>}
+            </div>
+          )}
+          {leadError && <p role="alert" className="text-sm text-destructive">{leadError}</p>}
+          <p className="text-xs text-muted-foreground">O calendário comercial padrão é segunda a sexta, 08:00–18:00. Para atender aos sábados, configure <code>business_calendar</code> (janela de sábado).</p>
         </CardContent>
       </Card>
 

@@ -33,6 +33,14 @@ export interface OrganizationSettings {
   // Tamanho da lista "Hoje"; o restante fica na reserva. Padrão 15.
   today_list_limit?: number;
   scheduled_ad_closure_batch?: import('../ad-closure.js').ScheduledAdClosureBatch;
+  // Distribuição de leads (rodízio). Desligada por padrão.
+  lead_distribution_enabled?: boolean;
+  lead_distribution_activated_at?: string;
+  lead_sla_minutes?: number;
+  owner_lookback_days?: number;
+  business_calendar?: import("../business-calendar.js").BusinessCalendar;
+  // Modo sombra da distribuição (registra o que faria, sem atribuir de fato).
+  lead_distribution_shadow_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;
