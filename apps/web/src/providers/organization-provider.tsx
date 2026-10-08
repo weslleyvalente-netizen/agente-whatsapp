@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api";
 import type { Organization } from "@aula-agente/shared";
 
 interface OrganizationContextType {
@@ -30,10 +31,22 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: memberships } = await supabase
+    const loadMemberships = () => supabase
       .from("organization_members")
       .select("organization_id, role, organizations(*)")
       .eq("user_id", user.id);
+
+    let { data: memberships } = await loadMemberships();
+
+    // A person who was invited but has no organization yet joins it now (pending invitation for their e-mail).
+    if (!memberships || memberships.length === 0) {
+      try {
+        const result = await apiFetch("/invitations/accept", { method: "POST" });
+        if (result?.accepted > 0) ({ data: memberships } = await loadMemberships());
+      } catch {
+        // No pending invitation (or the API is unreachable): fall through to the normal onboarding.
+      }
+    }
 
     if (memberships && memberships.length > 0) {
       const orgs = memberships
