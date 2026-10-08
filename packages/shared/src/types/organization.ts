@@ -41,6 +41,8 @@ export interface OrganizationSettings {
   business_calendar?: import("../business-calendar.js").BusinessCalendar;
   // Modo sombra da distribuição (registra o que faria, sem atribuir de fato).
   lead_distribution_shadow_enabled?: boolean;
+  // Isolamento por vendedor no banco (RLS). Desligado por padrão: com ele ligado, um vendedor não lê nem altera o que é de outro vendedor.
+  seller_isolation_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;

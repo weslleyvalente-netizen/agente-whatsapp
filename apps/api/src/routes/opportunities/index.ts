@@ -27,7 +27,7 @@ import {
   updateOpportunityFields,
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
-import { isLeadVisible, resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canViewLead } from "../../lib/lead-access.js";
 
 import { enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
@@ -44,7 +44,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const [rows, organization] = await Promise.all([getOpportunitiesByOrganization(db, organizationId, request.query), getOrganizationById(db, organizationId)]);
-      const leadDistributionEnabled = organization.settings.lead_distribution_enabled === true;
+      const leadDistributionEnabled = isSellerFilterEnabled(organization.settings);
       const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled });
       return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true,
         leadDistributionEnabled ? { enabled: true, viewer } : undefined);
@@ -58,7 +58,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const db=getAdminClient();const org=await getOrganizationById(db,orgId);
     if(org.settings.sales_action_queue_enabled!==true)return [];
     const tasks=await getSalesTasksWithoutOpenBusiness(db,orgId);
-    const viewer=resolveLeadVisibility({role:member.role,userId:request.user.id,leadDistributionEnabled:org.settings.lead_distribution_enabled===true});
+    const viewer=resolveLeadVisibility({role:member.role,userId:request.user.id,leadDistributionEnabled:isSellerFilterEnabled(org.settings)});
     if(viewer.mode==="all")return tasks;
     const repUsers=new Set((await listSalesReps(db,orgId)).map(r=>r.user_id));
     return tasks.filter((t:any)=>isLeadVisible(viewer,t.assignee_id,repUsers));

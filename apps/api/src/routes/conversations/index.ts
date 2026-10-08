@@ -3,6 +3,7 @@ import { updateConversationSchema } from "@aula-agente/shared";
 import type { Conversation } from "@aula-agente/shared";
 import { getAdminClient, getConversationById, updateConversation } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
+import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 
 export default async function conversationRoutes(app: FastifyInstance) {
@@ -18,6 +19,10 @@ export default async function conversationRoutes(app: FastifyInstance) {
     const existing = await getConversationById(db, request.params.conversationId);
     const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+    if (!(await canViewLead(db, existing.organization_id, membership.role, request.user.id, existing.assigned_to))) {
+      return reply.status(403).send({ error: "Este lead pertence a outro vendedor" });
+    }
 
     // Same reasoning as messages/send.ts and the evolution webhook: taking
     // the conversation over (via this toggle, independent of sending a
@@ -35,6 +40,10 @@ export default async function conversationRoutes(app: FastifyInstance) {
       if (parseResult.data.assigned_to === undefined) {
         updates.assigned_to = parseResult.data.is_human_takeover ? request.user.id : null;
       }
+    }
+
+    if (updates.assigned_to !== undefined && !(await canAssignLead(db, existing.organization_id, membership.role, request.user.id, updates.assigned_to))) {
+      return reply.status(403).send({ error: "Somente o gestor passa um lead para outro vendedor" });
     }
 
     const updated = await updateConversation(db, request.params.conversationId, updates);

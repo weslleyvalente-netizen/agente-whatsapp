@@ -1,6 +1,9 @@
 export type LeadVisibility = { mode: "all" } | { mode: "own"; userId: string };
 
 const MANAGER_ROLES = ["owner", "admin"];
+/** O filtro por vendedor na API vale quando a distribuição OU o isolamento por vendedor estão ligados na organização. */
+export const isSellerFilterEnabled = (settings: { lead_distribution_enabled?: boolean; seller_isolation_enabled?: boolean } | null | undefined): boolean =>
+  settings?.lead_distribution_enabled === true || settings?.seller_isolation_enabled === true;
 export const isManager = (role: string) => MANAGER_ROLES.includes(role);
 
 export function resolveLeadVisibility(args: { role: string; userId: string; leadDistributionEnabled: boolean }): LeadVisibility {

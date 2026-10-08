@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { sendMessageSchema } from "@aula-agente/shared";
 import { getAdminClient, getConversationById } from "@aula-agente/database";
 import { authMiddleware, requireOrg } from "../../middleware/auth.js";
+import { canViewLead } from "../../lib/lead-access.js";
 import { sendPanelMessage } from "../../services/message-send.service.js";
 
 export default async function messageSendRoutes(app: FastifyInstance) {
@@ -26,6 +27,10 @@ export default async function messageSendRoutes(app: FastifyInstance) {
       );
       if (!membership) {
         return reply.status(403).send({ error: "Access denied" });
+      }
+
+      if (!(await canViewLead(db, conversation.organization_id, membership.role, request.user.id, conversation.assigned_to))) {
+        return reply.status(403).send({ error: "Este lead pertence a outro vendedor" });
       }
 
       let result;
