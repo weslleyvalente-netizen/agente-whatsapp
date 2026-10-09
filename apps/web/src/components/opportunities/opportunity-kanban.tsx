@@ -101,7 +101,7 @@ function StageColumn({
   onChanged: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
-  const label = stage.startsWith("__queue_") ? SALES_QUEUE_LABELS[stage.slice(8) as SalesQueueGroup] : stage === "__ready_for_marina" ? "Pronto para Marina" : FUNNEL_STAGE_LABELS[stage] ?? stage;
+  const label = stage.startsWith("__queue_") ? SALES_QUEUE_LABELS[stage.slice(8) as SalesQueueGroup] : stage === "__ready_for_marina" ? "Pronto para assumir" : FUNNEL_STAGE_LABELS[stage] ?? stage;
   const marker = stage.includes("ready") ? "bg-orange-500" : stage.includes("no_response") ? "bg-slate-400" : stage.includes("waiting") || stage.includes("scheduled") ? "bg-cyan-500" : stage.includes("formalization") ? "bg-emerald-500" : "bg-blue-500";
   const sorted = queueMode ? sortSalesQueue(opportunities.map(o => ({ ...o, tasks: o.sales_state?.tasks })), new Date().toISOString()) : sortNewestSalesCards(opportunities);
   return (
