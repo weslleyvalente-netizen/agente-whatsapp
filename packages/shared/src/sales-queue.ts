@@ -1,5 +1,5 @@
 export interface SalesQueueInput {id:string;created_at:string;status:string;stage:string;waiting_on:string|null;next_action_due_date:string|null;frozen_until?:string|null;last_interaction_at?:string|null;sales_state?:{readyForHuman:boolean;customerReplied:boolean;humanPending:boolean;taskCount:number;hot?:boolean};tasks?:Array<{type:string;due_date:string;priority:string;consolidated_pendencies?:Array<{type:string;due_date:string;priority:string}>}>;}
-export const SALES_QUEUE_LABELS = {ready:'Pronto para Marina',customer_replied:'Cliente respondeu',due_today:'Compromissos de hoje',overdue:'Pendências com interesse',action:'Próximas ações',scheduled:'Retornos futuros',waiting:'Aguardando cliente ou banco',no_response:'Sem resposta',other:'Outros'} as const;
+export const SALES_QUEUE_LABELS = {ready:'Pronto para assumir',customer_replied:'Cliente respondeu',due_today:'Compromissos de hoje',overdue:'Pendências com interesse',action:'Próximas ações',scheduled:'Retornos futuros',waiting:'Aguardando cliente ou banco',no_response:'Sem resposta',other:'Outros'} as const;
 export type SalesQueueGroup=keyof typeof SALES_QUEUE_LABELS;
 export function classifySalesQueue(row:SalesQueueInput,now:string){
  const today=new Date(now).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
