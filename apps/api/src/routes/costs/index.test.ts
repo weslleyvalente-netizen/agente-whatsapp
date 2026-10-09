@@ -68,3 +68,34 @@ describe("buildSummary", () => {
     expect(day!.messageCount).toBe(2);
   });
 });
+
+describe("buildSummary em reais", () => {
+  beforeEach(() => vi.setSystemTime(new Date("2026-10-08T12:00:00Z")));
+  afterEach(() => vi.useRealTimers());
+  const msg = (d: string) => ({ created_at: `${d}T10:00:00Z`, metadata: { model: "claude-sonnet-5", input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 } });
+  const rates = new Map([["2026-09-30", 5.0], ["2026-10-02", 5.5], ["2026-10-07", 6.0]]);
+
+  it("converte cada dia pela cotação do próprio dia e agrupa por mês", () => {
+    const r = buildSummary([msg("2026-09-30"), msg("2026-10-02"), msg("2026-10-02")], [], rates);
+    // US$ 2 por 1M de entrada
+    expect(r.monthlyCosts.map((m) => m.month)).toEqual(["2026-10", "2026-09"]);
+    expect(r.monthlyCosts[0].costBrl).toBeCloseTo(4 * 5.5, 6);
+    expect(r.monthlyCosts[1].costBrl).toBeCloseTo(2 * 5.0, 6);
+    expect(r.monthlyCosts[0].avgRate).toBeCloseTo(5.5, 6);
+    expect(r.totalCostBrl).toBeCloseTo(4 * 5.5 + 2 * 5.0, 6);
+  });
+  it("fim de semana usa a última cotação anterior; hoje usa a mais recente disponível", () => {
+    const r = buildSummary([msg("2026-10-04"), msg("2026-10-08")], [], rates);
+    const d4 = r.dailyCosts.find((d) => d.date === "2026-10-04")!;
+    expect(d4.rate).toBe(5.5);
+    expect(r.todayRate).toBe(6.0);
+    expect(r.todayCostBrl).toBeCloseTo(2 * 6.0, 6);
+  });
+  it("sem cotação (BCB fora do ar) mantém o dólar e devolve reais nulos", () => {
+    const r = buildSummary([msg("2026-10-02")], []);
+    expect(r.totalCostUsd).toBeCloseTo(2, 6);
+    expect(r.ratesAvailable).toBe(false);
+    expect(r.totalCostBrl).toBeNull();
+    expect(r.monthlyCosts[0].unconvertedDays).toBe(1);
+  });
+});

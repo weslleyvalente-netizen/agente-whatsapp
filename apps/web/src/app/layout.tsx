@@ -21,8 +21,8 @@ const fontMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "aula-agente / console",
-  description: "Console operacional do agente de IA no WhatsApp",
+  title: "Moto e Trilha — Atendimento",
+  description: "Atendimento e vendas da Moto e Trilha Veículos",
 };
 
 export default function RootLayout({

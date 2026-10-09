@@ -3,10 +3,13 @@ import { computeMessageCostUsd } from "@aula-agente/shared";
 import type { MessageMetadata, AiUsageEvent } from "@aula-agente/shared";
 import { getAdminClient, getAgentMessagesForCost, getAiUsageEventsForCost } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
+import { getUsdBrlRates, rateOnOrBefore, type RateMap } from "../../lib/fx-rates.js";
 
 interface DailyCost {
   date: string;
   costUsd: number;
+  costBrl: number | null;
+  rate: number | null;
   inputTokens: number;
   outputTokens: number;
   messageCount: number;
@@ -96,7 +99,8 @@ function usageEventsToItems(
 
 export function buildSummary(
   messages: Array<{ created_at: string; metadata: MessageMetadata | null }>,
-  usageEvents: Array<Pick<AiUsageEvent, "created_at" | "source" | "model" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens">>
+  usageEvents: Array<Pick<AiUsageEvent, "created_at" | "source" | "model" | "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens">>,
+  rates: RateMap = new Map()
 ) {
   const today = new Date().toISOString().slice(0, 10);
   const windowStart = new Date(Date.now() - DAYS_IN_WINDOW * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -105,6 +109,7 @@ export function buildSummary(
   const items = [...messageItems, ...usageEventsToItems(usageEvents)];
 
   const dailyByDate = new Map<string, DailyCost>();
+  const allDaily = new Map<string, { costUsd: number; inputTokens: number; outputTokens: number; messageCount: number }>();
   const byModel = new Map<string, ModelCost>();
   const bySource = new Map<string, SourceCost>();
 
@@ -147,9 +152,13 @@ export function buildSummary(
     totalOutputTokens += item.outputTokens;
     if (item.date === today) todayCostUsd += cost;
 
+    const all = allDaily.get(item.date) || { costUsd: 0, inputTokens: 0, outputTokens: 0, messageCount: 0 };
+    all.costUsd += cost; all.inputTokens += item.inputTokens; all.outputTokens += item.outputTokens; all.messageCount++;
+    allDaily.set(item.date, all);
+
     if (item.date >= windowStart) {
       const dayEntry = dailyByDate.get(item.date) || {
-        date: item.date, costUsd: 0, inputTokens: 0, outputTokens: 0, messageCount: 0,
+        date: item.date, costUsd: 0, costBrl: null, rate: null, inputTokens: 0, outputTokens: 0, messageCount: 0,
       };
       dayEntry.costUsd += cost;
       dayEntry.inputTokens += item.inputTokens;
@@ -161,6 +170,29 @@ export function buildSummary(
 
   const last30dCostUsd = [...dailyByDate.values()].reduce((sum, day) => sum + day.costUsd, 0);
 
+  // Cada dia é convertido pela cotação (PTAX de fechamento) do próprio dia; fim de semana/feriado usa a última anterior.
+  // Dia sem cotação disponível fica sem valor em reais (e o total em reais só soma os dias convertidos).
+  const brlOf = (date: string, usd: number) => {
+    const r = rateOnOrBefore(rates, date);
+    return r ? { brl: usd * r.rate, rate: r.rate } : null;
+  };
+  let totalCostBrl = 0, last30dCostBrl = 0, unconvertedDays = 0;
+  const months = new Map<string, { month: string; costUsd: number; costBrl: number; inputTokens: number; outputTokens: number; messageCount: number; unconvertedDays: number }>();
+  for (const [date, d] of allDaily) {
+    const c = brlOf(date, d.costUsd);
+    const month = date.slice(0, 7);
+    const m = months.get(month) || { month, costUsd: 0, costBrl: 0, inputTokens: 0, outputTokens: 0, messageCount: 0, unconvertedDays: 0 };
+    m.costUsd += d.costUsd; m.inputTokens += d.inputTokens; m.outputTokens += d.outputTokens; m.messageCount += d.messageCount;
+    if (c) { m.costBrl += c.brl; totalCostBrl += c.brl; } else { m.unconvertedDays++; unconvertedDays++; }
+    months.set(month, m);
+  }
+  for (const day of dailyByDate.values()) {
+    const c = brlOf(day.date, day.costUsd);
+    day.costBrl = c ? c.brl : null; day.rate = c ? c.rate : null;
+    if (c) last30dCostBrl += c.brl;
+  }
+  const todayConv = brlOf(today, todayCostUsd);
+
   return {
     totalCostUsd,
     todayCostUsd,
@@ -170,6 +202,15 @@ export function buildSummary(
     exactMessageCount,
     unpricedMessageCount,
     legacyMessageCount,
+    ratesAvailable: rates.size > 0,
+    unconvertedDays,
+    totalCostBrl: rates.size > 0 ? totalCostBrl : null,
+    last30dCostBrl: rates.size > 0 ? last30dCostBrl : null,
+    todayCostBrl: todayConv ? todayConv.brl : null,
+    todayRate: todayConv ? todayConv.rate : null,
+    monthlyCosts: [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).map((m) => ({
+      ...m, avgRate: m.costBrl > 0 && m.costUsd > 0 ? m.costBrl / m.costUsd : null,
+    })),
     dailyCosts: [...dailyByDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
     byModel: [...byModel.values()].sort((a, b) => b.costUsd - a.costUsd),
     bySource: [...bySource.values()].sort((a, b) => b.costUsd - a.costUsd),
@@ -193,7 +234,9 @@ export default async function costRoutes(app: FastifyInstance) {
         getAgentMessagesForCost(db, organizationId),
         getAiUsageEventsForCost(db, organizationId),
       ]);
-      return buildSummary(messages, usageEvents);
+      const dates = [...messages.map((m) => m.created_at), ...usageEvents.map((e) => e.created_at)].map((d) => d.slice(0, 10)).sort();
+      const rates = dates.length ? await getUsdBrlRates(dates[0], new Date().toISOString().slice(0, 10)) : new Map();
+      return buildSummary(messages, usageEvents, rates);
     }
   );
 }
