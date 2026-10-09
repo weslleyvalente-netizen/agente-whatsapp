@@ -436,7 +436,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 {followupTouch && (
                   <p className="text-xs text-muted-foreground">
                     {followupTouch.lastTouchAt
-                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "Mariana (IA)" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
+                      ? `Último toque: ${followupTouch.lastTouchBy === "agent" ? "IA" : "atendente"}, ${formatRelativeTime(followupTouch.lastTouchAt)}. `
                       : "Nenhum toque pendente — o cliente respondeu por último. "}
                     {followupTouch.touchCount} toque(s) sem resposta.
                   </p>
