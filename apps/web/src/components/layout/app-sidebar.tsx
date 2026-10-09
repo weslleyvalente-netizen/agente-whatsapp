@@ -35,7 +35,7 @@ const navigation = [
   { name: "Configuracoes", href: "/settings", icon: Settings },
 ];
 
-const COLLAPSED_STORAGE_KEY = "aula-agente-sidebar-collapsed";
+const COLLAPSED_STORAGE_KEY = "moto-e-trilha-sidebar-collapsed";
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -65,7 +65,7 @@ export function AppSidebar() {
     >
       <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
         <StatusLamp tone="green" />
-        {!collapsed && <span className="label-eyebrow text-muted-foreground">Console online</span>}
+        {!collapsed && <span className="label-eyebrow text-muted-foreground">Online</span>}
         <Button
           variant="ghost"
           size="icon"
@@ -75,6 +75,11 @@ export function AppSidebar() {
         >
           {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
+      </div>
+
+      <div className={cn("flex justify-center border-b border-sidebar-border bg-white", collapsed ? "p-1.5" : "px-4 py-3")}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo-moto-e-trilha.png" alt="Moto e Trilha Veículos" className={collapsed ? "h-9 w-9 object-cover object-top" : "h-24 w-auto"} />
       </div>
 
       {!collapsed && (
@@ -108,7 +113,7 @@ export function AppSidebar() {
 
       {!collapsed && (
         <div className="border-t border-sidebar-border px-4 py-3">
-          <p className="label-eyebrow">aula-agente</p>
+          <p className="label-eyebrow">Moto e Trilha Veículos</p>
         </div>
       )}
     </aside>
