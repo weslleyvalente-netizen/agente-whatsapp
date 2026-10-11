@@ -1,4 +1,5 @@
 "use client";
+import { displayText } from "@/lib/display-text";
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -72,7 +73,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
       {opportunity.sale_amount != null && opportunity.credit_amount != null && <p className="mt-1 text-xs text-muted-foreground">Crédito: {Number(opportunity.credit_amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>}
       <div className="mt-3 flex items-start gap-2 text-muted-foreground"><Bike className="mt-0.5 size-4 shrink-0"/><p className="line-clamp-2">{opportunity.product_model || opportunity.product || OPERATION_LABELS[opportunity.operation]}</p></div>
       <div className="mt-3 flex items-center gap-2 text-muted-foreground">{opportunity.frozen_until ? <Snowflake className="size-4"/> : <CalendarDays className="size-4"/>}<span>{date ? `${opportunity.frozen_until ? "Retorno: " : ""}${new Date(`${date}T12:00:00`).toLocaleDateString("pt-BR")}` : "Data a definir"}</span></div>
-      {opportunity.next_action && <p className="mt-3 line-clamp-2 text-xs leading-relaxed" title={opportunity.next_action}>Próxima ação: {opportunity.next_action}</p>}
+      {opportunity.next_action && <p className="mt-3 line-clamp-2 text-xs leading-relaxed" title={displayText(opportunity.next_action)}>Próxima ação: {displayText(opportunity.next_action)}</p>}
       <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
         {opportunity.sales_state?.humanPending && <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-primary"><UserCheck className="size-3.5"/>Atendimento pendente</span>}
         {responseOverdue && <span title="Confira a conversa antes de responder para evitar duplicidade" className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950 dark:text-amber-200"><Clock3 className="size-3.5"/>Resposta da IA pendente</span>}
