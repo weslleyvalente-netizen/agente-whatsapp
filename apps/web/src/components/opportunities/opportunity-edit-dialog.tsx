@@ -31,12 +31,15 @@ export function OpportunityEditDialog({opportunity,open,onOpenChange,onSaved}:{o
  <p className="text-sm text-muted-foreground">{details.customer.name} · {details.customer.phone}. Salve cada seção separadamente.</p>
  <p className="text-xs text-muted-foreground">Campos vazios do negócio usam os dados do atendimento. Alterações comerciais são salvas no negócio.</p>
  {divergences.length>0&&<div className="rounded border p-3 text-xs">Valores diferentes no atendimento: {divergences.map(f=>`${f.label}: ${details.qualification?.[f.key]} (o formulário usa o negócio)`).join("; ")}</div>}
+ {details.conversation?<>
+ {details.qualification?.has_cpf&&!revealed?<><QualificationSection title="Dados para financiamento" fields={client.filter(f=>f.key!=="city")} values={details.qualification??{}} onSave={saveQualification} startInEditMode/><Button variant="outline" onClick={async()=>{try{setDetails(await apiFetch(`/opportunities/${opportunity.id}/details?revealCpf=true`));setRevealed(true);}catch(e){setError((e as Error).message)}}}>Revelar CPF para editar</Button></>:<QualificationSection title="Dados para financiamento" fields={[{key:"cpf",label:"CPF (11 dígitos)",kind:"text"},...client.filter(f=>f.key!=="city")]} values={details.qualification??{}} onSave={saveQualification} startInEditMode/>}
+ <QualificationSection title="Dados do cliente" fields={client.filter(f=>f.key==="city")} values={details.qualification??{}} onSave={saveQualification}/>
+ <QualificationSection title="Resumo do atendimento" fields={[{key:"summary",label:"Resumo",kind:"textarea"}]} values={details.qualification??{}} onSave={saveQualification} startInEditMode/>
+ </>:<p className="text-sm">Sem conversa: dados do cliente e resumo ainda não podem ser editados.</p>}
  <QualificationSection title="Interesse e condições" fields={conditions} values={values} onSave={saveBusiness} startInEditMode/>
  <QualificationSection title="Próximo passo e observações" fields={next} values={values} onSave={saveBusiness} startInEditMode/>
  <QualificationSection title="Responsável" fields={[{key:"owner_id",label:"Responsável",kind:"select",options:members.map(m=>({value:m.user_id,label:m.email}))}]} values={values} onSave={saveBusiness}/>
- {details.conversation?<><QualificationSection title="Resumo do atendimento" fields={[{key:"summary",label:"Resumo",kind:"textarea"}]} values={details.qualification??{}} onSave={saveQualification} startInEditMode/>
- <QualificationSection title="Dados do cliente" fields={client} values={details.qualification??{}} onSave={saveQualification}/>
- {details.qualification?.has_cpf&&!revealed?<Button variant="outline" onClick={async()=>{try{setDetails(await apiFetch(`/opportunities/${opportunity.id}/details?revealCpf=true`));setRevealed(true);}catch(e){setError((e as Error).message)}}}>Revelar CPF para editar</Button>:<QualificationSection title="CPF" fields={[{key:"cpf",label:"CPF (11 dígitos)",kind:"text"}]} values={details.qualification??{}} onSave={saveQualification}/>}</>:<p className="text-sm">Sem conversa: dados do cliente e resumo ainda não podem ser editados.</p>}
+
  <QualificationSection title="Origem do lead" fields={[{key:"source",label:"Origem",kind:"select",options:options(LEAD_ORIGIN_LABELS)}]} values={{source:details.origin?.source??null}} onSave={async patch=>{await apiFetch(`/opportunities/${opportunity.id}/origin`,{method:"PATCH",body:JSON.stringify(patch)});await reload()}}/>
  <Button variant="outline" onClick={()=>onOpenChange(false)}>Fechar editor</Button></div>}
  </DialogContent></Dialog>;
