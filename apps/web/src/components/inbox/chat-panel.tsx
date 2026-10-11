@@ -182,7 +182,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
   return (
     <div className="flex h-full w-full">
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {conversation && (
           <ChatHeader
             compact={compact}
@@ -198,7 +198,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
@@ -206,7 +206,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         </div>
 
         {/* Notice + Input */}
-        <div className="border-t">
+        <div className="shrink-0 border-t">
           {conversation && !conversation.is_human_takeover && !conversation.wa_contacts?.ai_disabled && (
             <div className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
               O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.

@@ -56,18 +56,18 @@ export function ChatHeader({
   onClose,
 }: ChatHeaderProps) {
   return (
-    <div className={compact ? "flex flex-wrap items-center gap-2 border-b p-3" : "flex items-center justify-between gap-4 border-b px-4 py-3"}>
-      <div className="min-w-0">
-        <p className="truncate font-medium">
+    <div className={compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex items-center justify-between gap-4 border-b px-4 py-3"}>
+      <div className={compact ? "flex min-w-0 items-baseline gap-2" : "min-w-0"}>
+        <p className={compact ? "min-w-0 truncate text-sm font-medium" : "truncate font-medium"}>
           {conversation.wa_contacts?.name || formatPhone(conversation.wa_contacts?.phone) || "Conversa"}
         </p>
-        <p className="text-xs text-muted-foreground">{formatPhone(conversation.wa_contacts?.phone)}</p>
-        {conversation.agents?.name && (
+        {conversation.wa_contacts?.name && <p className="shrink-0 text-xs text-muted-foreground">{formatPhone(conversation.wa_contacts?.phone)}</p>}
+        {!compact && conversation.agents?.name && (
           <p className="text-xs text-muted-foreground">Agente: {conversation.agents.name}</p>
         )}
       </div>
 
-      <div className={compact ? "flex w-full flex-wrap items-center gap-2" : "flex shrink-0 items-center gap-2"}>
+      <div className={compact ? "flex min-w-0 flex-wrap items-center gap-1" : "flex shrink-0 items-center gap-2"}>
         <Select value={conversation.status} onValueChange={(v) => v && onStatusChange(v)}>
           <SelectTrigger className={PILL_TRIGGER_CLASS}>
             <SelectValue>{(value: ConversationStatus) => STATUS_LABELS[value] ?? value}</SelectValue>
@@ -85,10 +85,10 @@ export function ChatHeader({
           assignedTo={conversation.assigned_to}
           organizationId={conversation.organization_id}
           onUpdate={onUpdate}
-          triggerClassName={PILL_TRIGGER_CLASS}
+          triggerClassName={`${PILL_TRIGGER_CLASS} ${compact ? "max-w-40" : ""}`}
         />
 
-        {conversation.wa_contacts?.ai_disabled ? (
+        {!compact && (conversation.wa_contacts?.ai_disabled ? (
           <Button
             variant="tonal"
             size="sm"
@@ -130,7 +130,21 @@ export function ChatHeader({
               </DropdownMenuContent>
             </DropdownMenu>
           </>
-        )}
+        ))}
+
+        {compact && <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Ações da conversa" />}>
+            <MoreVertical className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {conversation.agents?.name && <DropdownMenuItem disabled>Agente: {conversation.agents.name}</DropdownMenuItem>}
+            <DropdownMenuItem onClick={conversation.wa_contacts?.ai_disabled ? onReenableAi : onTakeoverToggle}>
+              {conversation.wa_contacts?.ai_disabled ? "Reativar IA" : conversation.is_human_takeover ? "Devolver ao Agente" : "Assumir conversa"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onOpenDetails}>Detalhes da conversa</DropdownMenuItem>
+            {!conversation.wa_contacts?.ai_disabled && <DropdownMenuItem variant="destructive" onClick={onDisableAi}>Desativar IA permanentemente</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>}
 
         {conversation.wa_contacts && (
           <TaskDialog
@@ -138,21 +152,21 @@ export function ChatHeader({
             organizationId={conversation.organization_id}
             presetContact={conversation.wa_contacts}
             presetConversationId={conversation.id}
-            triggerButton={<Button variant="outline" size="sm" className="rounded-full" />}
+            triggerButton={<Button variant="outline" size={compact ? "icon" : "sm"} className={compact ? "h-8 w-8 rounded-full" : "rounded-full"} aria-label="Criar tarefa" title="Criar tarefa" />}
             triggerLabel={
               <>
-                <ListChecks className="mr-1.5 h-3.5 w-3.5" />
-                Criar tarefa
+                <ListChecks className={compact ? "h-3.5 w-3.5" : "mr-1.5 h-3.5 w-3.5"} />
+                {!compact && "Criar tarefa"}
               </>
             }
             onSaved={() => {}}
           />
         )}
 
-        <Button variant="ghost" size="icon" onClick={onOpenDetails} aria-label="Detalhes da conversa">
+        {!compact && <Button variant="ghost" size="icon" onClick={onOpenDetails} aria-label="Detalhes da conversa">
           <Info className="h-4 w-4" />
-        </Button>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Fechar conversa">
+        </Button>}
+        <Button variant="ghost" size="icon" className={compact ? "ml-auto h-8 w-8" : undefined} onClick={onClose} aria-label="Fechar conversa">
           <X className="h-4 w-4" />
         </Button>
       </div>
