@@ -21,6 +21,10 @@ ALTER TABLE public.sales_call_logs ENABLE ROW LEVEL SECURITY;
 -- Mesmo padrão de opportunity_events: a visibilidade do negócio (já filtrada pelo RLS de opportunities) decide.
 -- Sem UPDATE/DELETE para usuários (só o service_role, que ignora RLS).
 CREATE POLICY "sales_call_logs_select" ON public.sales_call_logs FOR SELECT
-  USING (organization_id IN (SELECT get_user_org_ids()) AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = sales_call_logs.opportunity_id));
+  USING (organization_id IN (SELECT get_user_org_ids())
+    AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = sales_call_logs.opportunity_id AND o.organization_id = sales_call_logs.organization_id));
+-- Quem registra é sempre o próprio usuário, e o negócio tem de ser da mesma organização do registro.
 CREATE POLICY "sales_call_logs_insert" ON public.sales_call_logs FOR INSERT
-  WITH CHECK (organization_id IN (SELECT get_user_org_ids()) AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = sales_call_logs.opportunity_id));
+  WITH CHECK (organization_id IN (SELECT get_user_org_ids())
+    AND rep_user_id = (SELECT auth.uid())
+    AND EXISTS (SELECT 1 FROM public.opportunities o WHERE o.id = sales_call_logs.opportunity_id AND o.organization_id = sales_call_logs.organization_id));

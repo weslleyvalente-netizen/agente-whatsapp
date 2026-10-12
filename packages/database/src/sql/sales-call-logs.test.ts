@@ -38,6 +38,22 @@ describe("sales_call_logs", () => {
       await expect(ins(w.otherOrg, w.opp.otherOrg, w.contacts.otherOrg, w.users.manager)).rejects.toThrow(/row-level security/i);
     });
   });
+  it("o vendedor não registra ligação em nome de outro (rep_user_id deve ser ele mesmo)", async () => {
+    await asUser(db, w.users.marcio, async () => {
+      await expect(ins(w.org, w.opp.marcio, w.contacts.marcio, w.users.marina)).rejects.toThrow(/row-level security/i);
+    });
+    await asUser(db, w.users.manager, async () => {
+      await expect(ins(w.org, w.opp.none, w.contacts.none, w.users.marina)).rejects.toThrow(/row-level security/i);
+    });
+  });
+  it("negócio de outra organização no registro é recusado, mesmo para quem é membro das duas", async () => {
+    await db.query("insert into public.organization_members(organization_id,user_id,role) values ($1,$2,'owner')", [w.otherOrg, w.users.manager]);
+    await asUser(db, w.users.manager, async () => {
+      await expect(ins(w.org, w.opp.otherOrg, w.contacts.otherOrg, w.users.manager)).rejects.toThrow(/row-level security/i);
+      await expect(ins(w.otherOrg, w.opp.marina, w.contacts.marina, w.users.manager)).rejects.toThrow(/row-level security/i);
+      await expect(ins(w.otherOrg, w.opp.otherOrg, w.contacts.otherOrg, w.users.manager)).resolves.toBeTruthy();
+    });
+  });
   it("sem UPDATE nem DELETE para usuários (nem o gestor)", async () => {
     await asUser(db, w.users.manager, async () => {
       expect((await db.query("update public.sales_call_logs set note='x' where id=$1", [logs.marina])).affectedRows).toBe(0);

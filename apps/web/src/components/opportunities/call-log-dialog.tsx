@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-export interface CallLogEntry { id: string; strategy: CallStrategy; outcome: CallOutcome; note: string | null; called_at: string }
+export interface CallLogEntry { id: string; strategy: CallStrategy; outcome: CallOutcome; note: string | null; rep_name?: string; called_at: string }
 
 export function CallLogDialog({ opportunityId, onClose, onSaved, onRequestReturnTask }: {
   opportunityId: string; onClose: () => void; onSaved: () => void; onRequestReturnTask?: () => void;
@@ -38,9 +38,9 @@ export function CallLogDialog({ opportunityId, onClose, onSaved, onRequestReturn
     <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Ligação registrada</DialogTitle></DialogHeader>
-        <p className="text-sm">Não esqueça de criar uma tarefa de retorno para este lead.</p>
+        <p className="text-sm">Não esqueça de criar uma tarefa de retorno para este lead (congelar o negócio cria a tarefa de retorno).</p>
         <div className="flex gap-2">
-          {onRequestReturnTask && <Button onClick={() => { onClose(); onRequestReturnTask(); }}>Criar tarefa de retorno</Button>}
+          {onRequestReturnTask && <Button onClick={() => { onClose(); onRequestReturnTask(); }}>Congelar e criar retorno</Button>}
           <Button variant="outline" onClick={onClose}>Fechar</Button>
         </div>
       </DialogContent>

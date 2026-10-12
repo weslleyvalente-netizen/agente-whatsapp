@@ -36,13 +36,13 @@ function Head({ first }: { first: string }) {
   return (
     <thead>
       <tr className="text-left text-xs text-muted-foreground">
-        <th className="pb-2 pr-4 font-medium">{first}</th>
-        <th className="pb-2 pr-4 text-right font-medium">Ligações</th>
-        <th className="pb-2 pr-4 text-right font-medium">Leads</th>
-        <th className="pb-2 pr-4 text-right font-medium">% atenderam</th>
-        <th className="pb-2 pr-4 text-right font-medium">% proposta/visita</th>
-        <th className="pb-2 pr-4 text-right font-medium">% ganhos</th>
-        <th className="pb-2 text-right font-medium">Sem interesse</th>
+        <th scope="col" className="pb-2 pr-4 font-medium">{first}</th>
+        <th scope="col" className="pb-2 pr-4 text-right font-medium">Ligações</th>
+        <th scope="col" className="pb-2 pr-4 text-right font-medium">Leads</th>
+        <th scope="col" className="pb-2 pr-4 text-right font-medium">% atenderam</th>
+        <th scope="col" className="pb-2 pr-4 text-right font-medium">% proposta/visita</th>
+        <th scope="col" className="pb-2 pr-4 text-right font-medium">% ganhos</th>
+        <th scope="col" className="pb-2 text-right font-medium">Sem interesse</th>
       </tr>
     </thead>
   );
@@ -58,6 +58,8 @@ export default function CallsPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { setReport(null); }, [currentOrg?.id]);
 
   useEffect(() => {
     if (!currentOrg || !isManager || !from || !to || from > to) return;
@@ -79,8 +81,9 @@ export default function CallsPage() {
         <label className="text-sm">De<Input type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} /></label>
         <label className="text-sm">Até<Input type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} /></label>
       </div>
+      {from > to && <p role="alert" className="text-sm text-destructive">A data inicial deve ser anterior ou igual à data final.</p>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {loading && !report && <div>Carregando...</div>}
+      {loading && !report && from <= to && <div>Carregando...</div>}
       {report && (
         <>
           <Card>
