@@ -13,6 +13,7 @@ import {
   Settings,
   DollarSign,
   ListChecks,
+  Phone,
   ShoppingBag,
   PanelLeftClose,
   PanelLeft,
@@ -21,12 +22,14 @@ import { OrgSwitcher } from "./org-switcher";
 import { StatusLamp } from "@/components/ui/status-lamp";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
 
-const navigation = [
+const navigation: { name: string; href: string; icon: typeof Home; managerOnly?: boolean }[] = [
   { name: "Início", href: "/", icon: Home },
   { name: "Conversas", href: "/inbox", icon: Inbox },
   { name: "Funil de vendas", href: "/opportunities", icon: Kanban },
   { name: "Tarefas", href: "/tasks", icon: ListChecks },
+  { name: "Ligações", href: "/calls", icon: Phone, managerOnly: true },
   { name: "Catálogo", href: "/catalog", icon: ShoppingBag },
   { name: "Agentes", href: "/agents", icon: Bot },
   { name: "Instancias", href: "/instances", icon: Radio },
@@ -39,6 +42,8 @@ const COLLAPSED_STORAGE_KEY = "moto-e-trilha-sidebar-collapsed";
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { role } = useMyRole({ always: true });
+  const isManager = role === "owner" || role === "admin";
   const [collapsed, setCollapsed] = useState(false);
 
   // Read the saved preference after mount only — reading localStorage
@@ -89,7 +94,7 @@ export function AppSidebar() {
       )}
 
       <nav className="flex-1 space-y-0.5 p-2 pl-3">
-        {navigation.map((item) => {
+        {navigation.filter((item) => !item.managerOnly || isManager).map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
