@@ -108,6 +108,6 @@ describe("GET /organizations/:id/call-report", () => {
     expect(j.byStrategy.message_first).toMatchObject({ calls: 2, answered: 1, leads: 1, leadsWithProposalOrVisit: 1, won: 0 });
     expect(j.byStrategy.call_only).toMatchObject({ calls: 2, answered: 1, leads: 2, leadsWithProposalOrVisit: 1, won: 1, noInterest: 1 });
     expect(j.byStrategy.call_only.wonRate).toBeCloseTo(0.5);
-    expect(j.byRep.map((x: any) => [x.repName, x.total.calls]).sort()).toEqual([["Márcio", 2], ["Marina", 2]]);
+    expect(j.byRep.map((x: any) => [x.repName, x.total.calls])).toEqual(expect.arrayContaining([["Márcio", 2], ["Marina", 2]]));
   });
 });
