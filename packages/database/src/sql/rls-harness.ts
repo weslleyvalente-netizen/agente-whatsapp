@@ -9,6 +9,7 @@ export const RLS_MIGRATIONS = [
   "20261008120100_seller_isolation_conversations.sql",
   "20261008120200_seller_isolation_opportunities.sql",
   "20261008120300_seller_isolation_lead_assignments.sql",
+  "20261012120000_sales_call_logs.sql",
 ];
 
 export async function createRlsDb(files: string[] = RLS_MIGRATIONS) {
