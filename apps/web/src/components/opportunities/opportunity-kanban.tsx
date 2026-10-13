@@ -1,7 +1,7 @@
 "use client";
 import { displayText } from "@/lib/display-text";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
@@ -23,7 +23,7 @@ export type OpportunityWithContact = Opportunity & {
   wa_contacts: { name: string | null; phone: string } | null;
 };
 
-function OpportunityCard({
+const OpportunityCard = memo(function OpportunityCard({
   opportunity,
   onEdit,
   onOpen,
@@ -43,7 +43,7 @@ function OpportunityCard({
       <OpportunityCardContent opportunity={opportunity} onEdit={onEdit} onChanged={onChanged}/>
     </div>
   );
-}
+});
 
 // The overlay uses the same presentation without registering a second draggable.
 function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
@@ -86,6 +86,9 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
   );
 }
 
+const CARDS_PER_PAGE = 20;
+const EMPTY: OpportunityWithContact[] = [];
+
 function StageColumn({
   stage,
   opportunities,
@@ -104,12 +107,16 @@ function StageColumn({
   const { setNodeRef, isOver } = useDroppable({ id: stage });
   const label = stage.startsWith("__queue_") ? SALES_QUEUE_LABELS[stage.slice(8) as SalesQueueGroup] : stage === "__ready_for_marina" ? "Pronto para assumir" : FUNNEL_STAGE_LABELS[stage] ?? stage;
   const marker = stage.includes("ready") ? "bg-orange-500" : stage.includes("no_response") ? "bg-slate-400" : stage.includes("waiting") || stage.includes("scheduled") ? "bg-cyan-500" : stage.includes("formalization") ? "bg-emerald-500" : "bg-blue-500";
-  const sorted = queueMode ? sortSalesQueue(opportunities.map(o => ({ ...o, tasks: o.sales_state?.tasks })), new Date().toISOString()) : sortNewestSalesCards(opportunities);
+  const sorted = useMemo(() => queueMode ? sortSalesQueue(opportunities.map(o => ({ ...o, tasks: o.sales_state?.tasks })), new Date().toISOString()) : sortNewestSalesCards(opportunities), [opportunities, queueMode]);
+  // Renderizar centenas de cards de uma vez deixa o navegador lento: mostra os primeiros e libera mais sob demanda.
+  const [visibleCount, setVisibleCount] = useState(CARDS_PER_PAGE);
+  const visible = sorted.slice(0, visibleCount);
   return (
     <section ref={setNodeRef} aria-label={label} className={`w-[300px] shrink-0 rounded-2xl bg-muted/45 p-3 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
       <div className="mb-4 flex min-h-9 items-center gap-2 px-1"><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span></div>
       <div className="max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin]">
-        {sorted.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged}/>)}
+        {visible.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged}/>)}
+        {sorted.length > visible.length && <button type="button" className="w-full rounded-xl border border-dashed p-3 text-xs text-muted-foreground hover:bg-background hover:text-foreground" onClick={() => setVisibleCount(c => c + CARDS_PER_PAGE)}>Mostrar mais ({sorted.length - visible.length} restantes)</button>}
         {!sorted.length && <p className="rounded-xl border border-dashed p-5 text-center text-xs leading-relaxed text-muted-foreground">Nenhum negócio nesta etapa</p>}
       </div>
     </section>
@@ -138,6 +145,20 @@ export function OpportunityKanban({
   useEffect(() => { setMounted(true); }, []);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
   const stages = queueMode ? Object.keys(SALES_QUEUE_LABELS).map(k=>`__queue_${k}`) : [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
+
+  // Cada negócio é classificado uma única vez por atualização da lista (antes: uma vez por coluna).
+  const byStage = useMemo(() => {
+    const map = new Map<string, OpportunityWithContact[]>();
+    const nowIso = new Date().toISOString();
+    for (const o of opportunities) {
+      const key = queueMode ? `__queue_${classifySalesQueue({ ...o, tasks: o.sales_state?.tasks }, nowIso).group}` : o.sales_state?.readyForHuman ? "__ready_for_marina" : o.stage;
+      if (!queueMode && key === "__ready_for_marina" && !stages.includes(key)) continue;
+      const list = map.get(key); if (list) list.push(o); else map.set(key, [o]);
+    }
+    return map;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opportunities, queueMode, workspaceEnabled, operation]);
+  const openCard = useCallback((o: OpportunityWithContact) => { if (Date.now() - draggedAt.current > 400) setSelected(o); }, []);
 
   function handleDragEnd(event: DragEndEvent) {
     draggedAt.current = Date.now();
@@ -177,10 +198,10 @@ export function OpportunityKanban({
               key={stage}
               stage={stage}
               queueMode={queueMode}
-              opportunities={opportunities.filter((o) => queueMode ? stage === `__queue_${classifySalesQueue({...o,tasks:o.sales_state?.tasks},new Date().toISOString()).group}` : stage === "__ready_for_marina" ? o.sales_state?.readyForHuman : o.stage === stage && !o.sales_state?.readyForHuman)}
+              opportunities={byStage.get(stage) ?? EMPTY}
               onEdit={setEditing}
               onChanged={onChanged}
-              onOpen={o => { if (Date.now() - draggedAt.current > 400) setSelected(o); }}
+              onOpen={openCard}
             />
           ))}
         </div>

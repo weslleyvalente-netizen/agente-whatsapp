@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
-import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, sortNewestSalesCards, trailingThrottle } from "@aula-agente/shared";
+import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, sortNewestSalesCards, trailingThrottle, reuseUnchanged } from "@aula-agente/shared";
 import type { Operation, Task } from "@aula-agente/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,7 @@ export default function OpportunitiesPage() {
     setRefreshError(null);
     try {
       // The three lists are independent: fetch them in parallel and show each as soon as it arrives.
-      const jobs: Promise<unknown>[] = [apiFetch(`/organizations/${currentOrg.id}/opportunities${searching ? "" : `?status=${status}`}`).then(setOpportunities)];
+      const jobs: Promise<unknown>[] = [apiFetch(`/organizations/${currentOrg.id}/opportunities${searching ? "" : `?status=${status}`}`).then((next: OpportunityWithContact[]) => setOpportunities(prev => reuseUnchanged(prev, next)))];
       if (currentOrg.settings.sales_action_queue_enabled === true) jobs.push(apiFetch(`/organizations/${currentOrg.id}/opportunities/pending-tasks`).then(setOrphanTasks)); else setOrphanTasks([]);
       if (currentOrg.settings.sales_auto_pipeline_enabled === true) jobs.push(apiFetch(`/organizations/${currentOrg.id}/opportunities/unidentified`).then(setUnidentified)); else setUnidentified([]);
       await Promise.all(jobs);
