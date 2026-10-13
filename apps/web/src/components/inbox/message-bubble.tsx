@@ -63,11 +63,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         ) : (
           <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
         )}
-        <p className={cn(
+        <p
+          title={new Date(message.created_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "full", timeStyle: "medium" })}
+          className={cn(
           "tabular-data mt-1 text-right text-[10px]",
           isContact ? "text-muted-foreground" : "opacity-70"
         )}>
           {new Date(message.created_at).toLocaleTimeString("pt-BR", {
+            timeZone: "America/Sao_Paulo",
             hour: "2-digit",
             minute: "2-digit",
           })}

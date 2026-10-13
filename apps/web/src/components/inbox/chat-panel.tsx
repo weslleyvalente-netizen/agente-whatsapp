@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Send } from "lucide-react";
+import { chatDayKey, chatDayLabel } from "@aula-agente/shared";
 import type { Message } from "@aula-agente/shared";
 
 interface ChatPanelProps {
@@ -199,9 +200,20 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
         {/* Messages */}
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
-          ))}
+          {messages.map((msg, i) => {
+            // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
+            const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);
+            return (
+              <div key={msg.id} className="space-y-3">
+                {newDay && (
+                  <div className="sticky top-0 z-10 flex justify-center py-1">
+                    <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">{chatDayLabel(msg.created_at, new Date().toISOString())}</span>
+                  </div>
+                )}
+                <MessageBubble message={msg} />
+              </div>
+            );
+          })}
           <div ref={bottomRef} />
         </div>
 
