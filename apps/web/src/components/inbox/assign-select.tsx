@@ -20,6 +20,7 @@ export function AssignSelect({
   triggerClassName = "w-full",
 }: AssignSelectProps) {
   const [members, setMembers] = useState<Array<{ user_id: string; role: string }>>([]);
+  const [repNames, setRepNames] = useState<Record<string, string>>({});
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +32,8 @@ export function AssignSelect({
         .select("user_id, role")
         .eq("organization_id", organizationId);
       setMembers(data || []);
+      const { data: reps } = await supabase.from("sales_reps").select("user_id, display_name").eq("organization_id", organizationId);
+      setRepNames(Object.fromEntries((reps ?? []).map((r: { user_id: string; display_name: string }) => [r.user_id, r.display_name])));
     };
     fetchMembers();
     supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
@@ -51,10 +54,18 @@ export function AssignSelect({
     onUpdate();
   };
 
+  const ROLE_LABELS: Record<string, string> = { owner: "Gestor", admin: "Administrador", agent: "Atendente" };
+  // Vendedores aparecem pelo nome cadastrado; os demais pelo papel (com o fim do código só se houver nomes repetidos).
+  const nameOf = (m: { user_id: string; role: string }) => {
+    if (repNames[m.user_id]) return repNames[m.user_id];
+    const base = ROLE_LABELS[m.role] ?? m.role;
+    const repeated = members.filter(x => !repNames[x.user_id] && (ROLE_LABELS[x.role] ?? x.role) === base).length > 1;
+    return repeated ? `${base} (${m.user_id.slice(0, 4)})` : base;
+  };
   const memberLabel = (userId: string) => {
-    if (userId === currentUserId) return "Com você";
+    if (userId === currentUserId) return repNames[userId] ? `${repNames[userId]} (você)` : "Com você";
     const member = members.find((m) => m.user_id === userId);
-    return member ? `${member.user_id.slice(0, 8)}... (${member.role})` : userId;
+    return member ? nameOf(member) : "Responsável";
   };
 
   return (
@@ -69,7 +80,7 @@ export function AssignSelect({
         <SelectItem value="none">Ninguem</SelectItem>
         {members.map((m) => (
           <SelectItem key={m.user_id} value={m.user_id}>
-            {m.user_id === currentUserId ? "Você" : `${m.user_id.slice(0, 8)}... (${m.role})`}
+            {m.user_id === currentUserId ? (repNames[m.user_id] ? `${repNames[m.user_id]} (você)` : "Você") : nameOf(m)}
           </SelectItem>
         ))}
       </SelectContent>
