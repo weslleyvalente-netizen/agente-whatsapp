@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, MessageSquare, MessageCircle, Phone, X } from "lucide-react";
+import { Check, MessageSquare, MessageCircle, Phone, Snowflake, X } from "lucide-react";
 import { displayText, distinctDisplayTexts } from "@/lib/display-text";
 import { formatPhone } from "@/lib/utils";
 import { useOrganization } from "@/providers/organization-provider";
@@ -92,6 +92,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Avançar negócio</p>
       <div className="flex flex-wrap gap-2">
        <Button size="lg" className="h-9 bg-green-600 px-4 text-white hover:bg-green-700 focus-visible:ring-green-600/50 dark:bg-green-600 dark:hover:bg-green-500" onClick={() => { setError(null); setClosing("won"); }}><Check aria-hidden />Marcar como ganho</Button>
+       <Button size="lg" className="h-9 bg-sky-600 px-4 text-white hover:bg-sky-700 focus-visible:ring-sky-600/50 dark:bg-sky-600 dark:hover:bg-sky-500" onClick={() => setFreezing(true)}><Snowflake aria-hidden />{o.frozen_until ? "Reagendar / descongelar" : "Congelar e marcar retorno"}</Button>
        <Button size="lg" className="h-9 bg-red-600 px-4 text-white hover:bg-red-700 focus-visible:ring-red-600/50 dark:bg-red-600 dark:hover:bg-red-500" onClick={() => { setError(null); setClosing("lost"); }}><X aria-hidden />Marcar como perdido</Button>
       </div>
      </div>}
@@ -99,7 +100,6 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Gerenciar</p>
       <div className="flex flex-wrap gap-1">
        <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Editar dados</Button>
-       {o.status==="open" && (currentOrg?.settings.sales_opportunity_freeze_enabled===true || o.frozen_until) && <Button size="sm" variant="ghost" onClick={()=>setFreezing(true)}>{o.frozen_until?"Reagendar / descongelar":"Congelar"}</Button>}
        <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setTargetOperation(o.operation); setMoveReason(""); setMoving(!moving); }}>Mover para outro funil</Button>
       </div>
      </div>
@@ -129,7 +129,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
     </div>
    </DialogContent>
   </Dialog>
-  {callOpen && <CallLogDialog opportunityId={o.id} onClose={() => setCallOpen(false)} onSaved={loadCalls} onRequestReturnTask={o.status === "open" && (currentOrg?.settings.sales_opportunity_freeze_enabled === true || o.frozen_until) ? () => setFreezing(true) : undefined} />}
+  {callOpen && <CallLogDialog opportunityId={o.id} onClose={() => setCallOpen(false)} onSaved={loadCalls} onRequestReturnTask={o.status === "open" ? () => setFreezing(true) : undefined} />}
   {freezing && <OpportunityFreezeDialog opportunity={o} onClose={()=>setFreezing(false)} onSaved={()=>{load();onChanged()}}/>}
   {stage && <StageChangeDialog open fromLabel={FUNNEL_STAGE_LABELS[o.stage] ?? o.stage} toLabel={FUNNEL_STAGE_LABELS[stage] ?? stage} onConfirm={changeStage} onCancel={() => setStage(null)}/>}
   {editing && <OpportunityEditDialog opportunity={o} open onOpenChange={setEditing} onSaved={() => { load(); onChanged(); }}/ >}
