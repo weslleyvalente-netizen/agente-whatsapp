@@ -1,6 +1,6 @@
 import { getAdminClient } from "@aula-agente/database";
 import { isLeadVisible, type LeadVisibility } from "../lib/lead-visibility.js";
-import { isSubstantiveCustomerMessage, classifySalesCard, classifySalesQueue, sortSalesQueue, type Opportunity, type SalesCardState } from "@aula-agente/shared";
+import { computeContactState, isSubstantiveCustomerMessage, classifySalesCard, classifySalesQueue, sortSalesQueue, type Opportunity, type SalesCardState } from "@aula-agente/shared";
 
 // Every query is organization-scoped; pagination avoids PostgREST's default row cap.
 async function readAll(query: () => any): Promise<any[]> {
@@ -75,4 +75,35 @@ export async function getSalesTasksWithoutOpenBusiness(db:ReturnType<typeof getA
   return {...input,queue_group:classifySalesQueue(input,now).group,original_status:t.status};
  });
  return sortSalesQueue(candidates,now).map(({tasks,sales_state,original_status,...t})=>({...t,status:original_status}));
+}
+
+
+/** Último contato humano (mensagem de atendente ou ligação registrada) de cada negócio, para o selo e o filtro "Sem contato" do funil. */
+const CONTACT_CACHE_MS = 60_000;
+const contactCache = new Map<string, { at: number; human: Map<string, string>; calls: Map<string, string> }>();
+export function resetContactStateCacheForTests() { contactCache.clear(); }
+
+async function loadContactIndex(db: ReturnType<typeof getAdminClient>, organizationId: string) {
+ const cached = contactCache.get(organizationId);
+ if (cached && Date.now() - cached.at < CONTACT_CACHE_MS) return cached;
+ const [conversations, calls] = await Promise.all([
+  readAll(() => db.from("conversations").select("contact_id,messages(created_at)").eq("organization_id", organizationId).eq("messages.role", "human_agent").order("id").order("created_at", { ascending: false, referencedTable: "messages" }).limit(1, { referencedTable: "messages" })),
+  readAll(() => db.from("sales_call_logs").select("opportunity_id,called_at").eq("organization_id", organizationId).order("id")),
+ ]);
+ const human = new Map<string, string>();
+ for (const c of conversations) {
+  const at = c.messages?.[0]?.created_at as string | undefined;
+  if (at && at > (human.get(c.contact_id) ?? "")) human.set(c.contact_id, at);
+ }
+ const callMap = new Map<string, string>();
+ for (const c of calls) if (c.called_at > (callMap.get(c.opportunity_id) ?? "")) callMap.set(c.opportunity_id, c.called_at);
+ const entry = { at: Date.now(), human, calls: callMap };
+ contactCache.set(organizationId, entry);
+ return entry;
+}
+
+export async function attachContactState<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[]): Promise<Array<T & { contact_state: ReturnType<typeof computeContactState> }>> {
+ if (!rows.length) return rows as any;
+ const { human, calls } = await loadContactIndex(db, organizationId);
+ return rows.map((o: any) => ({ ...o, contact_state: computeContactState({ ownerAssignedAt: o.owner_assigned_at, lastHumanMessageAt: human.get(o.contact_id), lastCallAt: calls.get(o.id) }) }));
 }

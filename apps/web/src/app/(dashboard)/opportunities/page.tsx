@@ -29,6 +29,7 @@ export default function OpportunitiesPage() {
   const [searchSelected, setSearchSelected] = useState<OpportunityWithContact | null>(null);
   const [queueView,setQueueView]=useState(true);
   const [freezeFilter,setFreezeFilter]=useState("active");
+  const [contactFilter,setContactFilter]=useState("all");
   const [status, setStatus] = useState("open");
   const [operation, setOperation] = useState<Operation>("vehicle_sale");
   const [opportunities, setOpportunities] = useState<OpportunityWithContact[]>([]);
@@ -67,8 +68,8 @@ export default function OpportunitiesPage() {
   }, [opportunities]);
 
   const opportunitiesForTab = useMemo(
-    () => opportunities.filter((o) => (currentOrg?.settings.sales_action_queue_enabled === true && queueView || o.operation === operation) && (freezeFilter==="all" || (freezeFilter==="frozen" ? !!o.frozen_until && o.frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) : !o.frozen_until || o.frozen_until<=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"})))),
-    [opportunities, operation, freezeFilter, currentOrg, queueView]
+    () => opportunities.filter((o) => (currentOrg?.settings.sales_action_queue_enabled === true && queueView || o.operation === operation) && (contactFilter==="all" || !o.contact_state?.contactedSinceAssigned) && (freezeFilter==="all" || (freezeFilter==="frozen" ? !!o.frozen_until && o.frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) : !o.frozen_until || o.frozen_until<=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"})))),
+    [opportunities, operation, freezeFilter, contactFilter, currentOrg, queueView]
   );
 
   const orphanTasksForSearch=useMemo(()=>orphanTasks.filter(t=>matchesOpportunitySearch({wa_contacts:t.wa_contacts,commercial_notes:t.description,next_action:t.title},query)),[orphanTasks,query]);
@@ -105,7 +106,7 @@ export default function OpportunitiesPage() {
       <div className="flex flex-wrap items-center gap-2"><Input className="min-w-48 flex-1 rounded-full" aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" onClick={() => setQuery("")}>Limpar busca</Button>}</div>
       {searching && <p className="text-sm text-muted-foreground">Busca em todos os funis e situações, incluindo ganhos e perdidos.</p>}
       {currentOrg?.settings.sales_action_queue_enabled===true && !searching && status==="open" && <div className="flex flex-wrap gap-2"><Button variant={queueView?"default":"outline"} onClick={()=>setQueueView(true)}>Fila de atendimento · todos os funis</Button><Button variant={!queueView?"default":"outline"} onClick={()=>setQueueView(false)}>Etapas comerciais</Button></div>}
-      {!searching && <><label className="flex items-center gap-2 text-sm">Fila<select value={freezeFilter} onChange={e=>setFreezeFilter(e.target.value)} className="rounded border bg-background p-2"><option value="active">Para agir</option><option value="frozen">Congelados</option><option value="all">Todos</option></select></label><div className="flex w-fit flex-wrap gap-1 rounded-full bg-muted p-1" aria-label="Situação do negócio">{[{value:"open",label:"Em andamento"},{value:"won",label:"Ganhos"},{value:"lost",label:"Perdidos"}].map(item => <Button key={item.value} className="rounded-full" variant={status===item.value ? "outline" : "ghost"} aria-pressed={status===item.value} onClick={()=>setStatus(item.value)}>{item.label}</Button>)}</div>
+      {!searching && <><label className="flex items-center gap-2 text-sm">Fila<select value={freezeFilter} onChange={e=>setFreezeFilter(e.target.value)} className="rounded border bg-background p-2"><option value="active">Para agir</option><option value="frozen">Congelados</option><option value="all">Todos</option></select></label><label className="flex items-center gap-2 text-sm">Contato<select aria-label="Filtro de contato" value={contactFilter} onChange={e=>setContactFilter(e.target.value)} className="rounded border bg-background p-2"><option value="all">Todos</option><option value="none">Sem contato</option></select></label><div className="flex w-fit flex-wrap gap-1 rounded-full bg-muted p-1" aria-label="Situação do negócio">{[{value:"open",label:"Em andamento"},{value:"won",label:"Ganhos"},{value:"lost",label:"Perdidos"}].map(item => <Button key={item.value} className="rounded-full" variant={status===item.value ? "outline" : "ghost"} aria-pressed={status===item.value} onClick={()=>setStatus(item.value)}>{item.label}</Button>)}</div>
       {!(currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open") && <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
         <TabsList className="h-auto flex-wrap">
           {OPERATIONS.map((op) => (
