@@ -5,8 +5,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
-import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
-import type { Opportunity, Operation, SalesCardState } from "@aula-agente/shared";
+import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
+import type { Opportunity, Operation, SalesCardState, ContactState } from "@aula-agente/shared";
 import { Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3 } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
@@ -19,6 +19,7 @@ import { AssignmentBadge, type CardAssignment } from "../lead-distribution/assig
 // shared domain type for a display-only concern.
 export type OpportunityWithContact = Opportunity & {
   sales_state?: SalesCardState;
+  contact_state?: ContactState;
   lead_assignment?: CardAssignment | null;
   wa_contacts: { name: string | null; phone: string } | null;
 };
@@ -80,6 +81,11 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
         {opportunity.sales_state?.customerReplied && !responseOverdue && <span title="A última mensagem da conversa é do cliente; pode ser uma resposta antiga" className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1"><MessageCircle className="size-3.5"/>Cliente respondeu</span>}
         {!!opportunity.sales_state?.taskCount && <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1"><ListChecks className="size-3.5"/>{opportunity.sales_state.taskCount} {opportunity.sales_state.taskCount === 1 ? "tarefa" : "tarefas"}</span>}
       </div>
+      {opportunity.status === "open" && opportunity.contact_state && (() => {
+        const badge = contactBadgeLabel(opportunity.contact_state, new Date().toISOString());
+        const tone = badge.tone === "ok" ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : badge.tone === "warn" ? "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200" : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-200";
+        return <p className="mt-3"><span title="Última mensagem de atendente ou ligação registrada" className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${tone}`}><UserCheck className="size-3.5"/>{badge.text}</span></p>;
+      })()}
       <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 className="size-3.5 shrink-0"/>{elapsed ? `Última interação ${elapsed}` : `Criado em ${new Date(opportunity.created_at).toLocaleDateString("pt-BR")}`}</p>
       {opportunity.sales_state?.readyForHuman && <p className="mt-2 text-xs text-muted-foreground">Etapa comercial: {FUNNEL_STAGE_LABELS[opportunity.stage] ?? opportunity.stage}</p>}
     </>

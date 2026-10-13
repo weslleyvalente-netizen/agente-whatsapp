@@ -30,7 +30,7 @@ import { authMiddleware } from "../../middleware/auth.js";
 import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canViewLead } from "../../lib/lead-access.js";
 
-import { enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
+import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
 export default async function opportunityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -46,8 +46,9 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       const [rows, organization] = await Promise.all([getOpportunitiesByOrganization(db, organizationId, request.query), getOrganizationById(db, organizationId)]);
       const leadDistributionEnabled = isSellerFilterEnabled(organization.settings);
       const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled });
-      return enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true,
+      const enriched = await enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true,
         leadDistributionEnabled ? { enabled: true, viewer } : undefined);
+      return attachContactState(db, organizationId, enriched);
     }
   );
 
