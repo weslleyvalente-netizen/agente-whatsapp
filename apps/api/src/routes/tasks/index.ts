@@ -26,6 +26,7 @@ import {
   incrementFollowupRegenerationCount,
 } from "@aula-agente/database";
 import { canViewLead } from "../../lib/lead-access.js";
+import { clearStaleNextAction } from "../../services/clear-stale-next-action.js";
 import { resolveApiKey, generateTaskFollowupSuggestion } from "@aula-agente/agent-runtime";
 import {
   completeTask,
@@ -208,7 +209,9 @@ export default async function taskRoutes(app: FastifyInstance) {
     );
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-    return completeTask(db, request.params.taskId, { type: "human", id: request.user.id });
+    const completed = await completeTask(db, request.params.taskId, { type: "human", id: request.user.id });
+    await clearStaleNextAction(db, existing);
+    return completed;
   });
 
   app.post<{ Params: { taskId: string } }>("/tasks/:taskId/cancel", async (request, reply) => {
@@ -230,6 +233,7 @@ export default async function taskRoutes(app: FastifyInstance) {
       { type: "human", id: request.user.id },
       parseResult.data.note ?? null
     );
+    await clearStaleNextAction(db, existing);
     return task;
   });
 
