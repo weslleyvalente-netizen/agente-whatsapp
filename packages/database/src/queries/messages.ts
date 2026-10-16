@@ -193,3 +193,41 @@ export async function getRecentMessagesForOrganization(
   if (error) throw error;
   return data as Array<{ conversation_id: string; role: string; content: string; created_at: string }>;
 }
+
+// Áudio de cliente guardado no Storage privado (ver CUSTOMER_AUDIO_REF_PREFIX
+// em @aula-agente/shared). Só preenche se ainda estiver vazio, para o job de
+// captura ser idempotente mesmo com duas execuções concorrentes.
+export async function setMessageMediaUrlIfEmpty(client: SupabaseClient, id: string, mediaUrl: string) {
+  const { data, error } = await client
+    .from("messages")
+    .update({ media_url: mediaUrl })
+    .eq("id", id)
+    .is("media_url", null)
+    .select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
+// Mensagens com áudio guardado mais antigas que o corte (retenção).
+export async function listExpiredStoredAudioMessages(
+  client: SupabaseClient,
+  refPrefix: string,
+  cutoffISO: string,
+  limit = 500
+) {
+  const { data, error } = await client
+    .from("messages")
+    .select("id, media_url")
+    .like("media_url", `${refPrefix}%`)
+    .lt("created_at", cutoffISO)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as Array<{ id: string; media_url: string }>;
+}
+
+export async function clearMessageMediaUrls(client: SupabaseClient, ids: string[]) {
+  if (ids.length === 0) return;
+  const { error } = await client.from("messages").update({ media_url: null }).in("id", ids);
+  if (error) throw error;
+}

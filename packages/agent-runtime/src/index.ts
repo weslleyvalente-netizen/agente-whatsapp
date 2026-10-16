@@ -16,4 +16,4 @@ export {
   type TaskFollowupOpportunityContext,
 } from "./task-followup-suggestion.js";
 
-export { transcribeAudioMessage, pickAudioFileExtension, type TranscriptionResult } from "./audio-transcription.js";
+export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, type EvolutionMediaResponse, type TranscriptionResult } from "./audio-transcription.js";

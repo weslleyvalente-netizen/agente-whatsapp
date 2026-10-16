@@ -7,6 +7,8 @@ import type {
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
   StaleConversationFollowupJobData,
+  StoreCustomerAudioJobData,
+  CustomerAudioRetentionJobData,
 } from "./types.js";
 
 let processMessageQueue: Queue<ProcessMessageJobData> | null = null;
@@ -83,4 +85,30 @@ export function getStaleConversationFollowupQueue() {
     );
   }
   return staleConversationFollowupQueue;
+}
+
+let storeCustomerAudioQueue: Queue<StoreCustomerAudioJobData> | null = null;
+export function getStoreCustomerAudioQueue() {
+  if (!storeCustomerAudioQueue) {
+    storeCustomerAudioQueue = new Queue<StoreCustomerAudioJobData>(QUEUE_NAMES.STORE_CUSTOMER_AUDIO, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 4,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 2000 },
+      },
+    });
+  }
+  return storeCustomerAudioQueue;
+}
+
+let customerAudioRetentionQueue: Queue<CustomerAudioRetentionJobData> | null = null;
+export function getCustomerAudioRetentionQueue() {
+  if (!customerAudioRetentionQueue) {
+    customerAudioRetentionQueue = new Queue<CustomerAudioRetentionJobData>(QUEUE_NAMES.CUSTOMER_AUDIO_RETENTION, {
+      connection: getRedisConnection(),
+    });
+  }
+  return customerAudioRetentionQueue;
 }

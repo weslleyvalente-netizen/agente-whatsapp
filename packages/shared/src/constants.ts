@@ -183,6 +183,8 @@ export const QUEUE_NAMES = {
   TAKEOVER_TIMEOUT: "takeover-timeout",
   LEAD_SLA: "lead-sla",
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
+  STORE_CUSTOMER_AUDIO: "store-customer-audio",
+  CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",
 } as const;
 
 export const OPERATIONS = [
