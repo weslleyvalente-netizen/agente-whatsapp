@@ -149,18 +149,18 @@ export default function InboxPage() {
   if (loading) return <div>Carregando...</div>;
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-0 -m-6">
+    <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] gap-0 -m-3 md:h-[calc(100vh-8rem)] md:-m-6">
       {/* Sidebar: Conversation List */}
-      <div className="flex w-80 flex-col border-r">
+      <div className={cn("w-full flex-col border-r md:flex md:w-80", selectedId ? "hidden" : "flex")}>
         <div className="space-y-3 border-b p-3">
           <h1 className="px-1 text-lg font-heading font-semibold">Conversas</h1>
           <div className="relative">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-2 top-3.5 h-4 md:top-2.5 w-4 text-muted-foreground" />
             <Input
               placeholder="Buscar..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="rounded-full pl-8"
+              className="h-11 rounded-full pl-8 md:h-8"
             />
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -172,7 +172,7 @@ export default function InboxPage() {
                     key={tab.id}
                     onClick={() => setFilterTab(tab.id)}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      "flex items-center gap-1.5 rounded-full border px-3 py-2 text-xs md:py-1 font-medium transition-colors",
                       isActive
                         ? "border-transparent bg-lamp-rust text-white"
                         : "border-lamp-rust/40 text-lamp-rust hover:bg-lamp-rust/10"
@@ -188,7 +188,7 @@ export default function InboxPage() {
                   key={tab.id}
                   onClick={() => setFilterTab(tab.id)}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    "rounded-full border px-3 py-2 text-xs font-medium transition-colors md:py-1",
                     isActive
                       ? "border-transparent bg-primary text-primary-foreground"
                       : "border-border bg-background text-foreground hover:bg-accent"
@@ -210,7 +210,7 @@ export default function InboxPage() {
       </div>
 
       {/* Main: Chat Panel */}
-      <div className="flex min-w-0 flex-1 items-center justify-center text-muted-foreground">
+      <div className={cn("min-w-0 flex-1 items-center justify-center text-muted-foreground md:flex", selectedId ? "flex" : "hidden")}>
         {selectedId ? (
           <ChatPanel conversationId={selectedId} />
         ) : (

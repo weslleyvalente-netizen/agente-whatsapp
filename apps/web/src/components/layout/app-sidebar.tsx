@@ -40,46 +40,35 @@ const navigation: { name: string; href: string; icon: typeof Home; managerOnly?:
 
 const COLLAPSED_STORAGE_KEY = "moto-e-trilha-sidebar-collapsed";
 
-export function AppSidebar() {
+/** Corpo do menu, compartilhado entre a barra lateral (computador) e o painel do celular. */
+export function SidebarBody({
+  collapsed,
+  onToggleCollapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onToggleCollapsed?: () => void;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const { role } = useMyRole({ always: true });
   const isManager = role === "owner" || role === "admin";
-  const [collapsed, setCollapsed] = useState(false);
-
-  // Read the saved preference after mount only — reading localStorage
-  // during the initial render would mismatch the server-rendered markup
-  // (always expanded) and trigger a hydration error.
-  useEffect(() => {
-    setCollapsed(localStorage.getItem(COLLAPSED_STORAGE_KEY) === "true");
-  }, []);
-
-  const toggleCollapsed = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem(COLLAPSED_STORAGE_KEY, String(next));
-      return next;
-    });
-  };
-
   return (
-    <aside
-      className={cn(
-        "flex h-screen flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200",
-        collapsed ? "w-16" : "w-64"
-      )}
-    >
+    <>
       <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
         <StatusLamp tone="green" />
         {!collapsed && <span className="label-eyebrow text-muted-foreground">Online</span>}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="ml-auto h-6 w-6 shrink-0"
-          onClick={toggleCollapsed}
-          aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
-        >
-          {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-        </Button>
+        {onToggleCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto h-6 w-6 shrink-0"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+          >
+            {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </Button>
+        )}
       </div>
 
       <div className={cn("flex justify-center border-b border-sidebar-border bg-white", collapsed ? "p-1.5" : "px-4 py-3")}>
@@ -101,8 +90,9 @@ export function AppSidebar() {
               key={item.name}
               href={item.href}
               title={collapsed ? item.name : undefined}
+              onClick={onNavigate}
               className={cn(
-                "relative flex items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "relative flex items-center gap-3 overflow-hidden rounded-md px-3 py-3 text-sm md:py-2 font-medium transition-colors",
                 isActive
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
@@ -121,6 +111,36 @@ export function AppSidebar() {
           <p className="label-eyebrow">Moto e Trilha Veículos</p>
         </div>
       )}
+    </>
+  );
+}
+
+export function AppSidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Read the saved preference after mount only — reading localStorage
+  // during the initial render would mismatch the server-rendered markup
+  // (always expanded) and trigger a hydration error.
+  useEffect(() => {
+    setCollapsed(localStorage.getItem(COLLAPSED_STORAGE_KEY) === "true");
+  }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, String(next));
+      return next;
+    });
+  };
+
+  return (
+    <aside
+      className={cn(
+        "hidden h-screen flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex",
+        collapsed ? "w-16" : "w-64"
+      )}
+    >
+      <SidebarBody collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
     </aside>
   );
 }

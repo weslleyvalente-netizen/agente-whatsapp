@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { AssignSelect } from "./assign-select";
 import { TaskDialog } from "@/components/tasks/task-dialog";
-import { UserCheck, Bot, Info, X, ListChecks, MoreVertical } from "lucide-react";
+import { UserCheck, Bot, Info, X, ListChecks, MoreVertical, ArrowLeft } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -22,7 +22,7 @@ const STATUS_LABELS: Record<ConversationStatus, string> = {
 };
 
 const PILL_TRIGGER_CLASS =
-  "h-8 w-auto rounded-full border-transparent bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/20";
+  "h-8 w-auto data-[size=default]:h-10 md:data-[size=default]:h-8 rounded-full border-transparent bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/20";
 
 interface ChatHeaderProps {
   compact?: boolean;
@@ -56,8 +56,14 @@ export function ChatHeader({
   onClose,
 }: ChatHeaderProps) {
   return (
-    <div className={compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex items-center justify-between gap-4 border-b px-4 py-3"}>
-      <div className={compact ? "flex min-w-0 items-baseline gap-2" : "min-w-0"}>
+    <div className={compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4 md:py-3"}>
+      <div className={compact ? "flex min-w-0 items-baseline gap-2" : "flex min-w-0 items-center gap-1 md:block"}>
+        {!compact && (
+          <Button variant="ghost" size="icon" className="-ml-1 size-11 shrink-0 md:hidden" onClick={onClose} aria-label="Voltar para as conversas">
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+        )}
+        <div className={compact ? "contents" : "min-w-0"}>
         <p className={compact ? "min-w-0 truncate text-sm font-medium" : "truncate font-medium"}>
           {conversation.wa_contacts?.name || formatPhone(conversation.wa_contacts?.phone) || "Conversa"}
         </p>
@@ -65,9 +71,10 @@ export function ChatHeader({
         {!compact && conversation.agents?.name && (
           <p className="text-xs text-muted-foreground">Agente: {conversation.agents.name}</p>
         )}
+        </div>
       </div>
 
-      <div className={compact ? "flex min-w-0 flex-wrap items-center gap-1" : "flex shrink-0 items-center gap-2"}>
+      <div className={compact ? "flex min-w-0 flex-wrap items-center gap-1" : "flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap"}>
         <Select value={conversation.status} onValueChange={(v) => v && onStatusChange(v)}>
           <SelectTrigger className={PILL_TRIGGER_CLASS}>
             <SelectValue>{(value: ConversationStatus) => STATUS_LABELS[value] ?? value}</SelectValue>
@@ -166,7 +173,7 @@ export function ChatHeader({
         {!compact && <Button variant="ghost" size="icon" onClick={onOpenDetails} aria-label="Detalhes da conversa">
           <Info className="h-4 w-4" />
         </Button>}
-        <Button variant="ghost" size="icon" className={compact ? "ml-auto h-8 w-8" : undefined} onClick={onClose} aria-label="Fechar conversa">
+        <Button variant="ghost" size="icon" className={compact ? "ml-auto h-8 w-8" : "hidden md:inline-flex"} onClick={onClose} aria-label="Fechar conversa">
           <X className="h-4 w-4" />
         </Button>
       </div>

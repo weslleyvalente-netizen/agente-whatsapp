@@ -31,8 +31,8 @@ export function AvailabilitySelect({ userId }: { userId: string }) {
   };
   return (
     <label className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">Meu status</span>
-      <select aria-label="Minha disponibilidade" className="rounded border bg-background p-1" disabled={saving} value={rep.availability} onChange={e => change(e.target.value as SalesRepAvailability)}>
+      <span className="hidden text-muted-foreground md:inline">Meu status</span>
+      <select aria-label="Minha disponibilidade" className="h-11 max-w-[11rem] rounded border bg-background p-1 md:h-auto md:max-w-none" disabled={saving} value={rep.availability} onChange={e => change(e.target.value as SalesRepAvailability)}>
         {(Object.keys(LABELS) as SalesRepAvailability[]).map(a => <option key={a} value={a}>{LABELS[a]}</option>)}
       </select>
       {error && <span role="alert" className="text-xs text-destructive">{error}</span>}
