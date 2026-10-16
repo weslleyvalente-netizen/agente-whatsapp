@@ -24,7 +24,7 @@ import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
-import { enqueueProcessMessage } from "../../lib/queue.js";
+import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
@@ -408,6 +408,22 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // never enqueued for the AI and never synced to the CRM.
       if (isIgnoredMinimalRecord) {
         return reply.status(200).send({ ok: true, messageId: message.id, skipped: "ignored_contact" });
+      }
+
+      // Guarda o áudio do cliente no Storage privado (player das conversas).
+      // Independe da IA e do atendimento humano — por isso fica ANTES dos
+      // retornos de takeover / ai_disabled. Best-effort: falha ao enfileirar
+      // nunca derruba o recebimento da mensagem nem o fluxo da IA.
+      if (mediaType === "audio") {
+        try {
+          await enqueueStoreCustomerAudio({
+            messageId: message.id,
+            conversationId: conversation.id,
+            organizationId,
+          });
+        } catch (err) {
+          request.log.error({ err, messageId: message.id }, "Failed to enqueue customer audio capture");
+        }
       }
 
       // Independent of AI execution: a real customer reply resolves prior silence.
