@@ -71,36 +71,36 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
  }
  return <>
   <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }}>
-   <DialogContent className="w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
-    <DialogHeader><DialogTitle>{details?.customer.name || opportunity.wa_contacts?.name || "Detalhes do lead"}</DialogTitle><p className="text-sm text-muted-foreground">{OPERATION_LABELS[o.operation]} · {formatPhone(details?.customer.phone || opportunity.wa_contacts?.phone)} · {o.status === "open" ? "Em andamento" : o.status === "won" ? "Ganho" : "Perdido"}</p></DialogHeader>
+   <DialogContent className="w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto max-md:top-0 max-md:left-0 max-md:h-dvh max-md:max-h-none max-md:w-full max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none max-md:pb-[calc(1rem+env(safe-area-inset-bottom))] max-md:ring-0">
+    <DialogHeader className="max-md:pr-8"><DialogTitle>{details?.customer.name || opportunity.wa_contacts?.name || "Detalhes do lead"}</DialogTitle><p className="text-sm text-muted-foreground">{OPERATION_LABELS[o.operation]} · {formatPhone(details?.customer.phone || opportunity.wa_contacts?.phone)} · {o.status === "open" ? "Em andamento" : o.status === "won" ? "Ganho" : "Perdido"}</p></DialogHeader>
     {workspaceEnabled && opportunity.sales_state?.humanPending && <section className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm"><strong>Encaminhado pela IA</strong><p className="mt-1 line-clamp-2">{displayText(opportunity.sales_state.handoffSummary) || "Cliente aguardando atendimento humano."}</p>{opportunity.sales_state.handedAt && <p className="mt-1 text-xs text-muted-foreground">Aguardando desde {new Date(opportunity.sales_state.handedAt).toLocaleString("pt-BR")}</p>}</section>}
     {workspaceEnabled && o.status === "open" && !o.frozen_until && opportunity.sales_state?.responseOverdue && <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"><strong>Resposta da IA pendente</strong><p className="mt-1">A última mensagem é do cliente e aguarda resposta da IA há pelo menos 5 minutos. Confira a conversa antes de responder para evitar duplicidade.</p></section>}
     {o.frozen_until && <p className="rounded border p-3 text-sm">{o.frozen_until > new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) ? "Congelado até" : "Retorno combinado para"} {new Date(`${o.frozen_until}T12:00:00`).toLocaleDateString("pt-BR")} — {o.freeze_reason}. Cadências automáticas pausadas.</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!details && <Button variant="outline" onClick={() => load()}>Carregar detalhes</Button>}
-    <div className="flex flex-wrap gap-2">{FUNNEL_STAGES[o.operation].map(s => <Button key={s} size="sm" variant={s === o.stage ? "default" : "outline"} disabled={o.status !== "open" || s === o.stage} onClick={() => setStage(s)}>{FUNNEL_STAGE_LABELS[s] ?? s}</Button>)}</div>
-    <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+    <div className="flex flex-wrap gap-2">{FUNNEL_STAGES[o.operation].map(s => <Button key={s} size="sm" className="max-md:h-10" variant={s === o.stage ? "default" : "outline"} disabled={o.status !== "open" || s === o.stage} onClick={() => setStage(s)}>{FUNNEL_STAGE_LABELS[s] ?? s}</Button>)}</div>
+    <div className="flex flex-col gap-y-3 md:flex-row md:flex-wrap md:items-start md:gap-x-6">
      <div role="group" aria-label="Atendimento" className="space-y-1">
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Atendimento</p>
-      <div className="flex flex-wrap gap-2">
-       {details?.conversation && <Link className={buttonVariants({ variant: "default" })} href={`/inbox?id=${details.conversation.id}`}><MessageSquare aria-hidden />Abrir conversa</Link>}
-       {whatsappUrl && <a className={buttonVariants({ variant: "default" })} href={whatsappUrl} target="_blank" rel="noopener noreferrer"><MessageCircle aria-hidden />Abrir no WhatsApp</a>}
-       <Button onClick={() => setCallOpen(true)}><Phone aria-hidden />Registrar ligação</Button>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap">
+       {details?.conversation && <Link className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={`/inbox?id=${details.conversation.id}`}><MessageSquare aria-hidden />Abrir conversa</Link>}
+       {whatsappUrl && <a className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={whatsappUrl} target="_blank" rel="noopener noreferrer"><MessageCircle aria-hidden />Abrir no WhatsApp</a>}
+       <Button className="max-md:h-11" onClick={() => setCallOpen(true)}><Phone aria-hidden />Registrar ligação</Button>
       </div>
      </div>
      {o.status === "open" && <div role="group" aria-label="Avançar negócio" className="space-y-1 rounded-lg border p-2">
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Avançar negócio</p>
-      <div className="flex flex-wrap gap-2">
-       <Button size="lg" className="h-9 bg-green-600 px-4 text-white hover:bg-green-700 focus-visible:ring-green-600/50 dark:bg-green-600 dark:hover:bg-green-500" onClick={() => { setError(null); setClosing("won"); }}><Check aria-hidden />Marcar como ganho</Button>
-       <Button size="lg" className="h-9 bg-sky-600 px-4 text-white hover:bg-sky-700 focus-visible:ring-sky-600/50 dark:bg-sky-600 dark:hover:bg-sky-500" onClick={() => setFreezing(true)}><Snowflake aria-hidden />{o.frozen_until ? "Reagendar / descongelar" : "Congelar e marcar retorno"}</Button>
-       <Button size="lg" className="h-9 bg-red-600 px-4 text-white hover:bg-red-700 focus-visible:ring-red-600/50 dark:bg-red-600 dark:hover:bg-red-500" onClick={() => { setError(null); setClosing("lost"); }}><X aria-hidden />Marcar como perdido</Button>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap">
+       <Button size="lg" className="h-9 max-md:h-11 bg-green-600 px-4 text-white hover:bg-green-700 focus-visible:ring-green-600/50 dark:bg-green-600 dark:hover:bg-green-500" onClick={() => { setError(null); setClosing("won"); }}><Check aria-hidden />Marcar como ganho</Button>
+       <Button size="lg" className="h-9 max-md:h-11 bg-sky-600 px-4 text-white hover:bg-sky-700 focus-visible:ring-sky-600/50 dark:bg-sky-600 dark:hover:bg-sky-500" onClick={() => setFreezing(true)}><Snowflake aria-hidden />{o.frozen_until ? "Reagendar / descongelar" : "Congelar e marcar retorno"}</Button>
+       <Button size="lg" className="h-9 max-md:h-11 bg-red-600 px-4 text-white hover:bg-red-700 focus-visible:ring-red-600/50 dark:bg-red-600 dark:hover:bg-red-500" onClick={() => { setError(null); setClosing("lost"); }}><X aria-hidden />Marcar como perdido</Button>
       </div>
      </div>}
      <div role="group" aria-label="Gerenciar" className="space-y-1">
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Gerenciar</p>
       <div className="flex flex-wrap gap-1">
-       <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Editar dados</Button>
-       <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setTargetOperation(o.operation); setMoveReason(""); setMoving(!moving); }}>Mover para outro funil</Button>
+       <Button size="sm" className="max-md:h-11" variant="ghost" onClick={() => setEditing(true)}>Editar dados</Button>
+       <Button size="sm" className="max-md:h-11" variant="ghost" disabled={saving} onClick={() => { setTargetOperation(o.operation); setMoveReason(""); setMoving(!moving); }}>Mover para outro funil</Button>
       </div>
      </div>
     </div>
@@ -125,7 +125,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Ligações ({callLogs.length})</summary>{callLogs.length ? callLogs.map(c => <div key={c.id} className="mb-3 border-l-2 pl-3"><p className="text-sm font-medium">{CALL_OUTCOME_LABELS[c.outcome] ?? c.outcome} · {CALL_STRATEGY_LABELS[c.strategy] ?? c.strategy}{c.rep_name ? ` · ${c.rep_name}` : ""}</p>{c.note && <p className="whitespace-pre-wrap text-sm">{displayText(c.note)}</p>}<p className="text-xs text-muted-foreground">{new Date(c.called_at).toLocaleString("pt-BR")}</p></div>) : <p className="mt-2 text-sm text-muted-foreground">Nenhuma ligação registrada.</p>}</details>
      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Histórico</summary>{details?.events.length ? details.events.map(e => <div key={e.id} className="mb-4 border-l-2 pl-3"><p className="text-sm font-medium">{eventLabels[e.event_type] ?? "Atualização"}</p><p className="whitespace-pre-wrap text-sm">{displayText(e.evidence)}</p><p className="text-xs text-muted-foreground">{new Date(e.created_at).toLocaleString("pt-BR")}</p></div>) : <p className="text-sm text-muted-foreground">Sem eventos registrados.</p>}</details><details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Atribuição do lead</summary><AssignmentHistory contactId={o.contact_id} /></details></div>
     </div>
-    {workspaceEnabled && details?.conversation && (chatOpen ? <aside className="sticky top-0 h-[65vh] min-w-0 overflow-hidden rounded-lg border"><ChatPanel compact key={details.conversation.id} conversationId={details.conversation.id} onClose={() => setChatOpen(false)} onConversationChanged={() => { load(); onChanged(); }}/></aside> : <Button variant="outline" onClick={() => setChatOpen(true)}>Mostrar conversa</Button>)}
+    {workspaceEnabled && details?.conversation && (chatOpen ? <aside className="sticky top-0 h-[65vh] min-w-0 max-md:h-[75dvh] overflow-hidden rounded-lg border"><ChatPanel compact key={details.conversation.id} conversationId={details.conversation.id} onClose={() => setChatOpen(false)} onConversationChanged={() => { load(); onChanged(); }}/></aside> : <Button variant="outline" onClick={() => setChatOpen(true)}>Mostrar conversa</Button>)}
     </div>
    </DialogContent>
   </Dialog>

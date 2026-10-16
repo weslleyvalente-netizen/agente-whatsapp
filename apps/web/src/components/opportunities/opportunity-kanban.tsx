@@ -7,7 +7,7 @@ import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useS
 import { apiFetch } from "@/lib/api";
 import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState, ContactState } from "@aula-agente/shared";
-import { Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3 } from "lucide-react";
+import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3 } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
@@ -29,16 +29,18 @@ const OpportunityCard = memo(function OpportunityCard({
   onEdit,
   onOpen,
   onChanged,
+  dragEnabled,
 }: {
   opportunity: OpportunityWithContact;
   onEdit: (opportunity: OpportunityWithContact) => void;
   onOpen: (opportunity: OpportunityWithContact) => void;
   onChanged: () => void;
+  dragEnabled: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: opportunity.id });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: opportunity.id, disabled: !dragEnabled });
   return (
     <div ref={setNodeRef} {...listeners} {...attributes}
-      className={`cursor-grab rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
+      className={`${dragEnabled ? "cursor-grab" : "cursor-pointer"} rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
       onClick={() => !isDragging && onOpen(opportunity)}
       onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
       <OpportunityCardContent opportunity={opportunity} onEdit={onEdit} onChanged={onChanged}/>
@@ -68,7 +70,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>
         <p className="min-w-0 flex-1 break-words font-semibold leading-7">{contactLabel}</p>
-        {onEdit && <button type="button" aria-label="Editar oportunidade" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(opportunity); }}><Pencil className="size-3.5"/></button>}
+        {onEdit && <button type="button" aria-label="Editar oportunidade" className="rounded p-1 text-muted-foreground max-md:p-2.5 hover:bg-muted hover:text-foreground" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onEdit(opportunity); }}><Pencil className="size-3.5"/></button>}
       </div>
       {amount != null && <p className="mt-2 font-semibold tabular-nums"><span className="mr-2 text-xs font-normal text-muted-foreground">{opportunity.sale_amount != null ? "Preço" : "Crédito"}</span>{Number(amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>}
       {opportunity.sale_amount != null && opportunity.credit_amount != null && <p className="mt-1 text-xs text-muted-foreground">Crédito: {Number(opportunity.credit_amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>}
@@ -102,8 +104,12 @@ function StageColumn({
   onOpen,
   onChanged,
   queueMode = false,
+  dragEnabled,
+  defaultOpenMobile,
 }: {
   queueMode?: boolean;
+  dragEnabled: boolean;
+  defaultOpenMobile: boolean;
   stage: string;
   opportunities: OpportunityWithContact[];
   onEdit: (opportunity: OpportunityWithContact) => void;
@@ -117,11 +123,13 @@ function StageColumn({
   // Renderizar centenas de cards de uma vez deixa o navegador lento: mostra os primeiros e libera mais sob demanda.
   const [visibleCount, setVisibleCount] = useState(CARDS_PER_PAGE);
   const visible = sorted.slice(0, visibleCount);
+  // Só tem efeito abaixo de md (celular): o grupo é recolhível. No computador a coluna fica sempre visível.
+  const [openMobile, setOpenMobile] = useState(defaultOpenMobile);
   return (
-    <section ref={setNodeRef} aria-label={label} className={`w-[300px] shrink-0 rounded-2xl bg-muted/45 p-3 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
-      <div className="mb-4 flex min-h-9 items-center gap-2 px-1"><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span></div>
-      <div className="max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin]">
-        {visible.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged}/>)}
+    <section ref={setNodeRef} aria-label={label} className={`w-full rounded-2xl bg-muted/45 p-3 md:w-[300px] md:shrink-0 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
+      <div className={`flex min-h-9 items-center gap-2 px-1 max-md:min-h-11 max-md:cursor-pointer md:mb-4 ${openMobile ? "max-md:mb-3" : ""}`} onClick={() => setOpenMobile(v => !v)}><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span><button type="button" aria-expanded={openMobile} aria-label={openMobile ? `Recolher ${label}` : `Expandir ${label}`} className="-mr-1 shrink-0 rounded p-1.5 text-muted-foreground md:hidden"><ChevronDown className={`size-5 transition-transform ${openMobile ? "rotate-180" : ""}`}/></button></div>
+      <div className={`max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin] max-md:max-h-none max-md:min-h-0 max-md:overflow-visible ${openMobile ? "" : "max-md:hidden"}`}>
+        {visible.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged} dragEnabled={dragEnabled}/>)}
         {sorted.length > visible.length && <button type="button" className="w-full rounded-xl border border-dashed p-3 text-xs text-muted-foreground hover:bg-background hover:text-foreground" onClick={() => setVisibleCount(c => c + CARDS_PER_PAGE)}>Mostrar mais ({sorted.length - visible.length} restantes)</button>}
         {!sorted.length && <p className="rounded-xl border border-dashed p-5 text-center text-xs leading-relaxed text-muted-foreground">Nenhum negócio nesta etapa</p>}
       </div>
@@ -149,6 +157,16 @@ export function OpportunityKanban({
   const [activeOpportunity, setActiveOpportunity] = useState<OpportunityWithContact | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+  // Arrastar-e-soltar só no computador: abaixo de md (celular) o cartão apenas abre o detalhe.
+  // Começa habilitado (igual ao servidor/computador) e desliga após a montagem, sem divergência de hidratação.
+  const [dragEnabled, setDragEnabled] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const update = () => setDragEnabled(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor));
   const stages = queueMode ? Object.keys(SALES_QUEUE_LABELS).map(k=>`__queue_${k}`) : [...(workspaceEnabled ? ["__ready_for_marina"] : []), ...FUNNEL_STAGES[operation]];
 
@@ -164,6 +182,8 @@ export function OpportunityKanban({
     return map;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opportunities, queueMode, workspaceEnabled, operation]);
+  // No celular, só o primeiro grupo que tem cards começa aberto; os demais começam recolhidos.
+  const firstWithCards = stages.find(s => (byStage.get(s)?.length ?? 0) > 0);
   const openCard = useCallback((o: OpportunityWithContact) => { if (Date.now() - draggedAt.current > 400) setSelected(o); }, []);
 
   function handleDragEnd(event: DragEndEvent) {
@@ -198,7 +218,7 @@ export function OpportunityKanban({
         }}
         onDragCancel={() => { draggedAt.current = Date.now(); setActiveOpportunity(null); }}
         onDragEnd={handleDragEnd}>
-        <div className="flex items-start gap-4 overflow-x-auto pb-4 [scrollbar-width:thin]">
+        <div className="flex flex-col gap-3 [scrollbar-width:thin] md:flex-row md:items-start md:gap-4 md:overflow-x-auto md:pb-4">
           {stages.map((stage) => (
             <StageColumn
               key={stage}
@@ -208,6 +228,8 @@ export function OpportunityKanban({
               onEdit={setEditing}
               onChanged={onChanged}
               onOpen={openCard}
+              dragEnabled={dragEnabled}
+              defaultOpenMobile={stage === firstWithCards}
             />
           ))}
         </div>
