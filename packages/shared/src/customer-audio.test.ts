@@ -5,6 +5,7 @@ import {
   buildCustomerAudioRef,
   parseCustomerAudioRef,
   isStoredCustomerAudioRef,
+  isCustomerAudioRefFor,
 } from "./customer-audio.js";
 
 describe("customer audio ref", () => {
@@ -33,5 +34,19 @@ describe("customer audio ref", () => {
 
   it("retenção é de 90 dias", () => {
     expect(CUSTOMER_AUDIO_RETENTION_DAYS).toBe(90);
+  });
+});
+
+describe("isCustomerAudioRefFor", () => {
+  const ids = { organizationId: "o", conversationId: "c", messageId: "m" };
+  it("aceita só o caminho exato da própria mensagem com extensão permitida", () => {
+    for (const ext of ["mp4", "mp3", "wav", "webm", "ogg"]) expect(isCustomerAudioRefFor(`storage:customer-audio/o/c/m.${ext}`, ids)).toBe(true);
+  });
+  it("rejeita outra org/conversa/mensagem, extensão fora da lista, traversal e nulos", () => {
+    for (const ref of [
+      "storage:customer-audio/x/c/m.mp4", "storage:customer-audio/o/x/m.mp4", "storage:customer-audio/o/c/x.mp4",
+      "storage:customer-audio/o/c/m.exe", "storage:customer-audio/o/c/m.mp4/../../x.mp4", "storage:customer-audio/o/c/m",
+      "storage:agent-media/o/c/m.mp4", "https://o/c/m.mp4", null, undefined,
+    ]) expect(isCustomerAudioRefFor(ref as any, ids)).toBe(false);
   });
 });

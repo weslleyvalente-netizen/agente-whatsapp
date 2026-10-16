@@ -1,4 +1,4 @@
-import { Worker, type Job } from "bullmq";
+import { UnrecoverableError, Worker, type Job } from "bullmq";
 import { QUEUE_NAMES } from "@aula-agente/shared";
 import {
   getCustomerAudioRetentionQueue,
@@ -17,7 +17,11 @@ export function startStoreCustomerAudioWorker() {
     QUEUE_NAMES.STORE_CUSTOMER_AUDIO,
     async (job: Job<StoreCustomerAudioJobData>) => {
       const result = await storeCustomerAudio(getAdminClient(), job.data);
-      if (!result.ok) throw new Error(`store-customer-audio ${job.data.messageId}: ${result.reason}`);
+      if (!result.ok) {
+        const message = `store-customer-audio ${job.data.messageId}: ${result.reason}`;
+        // Falha permanente: não gasta retentativas.
+        throw result.permanent ? new UnrecoverableError(message) : new Error(message);
+      }
     },
     { connection: getRedisConnection(), concurrency: 3 }
   );

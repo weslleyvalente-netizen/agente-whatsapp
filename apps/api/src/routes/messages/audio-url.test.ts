@@ -18,7 +18,7 @@ import audioUrlRoutes from "./audio-url.js";
 
 const MARINA = "22222222-2222-4222-8222-222222222222"; const MARCIO = "33333333-3333-4333-8333-333333333333";
 const MSG = "11111111-1111-4111-8111-111111111111";
-const REF = "storage:customer-audio/org-1/conv-1/msg.mp4";
+const REF = `storage:customer-audio/org-1/conv-1/${MSG}.mp4`;
 
 async function get(id = MSG) {
   const app = Fastify(); await app.register(audioUrlRoutes);
@@ -28,7 +28,7 @@ const conv = (assigned: string | null) => m.getConversationById.mockResolvedValu
 
 beforeEach(() => {
   vi.clearAllMocks(); m.role.value = "agent"; m.settings.value = { seller_isolation_enabled: true }; m.memberOrg.value = "org-1";
-  m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", media_type: "audio", media_url: REF });
+  m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "contact", media_type: "audio", media_url: REF });
   conv(MARINA);
   m.getOrganizationById.mockImplementation(async () => ({ settings: m.settings.value }));
   m.listSalesReps.mockResolvedValue([{ user_id: MARINA }, { user_id: MARCIO }]);
@@ -42,7 +42,7 @@ describe("GET /messages/:messageId/audio-url", () => {
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ url: "https://signed.example/a.mp4?token=1", expiresIn: 300 });
     expect(m.from).toHaveBeenCalledWith("customer-audio");
-    expect(m.createSignedUrl).toHaveBeenCalledWith("org-1/conv-1/msg.mp4", 300);
+    expect(m.createSignedUrl).toHaveBeenCalledWith(`org-1/conv-1/${MSG}.mp4`, 300);
   });
 
   it("id que não é uuid -> 400", async () => {
@@ -57,10 +57,41 @@ describe("GET /messages/:messageId/audio-url", () => {
 
   it("sem arquivo guardado (media_url nulo, http ou de outro bucket) -> 404", async () => {
     for (const media_url of [null, "https://x/y.mp3", "storage:agent-media/a/b.png"]) {
-      m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", media_type: "audio", media_url });
+      m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "contact", media_type: "audio", media_url });
       expect((await get()).statusCode).toBe(404);
     }
     expect(m.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("referência forjada (outra org, conversa ou mensagem, extensão ou traversal) -> 404 sem assinar", async () => {
+    for (const media_url of [
+      `storage:customer-audio/org-2/conv-1/${MSG}.mp4`, `storage:customer-audio/org-1/conv-9/${MSG}.mp4`,
+      "storage:customer-audio/org-1/conv-1/outra-msg.mp4", `storage:customer-audio/org-1/conv-1/${MSG}.exe`,
+      `storage:customer-audio/org-1/conv-1/${MSG}.mp4/../../../org-2/c/x.mp4`,
+    ]) {
+      m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "contact", media_type: "audio", media_url });
+      expect((await get()).statusCode).toBe(404);
+    }
+    expect(m.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("só áudio de cliente: mensagem de agente ou não-áudio -> 404", async () => {
+    m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "agent", media_type: "audio", media_url: REF });
+    expect((await get()).statusCode).toBe(404);
+    m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "contact", media_type: "image", media_url: REF });
+    expect((await get()).statusCode).toBe(404);
+    expect(m.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("conversa de outra organização que a da mensagem -> 404", async () => {
+    m.getConversationById.mockResolvedValue({ id: "conv-1", organization_id: "org-2", assigned_to: null });
+    expect((await get()).statusCode).toBe(404);
+    expect(m.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("conversa inexistente (getConversationById lança) -> 404, não 500", async () => {
+    m.getConversationById.mockRejectedValue(new Error("not found"));
+    expect((await get()).statusCode).toBe(404);
   });
 
   it("usuário de outra organização -> 403", async () => {

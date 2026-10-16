@@ -217,13 +217,13 @@ export async function listExpiredStoredAudioMessages(
 ) {
   const { data, error } = await client
     .from("messages")
-    .select("id, media_url")
+    .select("id, organization_id, conversation_id, media_url")
     .like("media_url", `${refPrefix}%`)
     .lt("created_at", cutoffISO)
     .order("created_at", { ascending: true })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; media_url: string }>;
+  return (data ?? []) as Array<{ id: string; organization_id: string; conversation_id: string; media_url: string }>;
 }
 
 export async function clearMessageMediaUrls(client: SupabaseClient, ids: string[]) {

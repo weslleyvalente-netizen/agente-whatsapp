@@ -9,7 +9,11 @@ export interface EvolutionMediaResponse {
   mimetype: string;
 }
 
-export async function fetchAudioAsMp4(instanceName: string, evolutionMessageId: string): Promise<EvolutionMediaResponse> {
+export async function fetchAudioAsMp4(
+  instanceName: string,
+  evolutionMessageId: string,
+  timeoutMs = 20_000
+): Promise<EvolutionMediaResponse> {
   const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
     method: "POST",
     headers: {
@@ -20,7 +24,7 @@ export async function fetchAudioAsMp4(instanceName: string, evolutionMessageId: 
       message: { key: { id: evolutionMessageId } },
       convertToMp4: true,
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {

@@ -21,9 +21,12 @@ export function CustomerAudioPlayer({ messageId, durationSeconds }: CustomerAudi
   const audioRef = useRef<HTMLAudioElement>(null);
   const resumeAtRef = useRef(0);
   const autoPlayRef = useRef(false);
+  // Já houve um novo link automático após erro de reprodução? Evita laço de re-assinatura.
+  const retriedAfterErrorRef = useRef(false);
   const duration = formatAudioDuration(durationSeconds);
 
-  async function load() {
+  async function load(fromUserTap = true) {
+    if (fromUserTap) retriedAfterErrorRef.current = false;
     setStatus("loading");
     setErrorText(null);
     try {
@@ -38,28 +41,33 @@ export function CustomerAudioPlayer({ messageId, durationSeconds }: CustomerAudi
     }
   }
 
-  // Assim que o src novo entra no <audio>, retoma de onde parou e toca.
+  // Assim que o src novo entra no <audio>: toca direto (com preload="none" o
+  // loadedmetadata pode nunca disparar antes do play) e retoma de onde parou.
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !src || !autoPlayRef.current) return;
     autoPlayRef.current = false;
     const resumeAt = resumeAtRef.current;
-    const start = () => {
-      if (resumeAt > 0) el.currentTime = resumeAt;
-      // Alguns navegadores de celular bloqueiam o play fora do toque: os controles continuam visíveis.
-      el.play().catch(() => {});
-    };
-    el.addEventListener("loadedmetadata", start, { once: true });
-    el.load();
-    return () => el.removeEventListener("loadedmetadata", start);
+    resumeAtRef.current = 0;
+    if (resumeAt > 0) {
+      el.addEventListener("loadedmetadata", () => { el.currentTime = resumeAt; }, { once: true });
+    }
+    // Alguns navegadores de celular bloqueiam o play fora do toque: os controles continuam visíveis.
+    el.play().catch(() => {});
   }, [src]);
 
   // Link vencido ou arquivo apagado: volta ao botão para pedir outro link ao tocar de novo.
+  // Uma única renovação automática; se falhar de novo, "Áudio indisponível".
   function handleAudioError() {
     resumeAtRef.current = audioRef.current?.currentTime ?? 0;
     setSrc(null);
-    setStatus("idle");
-    setErrorText("O link expirou. Toque para ouvir de novo.");
+    if (retriedAfterErrorRef.current) {
+      setStatus("error");
+      setErrorText("Áudio indisponível");
+      return;
+    }
+    retriedAfterErrorRef.current = true;
+    void load(false);
   }
 
   if (status === "ready" && src) {
@@ -69,6 +77,7 @@ export function CustomerAudioPlayer({ messageId, durationSeconds }: CustomerAudi
         src={src}
         controls
         preload="none"
+        onPlaying={() => { retriedAfterErrorRef.current = false; }}
         onError={handleAudioError}
         className="h-11 w-full min-w-[220px] max-w-full"
       />
@@ -79,13 +88,13 @@ export function CustomerAudioPlayer({ messageId, durationSeconds }: CustomerAudi
     <div>
       <button
         type="button"
-        onClick={load}
+        onClick={() => void load()}
         disabled={status === "loading"}
-        aria-label="Ouvir áudio"
+        aria-busy={status === "loading"}
         className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-70"
       >
         {status === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-        Ouvir{duration ? ` · ${duration}` : ""}
+        Ouvir áudio{duration ? ` · ${duration}` : ""}
       </button>
       {errorText && (
         <p role="alert" className="mt-1 text-xs text-muted-foreground">
