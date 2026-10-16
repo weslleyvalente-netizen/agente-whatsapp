@@ -38,8 +38,10 @@ const OpportunityCard = memo(function OpportunityCard({
   dragEnabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: opportunity.id, disabled: !dragEnabled });
+  // Sem arrastar (celular), o cartão não deve se anunciar como arrastável/desabilitado.
+  const a11y = dragEnabled ? attributes : { ...attributes, "aria-disabled": undefined, "aria-roledescription": undefined, role: undefined };
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes}
+    <div ref={setNodeRef} {...listeners} {...a11y}
       className={`${dragEnabled ? "cursor-grab" : "cursor-pointer"} rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
       onClick={() => !isDragging && onOpen(opportunity)}
       onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
@@ -221,7 +223,7 @@ export function OpportunityKanban({
         <div className="flex flex-col gap-3 [scrollbar-width:thin] md:flex-row md:items-start md:gap-4 md:overflow-x-auto md:pb-4">
           {stages.map((stage) => (
             <StageColumn
-              key={stage}
+              key={`${operation}:${queueMode}:${workspaceEnabled}:${stage}`}
               stage={stage}
               queueMode={queueMode}
               opportunities={byStage.get(stage) ?? EMPTY}

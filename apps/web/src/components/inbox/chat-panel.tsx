@@ -194,7 +194,11 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
             onReenableAi={handleReenableAi}
             onUpdate={fetchConversation}
             onOpenDetails={() => setDetailsOpen(true)}
-            onClose={onClose ?? (() => router.push("/inbox"))}
+            onClose={onClose ?? (() => {
+              // Volta no histórico quando veio da própria lista; senão, abre a lista.
+              if (window.history.length > 1 && document.referrer.startsWith(window.location.origin)) router.back();
+              else router.push("/inbox");
+            })}
           />
         )}
 

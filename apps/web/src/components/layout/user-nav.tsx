@@ -27,7 +27,7 @@ export function UserNav({ email }: UserNavProps) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex items-center gap-2 rounded-md p-1 md:p-2 hover:bg-accent">
+      <DropdownMenuTrigger aria-label="Conta e sair" className="flex items-center gap-2 rounded-md p-1 md:p-2 hover:bg-accent">
         <Avatar className="h-8 w-8">
           <AvatarFallback>{email[0].toUpperCase()}</AvatarFallback>
         </Avatar>

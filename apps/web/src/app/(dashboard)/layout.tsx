@@ -19,7 +19,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <div className="flex h-dvh overflow-hidden md:h-screen">
         <AppSidebar />
         <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="flex h-14 items-center justify-end gap-2 border-b px-3 md:gap-4 md:px-6">
+          <header className="flex h-14 items-center justify-end gap-2 border-b px-3 max-md:h-[calc(3.5rem+env(safe-area-inset-top))] max-md:pt-[env(safe-area-inset-top)] max-md:pl-[max(0.75rem,env(safe-area-inset-left))] max-md:pr-[max(0.75rem,env(safe-area-inset-right))] md:gap-4 md:px-6">
             <MobileNav />
             <div className="min-w-0 flex-1 md:hidden" />
             <AvailabilitySelect userId={user.id} />

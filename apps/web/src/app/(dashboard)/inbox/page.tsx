@@ -149,7 +149,7 @@ export default function InboxPage() {
   if (loading) return <div>Carregando...</div>;
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] gap-0 -m-3 md:h-[calc(100vh-8rem)] md:-m-6">
+    <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] gap-0 -m-3 md:h-[calc(100vh-8rem)] md:-m-6">
       {/* Sidebar: Conversation List */}
       <div className={cn("w-full flex-col border-r md:flex md:w-80", selectedId ? "hidden" : "flex")}>
         <div className="space-y-3 border-b p-3">
