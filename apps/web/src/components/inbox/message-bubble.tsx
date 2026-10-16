@@ -1,6 +1,8 @@
 import { Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@aula-agente/shared";
+import { hasStoredAudio } from "@/lib/customer-audio";
+import { CustomerAudioPlayer } from "./customer-audio-player";
 
 interface MessageBubbleProps {
   message: Message;
@@ -54,6 +56,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             alt="Foto enviada"
             className="mb-1 h-auto max-w-full rounded-md"
           />
+        )}
+        {isContact && hasStoredAudio(message) && (
+          <div className="mb-1">
+            <CustomerAudioPlayer messageId={message.id} durationSeconds={message.metadata?.duration_seconds} />
+          </div>
         )}
         {message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (
           <p className="flex items-center gap-1.5 text-sm italic text-muted-foreground">

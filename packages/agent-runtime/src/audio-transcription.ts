@@ -4,12 +4,16 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
 
-interface EvolutionMediaResponse {
+export interface EvolutionMediaResponse {
   base64: string;
   mimetype: string;
 }
 
-async function fetchAudioAsMp4(instanceName: string, evolutionMessageId: string): Promise<EvolutionMediaResponse> {
+export async function fetchAudioAsMp4(
+  instanceName: string,
+  evolutionMessageId: string,
+  timeoutMs = 20_000
+): Promise<EvolutionMediaResponse> {
   const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
     method: "POST",
     headers: {
@@ -20,7 +24,7 @@ async function fetchAudioAsMp4(instanceName: string, evolutionMessageId: string)
       message: { key: { id: evolutionMessageId } },
       convertToMp4: true,
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {

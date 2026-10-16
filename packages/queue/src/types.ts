@@ -31,3 +31,13 @@ export interface TakeoverTimeoutJobData {
 export interface StaleConversationFollowupJobData {
   // no data needed — scans all organizations
 }
+
+export interface StoreCustomerAudioJobData {
+  messageId: string;
+  conversationId: string;
+  organizationId: string;
+}
+
+export interface CustomerAudioRetentionJobData {
+  // no data needed — scans every organization's expired audio
+}

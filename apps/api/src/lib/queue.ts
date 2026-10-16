@@ -1,4 +1,4 @@
-import { getProcessMessageQueue, getSendMessageQueue } from "@aula-agente/queue";
+import { getProcessMessageQueue, getSendMessageQueue, getStoreCustomerAudioQueue } from "@aula-agente/queue";
 
 // How long to wait after a customer's message before actually processing
 // it. Rapid consecutive bubbles (someone typing "oi" / "tudo bem?" / "quero
@@ -51,4 +51,14 @@ export function enqueueSendMessage(
 ) {
   const queue = getSendMessageQueue();
   return queue.add("send-message", data, opts);
+}
+
+// Guarda o áudio recebido do cliente no Storage privado (player nas conversas).
+// jobId = messageId: o mesmo áudio nunca entra duas vezes na fila (webhook repetido).
+export function enqueueStoreCustomerAudio(data: {
+  messageId: string;
+  conversationId: string;
+  organizationId: string;
+}) {
+  return getStoreCustomerAudioQueue().add("store-customer-audio", data, { jobId: data.messageId });
 }

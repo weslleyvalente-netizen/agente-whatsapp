@@ -6,6 +6,8 @@ export {
   getTakeoverTimeoutQueue,
   getStaleConversationFollowupQueue,
   getLeadSlaQueue,
+  getStoreCustomerAudioQueue,
+  getCustomerAudioRetentionQueue,
 } from "./queues.js";
 export type {
   ProcessMessageJobData,
@@ -13,4 +15,6 @@ export type {
   ProcessDocumentJobData,
   TakeoverTimeoutJobData,
   StaleConversationFollowupJobData,
+  StoreCustomerAudioJobData,
+  CustomerAudioRetentionJobData,
 } from "./types.js";

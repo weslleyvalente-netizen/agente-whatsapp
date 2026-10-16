@@ -5,6 +5,7 @@ import { startProcessDocumentWorker } from "./workers/process-document.js";
 import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout.js";
 import { startStaleConversationFollowupWorker } from "./workers/stale-conversation-followup.js";
 import { startLeadSlaWorker } from "./workers/lead-sla.js";
+import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
 
 async function main() {
   console.log("Starting workers...");
@@ -16,6 +17,8 @@ async function main() {
     startTakeoverTimeoutWorker(),
     startStaleConversationFollowupWorker(),
     startLeadSlaWorker(),
+    startStoreCustomerAudioWorker(),
+    startCustomerAudioRetentionWorker(),
   ];
 
   console.log(`${workers.length} workers started successfully`);

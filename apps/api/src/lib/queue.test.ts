@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { add, sendAdd } = vi.hoisted(() => ({ add: vi.fn(), sendAdd: vi.fn() }));
+const { add, sendAdd, audioAdd } = vi.hoisted(() => ({ add: vi.fn(), sendAdd: vi.fn(), audioAdd: vi.fn() }));
 
 vi.mock("@aula-agente/queue", () => ({
   getProcessMessageQueue: () => ({ add }),
   getSendMessageQueue: () => ({ add: sendAdd }),
+  getStoreCustomerAudioQueue: () => ({ add: audioAdd }),
 }));
 
-import { enqueueProcessMessage, enqueueSendMessage } from "./queue.js";
+import { enqueueProcessMessage, enqueueSendMessage, enqueueStoreCustomerAudio } from "./queue.js";
 
 const sendMessageData = {
   conversationId: "conv-1",
@@ -96,5 +97,13 @@ describe("enqueueSendMessage", () => {
     await enqueueSendMessage(sendMessageData, { attempts: 1 });
 
     expect(sendAdd).toHaveBeenCalledWith("send-message", sendMessageData, { attempts: 1 });
+  });
+});
+
+describe("enqueueStoreCustomerAudio", () => {
+  it("usa o id da mensagem como jobId para não duplicar a captura", async () => {
+    const data = { messageId: "msg-1", conversationId: "conv-1", organizationId: "org-1" };
+    await enqueueStoreCustomerAudio(data);
+    expect(audioAdd).toHaveBeenCalledWith("store-customer-audio", data, { jobId: "msg-1" });
   });
 });
