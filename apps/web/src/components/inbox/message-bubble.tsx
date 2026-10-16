@@ -37,7 +37,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div className={cn("flex", isContact ? "justify-start" : "justify-end")}>
       <div
         className={cn(
-          "min-w-0 max-w-[70%] rounded-lg px-3 py-2",
+          "min-w-0 max-w-[85%] md:max-w-[70%] rounded-lg px-3 py-2",
           isContact && "bg-muted",
           isAgent && "bg-primary/10 text-foreground",
           isHuman && "bg-steel text-white"
@@ -52,7 +52,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <img
             src={message.media_url}
             alt="Foto enviada"
-            className="mb-1 max-w-full rounded-md"
+            className="mb-1 h-auto max-w-full rounded-md"
           />
         )}
         {message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (

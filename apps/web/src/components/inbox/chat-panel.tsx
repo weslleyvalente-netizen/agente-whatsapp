@@ -199,7 +199,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         )}
 
         {/* Messages */}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4">
           {messages.map((msg, i) => {
             // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
             const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);
@@ -220,24 +220,24 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         {/* Notice + Input */}
         <div className="shrink-0 border-t">
           {conversation && !conversation.is_human_takeover && !conversation.wa_contacts?.ai_disabled && (
-            <div className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
+            <div className="border-b bg-destructive/10 px-3 py-2 md:px-4 text-xs text-destructive">
               O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.
             </div>
           )}
-          <div className="flex gap-2 p-4">
+          <div className="flex items-center gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:p-4">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Digite uma mensagem..."
               disabled={sending}
-              className="rounded-full"
+              className="h-11 rounded-full md:h-8"
             />
             <Button
               onClick={handleSend}
               disabled={sending || !input.trim()}
               size="icon"
-              className="rounded-full"
+              className="size-11 shrink-0 rounded-full md:size-8"
             >
               <Send className="h-4 w-4" />
             </Button>
@@ -246,7 +246,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
       </div>
 
       <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <SheetContent>
+        <SheetContent className="data-[side=right]:w-full sm:data-[side=right]:w-3/4">
           <SheetHeader>
             <SheetTitle>Detalhes da conversa</SheetTitle>
           </SheetHeader>
