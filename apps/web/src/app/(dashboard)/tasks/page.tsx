@@ -104,7 +104,7 @@ export default function TasksPage() {
     ]);
 
     const frozenByContact=new Map<string,string>();
-    for(let offset=0;;offset+=500){const {data,error}=await supabase.from("opportunities").select("*").eq("organization_id",currentOrg.id).eq("status","open").order("id").range(offset,offset+499);if(error)throw error;
+    for(let offset=0;;offset+=500){const {data,error}=await supabase.from("opportunities").select("contact_id, frozen_until").eq("organization_id",currentOrg.id).eq("status","open").order("id").range(offset,offset+499);if(error)throw error;
       for(const o of data??[])if(o.frozen_until && (!frozenByContact.has(o.contact_id)||o.frozen_until>frozenByContact.get(o.contact_id)!))frozenByContact.set(o.contact_id,o.frozen_until);
       if((data??[]).length<500)break;
     }
@@ -129,9 +129,19 @@ export default function TasksPage() {
     fetchMembers();
   }, [fetchTasks, fetchMembers]);
 
+  // Each refresh downloads the org's open/recent tasks plus its open
+  // opportunities, so it must not run in background tabs (a tab left open
+  // all day was the main source of Supabase egress).
   useEffect(() => {
-    const interval = setInterval(fetchTasks, 30_000);
-    return () => clearInterval(interval);
+    const refreshIfVisible = () => {
+      if (!document.hidden) fetchTasks();
+    };
+    const interval = setInterval(refreshIfVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
   }, [fetchTasks]);
 
   const handleTabChange = (nextTab: TaskBucket) => {
