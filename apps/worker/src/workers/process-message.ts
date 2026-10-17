@@ -97,11 +97,13 @@ export function startProcessMessageWorker() {
         // trusting job.data.afterHoursPending alone. Takeover/handoff rows
         // are left untouched.
         let afterHoursPending = false;
+        let afterHoursReopensAt: string | null = null;
         if (conversation.is_human_takeover) {
           const decision = await evaluateAfterHours(db, {
             organizationId,
             conversationId,
             isHumanTakeover: true,
+            humanTakeoverAt: conversation.human_takeover_at ?? null,
             aiDisabled: false,
           });
           if (!decision.run) {
@@ -113,6 +115,7 @@ export function startProcessMessageWorker() {
             return;
           }
           afterHoursPending = true;
+          afterHoursReopensAt = decision.reopensAt;
         }
 
         // Load instance now — needed both by agent tools (to send a photo
@@ -285,6 +288,7 @@ export function startProcessMessageWorker() {
           contactId: conversation.contact_id,
           contactName: conversation.wa_contacts?.name ?? null,
           afterHoursPending,
+          afterHoursReopensAt,
         });
 
         try { await syncSalesPipeline(db,organizationId,conversationId); } catch(error) { console.error("Pipeline sync failed",conversationId,error); }
@@ -313,7 +317,8 @@ export function startProcessMessageWorker() {
               organizationId,
               conversationId,
               isHumanTakeover: true,
-              aiDisabled: false,
+              humanTakeoverAt: freshConversation.human_takeover_at ?? null,
+              aiDisabled: freshConversation.wa_contacts?.ai_disabled === true,
             });
             if (!still.run) {
               console.log(`Conversation ${conversationId} left after-hours pending mode during generation, dropping reply`);
