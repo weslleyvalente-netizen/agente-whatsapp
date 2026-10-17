@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({ ping: async () => "PONG" }) }));
+vi.mock("../lib/redis-probe.js", () => ({ probeRedis: async () => true }));
 vi.mock("@aula-agente/database", () => ({ getAdminClient: () => ({}), getAllOrganizations: vi.fn(), getInstancesByOrganization: vi.fn() }));
 vi.mock("./evolution.service.js", () => ({ getInstanceStatus: vi.fn(), sendText: vi.fn() }));
 
@@ -28,6 +28,10 @@ describe("decideHealth", () => {
     expect(d.status).toBe("warning");
     expect(d.alerts[0]).toMatchObject({ code: "silence" });
     expect(d.reasons[0]).toContain("9 h");
+  });
+  it("histórico fraco (média < 2 por faixa) não alerta silêncio", () => {
+    expect(codes(base({ lastCustomerMessageAt: null, historicalAvgInWindow: 1 }))).toEqual([]);
+    expect(codes(base({ lastCustomerMessageAt: null, historicalAvgInWindow: 2 }))).toEqual(["silence"]);
   });
   it("silêncio sem histórico (dia morto) não alerta", () => {
     expect(codes(base({ lastCustomerMessageAt: null, historicalAvgInWindow: 0 }))).toEqual([]);
@@ -72,6 +76,14 @@ describe("planNotifications (anti-spam)", () => {
     expect(back.recovered).toBe(true);
     expect(planNotifications(back.next, ok, 3000).recovered).toBe(false);
   });
+  it("H1: fechar o expediente não é normalização (sem aviso, estado mantido)", () => {
+    const first = planNotifications(newNotifyState(), warn, 1000);
+    const closed = planNotifications(first.next, ok, 2000, false);
+    expect(closed.recovered).toBe(false);
+    expect(closed.next.wasWarning).toBe(true);
+    // na reabertura, se normalizou de fato, aí sim avisa
+    expect(planNotifications(closed.next, ok, 3000, true).recovered).toBe(true);
+  });
   it("nunca estava em alerta: sem aviso de normalizado", () => {
     expect(planNotifications(newNotifyState(), ok, 1000).recovered).toBe(false);
   });
@@ -93,7 +105,7 @@ describe("evaluateOrganization", () => {
   };
   // quarta 14/10/2026 15:00Z = 12:00 BRT, dentro do expediente padrão; janela de 2 h também aberta.
   const WED = new Date("2026-10-14T15:00:00Z");
-  const ctx = { organizationId: "org", settings: { handoff_notification_phone: "5511999998888" } };
+  const ctx = { organizationId: "org", settings: { health_alert_phone: "5511999998888" } };
   beforeEach(() => resetHealthMonitorState());
 
   it("silêncio em horário comercial: guarda snapshot e envia 1 aviso, sem repetir no ciclo seguinte", async () => {
@@ -113,6 +125,11 @@ describe("evaluateOrganization", () => {
     await evaluateOrganization(deps, ctx, { now: new Date(WED.getTime() + 60_000), notify: true });
     expect(deps.sent).toHaveLength(2);
     expect(deps.sent[1]).toContain("normalizado");
+  });
+  it("handoff_notification_phone NÃO é usado para alertas", async () => {
+    const deps = mkDeps({ pingRedis: async () => "down" });
+    await evaluateOrganization(deps, { organizationId: "org", settings: { handoff_notification_phone: "5511000000000" } as any }, { now: WED, notify: true });
+    expect(deps.sent).toHaveLength(0);
   });
   it("sem telefone configurado não envia nada, mas o snapshot existe", async () => {
     const deps = mkDeps({ pingRedis: async () => "down" });

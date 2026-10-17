@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
-import { bannerTitle, type HealthState } from "./health-banner-format";
+import { bannerTitle, extraReasons, type HealthState } from "./health-banner-format";
 
 const POLL_MS = 60_000;
 
@@ -32,10 +32,12 @@ export function HealthBanner() {
 
   if (!isManager || !health || health.status !== "warning") return null;
 
+  const title = bannerTitle(health);
+  const extras = extraReasons(health, title);
   return (
     <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-red-700 bg-red-600 px-3 py-2 text-sm text-white md:px-6">
-      <strong>{bannerTitle(health)}</strong>
-      {health.reasons.length > 0 && <span>{health.reasons.join(" · ")}</span>}
+      <strong>{title}</strong>
+      {extras.length > 0 && <span>{extras.join(" · ")}</span>}
       <Link href="/settings#recuperar-mensagens" className="ml-auto font-medium underline underline-offset-2">
         Configurações &rarr; Recuperar mensagens
       </Link>

@@ -1,4 +1,4 @@
-import { getRedisConnection } from "@aula-agente/queue";
+import { probeRedis } from "../lib/redis-probe.js";
 import { isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
 import type { BusinessCalendar } from "@aula-agente/shared";
 import { getAdminClient, getAllOrganizations, getInstancesByOrganization } from "@aula-agente/database";
@@ -11,7 +11,8 @@ import { getInstanceStatus, sendText } from "./evolution.service.js";
 export const SILENCE_WINDOW_MS = 2 * 60 * 60 * 1000;
 export const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 export const NOTIFY_COOLDOWN_MS = 2 * 60 * 60 * 1000;
-export const REDIS_PING_TIMEOUT_MS = 3000;
+// Média diária mínima de mensagens de clientes na mesma faixa para o silêncio contar como anormal.
+export const MIN_HISTORICAL_AVG = 2;
 
 export type RedisState = "ok" | "down";
 export type EvolutionState = "connected" | "disconnected" | "unknown";
@@ -35,7 +36,7 @@ export function decideHealth(i: HealthInputs): HealthDecision {
   const alerts: HealthAlert[] = [];
   if (i.businessOpenThroughout) {
     const silentMs = i.lastCustomerMessageAt ? i.now.getTime() - i.lastCustomerMessageAt.getTime() : Infinity;
-    if (silentMs >= SILENCE_WINDOW_MS && i.historicalAvgInWindow > 0) {
+    if (silentMs >= SILENCE_WINDOW_MS && i.historicalAvgInWindow >= MIN_HISTORICAL_AVG) {
       const hours = Number.isFinite(silentMs) ? `há ${Math.floor(silentMs / 3_600_000)} h` : "há mais de 2 h";
       alerts.push({ code: "silence", message: `Sem mensagens de clientes ${hours}` });
     }
@@ -50,7 +51,9 @@ export interface NotifyState { lastNotified: Partial<Record<AlertCode, number>>;
 export const newNotifyState = (): NotifyState => ({ lastNotified: {}, wasWarning: false });
 
 // Anti-spam: no máximo 1 aviso a cada 2 h por motivo; 1 mensagem de "normalizado" ao voltar.
-export function planNotifications(state: NotifyState, decision: HealthDecision, nowMs: number): {
+// Fora do expediente (businessOpenThroughout=false) o estado "warning" anterior é mantido: sumir o alerta
+// porque fechou o expediente não é normalização e não deve gerar o aviso de "normalizado".
+export function planNotifications(state: NotifyState, decision: HealthDecision, nowMs: number, businessOpenThroughout = true): {
   send: HealthAlert[]; recovered: boolean; next: NotifyState;
 } {
   const send = decision.alerts.filter((a) => {
@@ -59,6 +62,7 @@ export function planNotifications(state: NotifyState, decision: HealthDecision, 
   });
   const lastNotified = { ...state.lastNotified };
   for (const a of send) lastNotified[a.code] = nowMs;
+  if (!businessOpenThroughout) return { send, recovered: false, next: { lastNotified, wasWarning: state.wasWarning } };
   const recovered = state.wasWarning && decision.status === "ok";
   return { send, recovered, next: { lastNotified, wasWarning: decision.status === "warning" } };
 }
@@ -74,7 +78,7 @@ export interface HealthSnapshot {
 
 export interface OrgHealthContext {
   organizationId: string;
-  settings: { business_calendar?: unknown; handoff_notification_phone?: string | null };
+  settings: { business_calendar?: unknown; health_alert_phone?: string | null };
 }
 
 export interface HealthDeps {
@@ -119,8 +123,9 @@ export async function evaluateOrganization(
     deps.pingRedis().catch((): RedisState => "down"),
     deps.evolutionState(ctx.organizationId).catch((): EvolutionState => "unknown"),
   ]);
+  const openThroughout = isOpenThroughout(now, calendar);
   const decision = decideHealth({
-    now, businessOpenThroughout: isOpenThroughout(now, calendar),
+    now, businessOpenThroughout: openThroughout,
     lastCustomerMessageAt: last, historicalAvgInWindow: avg, redis, evolution,
   });
   const snapshot: HealthSnapshot = {
@@ -130,8 +135,9 @@ export async function evaluateOrganization(
   snapshots.set(ctx.organizationId, snapshot);
 
   if (opts.notify) {
-    const plan = planNotifications(notifyStates.get(ctx.organizationId) ?? newNotifyState(), decision, now.getTime());
-    const phone = ctx.settings.handoff_notification_phone?.trim();
+    const plan = planNotifications(notifyStates.get(ctx.organizationId) ?? newNotifyState(), decision, now.getTime(), openThroughout);
+    // Só health_alert_phone (nunca handoff_notification_phone). Vazio: só a faixa no painel.
+    const phone = ctx.settings.health_alert_phone?.trim();
     // Sem telefone configurado não há aviso, mas o estado (e o anti-spam) segue valendo.
     notifyStates.set(ctx.organizationId, plan.next);
     if (phone) {
@@ -187,12 +193,7 @@ export const defaultDeps: HealthDeps = {
     return counts.reduce((a, b) => a + b, 0) / 7;
   },
   async pingRedis() {
-    try {
-      const pong = await withTimeout(getRedisConnection().ping(), REDIS_PING_TIMEOUT_MS);
-      return pong === "PONG" ? "ok" : "down";
-    } catch {
-      return "down";
-    }
+    return (await probeRedis()) ? "ok" : "down";
   },
   async evolutionState(organizationId) {
     const instances = await activeInstances(organizationId);
