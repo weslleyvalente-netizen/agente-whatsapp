@@ -14,6 +14,7 @@ import {
 } from "@aula-agente/database";
 import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
+import { evaluateAfterHours } from "../lib/after-hours.js";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
 import { resolveApiKey, resolveElevenLabsApiKey } from "@aula-agente/agent-runtime";
 import { runAgent } from "@aula-agente/agent-runtime";
@@ -87,13 +88,31 @@ export function startProcessMessageWorker() {
 
         // Check if still not in human takeover
         const conversation = await getConversationById(db, conversationId);
-        if (conversation.is_human_takeover) {
-          console.log(`Conversation ${conversationId} is in human takeover, skipping`);
-          return;
-        }
         if (conversation.wa_contacts?.ai_disabled) {
           console.log(`Conversation ${conversationId} contact has AI permanently disabled, skipping`);
           return;
+        }
+        // "Modo noite": takeover from the AI's own requestHuman, unanswered
+        // by a human, store closed (flag-gated). Revalidated here, never
+        // trusting job.data.afterHoursPending alone. Takeover/handoff rows
+        // are left untouched.
+        let afterHoursPending = false;
+        if (conversation.is_human_takeover) {
+          const decision = await evaluateAfterHours(db, {
+            organizationId,
+            conversationId,
+            isHumanTakeover: true,
+            aiDisabled: false,
+          });
+          if (!decision.run) {
+            console.log(`Conversation ${conversationId} is in human takeover, skipping`);
+            return;
+          }
+          if (decision.capped) {
+            console.log(`Conversation ${conversationId} reached the after-hours reply cap, staying silent`);
+            return;
+          }
+          afterHoursPending = true;
         }
 
         // Load instance now — needed both by agent tools (to send a photo
@@ -265,6 +284,7 @@ export function startProcessMessageWorker() {
           phone,
           contactId: conversation.contact_id,
           contactName: conversation.wa_contacts?.name ?? null,
+          afterHoursPending,
         });
 
         try { await syncSalesPipeline(db,organizationId,conversationId); } catch(error) { console.error("Pipeline sync failed",conversationId,error); }
@@ -284,7 +304,23 @@ export function startProcessMessageWorker() {
         // shouldDropReplyForTakeover in @aula-agente/shared). A real human
         // jumping in mid-generation still drops normally.
         const calledRequestHuman = result.toolCalls.includes("requestHuman");
-        if (shouldDropReplyForTakeover(freshConversation.is_human_takeover, calledRequestHuman)) {
+        if (afterHoursPending) {
+          // The takeover is the AI's own pending handoff, so it must NOT drop
+          // the reply by itself -- but a human reply in the meantime (handoff
+          // closed), the store reopening, or the flag going off must.
+          if (freshConversation.is_human_takeover) {
+            const still = await evaluateAfterHours(db, {
+              organizationId,
+              conversationId,
+              isHumanTakeover: true,
+              aiDisabled: false,
+            });
+            if (!still.run) {
+              console.log(`Conversation ${conversationId} left after-hours pending mode during generation, dropping reply`);
+              return;
+            }
+          }
+        } else if (shouldDropReplyForTakeover(freshConversation.is_human_takeover, calledRequestHuman)) {
           console.log(`Conversation ${conversationId} was taken over by a human during generation, dropping reply`);
           return;
         }
@@ -356,6 +392,7 @@ export function startProcessMessageWorker() {
               cache_status: result.cacheStatus,
               latency_ms: result.latencyMs,
               tool_calls: result.toolCalls,
+              ...(afterHoursPending ? { after_hours_pending: true } : {}),
             },
           });
 
@@ -370,6 +407,7 @@ export function startProcessMessageWorker() {
             ...(audioBase64 ? { audioBase64 } : {}),
           });
 
+          if (afterHoursPending) console.log(`[after-hours] AI replied in after-hours pending mode, conversation ${conversationId}`);
           console.log(`Processed ${pendingMessages.length} message(s) ending in ${lastPendingMessage.id} -> response ${responseMessage.id}`);
         } else {
           if (cleanedText.trim()) {
@@ -384,7 +422,8 @@ export function startProcessMessageWorker() {
         // Update conversation
         await updateConversation(db, conversationId, {
           last_message_at: new Date().toISOString(),
-          status: "waiting",
+          // After-hours pending: the card stays as the handoff left it.
+          ...(afterHoursPending ? {} : { status: "waiting" as const }),
         });
       } finally {
         await releaseConversationLock(conversationId, lockValue);

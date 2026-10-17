@@ -131,6 +131,27 @@ describe("evolution webhook — echo race guard (arrives before backfill)", () =
     await app.close();
   });
 
+  // Modo noite: the AI keeps replying while the conversation is in takeover
+  // (pending requestHuman). Its own echo must NOT register a human reply,
+  // refresh human_takeover_at or create handoff events.
+  it("echo of the AI's after-hours reply (conversation in takeover) creates no handoff/takeover and no human reply", async () => {
+    ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: true }, contact, isNew: false });
+    findPendingOutboundMessages.mockResolvedValue([
+      { id: "pending-night-1", role: "agent", content: "Temos sim a Fazer!", media_type: null, created_at: "2026-09-29T11:59:30Z" },
+    ]);
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: fromMePayload({ content: "Temos sim a Fazer!" }) });
+
+    expect(response.json()).toEqual({ ok: true, skipped: "duplicate", messageId: "pending-night-1" });
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(updateConversation).not.toHaveBeenCalled();
+    expect(createHandoffEvent).not.toHaveBeenCalled();
+    expect(handleConversationTakeover).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   // Point 1b: the echo's extracted content for outbound audio is a fixed
   // "[audio]" placeholder (never our real TTS text) — must match by
   // media_type alone.
