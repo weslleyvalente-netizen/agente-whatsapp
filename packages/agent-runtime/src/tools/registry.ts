@@ -28,6 +28,8 @@ interface RegistryParams {
   businessHoursStartHour?: number;
   businessHoursEndHour?: number;
   sandbox?: boolean;
+  /** Modo noite: sem requestHuman/createTask (impede novo encaminhamento). */
+  afterHoursPending?: boolean;
 }
 
 function createMockCreateTaskTool() {
@@ -103,6 +105,7 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
     businessHoursStartHour,
     businessHoursEndHour,
     sandbox,
+    afterHoursPending,
   } = params;
   const tools: ToolSet = {};
 
@@ -127,13 +130,13 @@ export function buildToolsForAgent(params: RegistryParams): ToolSet {
       : createSendRegisteredImageTool({ conversationId, organizationId, instanceId, phone }, () => loadPublishedImages(agentId));
   }
 
-  if (toolsConfig.create_task) {
+  if (toolsConfig.create_task && !afterHoursPending) {
     tools.createTask = sandbox
       ? createMockCreateTaskTool()
       : createCreateTaskTool({ contactId, conversationId, organizationId });
   }
 
-  if (toolsConfig.request_human) {
+  if (toolsConfig.request_human && !afterHoursPending) {
     tools.requestHuman = sandbox
       ? createMockRequestHumanTool()
       : createRequestHumanTool({

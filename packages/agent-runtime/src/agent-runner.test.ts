@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatHistoryForLLM, buildSystemPrompt, buildFinalTurnMessage } from "./agent-runner.js";
 import { buildDynamicContextBlock, buildCacheableSystemMessages, deriveCacheStatus } from "./agent-runner.js";
-import { extractToolCallTrace } from "./agent-runner.js";
+import { extractToolCallTrace, AFTER_HOURS_PENDING_INSTRUCTION } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
 
 function makeMessage(overrides: Partial<Message>): Message {
@@ -193,5 +193,21 @@ describe("extractToolCallTrace", () => {
   });
   it("returns an empty array when no step made any tool call", () => {
     expect(extractToolCallTrace([{ toolCalls: [], toolResults: [] }], false)).toEqual([]);
+  });
+});
+
+describe("buildCacheableSystemMessages after-hours pending", () => {
+  const now = new Date("2026-07-24T17:32:00.000Z");
+  it("is unchanged without the flag", () => {
+    expect(buildCacheableSystemMessages("P", now, null, false)).toEqual(buildCacheableSystemMessages("P", now));
+  });
+  it("appends the extra instruction as a last uncached block, keeping the cached prompt intact", () => {
+    const msgs = buildCacheableSystemMessages("P", now, null, true);
+    const base = buildCacheableSystemMessages("P", now);
+    expect(msgs.slice(0, 2)).toEqual(base);
+    expect(msgs).toHaveLength(3);
+    expect(msgs[2].content).toBe(AFTER_HOURS_PENDING_INSTRUCTION);
+    expect(msgs[2]).not.toHaveProperty("providerOptions");
+    expect(AFTER_HOURS_PENDING_INSTRUCTION).toMatch(/NÃO chame requestHuman/);
   });
 });

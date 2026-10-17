@@ -21,6 +21,8 @@ interface RunAgentParams {
   contactId: string;
   contactName?: string | null;
   sandbox?: boolean;
+  /** Modo noite: cliente já encaminhado ao humano; IA segue ajudando, sem novo encaminhamento. */
+  afterHoursPending?: boolean;
 }
 
 // "write" = this call had to (re)populate the cache (first message of a
@@ -127,12 +129,21 @@ export function buildSystemPrompt(basePrompt: string, now: Date): string {
 // changes on every single call — stays in a separate, uncached block right
 // after it. Concatenating them into one string first (as buildSystemPrompt
 // does) and only then trying to cache it would defeat the cache entirely.
+export const AFTER_HOURS_PENDING_INSTRUCTION =
+  "Você já encaminhou este cliente para a equipe, que responde quando a loja reabrir (8h às 18h, seg–sex). " +
+  "Continue ajudando com dúvidas (modelos, estoque, preços via ferramentas, condições cadastradas, se o número/loja é verdadeiro, endereço). " +
+  "NÃO chame requestHuman de novo e não prometa prazo ou resposta de consultor além de 'quando reabrirmos'. " +
+  "Não repita o aviso de fora do horário em toda mensagem (só se o cliente perguntar). " +
+  "Se o cliente apenas agradece/confirma ('ok', 'obrigado'), responda curto e cordial ou não responda; " +
+  "se pedir algo que só um humano resolve, diga que a equipe retoma ao reabrir.";
+
 export function buildCacheableSystemMessages(
   basePrompt: string,
   now: Date,
-  contactName?: string | null
+  contactName?: string | null,
+  afterHoursPending = false
 ): SystemModelMessage[] {
-  return [
+  const blocks: SystemModelMessage[] = [
     {
       role: "system",
       content: basePrompt,
@@ -143,6 +154,8 @@ export function buildCacheableSystemMessages(
       content: buildDynamicContextBlock(now, contactName),
     },
   ];
+  if (afterHoursPending) blocks.push({ role: "system", content: AFTER_HOURS_PENDING_INSTRUCTION });
+  return blocks;
 }
 
 // "write" only ever happens together with 0 reads (a fresh/expired cache
@@ -226,11 +239,12 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     businessHoursStartHour: businessHours.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
     businessHoursEndHour: businessHours.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
     sandbox: params.sandbox,
+    afterHoursPending: params.afterHoursPending,
   });
 
   const history = formatHistoryForLLM(messages);
 
-  const system = buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName);
+  const system = buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName, params.afterHoursPending === true);
   const initialMessages = [...history, buildFinalTurnMessage(currentMessage)];
   const result = await generateText({
     model,
