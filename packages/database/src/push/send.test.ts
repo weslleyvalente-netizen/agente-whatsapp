@@ -6,16 +6,20 @@ const sub = (id: string) => ({ id, endpoint: `https://push.example/${id}`, p256d
 
 function fakeDb(subs: ReturnType<typeof sub>[]) {
   const deleted: string[] = [];
+  const filters: Array<[string, unknown]> = [];
   const db = {
     from: (table: string) => {
       expect(table).toBe("push_subscriptions");
       return {
-        select: () => ({ eq: async () => ({ data: subs, error: null }) }),
+        select: () => {
+          const c: any = { eq: (col: string, v: unknown) => { filters.push([col, v]); return c; }, then: (res: any) => res({ data: subs, error: null }) };
+          return c;
+        },
         delete: () => ({ in: async (_c: string, ids: string[]) => { deleted.push(...ids); return { error: null }; } }),
       };
     },
   } as any;
-  return { db, deleted };
+  return { db, deleted, filters };
 }
 const payload = { title: "t", body: "b", url: "/inbox", tag: "x" };
 
@@ -35,6 +39,12 @@ describe("sendPushToUser", () => {
     expect(r).toEqual({ sent: 0, removed: 0, failed: 0, skipped: true });
     expect(send).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("filtra as assinaturas pela organização quando informada", async () => {
+    const { db, filters } = fakeDb([sub("1")]);
+    await sendPushToUser(db, "u", payload, { env: ENV, send: vi.fn().mockResolvedValue({}), organizationId: "org-1" });
+    expect(filters).toEqual([["user_id", "u"], ["organization_id", "org-1"]]);
   });
 
   it("envia a todas as assinaturas", async () => {

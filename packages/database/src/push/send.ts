@@ -17,12 +17,15 @@ const defaultSender: Sender = (subscription, body, options) => webpush.sendNotif
  * a falha de um endpoint não impede os demais. Nunca loga endpoint nem chaves.
  */
 export async function sendPushToUser(
-  db: SupabaseClient, userId: string, payload: PushPayload, deps: { env?: Env; send?: Sender } = {},
+  db: SupabaseClient, userId: string, payload: PushPayload, deps: { env?: Env; send?: Sender; organizationId?: string } = {},
 ): Promise<PushSendResult> {
   const env = deps.env ?? process.env;
   if (!isPushConfigured(env)) return { sent: 0, removed: 0, failed: 0, skipped: true };
   const send = deps.send ?? defaultSender;
-  const { data, error } = await db.from("push_subscriptions").select("id, endpoint, p256dh, auth").eq("user_id", userId);
+  let query = db.from("push_subscriptions").select("id, endpoint, p256dh, auth").eq("user_id", userId);
+  // Só os aparelhos assinados nesta organização (quem está em duas organizações não recebe as dos outros contextos).
+  if (deps.organizationId) query = query.eq("organization_id", deps.organizationId);
+  const { data, error } = await query;
   if (error) throw error;
   const vapidDetails = { subject: env.VAPID_SUBJECT!, publicKey: env.VAPID_PUBLIC_KEY!, privateKey: env.VAPID_PRIVATE_KEY! };
   const body = JSON.stringify(payload);
