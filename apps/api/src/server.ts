@@ -24,6 +24,10 @@ import { startHealthMonitor } from "./services/health-monitor.js";
 
 const server = Fastify({ logger: true });
 
+if (!process.env.WEBHOOK_SECRET) {
+  server.log.warn("WEBHOOK_SECRET is not set: webhook verification is off and message recovery keeps no original timestamps");
+}
+
 // Plugins
 // `methods` must be explicit: @fastify/cors' default preflight response only
 // allows GET,HEAD,POST, silently blocking every PATCH (and PUT/DELETE) route

@@ -85,18 +85,19 @@ export interface EvolutionStoredMessage {
 const FIND_MESSAGES_PAGE_SIZE = 100;
 const FIND_MESSAGES_MAX_PAGES = 500;
 
-// Mensagens recebidas (fromMe=false) que a Evolution guardou na janela [gteSec, lteSec] (epoch em segundos).
+// Mensagens que a Evolution guardou na janela [gteSec, lteSec] (epoch em segundos); fromMe=false são as recebidas.
 // Pagina até esgotar. A resposta varia entre versões: lista pura ou { messages: { records, pages } }.
-export async function findReceivedMessages(
+export async function findStoredMessages(
   instanceName: string,
-  window: { gteSec: number; lteSec: number }
+  window: { gteSec: number; lteSec: number },
+  fromMe: boolean
 ): Promise<EvolutionStoredMessage[]> {
   const all: EvolutionStoredMessage[] = [];
   for (let page = 1; page <= FIND_MESSAGES_MAX_PAGES; page++) {
     const result = await evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
       method: "POST",
       body: JSON.stringify({
-        where: { key: { fromMe: false }, messageTimestamp: { gte: window.gteSec, lte: window.lteSec } },
+        where: { key: { fromMe }, messageTimestamp: { gte: window.gteSec, lte: window.lteSec } },
         page,
         offset: FIND_MESSAGES_PAGE_SIZE,
       }),

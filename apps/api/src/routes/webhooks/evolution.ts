@@ -28,6 +28,7 @@ import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queu
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
+import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
 // A placeholder saved instead of real content for an ignored contact's
 // message under retention_mode "minimal_record" — proves traffic still
@@ -74,7 +75,8 @@ const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]
 // Cabeçalho interno usado só pela recuperação de mensagens perdidas
 // (routes/admin/recover-messages.ts): pede que created_at guarde o horário
 // ORIGINAL da mensagem (messageTimestamp, em segundos) em vez de "agora".
-// Sem o cabeçalho o comportamento é o de sempre. Exige o mesmo segredo do webhook.
+// Só é respeitado com o token aleatório do processo (REPLAY_TOKEN) E com
+// WEBHOOK_SECRET configurado; sem isso o comportamento é o de sempre.
 export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
 
 export function resolveReplayCreatedAt(
@@ -82,7 +84,8 @@ export function resolveReplayCreatedAt(
   messageTimestamp: number | undefined,
   now: number = Date.now()
 ): string | undefined {
-  if (headers[REPLAY_TIMESTAMP_HEADER] !== "1") return undefined;
+  if (!process.env.WEBHOOK_SECRET) return undefined;
+  if (headers[REPLAY_TIMESTAMP_HEADER] !== REPLAY_TOKEN) return undefined;
   if (typeof messageTimestamp !== "number" || !Number.isFinite(messageTimestamp) || messageTimestamp <= 0) return undefined;
   const ms = messageTimestamp * 1000;
   if (ms > now) return undefined; // nunca no futuro

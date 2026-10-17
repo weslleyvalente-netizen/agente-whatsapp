@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Message } from "@aula-agente/shared";
+import { brazilPhoneVariants } from "@aula-agente/shared";
 import { fetchAllPages } from "../pagination.js";
 
 export async function getMessagesByConversation(
@@ -230,4 +231,52 @@ export async function clearMessageMediaUrls(client: SupabaseClient, ids: string[
   if (ids.length === 0) return;
   const { error } = await client.from("messages").update({ media_url: null }).in("id", ids);
   if (error) throw error;
+}
+
+// Versão em lote de messageExistsByEvolutionId: devolve quais dos ids já estão em messages.
+// Em blocos para respeitar o limite de tamanho da URL do PostgREST.
+export async function findExistingEvolutionMessageIds(
+  client: SupabaseClient,
+  evolutionMessageIds: string[],
+  chunkSize = 200
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < evolutionMessageIds.length; i += chunkSize) {
+    const chunk = evolutionMessageIds.slice(i, i + chunkSize);
+    const { data, error } = await client
+      .from("messages")
+      .select("evolution_message_id")
+      .in("evolution_message_id", chunk);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const id = (row as { evolution_message_id: string | null }).evolution_message_id;
+      if (id) found.add(id);
+    }
+  }
+  return found;
+}
+
+// Horário da última mensagem NOSSA (agent/human_agent) em qualquer conversa do telefone, ou null.
+// Usado pela recuperação para saber se uma mensagem recuperada (com created_at original) ficará
+// antes de uma resposta já existente, caso em que a IA não a considera pendente.
+export async function getLastOutboundAtForPhone(
+  client: SupabaseClient,
+  organizationId: string,
+  phone: string
+): Promise<string | null> {
+  const { data: contacts, error: cErr } = await client
+    .from("wa_contacts").select("id").eq("organization_id", organizationId).in("phone", brazilPhoneVariants(phone));
+  if (cErr) throw cErr;
+  const contactIds = (contacts ?? []).map((c: { id: string }) => c.id);
+  if (contactIds.length === 0) return null;
+  const { data: convs, error: vErr } = await client
+    .from("conversations").select("id").eq("organization_id", organizationId).in("contact_id", contactIds);
+  if (vErr) throw vErr;
+  const convIds = (convs ?? []).map((c: { id: string }) => c.id);
+  if (convIds.length === 0) return null;
+  const { data, error } = await client
+    .from("messages").select("created_at").in("conversation_id", convIds).in("role", ["agent", "human_agent"])
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return (data as { created_at: string } | null)?.created_at ?? null;
 }

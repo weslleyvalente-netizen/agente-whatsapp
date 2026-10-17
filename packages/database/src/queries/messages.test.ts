@@ -78,3 +78,26 @@ it("o contexto da IA só inclui despedida efetivamente confirmada, sem a pendent
  const messages=await getRecentMessages({from:()=>q} as any,"c");
  expect(messages.map(m=>m.id)).toEqual(["legacy","confirmed"]);
 });
+
+describe("findExistingEvolutionMessageIds (lote)", () => {
+  it("consulta em blocos e junta os ids existentes", async () => {
+    const calls: string[][] = [];
+    const client = {
+      from: () => ({
+        select: () => ({
+          in: async (_col: string, ids: string[]) => {
+            calls.push(ids);
+            return { data: ids.filter((i) => i.endsWith("0")).map((i) => ({ evolution_message_id: i })), error: null };
+          },
+        }),
+      }),
+    } as never;
+    const { findExistingEvolutionMessageIds } = await import("./messages.js");
+    const ids = Array.from({ length: 450 }, (_, i) => `id${i}`);
+    const found = await findExistingEvolutionMessageIds(client, ids);
+    expect(calls.map((c) => c.length)).toEqual([200, 200, 50]);
+    expect(found.size).toBe(45);
+    expect(found.has("id10")).toBe(true);
+    expect(found.has("id11")).toBe(false);
+  });
+});
