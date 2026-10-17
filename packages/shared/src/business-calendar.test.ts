@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addBusinessMinutes, DEFAULT_BUSINESS_CALENDAR, isBusinessOpen, resolveBusinessCalendar,
+  addBusinessMinutes, DEFAULT_BUSINESS_CALENDAR, isBusinessOpen, resolveBusinessCalendar, nextBusinessOpening, lastBusinessClosing, describeBusinessInstant,
   type BusinessCalendar,
 } from "./business-calendar.js";
 
@@ -84,5 +84,36 @@ describe("resolveBusinessCalendar", () => {
     const cal = resolveBusinessCalendar({ weekly: { sat: [{ start: "08:00", end: "12:00" }] } });
     expect(cal.timeZone).toBe("America/Sao_Paulo");
     expect(cal.weekly.sat).toEqual([{ start: "08:00", end: "12:00" }]);
+  });
+});
+
+describe("nextBusinessOpening / lastBusinessClosing / describeBusinessInstant", () => {
+  it("sexta 18:00 -> segunda 08:00; domingo -> segunda 08:00", () => {
+    expect(iso(nextBusinessOpening(at("2026-10-09T21:00:00Z"))!)).toBe("2026-10-12T11:00:00.000Z");
+    expect(iso(nextBusinessOpening(at("2026-10-11T15:00:00Z"))!)).toBe("2026-10-12T11:00:00.000Z");
+  });
+  it("segunda 07:59 -> 08:00 do mesmo dia; segunda 08:00 (aberto) -> terça 08:00", () => {
+    expect(iso(nextBusinessOpening(at("2026-10-12T10:59:00Z"))!)).toBe("2026-10-12T11:00:00.000Z");
+    expect(iso(nextBusinessOpening(at("2026-10-12T11:00:00Z"))!)).toBe("2026-10-13T11:00:00.000Z");
+  });
+  it("pula feriado (closedDates) e período fechado", () => {
+    const hol: BusinessCalendar = { ...DEFAULT_BUSINESS_CALENDAR, closedDates: ["2026-10-12"] };
+    expect(iso(nextBusinessOpening(at("2026-10-11T15:00:00Z"), hol)!)).toBe("2026-10-13T11:00:00.000Z");
+    const per: BusinessCalendar = { ...DEFAULT_BUSINESS_CALENDAR, closedPeriods: [{ from: "2026-10-12T00:00:00-03:00", to: "2026-10-14T00:00:00-03:00" }] };
+    expect(iso(nextBusinessOpening(at("2026-10-11T15:00:00Z"), per)!)).toBe("2026-10-14T11:00:00.000Z");
+  });
+  it("respeita janela de sábado", () => {
+    const sat: BusinessCalendar = { ...DEFAULT_BUSINESS_CALENDAR, weekly: { ...DEFAULT_BUSINESS_CALENDAR.weekly, sat: [{ start: "09:00", end: "13:00" }] } };
+    expect(iso(nextBusinessOpening(at("2026-10-09T21:00:00Z"), sat)!)).toBe("2026-10-10T12:00:00.000Z");
+    expect(isBusinessOpen(at("2026-10-10T15:00:00Z"), sat)).toBe(true);
+  });
+  it("lastBusinessClosing: null aberto; sexta 18:00 no sábado e domingo; mesmo dia à noite", () => {
+    expect(lastBusinessClosing(at("2026-10-09T15:00:00Z"))).toBeNull();
+    expect(iso(lastBusinessClosing(at("2026-10-10T15:00:00Z"))!)).toBe("2026-10-09T21:00:00.000Z");
+    expect(iso(lastBusinessClosing(at("2026-10-11T15:00:00Z"))!)).toBe("2026-10-09T21:00:00.000Z");
+    expect(iso(lastBusinessClosing(at("2026-10-13T01:00:00Z"))!)).toBe("2026-10-12T21:00:00.000Z"); // seg 22:00
+  });
+  it("describeBusinessInstant", () => {
+    expect(describeBusinessInstant(at("2026-10-12T11:00:00Z"))).toBe("segunda, 12/10, às 08:00");
   });
 });

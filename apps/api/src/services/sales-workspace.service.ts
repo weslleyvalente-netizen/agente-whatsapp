@@ -21,7 +21,7 @@ export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType
 
 async function enrichOperational<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[]): Promise<Array<T & {sales_state?: SalesCardState}>> {
  const [conversations, handoffs, tasks, openBusinesses] = await Promise.all([
-  readAll(() => db.from("conversations").select("id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)").eq("organization_id", organizationId).in("status", ["open", "waiting"]).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})),
+  readAll(() => db.from("conversations").select("id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)").eq("organization_id", organizationId).in("status", ["open", "waiting"]).is("messages.metadata->>after_hours_pending", null).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})),
   readAll(() => db.from("handoff_events").select("conversation_id,motivo,resumo,handed_at,first_human_reply_at").eq("organization_id",organizationId).eq("trigger_type","request_human").is("first_human_reply_at",null).order("handed_at",{ascending:false}).order("id")),
   readAll(() => db.from("tasks").select("id,opportunity_id,contact_id,type,due_date,priority,consolidated_pendencies").eq("organization_id",organizationId).in("status",["pending","in_progress","rescheduled"]).order("id")),
   readAll(() => db.from("opportunities").select("contact_id").eq("organization_id",organizationId).eq("status","open").order("id")),
@@ -65,7 +65,7 @@ export async function getSalesTasksWithoutOpenBusiness(db:ReturnType<typeof getA
  const [tasks,businesses,conversations]=await Promise.all([
   readAll(()=>db.from('tasks').select('*,wa_contacts(name,phone)').eq('organization_id',organizationId).in('status',['pending','in_progress','rescheduled']).order('due_date').order('id')),
   readAll(()=>db.from('opportunities').select('id,contact_id').eq('organization_id',organizationId).eq('status','open').order('id')),
-  readAll(()=>db.from('conversations').select('contact_id,last_message_at,messages(role,content,created_at)').eq('organization_id',organizationId).in('status',['open','waiting']).order('id').order('created_at',{ascending:false,referencedTable:'messages'}).limit(1,{referencedTable:'messages'}))
+  readAll(()=>db.from('conversations').select('contact_id,last_message_at,messages(role,content,created_at)').eq('organization_id',organizationId).in('status',['open','waiting']).is('messages.metadata->>after_hours_pending',null).order('id').order('created_at',{ascending:false,referencedTable:'messages'}).limit(1,{referencedTable:'messages'}))
  ]);
  const ids=new Set(businesses.map(o=>o.id));const contacts=new Set(businesses.map(o=>o.contact_id));
  const latest=new Map<string,any>();for(const c of conversations)if(!latest.has(c.contact_id)||(c.last_message_at??'')>(latest.get(c.contact_id).last_message_at??''))latest.set(c.contact_id,c);

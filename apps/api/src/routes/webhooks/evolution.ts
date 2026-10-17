@@ -5,6 +5,11 @@ import {
   resolveGreetingFilterConfig,
   isGreetingOrShortConfirmation,
   matchPendingOutboundMessage,
+  shouldRunAiAfterHours,
+  handoffStartedTakeover,
+  matchAfterHoursEcho,
+  isBusinessOpen,
+  resolveBusinessCalendar,
 } from "@aula-agente/shared";
 import type { GreetingFilterConfig } from "@aula-agente/shared";
 import {
@@ -18,6 +23,7 @@ import {
   getOpenHandoffEvent,
   markFirstHumanReply,
   findPendingOutboundMessages,
+  findRecentAfterHoursAgentMessages,
   setMessageEvolutionId,
 } from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
@@ -149,6 +155,8 @@ export function extractMessageContent(data: Record<string, unknown>): { content:
   return adPrefix ? { ...extracted, content: `${adPrefix}${extracted.content}` } : extracted;
 }
 
+const AFTER_HOURS_ECHO_WINDOW_MS = 15 * 60 * 1000;
+
 export default async function evolutionWebhookRoutes(app: FastifyInstance) {
   app.post("/webhooks/evolution", {
     preHandler: [webhookVerifyMiddleware],
@@ -268,6 +276,23 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           if (matched) {
             await setMessageEvolutionId(db, matched.id, evolutionMessageId);
             return reply.status(200).send({ ok: true, skipped: "duplicate", messageId: matched.id });
+          }
+        }
+
+        // Modo noite: the AI keeps replying under takeover, so its own echo
+        // must never look like a human reply. Fallback match against recent
+        // after_hours_pending agent messages (whitespace-normalized text, 15
+        // min window), independent of evolution_message_id / backfill timing.
+        if (!isIgnoredMinimalRecord && conversation.is_human_takeover) {
+          try {
+            const sinceISO = new Date(Date.now() - AFTER_HOURS_ECHO_WINDOW_MS).toISOString();
+            const nightReplies = await findRecentAfterHoursAgentMessages(db, conversation.id, sinceISO);
+            const nightMatch = matchAfterHoursEcho(nightReplies, { mediaType, content });
+            if (nightMatch) {
+              return reply.status(200).send({ ok: true, skipped: "duplicate", messageId: nightMatch.id });
+            }
+          } catch (err) {
+            request.log.error({ err, conversationId: conversation.id }, "Failed to check after-hours echo fallback");
           }
         }
 
@@ -436,8 +461,34 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         request.log.error({ err, conversationId: conversation.id }, "Failed to resolve unresponsive tasks after customer reply");
       }
 
+      // "Modo noite": takeover that came from the AI's own requestHuman, still
+      // unanswered by a human, while the store is closed -> the AI keeps
+      // answering (flag-gated, default off). The takeover/handoff rows stay
+      // untouched; the worker revalidates and tells the runtime via the job
+      // signal. Any lookup failure fails closed (stays silent, as before).
+      let afterHoursPending = false;
+      if (conversation.is_human_takeover && !contact.ai_disabled) {
+        try {
+          const db = getAdminClient();
+          const org = await getOrganizationById(db, organizationId);
+          if (org.settings?.ai_after_hours_pending_enabled === true) {
+            const openHandoff = await getOpenHandoffEvent(db, conversation.id);
+            afterHoursPending = shouldRunAiAfterHours({
+              isHumanTakeover: true,
+              hasOpenRequestHumanHandoff: !!openHandoff,
+              takeoverOriginatedFromHandoff: handoffStartedTakeover(openHandoff?.handed_at, conversation.human_takeover_at),
+              businessOpen: isBusinessOpen(new Date(), resolveBusinessCalendar(org.settings?.business_calendar)),
+              aiDisabled: false,
+              flagEnabled: true,
+            });
+          }
+        } catch (err) {
+          request.log.error({ err, conversationId: conversation.id }, "Failed to evaluate after-hours AI mode");
+        }
+      }
+
       // If human takeover is active, don't enqueue for LLM processing
-      if (conversation.is_human_takeover) {
+      if (conversation.is_human_takeover && !afterHoursPending) {
         return reply.status(200).send({ ok: true, skipped: "human_takeover" });
       }
 
@@ -454,6 +505,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         messageId: message.id,
         agentId,
         organizationId,
+        ...(afterHoursPending ? { afterHoursPending: true } : {}),
       });
 
       // Best-effort: mirror brand-new contacts into the CRM. Never blocks

@@ -5,7 +5,7 @@ function database(tables: Record<string, unknown[]>) {
  const scopes: unknown[][] = [];
  const selections: unknown[][] = [];
  const db = { from: (table: string) => {
-  const q: any = { select: (fields: string) => { selections.push([table,fields]); return q; }, eq: (...args: unknown[]) => { scopes.push([table, ...args]); return q; }, in: () => q, is: () => q, order: () => q, limit: () => q,
+  const q: any = { select: (fields: string) => { selections.push([table,fields]); return q; }, eq: (...args: unknown[]) => { scopes.push([table, ...args]); return q; }, in: () => q, is: (...args: unknown[]) => { scopes.push([table, 'is', ...args]); return q; }, order: () => q, limit: () => q,
    range: (start: number, end: number) => Promise.resolve({ data: (tables[table] ?? (table === "opportunities" ? rows : [])).slice(start,end+1), error: null }) };
   return q;
  } };
@@ -135,4 +135,10 @@ describe("lead distribution with the workspace flags off", () => {
     expect(out[0]).toMatchObject({ lead_assignment: null });
     expect((out[0] as any).sales_state).toBeUndefined();
   });
+});
+
+it('ignores after-hours AI replies when deriving the latest message (customer still shows as having written overnight)',async()=>{
+ const {db,scopes}=database({conversations:[contactWaiting]});
+ await enrichSalesWorkspace(db as any,'org',rows as any,true);
+ expect(scopes).toContainEqual(['conversations','is','messages.metadata->>after_hours_pending',null]);
 });

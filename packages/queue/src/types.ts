@@ -3,6 +3,8 @@ export interface ProcessMessageJobData {
   messageId: string;
   agentId: string;
   organizationId: string;
+  /** Sinal do webhook: modo noite (IA segue atendendo após requestHuman fora do horário). O worker revalida. */
+  afterHoursPending?: boolean;
 }
 
 export interface SendMessageJobData {

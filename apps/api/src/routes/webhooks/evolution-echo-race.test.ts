@@ -13,6 +13,9 @@ const createHandoffEvent = vi.fn();
 const getOrganizationById = vi.fn();
 const findPendingOutboundMessages = vi.fn();
 const setMessageEvolutionId = vi.fn();
+const findRecentAfterHoursAgentMessages = vi.fn();
+const markFirstHumanReply = vi.fn();
+const getOpenHandoffEvent = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -23,6 +26,9 @@ vi.mock("@aula-agente/database", () => ({
   getOrganizationById: (...args: unknown[]) => getOrganizationById(...args),
   findPendingOutboundMessages: (...args: unknown[]) => findPendingOutboundMessages(...args),
   setMessageEvolutionId: (...args: unknown[]) => setMessageEvolutionId(...args),
+  findRecentAfterHoursAgentMessages: (...args: unknown[]) => findRecentAfterHoursAgentMessages(...args),
+  markFirstHumanReply: (...args: unknown[]) => markFirstHumanReply(...args),
+  getOpenHandoffEvent: (...args: unknown[]) => getOpenHandoffEvent(...args),
 }));
 
 const ensureConversation = vi.fn();
@@ -80,6 +86,7 @@ beforeEach(() => {
   getIgnoredContact.mockResolvedValue(null);
   ensureConversation.mockResolvedValue({ conversation: openConversation, contact, isNew: false });
   findPendingOutboundMessages.mockResolvedValue([]);
+  findRecentAfterHoursAgentMessages.mockResolvedValue([]);
 });
 
 describe("evolution webhook — echo race guard (arrives before backfill)", () => {
@@ -127,6 +134,65 @@ describe("evolution webhook — echo race guard (arrives before backfill)", () =
     expect(updateConversation).not.toHaveBeenCalled();
     expect(handleConversationTakeover).not.toHaveBeenCalled();
     expect(createHandoffEvent).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  // Modo noite: the AI keeps replying while the conversation is in takeover
+  // (pending requestHuman). Its own echo must NOT register a human reply,
+  // refresh human_takeover_at or create handoff events.
+  it("echo of the AI's after-hours reply (conversation in takeover) creates no handoff/takeover and no human reply", async () => {
+    ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: true }, contact, isNew: false });
+    findPendingOutboundMessages.mockResolvedValue([
+      { id: "pending-night-1", role: "agent", content: "Temos sim a Fazer!", media_type: null, created_at: "2026-09-29T11:59:30Z" },
+    ]);
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: fromMePayload({ content: "Temos sim a Fazer!" }) });
+
+    expect(response.json()).toEqual({ ok: true, skipped: "duplicate", messageId: "pending-night-1" });
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(updateConversation).not.toHaveBeenCalled();
+    expect(createHandoffEvent).not.toHaveBeenCalled();
+    expect(handleConversationTakeover).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("fallback: normal echo matching misses (id already set / reformatted text) but the after-hours reply is recognized -> no human reply, no takeover refresh", async () => {
+    ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: true }, contact, isNew: false });
+    findPendingOutboundMessages.mockResolvedValue([]);
+    findRecentAfterHoursAgentMessages.mockResolvedValue([
+      { id: "night-1", role: "agent", content: "Temos sim\na Fazer 150!", media_type: null, evolution_message_id: "EVO-OLD", created_at: "2026-09-29T11:50:00Z" },
+    ]);
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: fromMePayload({ content: "Temos sim a Fazer 150! " }) });
+
+    expect(response.json()).toEqual({ ok: true, skipped: "duplicate", messageId: "night-1" });
+    expect(findRecentAfterHoursAgentMessages).toHaveBeenCalledWith({}, "conv-1", expect.any(String));
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(markFirstHumanReply).not.toHaveBeenCalled();
+    expect(updateConversation).not.toHaveBeenCalled();
+    expect(createHandoffEvent).not.toHaveBeenCalled();
+    expect(handleConversationTakeover).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("fallback does not swallow a genuinely different human message", async () => {
+    ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: true }, contact, isNew: false });
+    findRecentAfterHoursAgentMessages.mockResolvedValue([
+      { id: "night-1", role: "agent", content: "Temos sim a Fazer 150!", media_type: null, created_at: "2026-09-29T11:50:00Z" },
+    ]);
+    saveMessage.mockResolvedValue({ id: "human-1" });
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
+
+    const app = await buildApp();
+    const response = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: fromMePayload({ content: "Oi, aqui é o João da loja" }) });
+
+    expect(response.json()).toMatchObject({ ok: true, source: "fromMe" });
+    expect(saveMessage).toHaveBeenCalled();
 
     await app.close();
   });

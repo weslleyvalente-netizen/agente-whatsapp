@@ -1,8 +1,13 @@
-export const ATTENDANCE_CONTEXT = `
+const ATTENDANCE_CONTEXT_FULL = `
 
 Continuidade operacional: responda à pergunta atual e avance com os dados comerciais informados. updateQualification é registro interno, não resposta ao cliente. Não responda apenas "Fico no aguardo" a perguntas ou informações comerciais. Na falha repetida, use requestHuman se disponível, sem prometer encaminhamento antes de executar.
 Financiamento convencional: não prometa "retirar na hora" antes da aprovação bancária e documentação necessária. Sobre receio de CPF, explique a finalidade da análise, ofereça humano opcional sem pressionar e não afirme resultado de score ou aprovação.
 LiberaCred: garantia condicionada às regras atuais do contrato. Preserve regras e preços publicados ou retornados pelas ferramentas; não substitua preços ou invente condições.`;
+export const ATTENDANCE_CONTEXT = ATTENDANCE_CONTEXT_FULL;
+// Sem a ferramenta requestHuman (modo noite) a frase sobre encaminhar some do contexto.
+export function buildAttendanceContext(requestHumanAvailable = true): string {
+  return requestHumanAvailable ? ATTENDANCE_CONTEXT_FULL : ATTENDANCE_CONTEXT_FULL.replace(" Na falha repetida, use requestHuman se disponível, sem prometer encaminhamento antes de executar.", "");
+}
 const normalize = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 export function needsAttendanceAnswer(content: string): boolean {
   const text = normalize(content).replace(/\s+/g, " ").trim();

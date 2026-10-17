@@ -278,11 +278,13 @@ it("refreshes expired AI return reminders on a new handoff, with an event preser
  expect(addTaskEvent).toHaveBeenCalledWith({},expect.objectContaining({event_type:"rescheduled",note:expect.stringContaining("Plano antigo")}));vi.useRealTimers();
 });
 it("keeps frozen opportunity reminders unchanged",async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-02T22:19:00Z"));
  getOrganizationById.mockResolvedValue({id:"org-1",settings:{sales_qualified_handoff_task_enabled:true}});
  getOpenOpportunitiesByContact.mockResolvedValue([{id:"frozen",frozen_until:"2026-10-10"}]);
  getOpenTasksByConversation.mockResolvedValue([{id:"old",organization_id:"org-1",opportunity_id:"frozen",type:"return_customer",description:"Plano antigo",status:"pending",priority:"normal",due_date:"2026-09-29",created_by_type:"ai",consolidated_pendencies:[]}]);
  await createRequestHumanTool(context).execute!(baseInput,{} as never);
  expect(updateTask.mock.calls[0][2]).not.toHaveProperty("due_date");
+ vi.useRealTimers();
 });
 
 afterEach(() => vi.useRealTimers());

@@ -100,6 +100,55 @@ export function isBusinessOpen(date: Date, calendar: BusinessCalendar = DEFAULT_
   return closedPeriodAt(t, calendar) === null && openUntil(t, calendar) !== null;
 }
 
+/** Próxima abertura estritamente depois de `date`, respeitando datas e períodos fechados. null se não houver. */
+export function nextBusinessOpening(date: Date, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): Date | null {
+  let t = date.getTime();
+  for (let guard = 0; guard < 1_000; guard++) {
+    const period = closedPeriodAt(t, calendar);
+    if (period) {
+      t = period.to;
+      if (openUntil(t, calendar) !== null && closedPeriodAt(t, calendar) === null) return new Date(t);
+      continue;
+    }
+    const next = nextOpening(t, calendar);
+    if (next === null) return null;
+    if (closedPeriodAt(next, calendar) === null) return new Date(next);
+    t = next;
+  }
+  return null;
+}
+
+/** Último instante (<= date) em que o expediente fechou; null se está aberto agora ou não há registro. */
+export function lastBusinessClosing(date: Date, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): Date | null {
+  const t = date.getTime();
+  if (isBusinessOpen(date, calendar)) return null;
+  const p = parts(t, calendar.timeZone);
+  const base = Date.UTC(p.y, p.mo - 1, p.d);
+  let best: number | null = null;
+  for (let back = 0; back <= 40 && best === null; back++) {
+    const day = new Date(base - back * DAY_MS);
+    const y = day.getUTCFullYear(), mo = day.getUTCMonth() + 1, d = day.getUTCDate();
+    if ((calendar.closedDates ?? []).includes(isoDay(y, mo, d))) continue;
+    for (const w of calendar.weekly[WEEKDAYS[day.getUTCDay()]] ?? []) {
+      const e = minutesOf(w.end);
+      const instant = zonedToInstant(y, mo, d, Math.floor(e / 60), e % 60, calendar.timeZone);
+      if (instant <= t && (best === null || instant > best)) best = instant;
+    }
+  }
+  for (const cp of calendar.closedPeriods ?? []) {
+    const from = Date.parse(cp.from);
+    if (Number.isFinite(from) && from <= t && (best === null || from > best) && isBusinessOpen(new Date(from - 1), calendar)) best = from;
+  }
+  return best === null ? null : new Date(best);
+}
+
+/** "segunda, 20/10, às 08:00" no fuso do calendário. */
+export function describeBusinessInstant(date: Date, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): string {
+  const p = parts(date.getTime(), calendar.timeZone);
+  const names: Record<Weekday, string> = { sun: "domingo", mon: "segunda", tue: "terça", wed: "quarta", thu: "quinta", fri: "sexta", sat: "sábado" };
+  return `${names[p.wd]}, ${pad(p.d)}/${pad(p.mo)}, às ${pad(p.h)}:${pad(p.mi)}`;
+}
+
 export function addBusinessMinutes(start: Date, minutes: number, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): Date {
   let remaining = Math.max(0, minutes);
   let t = start.getTime();

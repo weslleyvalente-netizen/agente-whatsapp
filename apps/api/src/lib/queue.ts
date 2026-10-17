@@ -17,6 +17,7 @@ export function enqueueProcessMessage(data: {
   messageId: string;
   agentId: string;
   organizationId: string;
+  afterHoursPending?: boolean;
 }) {
   const queue = getProcessMessageQueue();
   return queue.add("process-message", data, {

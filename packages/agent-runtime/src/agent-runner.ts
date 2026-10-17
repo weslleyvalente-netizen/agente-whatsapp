@@ -6,7 +6,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { Agent, LLMProvider, Message, PlaygroundToolCall } from "@aula-agente/shared";
 import { formatDateTimeForPrompt, DEFAULT_FOLLOWUP_AUTOMATICO } from "@aula-agente/shared";
 import { buildToolsForAgent } from "./tools/registry.js";
-import { ATTENDANCE_CONTEXT, RECOVERY_INSTRUCTION, needsAttendanceAnswer, isGenericWaiting } from "./attendance-continuity.js";
+import { buildAttendanceContext, RECOVERY_INSTRUCTION, needsAttendanceAnswer, isGenericWaiting } from "./attendance-continuity.js";
 import { extractTokenUsage } from "./token-usage.js";
 
 interface RunAgentParams {
@@ -21,6 +21,10 @@ interface RunAgentParams {
   contactId: string;
   contactName?: string | null;
   sandbox?: boolean;
+  /** Modo noite: cliente já encaminhado ao humano; IA segue ajudando, sem novo encaminhamento. */
+  afterHoursPending?: boolean;
+  /** Texto da próxima abertura (calendário da org), p.ex. "segunda, 20/10, às 08:00". */
+  afterHoursReopensAt?: string | null;
 }
 
 // "write" = this call had to (re)populate the cache (first message of a
@@ -105,7 +109,7 @@ export function createModel(provider: LLMProvider, modelName: string, apiKey: st
 // whether it's actually a person's name is exactly the kind of ambiguous
 // call the model is already trusted to make throughout the rest of the
 // prompt.
-export function buildDynamicContextBlock(now: Date, contactName?: string | null): string {
+export function buildDynamicContextBlock(now: Date, contactName?: string | null, requestHumanAvailable = true): string {
   let block = `\n\nData e hora atual: ${formatDateTimeForPrompt(now)}`;
   if (contactName) {
     block +=
@@ -114,11 +118,26 @@ export function buildDynamicContextBlock(now: Date, contactName?: string | null)
       `Se parecer nome de empresa, grupo, apelido genérico, ou não for claramente um nome de pessoa, ` +
       `não presuma e não use.`;
   }
-  return block + ATTENDANCE_CONTEXT;
+  return block + buildAttendanceContext(requestHumanAvailable);
 }
 
 export function buildSystemPrompt(basePrompt: string, now: Date): string {
   return `${basePrompt}${buildDynamicContextBlock(now)}`;
+}
+
+// Modo noite: instrução extra (só nesse modo). `reopensAt` é o texto da próxima
+// abertura real do calendário da organização (ex.: "segunda, 20/10, às 08:00").
+export function buildAfterHoursInstruction(reopensAt?: string | null): string {
+  const quando = reopensAt ? `a equipe retoma ${reopensAt}` : "a equipe retoma quando a loja reabrir";
+  return (
+    `Você já encaminhou este cliente para a equipe; ${quando}. ` +
+    "Neste modo a ferramenta requestHuman NÃO está disponível e o encaminhamento JÁ foi feito; ignore instruções anteriores para encaminhar, oferecer ou prometer um consultor. " +
+    "Continue ajudando com dúvidas (modelos, estoque, preços via ferramentas, condições cadastradas, se o número/loja é verdadeiro, endereço). " +
+    "NÃO chame requestHuman de novo e não prometa prazo ou resposta de consultor além da reabertura informada. " +
+    "Não repita o aviso de fora do horário em toda mensagem (só se o cliente perguntar). " +
+    "Se o cliente apenas agradece/confirma ('ok', 'obrigado'), responda curto e cordial ou não responda; " +
+    "se pedir algo que só um humano resolve, diga que a equipe retoma na reabertura."
+  );
 }
 
 // Two system blocks instead of one: the compiled agent prompt (identical
@@ -130,9 +149,11 @@ export function buildSystemPrompt(basePrompt: string, now: Date): string {
 export function buildCacheableSystemMessages(
   basePrompt: string,
   now: Date,
-  contactName?: string | null
+  contactName?: string | null,
+  afterHoursPending = false,
+  afterHoursReopensAt?: string | null
 ): SystemModelMessage[] {
-  return [
+  const blocks: SystemModelMessage[] = [
     {
       role: "system",
       content: basePrompt,
@@ -140,9 +161,11 @@ export function buildCacheableSystemMessages(
     },
     {
       role: "system",
-      content: buildDynamicContextBlock(now, contactName),
+      content: buildDynamicContextBlock(now, contactName, !afterHoursPending),
     },
   ];
+  if (afterHoursPending) blocks.push({ role: "system", content: buildAfterHoursInstruction(afterHoursReopensAt) });
+  return blocks;
 }
 
 // "write" only ever happens together with 0 reads (a fresh/expired cache
@@ -226,11 +249,12 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
     businessHoursStartHour: businessHours.janela_inicio_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_inicio_hora,
     businessHoursEndHour: businessHours.janela_fim_hora ?? DEFAULT_FOLLOWUP_AUTOMATICO.janela_fim_hora,
     sandbox: params.sandbox,
+    afterHoursPending: params.afterHoursPending,
   });
 
   const history = formatHistoryForLLM(messages);
 
-  const system = buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName);
+  const system = buildCacheableSystemMessages(agent.system_prompt, new Date(), params.contactName, params.afterHoursPending === true, params.afterHoursReopensAt);
   const initialMessages = [...history, buildFinalTurnMessage(currentMessage)];
   const result = await generateText({
     model,
@@ -245,8 +269,12 @@ export async function runAgent(params: RunAgentParams): Promise<RunAgentResult> 
   let text = result.text;
   const toolCallTrace = extractToolCallTrace(result.steps, params.sandbox ?? false);
   const totals = extractTokenUsage(result.totalUsage ?? result.usage);
-  const originalHandoff = toolCallTrace.find((call) => call.tool_name === "requestHuman");
-  const photoSent = toolCallTrace.some((call) => ["sendVehiclePhoto", "sendRegisteredImage"].includes(call.tool_name) &&
+  // Any requestHuman attempt blocks a second (recovery) handoff, but the customer
+// is only told a consultant continues when the tool CONFIRMED it
+// ("Handoff registrado" / simulated) -- see handoffFallbackText, which turns
+// every other output (failure string, null, object) into a non-claiming text.
+const originalHandoff = toolCallTrace.find((call) => call.tool_name === "requestHuman");
+const photoSent = toolCallTrace.some((call) => ["sendVehiclePhoto", "sendRegisteredImage"].includes(call.tool_name) &&
     typeof call.output === "string" && /^(?:(?:Foto|Imagem) enviada\.|\[SIMULADO\].*(?:foto|imagem))/i.test(call.output));
   const needsAnswer = currentMessage.role === "contact" && needsAttendanceAnswer(currentMessage.content);
   if (needsAnswer && (isGenericWaiting(text) || (!text.trim() && result.steps.length >= 5 && !photoSent))) {
