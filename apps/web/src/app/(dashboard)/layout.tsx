@@ -4,6 +4,7 @@ import { OrganizationProvider } from "@/providers/organization-provider";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { UserNav } from "@/components/layout/user-nav";
+import { HealthBanner } from "@/components/layout/health-banner";
 import { AvailabilitySelect } from "@/components/lead-distribution/availability-select";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -25,6 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <AvailabilitySelect userId={user.id} />
             <UserNav email={user.email!} />
           </header>
+          <HealthBanner />
           <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-6">{children}</main>
         </div>
       </div>
