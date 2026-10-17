@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { countAfterHoursAgentReplies } from "./messages.js";
+import { countAfterHoursAgentReplies, findRecentAfterHoursAgentMessages } from "./messages.js";
 
-function fakeClient(result: { count: number | null; error: unknown }) {
+function fakeClient(result: { count?: number | null; data?: unknown; error: unknown }) {
   const calls: Array<[string, ...unknown[]]> = [];
   const b: any = new Proxy({}, {
     get: (_t, prop: string) => {
@@ -24,5 +24,16 @@ describe("countAfterHoursAgentReplies", () => {
   it("treats a null count as zero and throws on error", async () => {
     await expect(countAfterHoursAgentReplies(fakeClient({ count: null, error: null }).client, "c", "x")).resolves.toBe(0);
     await expect(countAfterHoursAgentReplies(fakeClient({ count: null, error: new Error("x") }).client, "c", "x")).rejects.toThrow();
+  });
+});
+
+describe("findRecentAfterHoursAgentMessages", () => {
+  it("filters agent messages flagged after_hours_pending (any evolution id) since the cutoff", async () => {
+    const { client, calls } = fakeClient({ data: [{ id: "m" }], error: null });
+    await expect(findRecentAfterHoursAgentMessages(client, "conv-1", "2026-10-10T00:00:00Z")).resolves.toEqual([{ id: "m" }]);
+    expect(calls).toContainEqual(["eq", "role", "agent"]);
+    expect(calls).toContainEqual(["gte", "created_at", "2026-10-10T00:00:00Z"]);
+    expect(calls).toContainEqual(["contains", "metadata", { after_hours_pending: true }]);
+    expect(calls.some((c) => c[0] === "is")).toBe(false);
   });
 });
