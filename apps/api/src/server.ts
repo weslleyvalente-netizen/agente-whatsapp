@@ -19,6 +19,8 @@ import opportunityRoutes from "./routes/opportunities/index.js";
 import callLogRoutes from "./routes/call-logs/index.js";
 import leadDistributionRoutes from "./routes/lead-distribution/index.js";
 import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
+import healthRoutes from "./routes/health/index.js";
+import { startHealthMonitor } from "./services/health-monitor.js";
 
 const server = Fastify({ logger: true });
 
@@ -56,12 +58,15 @@ server.register(callLogRoutes);
 server.register(invitationRoutes);
 server.register(leadDistributionRoutes);
 server.register(recoverMessagesRoutes);
+server.register(healthRoutes);
 
 // Start
 const start = async () => {
   const port = parseInt(process.env.API_PORT || "3001", 10);
   await server.listen({ port, host: "0.0.0.0" });
   server.log.info(`API server running on port ${port}`);
+  // Alerta de silêncio: setInterval no próprio processo da API, sem fila (independe do Redis).
+  startHealthMonitor(server.log);
 };
 
 start().catch((err) => {
