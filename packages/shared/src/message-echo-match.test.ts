@@ -78,3 +78,15 @@ describe("matchPendingOutboundMessage", () => {
     expect(matchPendingOutboundMessage([], { mediaType: null, content: "Oi!" })).toBeNull();
   });
 });
+
+import { matchAfterHoursEcho } from "./message-echo-match.js";
+describe("matchAfterHoursEcho", () => {
+  const c = (content: string, media_type: string | null = null) => ({ id: "x", content, media_type, created_at: "2026-10-10T12:00:00Z" });
+  it("matches ignoring whitespace differences", () => {
+    expect(matchAfterHoursEcho([c("Temos  sim\na Fazer!")], { mediaType: null, content: "Temos sim a Fazer! " })).not.toBeNull();
+  });
+  it("matches audio by media type and rejects different text", () => {
+    expect(matchAfterHoursEcho([c("tts", "audio")], { mediaType: "audio", content: "[audio]" })).not.toBeNull();
+    expect(matchAfterHoursEcho([c("outra")], { mediaType: null, content: "Oi" })).toBeNull();
+  });
+});

@@ -40,3 +40,18 @@ export function matchPendingOutboundMessage(
 
   return null;
 }
+
+const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+
+// Fallback do modo noite: igual a matchPendingOutboundMessage, mas compara o
+// texto com espaços/quebras de linha normalizados (a Evolution às vezes
+// reformata espaços) e ignora se o candidato já tem evolution_message_id.
+export function matchAfterHoursEcho(
+  candidates: PendingOutboundCandidate[],
+  incoming: IncomingEcho
+): PendingOutboundCandidate | null {
+  return matchPendingOutboundMessage(
+    candidates.map((c) => ({ ...c, content: collapse(c.content) })),
+    { ...incoming, content: collapse(incoming.content) }
+  );
+}
