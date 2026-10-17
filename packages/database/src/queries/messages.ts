@@ -49,7 +49,7 @@ export async function getLastContactMessage(client: SupabaseClient, conversation
 
 export async function createMessage(
   client: SupabaseClient,
-  message: Omit<Message, "id" | "created_at">
+  message: Omit<Message, "id" | "created_at"> & { created_at?: string }
 ) {
   const { data, error } = await client
     .from("messages")

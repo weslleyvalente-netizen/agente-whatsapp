@@ -80,3 +80,20 @@ describe("saveMessage — echo idempotency", () => {
     expect(result).toEqual({ id: "msg-new" });
   });
 });
+
+describe("saveMessage — createdAt (recuperação de mensagens)", () => {
+  it("grava created_at com o horário original quando createdAt é informado", async () => {
+    messageExistsByEvolutionId.mockResolvedValue(false);
+    await saveMessage({
+      conversationId: "conv-1", organizationId: "org-1", evolutionMessageId: "EVO-9",
+      role: "contact", content: "oi", createdAt: "2026-10-16T23:30:00.000Z",
+    });
+    expect(createMessage.mock.calls[0][1].created_at).toBe("2026-10-16T23:30:00.000Z");
+  });
+
+  it("não envia created_at no fluxo normal (o banco usa now())", async () => {
+    messageExistsByEvolutionId.mockResolvedValue(false);
+    await saveMessage({ conversationId: "conv-1", organizationId: "org-1", evolutionMessageId: "EVO-10", role: "contact", content: "oi" });
+    expect("created_at" in createMessage.mock.calls[0][1]).toBe(false);
+  });
+});

@@ -71,6 +71,24 @@ const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
 // same as the group-message check.
 const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]);
 
+// Cabeçalho interno usado só pela recuperação de mensagens perdidas
+// (routes/admin/recover-messages.ts): pede que created_at guarde o horário
+// ORIGINAL da mensagem (messageTimestamp, em segundos) em vez de "agora".
+// Sem o cabeçalho o comportamento é o de sempre. Exige o mesmo segredo do webhook.
+export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
+
+export function resolveReplayCreatedAt(
+  headers: Record<string, unknown>,
+  messageTimestamp: number | undefined,
+  now: number = Date.now()
+): string | undefined {
+  if (headers[REPLAY_TIMESTAMP_HEADER] !== "1") return undefined;
+  if (typeof messageTimestamp !== "number" || !Number.isFinite(messageTimestamp) || messageTimestamp <= 0) return undefined;
+  const ms = messageTimestamp * 1000;
+  if (ms > now) return undefined; // nunca no futuro
+  return new Date(ms).toISOString();
+}
+
 export function isNonContentMessageType(messageType: string): boolean {
   return NON_CONTENT_MESSAGE_TYPES.has(messageType);
 }
@@ -161,6 +179,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       }
 
       const payload = parseResult.data;
+      const replayCreatedAt = resolveReplayCreatedAt(request.headers, payload.data.messageTimestamp);
 
       // Ignore group messages — this agent only handles direct conversations
       if (payload.data.key.remoteJid.endsWith("@g.us")) {
@@ -284,6 +303,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           role: "human_agent",
           content,
           mediaType: mediaType as any,
+          createdAt: replayCreatedAt,
         });
 
         if (!humanMessage) {
@@ -397,6 +417,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         content,
         mediaType: mediaType as any,
         metadata: durationSeconds !== undefined ? { duration_seconds: durationSeconds } : undefined,
+        createdAt: replayCreatedAt,
       });
 
       // If message was already processed (duplicate webhook), skip

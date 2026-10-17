@@ -12,6 +12,9 @@ interface SaveMessageParams {
   mediaUrl?: string | null;
   mediaType?: MediaType | null;
   metadata?: Record<string, unknown> | null;
+  // Só para mensagens recuperadas (replay): preserva o horário original em created_at.
+  // Sem isto o banco usa now(), que é o comportamento normal.
+  createdAt?: string;
 }
 
 export async function saveMessage(params: SaveMessageParams) {
@@ -34,6 +37,7 @@ export async function saveMessage(params: SaveMessageParams) {
     media_url: params.mediaUrl || null,
     media_type: params.mediaType || null,
     metadata: params.metadata || null,
+    ...(params.createdAt ? { created_at: params.createdAt } : {}),
   });
 
   // Update conversation last_message_at
