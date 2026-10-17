@@ -85,33 +85,71 @@ export interface EvolutionStoredMessage {
 const FIND_MESSAGES_PAGE_SIZE = 100;
 const FIND_MESSAGES_MAX_PAGES = 500;
 
+function extractRecords(result: any): EvolutionStoredMessage[] {
+  return Array.isArray(result)
+    ? result
+    : Array.isArray(result?.messages?.records)
+      ? result.messages.records
+      : Array.isArray(result?.messages)
+        ? result.messages
+        : [];
+}
+
+const tsSec = (r: EvolutionStoredMessage) => Number(r.messageTimestamp);
+
+async function pageThrough(
+  instanceName: string,
+  where: Record<string, unknown>,
+  onPage: (records: EvolutionStoredMessage[]) => boolean | void
+): Promise<number> {
+  let pages = 0;
+  for (let page = 1; page <= FIND_MESSAGES_MAX_PAGES; page++) {
+    const result = await evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({ where, page, offset: FIND_MESSAGES_PAGE_SIZE }),
+    });
+    const records = extractRecords(result);
+    pages++;
+    if (onPage(records) === false) break;
+    const totalPages = typeof result?.messages?.pages === "number" ? result.messages.pages : 1;
+    if (page >= totalPages || records.length === 0) break;
+  }
+  return pages;
+}
+
 // Mensagens que a Evolution guardou na janela [gteSec, lteSec] (epoch em segundos); fromMe=false são as recebidas.
-// Pagina até esgotar. A resposta varia entre versões: lista pura ou { messages: { records, pages } }.
+// A resposta varia entre versões: lista pura ou { messages: { records, pages } }.
+// Algumas versões ignoram/rejeitam o filtro por messageTimestamp e devolvem vazio: nesse caso (e só nele)
+// refaz a busca sem filtro de data, paginando e filtrando aqui.
 export async function findStoredMessages(
   instanceName: string,
   window: { gteSec: number; lteSec: number },
   fromMe: boolean
 ): Promise<EvolutionStoredMessage[]> {
-  const all: EvolutionStoredMessage[] = [];
-  for (let page = 1; page <= FIND_MESSAGES_MAX_PAGES; page++) {
-    const result = await evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
-      method: "POST",
-      body: JSON.stringify({
-        where: { key: { fromMe }, messageTimestamp: { gte: window.gteSec, lte: window.lteSec } },
-        page,
-        offset: FIND_MESSAGES_PAGE_SIZE,
-      }),
-    });
-    const records: EvolutionStoredMessage[] = Array.isArray(result)
-      ? result
-      : Array.isArray(result?.messages?.records)
-        ? result.messages.records
-        : Array.isArray(result?.messages)
-          ? result.messages
-          : [];
-    all.push(...records);
-    const totalPages = typeof result?.messages?.pages === "number" ? result.messages.pages : 1;
-    if (page >= totalPages || records.length === 0) break;
-  }
-  return all;
+  const filtered: EvolutionStoredMessage[] = [];
+  const filteredPages = await pageThrough(
+    instanceName,
+    { key: { fromMe }, messageTimestamp: { gte: window.gteSec, lte: window.lteSec } },
+    (records) => { filtered.push(...records); }
+  );
+  if (filtered.length > 0) return filtered;
+
+  const inWindow: EvolutionStoredMessage[] = [];
+  let scanned = 0;
+  let newestFirst: boolean | null = null;
+  const pages = await pageThrough(instanceName, { key: { fromMe } }, (records) => {
+    scanned += records.length;
+    const stamps = records.map(tsSec).filter(Number.isFinite);
+    if (newestFirst === null && stamps.length > 1) newestFirst = stamps[0] >= stamps[stamps.length - 1];
+    for (const r of records) {
+      const t = tsSec(r);
+      if (Number.isFinite(t) && t >= window.gteSec && t <= window.lteSec) inWindow.push(r);
+    }
+    // Ordem decrescente e a página inteira já é anterior à janela: não há mais nada a buscar.
+    if (newestFirst && stamps.length > 0 && Math.max(...stamps) < window.gteSec) return false;
+  });
+  console.warn(
+    `[evolution] findMessages com filtro de data veio vazio (${filteredPages} pág.); busca sem filtro: instância=${instanceName} fromMe=${fromMe} páginas=${pages} lidas=${scanned} na janela=${inWindow.length}`
+  );
+  return inWindow;
 }
