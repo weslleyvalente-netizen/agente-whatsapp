@@ -42,6 +42,14 @@ describe("sw.js", () => {
     expect(client.navigate).toHaveBeenCalledWith("https://crm.example/inbox?id=9");
     expect(self.clients.openWindow).not.toHaveBeenCalled();
   });
+  it("se navigate falhar (janela não controlada) abre uma nova janela", async () => {
+    const { self, listeners } = loadSw();
+    const client: any = { url: "https://crm.example/inbox", focus: vi.fn(async () => client), navigate: vi.fn(async () => { throw new Error("uncontrolled"); }) };
+    self.clients.matchAll.mockResolvedValue([client]);
+    const w = waitable({ notification: { close: vi.fn(), data: { url: "/inbox?id=9" } } });
+    listeners.notificationclick(w.e); await w.done();
+    expect(self.clients.openWindow).toHaveBeenCalledWith("https://crm.example/inbox?id=9");
+  });
   it("clique sem janela aberta abre uma nova", async () => {
     const { self, listeners } = loadSw();
     self.clients.matchAll.mockResolvedValue([]);

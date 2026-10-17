@@ -21,6 +21,7 @@ async function app() { const f = Fastify(); await f.register(routes); return f; 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.upsertPushSubscription.mockResolvedValue("ok");
   m.isPushConfigured.mockReturnValue(true);
   process.env.VAPID_PUBLIC_KEY = "PUB";
 });
@@ -47,6 +48,11 @@ describe("POST /push/subscribe", () => {
     const res = await (await app()).inject({ method: "POST", url: "/push/subscribe", headers: { ...auth, "user-agent": "UA" }, payload: body });
     expect(res.statusCode).toBe(200);
     expect(m.upsertPushSubscription).toHaveBeenCalledWith(expect.anything(), { organizationId: ORG, userId: "u1", endpoint: body.endpoint, p256dh: "pk", auth: "ak", userAgent: "UA" });
+  });
+  it("endpoint vinculado a outro usuário com chaves diferentes devolve 409", async () => {
+    m.upsertPushSubscription.mockResolvedValueOnce("conflict");
+    const res = await (await app()).inject({ method: "POST", url: "/push/subscribe", headers: auth, payload: body });
+    expect(res.statusCode).toBe(409);
   });
   it("recusa organização da qual o usuário não é membro", async () => {
     const res = await (await app()).inject({ method: "POST", url: "/push/subscribe", headers: auth, payload: { ...body, organizationId: OTHER_ORG } });

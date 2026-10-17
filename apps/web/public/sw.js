@@ -24,7 +24,10 @@ self.addEventListener("notificationclick", (event) => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
       for (const client of windows) {
         if (new URL(client.url).origin === self.location.origin && "focus" in client) {
-          return client.focus().then((focused) => ("navigate" in focused ? focused.navigate(url) : focused));
+          // navigate() rejeita em janelas que este service worker não controla: nesse caso abre uma nova.
+          return client.focus()
+            .then((focused) => ("navigate" in focused ? focused.navigate(url) : focused))
+            .catch(() => self.clients.openWindow(url));
         }
       }
       return self.clients.openWindow(url);

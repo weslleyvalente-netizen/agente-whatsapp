@@ -7,6 +7,7 @@ import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { unsubscribeThisDeviceOnLogout } from "@/lib/push-client";
 import { getPushStatus, PUSH_STATUS_TEXT, urlBase64ToUint8Array, type PushStatus } from "@/lib/push";
 
 function readEnv() {
@@ -36,7 +37,18 @@ export function PushNotificationsCard() {
     if (env.hasServiceWorker && env.hasPushManager) {
       try {
         const reg = await navigator.serviceWorker.getRegistration("/sw.js");
-        subscribed = Boolean(await reg?.pushManager.getSubscription());
+        const existing = await reg?.pushManager.getSubscription();
+        subscribed = Boolean(existing);
+        // Vincula o aparelho ao usuário logado agora (corrige aparelho trocado de usuário ou linha removida no servidor).
+        if (existing && currentOrg && Notification.permission === "granted") {
+          const json = existing.toJSON();
+          try {
+            await apiFetch("/push/subscribe", { method: "POST", body: JSON.stringify({ organizationId: currentOrg.id, endpoint: json.endpoint, keys: json.keys }) });
+          } catch (err) {
+            // 409: o aparelho pertence a outro usuário. Solta a assinatura local para poder ativar de novo.
+            if ((err as { status?: number }).status === 409) { await existing.unsubscribe().catch(() => {}); subscribed = false; }
+          }
+        }
       } catch { /* sem registro ainda */ }
       try {
         const { publicKey } = await apiFetch("/push/public-key");
@@ -44,7 +56,7 @@ export function PushNotificationsCard() {
       } catch { /* mantém o estado local */ }
     }
     setStatus(getPushStatus({ ...env, subscribed, serverUnavailable }));
-  }, []);
+  }, [currentOrg]);
 
   // Lê o estado do navegador (API externa) ao montar.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -52,14 +64,16 @@ export function PushNotificationsCard() {
 
   async function enable() {
     if (!currentOrg || busy) return;
+    // O iOS só mostra o pedido de permissão enquanto o toque do usuário ainda é válido: pedir ANTES de qualquer await.
+    const permissionRequest = Notification.requestPermission();
     setBusy(true); setMessage(null);
     try {
+      const permission = await permissionRequest;
+      if (permission !== "granted") { setMessage("Permissão não concedida."); return; }
       const { publicKey } = await apiFetch("/push/public-key");
       if (!publicKey) throw new Error("As notificações ainda não foram configuradas no servidor.");
       const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       await navigator.serviceWorker.ready;
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") { setMessage("Permissão não concedida."); return; }
       const subscription = (await reg.pushManager.getSubscription())
         ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) }));
       const json = subscription.toJSON();
@@ -80,12 +94,7 @@ export function PushNotificationsCard() {
     if (busy) return;
     setBusy(true); setMessage(null);
     try {
-      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
-      const subscription = await reg?.pushManager.getSubscription();
-      if (subscription) {
-        await apiFetch("/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
-        await subscription.unsubscribe();
-      }
+      await unsubscribeThisDeviceOnLogout();
       setMessage("Notificações desativadas neste aparelho.");
     } catch (err) {
       setMessage((err as Error).message || "Não foi possível desativar.");

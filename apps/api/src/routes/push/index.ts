@@ -22,10 +22,11 @@ export default async function pushRoutes(app: FastifyInstance) {
     const { organizationId, endpoint, keys } = parsed.data;
     if (!request.user.memberships.some((m: { organization_id: string }) => m.organization_id === organizationId)) return reply.status(403).send({ error: "Access denied" });
     try {
-      await upsertPushSubscription(getAdminClient(), {
+      const outcome = await upsertPushSubscription(getAdminClient(), {
         organizationId, userId: request.user.id, endpoint, p256dh: keys.p256dh, auth: keys.auth,
         userAgent: (request.headers["user-agent"] as string | undefined) ?? null,
       });
+      if (outcome === "conflict") return reply.status(409).send({ error: "Este aparelho já está vinculado a outro usuário. Desative as notificações nele e tente de novo." });
       return { ok: true };
     } catch (err) {
       request.log.error({ err }, "Failed to save push subscription");
