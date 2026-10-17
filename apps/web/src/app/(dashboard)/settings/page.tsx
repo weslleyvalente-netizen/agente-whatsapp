@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact, SalesRep, SalesRepAvailability } from "@aula-agente/shared";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
 import { RecoverMessagesCard } from "@/components/settings/recover-messages-card";
+import { PushNotificationsCard } from "@/components/settings/push-notifications-card";
 import { SystemAlertsCard } from "@/components/settings/system-alerts-card";
 import {
   DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
@@ -69,9 +70,9 @@ export default function SettingsPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled";
+    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled";
     const setErr = isLead ? setLeadError : setWorkspaceError;
     setSavingWorkspace(true); setErr(null);
     try {
@@ -700,6 +701,8 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      <PushNotificationsCard />
+
       <SystemAlertsCard />
 
       <RecoverMessagesCard />
@@ -711,6 +714,10 @@ export default function SettingsPage() {
   <Label htmlFor="seller-isolation">Isolamento por vendedor (cada vendedor só vê o que é dele e o que está sem dono)</Label>
   <Switch id="seller-isolation" checked={currentOrg?.settings.seller_isolation_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "seller_isolation_enabled")} />
 </div>
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="push-notifications">Notificações push para vendedores (novo lead, mensagem do cliente, prazo)</Label>
+            <Switch id="push-notifications" checked={currentOrg?.settings.push_notifications_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "push_notifications_enabled")} />
+          </div>
           <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-shadow">Modo de teste (simulação)</Label><Switch id="lead-dist-shadow" checked={currentOrg?.settings.lead_distribution_shadow_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_shadow_enabled")}/></div>
           <p className="text-xs text-muted-foreground">Calcula quem receberia cada lead e registra, sem alterar nada. Use antes de ativar.</p>
           <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-enabled">Distribuição de leads ativa</Label><Switch id="lead-dist-enabled" checked={currentOrg?.settings.lead_distribution_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_enabled")}/></div>

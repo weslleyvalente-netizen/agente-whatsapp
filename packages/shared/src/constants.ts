@@ -182,6 +182,7 @@ export const QUEUE_NAMES = {
   PROCESS_DOCUMENT: "process-document",
   TAKEOVER_TIMEOUT: "takeover-timeout",
   LEAD_SLA: "lead-sla",
+  PUSH_NOTIFICATIONS: "push-notifications",
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
   STORE_CUSTOMER_AUDIO: "store-customer-audio",
   CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",

@@ -77,6 +77,12 @@ export function getLeadSlaQueue() {
   return leadSlaQueue;
 }
 
+let pushNotificationsQueue: Queue<{}> | undefined;
+export function getPushNotificationsQueue() {
+  if (!pushNotificationsQueue) pushNotificationsQueue = new Queue<{}>(QUEUE_NAMES.PUSH_NOTIFICATIONS, { connection: getRedisConnection() });
+  return pushNotificationsQueue;
+}
+
 export function getStaleConversationFollowupQueue() {
   if (!staleConversationFollowupQueue) {
     staleConversationFollowupQueue = new Queue<StaleConversationFollowupJobData>(

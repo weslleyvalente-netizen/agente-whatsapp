@@ -45,6 +45,8 @@ export interface OrganizationSettings {
   lead_distribution_shadow_enabled?: boolean;
   // Isolamento por vendedor no banco (RLS). Desligado por padrão: com ele ligado, um vendedor não lê nem altera o que é de outro vendedor.
   seller_isolation_enabled?: boolean;
+  // Notificações push (PWA) para vendedores. Desligado por padrão (ausente = desligado).
+  push_notifications_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;

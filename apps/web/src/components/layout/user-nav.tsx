@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { unsubscribeThisDeviceOnLogout } from "@/lib/push-client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +21,8 @@ export function UserNav({ email }: UserNavProps) {
   const supabase = createClient();
 
   const handleLogout = async () => {
+    // Antes do signOut (o POST precisa do token): este aparelho não pode continuar recebendo os avisos de quem saiu.
+    await unsubscribeThisDeviceOnLogout();
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();

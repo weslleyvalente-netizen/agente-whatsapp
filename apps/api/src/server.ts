@@ -18,6 +18,7 @@ import invitationRoutes from "./routes/invitations/index.js";
 import opportunityRoutes from "./routes/opportunities/index.js";
 import callLogRoutes from "./routes/call-logs/index.js";
 import leadDistributionRoutes from "./routes/lead-distribution/index.js";
+import pushRoutes from "./routes/push/index.js";
 import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
 import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
@@ -61,6 +62,7 @@ server.register(opportunityRoutes);
 server.register(callLogRoutes);
 server.register(invitationRoutes);
 server.register(leadDistributionRoutes);
+server.register(pushRoutes);
 server.register(recoverMessagesRoutes);
 server.register(healthRoutes);
 
