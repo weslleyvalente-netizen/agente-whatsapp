@@ -69,9 +69,9 @@ export default function SettingsPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled";
+    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled";
     const setErr = isLead ? setLeadError : setWorkspaceError;
     setSavingWorkspace(true); setErr(null);
     try {
@@ -728,6 +728,12 @@ export default function SettingsPage() {
                 </div>
               ))}
               {repsError && <p role="alert" className="text-sm text-destructive">{repsError}</p>}
+            </div>
+          )}
+          {isManager && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3"><Label htmlFor="ai-after-hours">IA segue atendendo depois de encaminhar, fora do horário comercial</Label><Switch id="ai-after-hours" checked={currentOrg?.settings.ai_after_hours_pending_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "ai_after_hours_pending_enabled")}/></div>
+              <p className="text-xs text-muted-foreground">Quando o cliente já foi encaminhado à equipe e volta a escrever com a loja fechada, a IA responde dúvidas (sem encaminhar de novo) até um vendedor responder. Dentro do horário comercial nada muda.</p>
             </div>
           )}
           {leadError && <p role="alert" className="text-sm text-destructive">{leadError}</p>}

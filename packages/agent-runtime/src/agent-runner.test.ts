@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { formatHistoryForLLM, buildSystemPrompt, buildFinalTurnMessage } from "./agent-runner.js";
 import { buildDynamicContextBlock, buildCacheableSystemMessages, deriveCacheStatus } from "./agent-runner.js";
-import { extractToolCallTrace } from "./agent-runner.js";
+import { extractToolCallTrace, buildAfterHoursInstruction } from "./agent-runner.js";
 import type { Message } from "@aula-agente/shared";
 
 function makeMessage(overrides: Partial<Message>): Message {
@@ -193,5 +193,38 @@ describe("extractToolCallTrace", () => {
   });
   it("returns an empty array when no step made any tool call", () => {
     expect(extractToolCallTrace([{ toolCalls: [], toolResults: [] }], false)).toEqual([]);
+  });
+});
+
+describe("buildCacheableSystemMessages after-hours pending", () => {
+  const now = new Date("2026-07-24T17:32:00.000Z");
+  it("is unchanged without the flag", () => {
+    expect(buildCacheableSystemMessages("P", now, null, false)).toEqual(buildCacheableSystemMessages("P", now));
+  });
+  it("appends the extra instruction as a last uncached block, keeping the cached prompt intact", () => {
+    const msgs = buildCacheableSystemMessages("P", now, null, true);
+    const base = buildCacheableSystemMessages("P", now);
+    expect(msgs[0]).toEqual(base[0]);
+    expect(msgs).toHaveLength(3);
+    expect(msgs[2].content).toBe(buildAfterHoursInstruction(undefined));
+    expect(msgs[2]).not.toHaveProperty("providerOptions");
+    expect(msgs[2].content).toMatch(/NÃO chame requestHuman/);
+    expect(msgs[2].content).toMatch(/requestHuman NÃO está disponível e o encaminhamento JÁ foi feito/);
+  });
+});
+
+describe("after-hours instruction and attendance context", () => {
+  it("uses the real next opening text, never the hardcoded hours", () => {
+    const text = buildAfterHoursInstruction("segunda, 20/10, às 08:00");
+    expect(text).toContain("a equipe retoma segunda, 20/10, às 08:00");
+    expect(text).not.toMatch(/8h às 18h/);
+  });
+  it("drops the requestHuman sentence from ATTENDANCE_CONTEXT only when unavailable", () => {
+    const now = new Date("2026-07-24T17:32:00.000Z");
+    expect(buildDynamicContextBlock(now)).toMatch(/use requestHuman se disponível/);
+    expect(buildDynamicContextBlock(now, null, false)).not.toMatch(/requestHuman/);
+    const msgs = buildCacheableSystemMessages("P", now, null, true, "sábado, 10/10, às 09:00");
+    expect(msgs[1].content).not.toMatch(/requestHuman/);
+    expect(msgs[2].content).toContain("sábado, 10/10, às 09:00");
   });
 });

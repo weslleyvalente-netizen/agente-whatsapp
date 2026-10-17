@@ -117,3 +117,20 @@ describe("buildToolsForAgent requestHuman (Fase 1 handoff explícito)", () => {
     expect(result).toContain("[SIMULADO]");
   });
 });
+
+describe("buildToolsForAgent after-hours pending mode", () => {
+  const cfg = { ...baseParams.toolsConfig, request_human: true, send_registered_image: true };
+  it("normally includes requestHuman and createTask", () => {
+    const t = buildToolsForAgent({ ...baseParams, toolsConfig: cfg });
+    expect(t.requestHuman).toBeDefined();
+    expect(t.createTask).toBeDefined();
+  });
+  it("omits requestHuman and createTask but keeps the others", () => {
+    const t = buildToolsForAgent({ ...baseParams, toolsConfig: cfg, afterHoursPending: true });
+    expect(t.requestHuman).toBeUndefined();
+    expect(t.createTask).toBeUndefined();
+    expect(t.searchCatalog).toBeDefined();
+    expect(t.searchFaq).toBeDefined();
+    expect(t.sendVehiclePhoto).toBeDefined();
+  });
+});

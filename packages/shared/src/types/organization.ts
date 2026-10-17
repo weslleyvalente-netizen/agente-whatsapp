@@ -39,6 +39,8 @@ export interface OrganizationSettings {
   lead_sla_minutes?: number;
   owner_lookback_days?: number;
   business_calendar?: import("../business-calendar.js").BusinessCalendar;
+  // Modo noite: depois de um requestHuman fora do horário comercial a IA continua respondendo (sem requestHuman) até um humano responder. Desligado por padrão.
+  ai_after_hours_pending_enabled?: boolean;
   // Modo sombra da distribuição (registra o que faria, sem atribuir de fato).
   lead_distribution_shadow_enabled?: boolean;
   // Isolamento por vendedor no banco (RLS). Desligado por padrão: com ele ligado, um vendedor não lê nem altera o que é de outro vendedor.

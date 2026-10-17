@@ -280,3 +280,41 @@ export async function getLastOutboundAtForPhone(
   if (error) throw error;
   return (data as { created_at: string } | null)?.created_at ?? null;
 }
+
+// Modo noite: quantas respostas da IA já foram dadas nesta conversa em modo
+// noite desde `sinceISO` (início do encaminhamento aberto). Alimenta o limite
+// por conversa.
+export async function countAfterHoursAgentReplies(
+  client: SupabaseClient,
+  conversationId: string,
+  sinceISO: string
+): Promise<number> {
+  const { count, error } = await client
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("role", "agent")
+    .gte("created_at", sinceISO)
+    .contains("metadata", { after_hours_pending: true });
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Modo noite: respostas recentes da IA marcadas como after_hours_pending, com
+// ou sem evolution_message_id -- usado para reconhecer o eco (fromMe) da
+// própria IA e nunca tratá-lo como resposta humana.
+export async function findRecentAfterHoursAgentMessages(
+  client: SupabaseClient,
+  conversationId: string,
+  sinceISO: string
+) {
+  const { data, error } = await client
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .eq("role", "agent")
+    .gte("created_at", sinceISO)
+    .contains("metadata", { after_hours_pending: true });
+  if (error) throw error;
+  return data as Message[];
+}
