@@ -18,6 +18,7 @@ import invitationRoutes from "./routes/invitations/index.js";
 import opportunityRoutes from "./routes/opportunities/index.js";
 import callLogRoutes from "./routes/call-logs/index.js";
 import leadDistributionRoutes from "./routes/lead-distribution/index.js";
+import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
 
 const server = Fastify({ logger: true });
 
@@ -54,6 +55,7 @@ server.register(opportunityRoutes);
 server.register(callLogRoutes);
 server.register(invitationRoutes);
 server.register(leadDistributionRoutes);
+server.register(recoverMessagesRoutes);
 
 // Start
 const start = async () => {
