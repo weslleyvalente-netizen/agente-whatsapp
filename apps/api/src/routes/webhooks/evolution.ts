@@ -34,6 +34,7 @@ import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queu
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
+import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
 // A placeholder saved instead of real content for an ignored contact's
 // message under retention_mode "minimal_record" — proves traffic still
@@ -76,6 +77,26 @@ const UNSUPPORTED_MESSAGE_PLACEHOLDER = "[mensagem não suportada]";
 // consegui abrir esse arquivo" back). Checked before saving or enqueueing,
 // same as the group-message check.
 const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]);
+
+// Cabeçalho interno usado só pela recuperação de mensagens perdidas
+// (routes/admin/recover-messages.ts): pede que created_at guarde o horário
+// ORIGINAL da mensagem (messageTimestamp, em segundos) em vez de "agora".
+// Só é respeitado com o token aleatório do processo (REPLAY_TOKEN) E com
+// WEBHOOK_SECRET configurado; sem isso o comportamento é o de sempre.
+export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
+
+export function resolveReplayCreatedAt(
+  headers: Record<string, unknown>,
+  messageTimestamp: number | undefined,
+  now: number = Date.now()
+): string | undefined {
+  if (!process.env.WEBHOOK_SECRET) return undefined;
+  if (headers[REPLAY_TIMESTAMP_HEADER] !== REPLAY_TOKEN) return undefined;
+  if (typeof messageTimestamp !== "number" || !Number.isFinite(messageTimestamp) || messageTimestamp <= 0) return undefined;
+  const ms = messageTimestamp * 1000;
+  if (ms > now) return undefined; // nunca no futuro
+  return new Date(ms).toISOString();
+}
 
 export function isNonContentMessageType(messageType: string): boolean {
   return NON_CONTENT_MESSAGE_TYPES.has(messageType);
@@ -169,6 +190,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       }
 
       const payload = parseResult.data;
+      const replayCreatedAt = resolveReplayCreatedAt(request.headers, payload.data.messageTimestamp);
 
       // Ignore group messages — this agent only handles direct conversations
       if (payload.data.key.remoteJid.endsWith("@g.us")) {
@@ -309,6 +331,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           role: "human_agent",
           content,
           mediaType: mediaType as any,
+          createdAt: replayCreatedAt,
         });
 
         if (!humanMessage) {
@@ -422,6 +445,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         content,
         mediaType: mediaType as any,
         metadata: durationSeconds !== undefined ? { duration_seconds: durationSeconds } : undefined,
+        createdAt: replayCreatedAt,
       });
 
       // If message was already processed (duplicate webhook), skip

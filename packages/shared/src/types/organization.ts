@@ -66,6 +66,10 @@ export interface OrganizationSettings {
   // Digits-only WhatsApp number (Evolution format) notified on every
   // requestHuman handoff. Optional — omitted/null disables the notification.
   handoff_notification_phone?: string | null;
+  // Digits-only WhatsApp number (com DDI) que recebe SOMENTE os alertas do sistema (silêncio de clientes,
+  // Redis fora, WhatsApp desconectado). Separado de handoff_notification_phone, que avisa a cada handoff.
+  // Vazio/null: só a faixa no painel, sem WhatsApp.
+  health_alert_phone?: string | null;
   // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
   // that haven't configured this yet fall back to
   // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /
