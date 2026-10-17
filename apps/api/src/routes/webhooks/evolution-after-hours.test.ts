@@ -38,7 +38,7 @@ async function post(payload: unknown) {
 const NIGHT = "2026-10-10T15:00:00Z"; // sábado 12:00 BRT
 const DAY = "2026-10-09T15:00:00Z"; // sexta 12:00 BRT
 const conv = (takeover: boolean, ai = false) =>
-  m.ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: takeover }, contact: { id: "c1", ai_disabled: ai }, isNew: false });
+  m.ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: takeover, human_takeover_at: "2026-10-09T22:00:00Z" }, contact: { id: "c1", ai_disabled: ai }, isNew: false });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,7 +48,7 @@ beforeEach(() => {
   conv(true);
   m.saveMessage.mockResolvedValue({ id: "msg-1", role: "contact", created_at: "2026-10-10T15:00:00Z" });
   m.getOrganizationById.mockResolvedValue({ settings: { ai_after_hours_pending_enabled: true } });
-  m.getOpenHandoffEvent.mockResolvedValue({ id: "h1" });
+  m.getOpenHandoffEvent.mockResolvedValue({ id: "h1", handed_at: "2026-10-09T22:00:00Z" });
 });
 afterEach(() => vi.useRealTimers());
 
@@ -88,5 +88,30 @@ describe("webhook: modo noite", () => {
     conv(false);
     await post(text);
     expect(m.enqueueProcessMessage).toHaveBeenCalledWith(expect.not.objectContaining({ afterHoursPending: true }));
+  });
+  it("handoff antigo aberto + takeover MANUAL posterior -> pula", async () => {
+    m.getOpenHandoffEvent.mockResolvedValue({ id: "h-old", handed_at: "2026-10-01T22:00:00Z" });
+    expect((await post(text)).json()).toMatchObject({ skipped: "human_takeover" });
+    expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["sexta 17:59 (aberto)", "2026-10-09T20:59:00Z", false],
+    ["sexta 18:00 (fechado)", "2026-10-09T21:00:00Z", true],
+    ["domingo", "2026-10-11T15:00:00Z", true],
+    ["segunda 07:59 (fechado)", "2026-10-12T10:59:00Z", true],
+    ["segunda 08:00 (aberto)", "2026-10-12T11:00:00Z", false],
+  ])("calendário real: %s", async (_n, iso, enqueues) => {
+    vi.setSystemTime(new Date(iso));
+    await post(text);
+    expect(m.enqueueProcessMessage.mock.calls.length).toBe(enqueues ? 1 : 0);
+  });
+  it("feriado em dia útil e janela de sábado respeitados", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { ai_after_hours_pending_enabled: true, business_calendar: { timeZone: "America/Sao_Paulo", weekly: { mon: [{ start: "08:00", end: "18:00" }], sat: [{ start: "09:00", end: "13:00" }] }, closedDates: ["2026-10-12"] } } });
+    vi.setSystemTime(new Date("2026-10-12T15:00:00Z")); // segunda feriado
+    await post(text);
+    expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date("2026-10-10T15:00:00Z")); // sábado 12:00, aberto
+    await post(text);
+    expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
   });
 });
