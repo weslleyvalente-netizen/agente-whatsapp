@@ -5,6 +5,7 @@ import { startProcessDocumentWorker } from "./workers/process-document.js";
 import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout.js";
 import { startStaleConversationFollowupWorker } from "./workers/stale-conversation-followup.js";
 import { startLeadSlaWorker } from "./workers/lead-sla.js";
+import { startPushNotificationsWorker } from "./workers/push-notifications.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
 
 async function main() {
@@ -17,6 +18,7 @@ async function main() {
     startTakeoverTimeoutWorker(),
     startStaleConversationFollowupWorker(),
     startLeadSlaWorker(),
+    startPushNotificationsWorker(),
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
   ];
