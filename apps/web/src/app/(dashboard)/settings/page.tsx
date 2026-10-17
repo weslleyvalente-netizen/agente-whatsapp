@@ -15,6 +15,7 @@ import { Eye, EyeOff, Save, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact, SalesRep, SalesRepAvailability } from "@aula-agente/shared";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
+import { RecoverMessagesCard } from "@/components/settings/recover-messages-card";
 import {
   DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
   DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES,
@@ -697,6 +698,8 @@ export default function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      <RecoverMessagesCard />
 
       <Card>
         <CardHeader><CardTitle>Distribuição</CardTitle><CardDescription>Rodízio de novos leads entre os vendedores, com prazo de resposta.</CardDescription></CardHeader>
