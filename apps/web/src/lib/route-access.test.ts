@@ -29,6 +29,14 @@ describe("guardDecision", () => {
   it("enquanto o papel carrega, rota restrita espera (sem mostrar conteúdo)", () => {
     expect(guardDecision("/agents", null)).toEqual({ kind: "wait" });
   });
+  it("falha ao buscar o papel libera (a trava real é RLS/API) e nunca prende o gestor", () => {
+    expect(guardDecision("/settings", null, "error")).toEqual({ kind: "allow" });
+  });
+  it("status loading espera mesmo com papel antigo; ready com papel nulo espera", () => {
+    expect(guardDecision("/settings", "admin", "loading")).toEqual({ kind: "wait" });
+    expect(guardDecision("/settings", null, "ready")).toEqual({ kind: "wait" });
+    expect(guardDecision("/settings", "agent", "ready")).toEqual({ kind: "redirect", to: SELLER_HOME });
+  });
   it("gestor passa em tudo; rota livre passa mesmo sem papel", () => {
     expect(guardDecision("/costs", "owner")).toEqual({ kind: "allow" });
     expect(guardDecision("/team", "admin")).toEqual({ kind: "allow" });

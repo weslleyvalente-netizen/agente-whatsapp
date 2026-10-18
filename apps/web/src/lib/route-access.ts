@@ -12,9 +12,11 @@ export const isManagerOnlyPath = (pathname: string): boolean =>
 
 export type GuardDecision = { kind: "allow" } | { kind: "wait" } | { kind: "redirect"; to: string };
 
-/** role === null significa "ainda carregando": nada restrito aparece até saber o papel. */
-export function guardDecision(pathname: string, role: string | null): GuardDecision {
+/** "loading": nada restrito aparece até saber o papel. "error" (falha ao buscar o papel) libera a tela: a trava de verdade está
+ *  no banco (RLS) e na API, e a guarda é só cosmética, então um gestor nunca fica preso em "Carregando...". */
+export function guardDecision(pathname: string, role: string | null, status: "loading" | "ready" | "error" = role === null ? "loading" : "ready"): GuardDecision {
   if (!isManagerOnlyPath(pathname)) return { kind: "allow" };
-  if (role === null) return { kind: "wait" };
+  if (status === "error") return { kind: "allow" };
+  if (status === "loading" || role === null) return { kind: "wait" };
   return isManagerRole(role) ? { kind: "allow" } : { kind: "redirect", to: SELLER_HOME };
 }

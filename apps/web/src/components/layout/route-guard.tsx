@@ -9,8 +9,8 @@ import { guardDecision } from "@/lib/route-access";
 export function RouteGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { role } = useMyRole({ always: true });
-  const decision = guardDecision(pathname, role);
+  const { role, status } = useMyRole({ always: true });
+  const decision = guardDecision(pathname, role, status);
 
   useEffect(() => {
     if (decision.kind === "redirect") router.replace(decision.to);
