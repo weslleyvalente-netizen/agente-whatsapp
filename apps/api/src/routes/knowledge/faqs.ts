@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { createFaqSchema, updateFaqSchema } from "@aula-agente/shared";
 import { getAdminClient } from "@aula-agente/database";
-import { getFaqsByAgent, createFaq, updateFaq, deleteFaq } from "@aula-agente/database";
+import { getFaqsByAgent, getFaqById, createFaq, updateFaq, deleteFaq } from "@aula-agente/database";
+import { isManager } from "../../lib/lead-visibility.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 export default async function knowledgeFaqRoutes(app: FastifyInstance) {
@@ -59,7 +60,11 @@ export default async function knowledgeFaqRoutes(app: FastifyInstance) {
       }
 
       const db = getAdminClient();
-      const faq = await updateFaq(db, request.params.faqId, parseResult.data);
+      const existing = await getFaqById(db, request.params.faqId);
+      if (!existing) return reply.status(404).send({ error: "FAQ not found" });
+      const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id && isManager(m.role));
+      if (!membership) return reply.status(403).send({ error: "Admin access required" });
+      const faq = await updateFaq(db, existing.id, parseResult.data);
       return faq;
     }
   );
@@ -69,7 +74,11 @@ export default async function knowledgeFaqRoutes(app: FastifyInstance) {
     "/faqs/:faqId",
     async (request, reply) => {
       const db = getAdminClient();
-      await deleteFaq(db, request.params.faqId);
+      const existing = await getFaqById(db, request.params.faqId);
+      if (!existing) return reply.status(404).send({ error: "FAQ not found" });
+      const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id && isManager(m.role));
+      if (!membership) return reply.status(403).send({ error: "Admin access required" });
+      await deleteFaq(db, existing.id);
       return reply.status(204).send();
     }
   );

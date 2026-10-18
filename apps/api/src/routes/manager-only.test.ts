@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 
-const state = vi.hoisted(() => ({ role: "agent" }));
+const state = vi.hoisted(() => ({ role: "agent", org: "org-1" }));
 const db = vi.hoisted(() => ({
   getAdminClient: vi.fn(() => ({})),
   getAgentById: vi.fn(),
+  getFaqById: vi.fn(),
+  updateFaq: vi.fn(async () => ({ id: "f1" })),
+  deleteFaq: vi.fn(async () => undefined),
   getInstanceById: vi.fn(),
   getAgentMessagesForCost: vi.fn(async () => []),
   getAiUsageEventsForCost: vi.fn(async () => []),
@@ -23,13 +26,14 @@ vi.mock("../services/evolution.service.js", () => ({ getInstanceQrCode: vi.fn(as
 vi.mock("../lib/fx-rates.js", () => ({ getUsdBrlRates: vi.fn(async () => new Map()), rateOnOrBefore: vi.fn() }));
 vi.mock("../middleware/auth.js", () => ({
   authMiddleware: async (request: any) => {
-    request.user = { id: "u1", email: "u@x.com", memberships: [{ organization_id: "org-1", role: state.role }] };
+    request.user = { id: "u1", email: "u@x.com", memberships: [{ organization_id: state.org, role: state.role }] };
   },
 }));
 
 import agentConfigRoutes from "./agent-config/index.js";
 import costRoutes from "./costs/index.js";
 import instanceRoutes from "./instances/index.js";
+import knowledgeFaqRoutes from "./knowledge/faqs.js";
 
 const requests = [
   { name: "config do agente (GET)", method: "GET", url: "/agents/a1/config" },
@@ -37,6 +41,8 @@ const requests = [
   { name: "publicar", method: "POST", url: "/agents/a1/config/publish", payload: { changelog: "x" } },
   { name: "versões", method: "GET", url: "/agents/a1/versions" },
   { name: "custos", method: "GET", url: "/organizations/org-1/costs/summary" },
+  { name: "FAQ (PATCH)", method: "PATCH", url: "/faqs/f1", payload: { answer: "x" } },
+  { name: "FAQ (DELETE)", method: "DELETE", url: "/faqs/f1" },
   { name: "QR code", method: "GET", url: "/instances/i1/qrcode" },
 ] as const;
 
@@ -47,7 +53,9 @@ describe("rotas de configuração/custos exigem owner/admin", () => {
     db.getAgentById.mockResolvedValue({ id: "a1", organization_id: "org-1" });
     db.getInstanceById.mockResolvedValue({ id: "i1", organization_id: "org-1", instance_name: "n" });
     app = Fastify();
-    await app.register(agentConfigRoutes); await app.register(costRoutes); await app.register(instanceRoutes);
+    await app.register(agentConfigRoutes); await app.register(costRoutes); await app.register(instanceRoutes); await app.register(knowledgeFaqRoutes);
+    db.getFaqById.mockResolvedValue({ id: "f1", organization_id: "org-1" });
+    state.org = "org-1";
     await app.ready();
   });
   afterEach(async () => { await app.close(); });
@@ -65,5 +73,13 @@ describe("rotas de configuração/custos exigem owner/admin", () => {
   it("dono também passa nos custos", async () => {
     state.role = "owner";
     expect((await app.inject({ method: "GET", url: "/organizations/org-1/costs/summary" })).statusCode).toBe(200);
+  });
+  it.each([["PATCH", { answer: "x" }], ["DELETE", undefined]] as const)("admin de OUTRA organização recebe 403 em FAQ %s", async (method, payload) => {
+    state.role = "admin"; state.org = "org-2";
+    expect((await app.inject({ method, url: "/faqs/f1", payload })).statusCode).toBe(403);
+  });
+  it("FAQ inexistente devolve 404", async () => {
+    state.role = "admin"; db.getFaqById.mockResolvedValue(null);
+    expect((await app.inject({ method: "DELETE", url: "/faqs/zz" })).statusCode).toBe(404);
   });
 });
