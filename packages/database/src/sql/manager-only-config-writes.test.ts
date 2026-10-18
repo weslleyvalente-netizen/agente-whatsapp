@@ -70,6 +70,16 @@ describe("tabelas do dia a dia do vendedor não mudam", () => {
   });
 });
 
+describe("trava de políticas extras", () => {
+  it("falha se existir política de escrita permissiva extra (ex.: criada pelo painel)", async () => {
+    const db = await createRlsDb([]);
+    await db.exec("CREATE POLICY \"hotfix_painel\" ON public.agents FOR ALL USING (true)");
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync(new URL("../../../../supabase/migrations/" + MIG, import.meta.url), "utf8");
+    await expect(db.exec(sql)).rejects.toThrow(/fora do padrão/);
+  });
+});
+
 describe("idempotência", () => {
   it("rodar a migration duas vezes não falha", async () => {
     const db = await createRlsDb([MIG, MIG]);

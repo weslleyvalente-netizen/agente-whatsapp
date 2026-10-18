@@ -8,3 +8,5 @@ dist/
 .DS_Store
 supabase/.temp/
 .worktrees/
+
+.superpowers-*.md
