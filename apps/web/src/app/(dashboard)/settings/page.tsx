@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { useOrganization } from "@/providers/organization-provider";
 import { createClient } from "@/lib/supabase/client";
@@ -16,7 +17,6 @@ import { Switch } from "@/components/ui/switch";
 import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredContact, SalesRep, SalesRepAvailability } from "@aula-agente/shared";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
 import { RecoverMessagesCard } from "@/components/settings/recover-messages-card";
-import { PushNotificationsCard } from "@/components/settings/push-notifications-card";
 import { SystemAlertsCard } from "@/components/settings/system-alerts-card";
 import {
   DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
@@ -701,7 +701,15 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <PushNotificationsCard />
+      <Card>
+        <CardHeader>
+          <CardTitle>Notificações neste aparelho</CardTitle>
+          <CardDescription>
+            Agora fica no menu da conta (canto superior direito), para todos os usuários.{" "}
+            <Link href="/notificacoes" className="underline">Abrir notificações</Link>
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       <SystemAlertsCard />
 

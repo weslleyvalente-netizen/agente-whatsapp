@@ -134,6 +134,12 @@ export async function getFaqsByAgent(client: SupabaseClient, agentId: string) {
   return data as KnowledgeFaq[];
 }
 
+export async function getFaqById(client: SupabaseClient, id: string) {
+  const { data, error } = await client.from("knowledge_faqs").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data as KnowledgeFaq | null;
+}
+
 export async function createFaq(
   client: SupabaseClient,
   faq: Omit<KnowledgeFaq, "id" | "created_at" | "updated_at">

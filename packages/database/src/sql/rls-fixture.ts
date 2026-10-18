@@ -21,12 +21,23 @@ CREATE TABLE public.opportunity_events (id uuid PRIMARY KEY DEFAULT gen_random_u
 CREATE TABLE public.tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), contact_id uuid NOT NULL REFERENCES public.wa_contacts(id) ON DELETE CASCADE, conversation_id uuid REFERENCES public.conversations(id) ON DELETE SET NULL, opportunity_id uuid REFERENCES public.opportunities(id) ON DELETE SET NULL, assignee_id uuid, status text NOT NULL DEFAULT 'pending');
 CREATE TABLE public.task_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), task_id uuid NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE, event_type text NOT NULL DEFAULT 'created');
 CREATE TABLE public.lead_assignments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), contact_id uuid NOT NULL REFERENCES public.wa_contacts(id), conversation_id uuid NOT NULL REFERENCES public.conversations(id), rep_id uuid REFERENCES public.sales_reps(id), status text NOT NULL DEFAULT 'accepted');
+CREATE TABLE public.agents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), name text NOT NULL DEFAULT 'x');
+CREATE TABLE public.evolution_instances (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), instance_name text NOT NULL DEFAULT 'x');
+CREATE TABLE public.knowledge_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), title text NOT NULL DEFAULT 'x');
+CREATE TABLE public.knowledge_chunks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), content text NOT NULL DEFAULT 'x');
+CREATE TABLE public.knowledge_faqs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), question text NOT NULL DEFAULT 'x');
+CREATE TABLE public.agent_configs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), prompt text NOT NULL DEFAULT 'x');
+CREATE TABLE public.agent_versions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), prompt text NOT NULL DEFAULT 'x');
+CREATE TABLE public.agent_playground_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id));
+CREATE TABLE public.agent_playground_messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), content text NOT NULL DEFAULT 'x');
+CREATE TABLE public.agent_trainer_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id));
+CREATE TABLE public.agent_trainer_messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), content text NOT NULL DEFAULT 'x');
 CREATE INDEX idx_messages_conversation ON public.messages(conversation_id);
 
 CREATE FUNCTION public.get_user_org_ids() RETURNS SETOF uuid LANGUAGE sql SECURITY DEFINER STABLE AS $$ SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid() $$;
 
 DO $$ DECLARE t text; BEGIN
-  FOREACH t IN ARRAY ARRAY['organizations','organization_members','sales_reps','wa_contacts','conversations','messages','conversation_notes','conversation_reads','conversation_qualifications','conversation_qualification_events','handoff_events','opportunities','opportunity_events','tasks','task_events','lead_assignments'] LOOP
+  FOREACH t IN ARRAY ARRAY['organizations','organization_members','sales_reps','wa_contacts','conversations','messages','conversation_notes','conversation_reads','conversation_qualifications','conversation_qualification_events','handoff_events','opportunities','opportunity_events','tasks','task_events','lead_assignments','agents','evolution_instances','knowledge_documents','knowledge_chunks','knowledge_faqs','agent_configs','agent_versions','agent_playground_sessions','agent_playground_messages','agent_trainer_sessions','agent_trainer_messages'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;
   -- Políticas "por organização" de hoje (00008 loop, 00011, 00020, 00025, 00028).
@@ -36,6 +47,15 @@ DO $$ DECLARE t text; BEGIN
     EXECUTE format('CREATE POLICY "%1$s_update" ON public.%1$s FOR UPDATE USING (organization_id IN (SELECT get_user_org_ids()))', t);
     EXECUTE format('CREATE POLICY "%1$s_delete" ON public.%1$s FOR DELETE USING (organization_id IN (SELECT get_user_org_ids()))', t);
   END LOOP;
+  -- Configuração do agente (00008, 00015, 00017): hoje qualquer membro escreve. agent_versions (00015) só tem select/insert.
+  FOREACH t IN ARRAY ARRAY['agents','evolution_instances','knowledge_documents','knowledge_chunks','knowledge_faqs','agent_configs','agent_playground_sessions','agent_playground_messages','agent_trainer_sessions','agent_trainer_messages'] LOOP
+    EXECUTE format('CREATE POLICY "%1$s_select" ON public.%1$s FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))', t);
+    EXECUTE format('CREATE POLICY "%1$s_insert" ON public.%1$s FOR INSERT WITH CHECK (organization_id IN (SELECT get_user_org_ids()))', t);
+    EXECUTE format('CREATE POLICY "%1$s_update" ON public.%1$s FOR UPDATE USING (organization_id IN (SELECT get_user_org_ids()))', t);
+    EXECUTE format('CREATE POLICY "%1$s_delete" ON public.%1$s FOR DELETE USING (organization_id IN (SELECT get_user_org_ids()))', t);
+  END LOOP;
+  EXECUTE 'CREATE POLICY "agent_versions_select" ON public.agent_versions FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))';
+  EXECUTE 'CREATE POLICY "agent_versions_insert" ON public.agent_versions FOR INSERT WITH CHECK (organization_id IN (SELECT get_user_org_ids()))';
   FOREACH t IN ARRAY ARRAY['conversation_qualifications','opportunities'] LOOP
     EXECUTE format('CREATE POLICY "%1$s_select" ON public.%1$s FOR SELECT USING (organization_id IN (SELECT get_user_org_ids()))', t);
     EXECUTE format('CREATE POLICY "%1$s_insert" ON public.%1$s FOR INSERT WITH CHECK (organization_id IN (SELECT get_user_org_ids()))', t);

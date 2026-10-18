@@ -11,6 +11,7 @@ import { suggestConfigFromSystemPrompt } from "../../services/import-suggestion.
 import { proposeConfigChange } from "../../services/trainer.service.js";
 import { applyTrainerProposal, rejectTrainerProposal } from "../../services/trainer-decisions.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
+import { isManager } from "../../lib/lead-visibility.js";
 
 // `loadOwnedProposal` (in trainer-decisions.service.ts) throws distinct,
 // distinguishable messages for three different failure conditions. Map each
@@ -31,7 +32,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.get<{ Params: { agentId: string } }>("/agents/:agentId/config", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     return getAgentConfigWithStatus(db, request.params.agentId);
@@ -45,7 +46,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
 
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     const draft = await patchAgentConfig(db, request.params.agentId, parseResult.data, request.user.id);
@@ -55,7 +56,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.post<{ Params: { agentId: string } }>("/agents/:agentId/playground/sessions", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     const session = await createPlaygroundSession(db, {
@@ -76,7 +77,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       const session = await getPlaygroundSessionById(db, request.params.sessionId);
@@ -99,7 +100,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       const session = await getPlaygroundSessionById(db, request.params.sessionId);
@@ -119,7 +120,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
 
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     const version = await publishDraft(db, request.params.agentId, parseResult.data.changelog, request.user.id);
@@ -129,7 +130,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.post<{ Params: { agentId: string } }>("/agents/:agentId/config/discard", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     try {
@@ -143,7 +144,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.post<{ Params: { agentId: string } }>("/agents/:agentId/config/import-suggestion", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     const suggestion = await suggestConfigFromSystemPrompt(db, request.params.agentId);
@@ -153,7 +154,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.get<{ Params: { agentId: string } }>("/agents/:agentId/versions", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     return listVersions(db, request.params.agentId);
@@ -164,7 +165,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       return getVersionWithDiff(db, request.params.agentId, request.params.versionId);
@@ -176,7 +177,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       return restoreVersion(db, request.params.agentId, request.params.versionId);
@@ -186,7 +187,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
   app.post<{ Params: { agentId: string } }>("/agents/:agentId/trainer/sessions", async (request, reply) => {
     const db = getAdminClient();
     const agent = await getAgentById(db, request.params.agentId);
-    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+    const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
     const session = await createTrainerSession(db, {
@@ -202,7 +203,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       const session = await getTrainerSessionById(db, request.params.sessionId);
@@ -224,7 +225,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       const session = await getTrainerSessionById(db, request.params.sessionId);
@@ -278,7 +279,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       try {
@@ -300,7 +301,7 @@ export default async function agentConfigRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const db = getAdminClient();
       const agent = await getAgentById(db, request.params.agentId);
-      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id);
+      const membership = request.user.memberships.find((m) => m.organization_id === agent.organization_id && isManager(m.role));
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
       try {

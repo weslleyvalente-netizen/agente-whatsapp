@@ -3,6 +3,7 @@ import { computeMessageCostUsd } from "@aula-agente/shared";
 import type { MessageMetadata, AiUsageEvent } from "@aula-agente/shared";
 import { getAdminClient, getAgentMessagesForCost, getAiUsageEventsForCost } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
+import { isManager } from "../../lib/lead-visibility.js";
 import { getUsdBrlRates, rateOnOrBefore, type RateMap } from "../../lib/fx-rates.js";
 
 interface DailyCost {
@@ -225,7 +226,7 @@ export default async function costRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { organizationId } = request.params;
       const membership = request.user.memberships.find(
-        (m) => m.organization_id === organizationId
+        (m) => m.organization_id === organizationId && isManager(m.role)
       );
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
