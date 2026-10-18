@@ -111,9 +111,9 @@ export default async function instanceRoutes(app: FastifyInstance) {
       const instance = await getInstanceById(db, request.params.instanceId);
 
       const membership = request.user.memberships.find(
-        (m) => m.organization_id === instance.organization_id
+        (m) => m.organization_id === instance.organization_id && m.role !== "agent"
       );
-      if (!membership) return reply.status(403).send({ error: "Access denied" });
+      if (!membership) return reply.status(403).send({ error: "Admin access required" });
 
       const qrData = await getInstanceQrCode(instance.instance_name);
       return qrData;
