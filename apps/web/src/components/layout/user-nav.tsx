@@ -10,7 +10,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LogOut } from "lucide-react";
+import { Bell, LogOut } from "lucide-react";
+import { USER_MENU_LINKS } from "./user-menu-items";
 
 interface UserNavProps {
   email: string;
@@ -37,6 +38,12 @@ export function UserNav({ email }: UserNavProps) {
         <span className="hidden truncate text-sm md:inline">{email}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {USER_MENU_LINKS.map((link) => (
+          <DropdownMenuItem key={link.href} onClick={() => router.push(link.href)}>
+            <Bell className="mr-2 h-4 w-4" />
+            {link.label}
+          </DropdownMenuItem>
+        ))}
         <DropdownMenuItem onClick={handleLogout}>
           <LogOut className="mr-2 h-4 w-4" />
           Sair

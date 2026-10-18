@@ -3,40 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Home,
-  Inbox,
-  Kanban,
-  Bot,
-  Radio,
-  Users,
-  Settings,
-  DollarSign,
-  ListChecks,
-  Phone,
-  ShoppingBag,
-  PanelLeftClose,
-  PanelLeft,
-} from "lucide-react";
+import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { OrgSwitcher } from "./org-switcher";
 import { StatusLamp } from "@/components/ui/status-lamp";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
-
-const navigation: { name: string; href: string; icon: typeof Home; managerOnly?: boolean }[] = [
-  { name: "Início", href: "/", icon: Home },
-  { name: "Conversas", href: "/inbox", icon: Inbox },
-  { name: "Funil de vendas", href: "/opportunities", icon: Kanban },
-  { name: "Tarefas", href: "/tasks", icon: ListChecks },
-  { name: "Ligações", href: "/calls", icon: Phone, managerOnly: true },
-  { name: "Catálogo", href: "/catalog", icon: ShoppingBag },
-  { name: "Agentes", href: "/agents", icon: Bot },
-  { name: "Instancias", href: "/instances", icon: Radio },
-  { name: "Custos", href: "/costs", icon: DollarSign },
-  { name: "Equipe", href: "/team", icon: Users },
-  { name: "Configuracoes", href: "/settings", icon: Settings },
-];
+import { isManagerRole } from "@/lib/route-access";
+import { visibleNavigation } from "./nav-items";
 
 const COLLAPSED_STORAGE_KEY = "moto-e-trilha-sidebar-collapsed";
 
@@ -52,7 +26,7 @@ export function SidebarBody({
 }) {
   const pathname = usePathname();
   const { role } = useMyRole({ always: true });
-  const isManager = role === "owner" || role === "admin";
+  const isManager = isManagerRole(role);
   return (
     <>
       <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
@@ -83,7 +57,7 @@ export function SidebarBody({
       )}
 
       <nav className="flex-1 space-y-0.5 p-2 pl-3">
-        {navigation.filter((item) => !item.managerOnly || isManager).map((item) => {
+        {visibleNavigation(isManager).map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
