@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-process.env.EVOLUTION_API_URL = "http://evo.test";
-process.env.EVOLUTION_API_KEY = "k";
+// O serviço lê as variáveis ao ser importado: elas precisam existir antes do import (hoisted).
+vi.hoisted(() => {
+  process.env.EVOLUTION_API_URL = "http://evo.test";
+  process.env.EVOLUTION_API_KEY = "k";
+});
 
-const { findStoredMessages } = await import("./evolution.service.js");
+import { findStoredMessages } from "./evolution.service.js";
 
 const rec = (id: string, ts: number) => ({ key: { remoteJid: "5511@s.whatsapp.net", fromMe: false, id }, messageType: "conversation", messageTimestamp: ts });
 const reply = (records: unknown[], pages = 1) => ({ ok: true, json: async () => ({ messages: { records, pages } }) });
