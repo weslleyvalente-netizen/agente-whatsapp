@@ -8,10 +8,12 @@ import { startLeadSlaWorker } from "./workers/lead-sla.js";
 import { startPushNotificationsWorker } from "./workers/push-notifications.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
 
+import { startFinancingWorker } from './workers/financing.js';
+
 async function main() {
   console.log("Starting workers...");
 
-  const workers = [
+  const workers: Array<{ close(): Promise<unknown> }> = [
     startProcessMessageWorker(),
     startSendMessageWorker(),
     startProcessDocumentWorker(),
@@ -22,6 +24,8 @@ async function main() {
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
   ];
+
+  if (process.env.FINANCING_MODE === 'mock') workers.push(await startFinancingWorker());
 
   console.log(`${workers.length} workers started successfully`);
 
