@@ -142,6 +142,22 @@ export default async function opportunityRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Contact does not belong to this organization" });
       }
 
+      // Um contato com 2 negócios abertos trava o pipeline automático (sync_sales_pipeline e o "Pronto para assumir" exigem exatamente 1).
+      // Tarefas humanas já abrem o negócio sozinhas (gatilho trg_human_task_opens_opportunity): devolve o existente em vez de duplicar.
+      const { data: existingOpen, error: existingError } = await db
+        .from("opportunities")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .eq("contact_id", parseResult.data.contact_id)
+        .eq("status", "open")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (existingOpen) {
+        return reply.status(409).send({ error: "Este cliente já tem um negócio aberto. Abra o card existente em vez de criar outro.", opportunity_id: existingOpen.id });
+      }
+
       const opportunity = await createOpportunity(db, {
         organization_id: organizationId,
         contact_id: parseResult.data.contact_id,
