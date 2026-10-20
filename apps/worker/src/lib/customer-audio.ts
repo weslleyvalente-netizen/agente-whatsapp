@@ -59,7 +59,7 @@ export async function storeCustomerAudio(
     if (!message.evolution_message_id) return { ok: false, reason: "missing_evolution_message_id", permanent: true };
 
     const conversation = await getConversationById(db, message.conversation_id);
-    const instance = await getInstanceById(db, conversation.instance_id);
+    const instance = await getInstanceById(db, conversation.evolution_instance_id);
 
     const { base64, mimetype } = await fetchAudio(instance.instance_name, message.evolution_message_id);
     const buffer = Buffer.from(base64 ?? "", "base64");
