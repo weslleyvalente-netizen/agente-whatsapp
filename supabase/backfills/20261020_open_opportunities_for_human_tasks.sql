@@ -1,68 +1,59 @@
 -- Backfill: aplica a regra de 20261021120000_human_task_opens_opportunity.sql às tarefas humanas abertas JÁ existentes.
--- NÃO rode antes de aplicar a migration. Rode o bloco 1 (preview) primeiro, confira, e só então o bloco 2 (dentro de transação).
--- Mesma regra do gatilho: flag sales_auto_pipeline_enabled = true, tarefa humana aberta (pending/in_progress/rescheduled),
--- contato sem nenhum negócio aberto, telefone fora de organization_ignored_contacts; 1 negócio por contato (tarefa mais antiga).
--- Dono = assignee_id se for vendedor (sales_reps); senão sem dono (e o gatilho trg_owner_on_opportunity_open herda da conversa).
--- Operação = a do último negócio do contato, ou 'vehicle_sale'; etapa 'interest_received'.
+-- NÃO rode antes de aplicar a migration (usa public._open_opportunity_for_task: mesma regra e mesmos pulos do gatilho).
+-- Passos: (1) rode o PREVIEW e confira; (2) rode o bloco APLICAR, que termina em ROLLBACK; confira a contagem;
+-- (3) só então troque o ROLLBACK por COMMIT e rode de novo. Este arquivo NUNCA confirma sozinho.
+-- Regra: flag sales_auto_pipeline_enabled = true; tarefa humana aberta sem opportunity_id; contato SEM nenhum negócio (aberto,
+-- ganho ou perdido); telefone fora de organization_ignored_contacts; operação inferida do tipo da tarefa (consortium_followup,
+-- vehicle_followup, financing_followup, libera_cred_resumption); outros tipos NÃO criam e ficam contados no preview.
+-- Contatos com a linha travada por outra transação são pulados (SKIP LOCKED); rode de novo depois.
 
--- ===== 1) PREVIEW (rode primeiro; somente leitura) =====
--- SELECT DISTINCT ON (t.organization_id, t.contact_id) t.organization_id, t.contact_id, t.id AS task_id, t.assignee_id,
---        EXISTS (SELECT 1 FROM public.sales_reps r WHERE r.organization_id = t.organization_id AND r.user_id = t.assignee_id) AS owner_is_rep
+-- ===== 1) PREVIEW (somente leitura): TODAS as tarefas humanas abertas sem negócio aberto, com o motivo =====
+-- SELECT t.organization_id, t.contact_id, t.id AS task_id, t.type, t.opportunity_id,
+--        public._task_type_operation(t.type) AS operation,
+--        (SELECT string_agg(o.status, ',' ORDER BY o.created_at) FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id) AS historico,
+--        CASE
+--          WHEN org.settings->'sales_auto_pipeline_enabled' IS DISTINCT FROM 'true'::jsonb THEN 'pula: flag desligada'
+--          WHEN t.opportunity_id IS NOT NULL THEN 'pula: tarefa ja ligada a um negocio'
+--          WHEN EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id) THEN 'pula: contato ja tem historico de negocio'
+--          WHEN EXISTS (SELECT 1 FROM public.organization_ignored_contacts i WHERE i.organization_id = w.organization_id AND i.phone = w.phone) THEN 'pula: contato ignorado'
+--          WHEN public._task_type_operation(t.type) IS NULL THEN 'pula: operacao nao inferivel pelo tipo da tarefa'
+--          ELSE 'CRIA' END AS decisao
 --   FROM public.tasks t
---   JOIN public.organizations org ON org.id = t.organization_id AND org.settings->'sales_auto_pipeline_enabled' = 'true'::jsonb
+--   JOIN public.organizations org ON org.id = t.organization_id
 --   JOIN public.wa_contacts w ON w.id = t.contact_id AND w.organization_id = t.organization_id
 --  WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled')
 --    AND NOT EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id AND o.status = 'open')
---    AND NOT EXISTS (SELECT 1 FROM public.organization_ignored_contacts i WHERE i.organization_id = w.organization_id AND i.phone = w.phone)
---  ORDER BY t.organization_id, t.contact_id, t.created_at, t.id;
+--  ORDER BY decisao, t.organization_id, t.contact_id, t.created_at, t.id;
+-- Resumo: troque o SELECT acima por  SELECT decisao, count(*) ... GROUP BY decisao  (ou envolva em subconsulta).
 
--- ===== 2) APLICAR =====
+-- ===== 2) APLICAR (transação; termina em ROLLBACK) =====
 BEGIN;
--- Trava os contatos afetados na ordem do id para não competir com sync_sales_pipeline/gatilho.
-SELECT w.id FROM public.wa_contacts w
- WHERE w.id IN (SELECT t.contact_id FROM public.tasks t WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled'))
- ORDER BY w.id FOR UPDATE;
-
-WITH pick AS (
-  SELECT DISTINCT ON (t.organization_id, t.contact_id) t.organization_id, t.contact_id, t.id AS task_id, t.assignee_id
-    FROM public.tasks t
-    JOIN public.organizations org ON org.id = t.organization_id AND org.settings->'sales_auto_pipeline_enabled' = 'true'::jsonb
-    JOIN public.wa_contacts w ON w.id = t.contact_id AND w.organization_id = t.organization_id
-   WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled')
-     AND NOT EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id AND o.status = 'open')
-     AND NOT EXISTS (SELECT 1 FROM public.organization_ignored_contacts i WHERE i.organization_id = w.organization_id AND i.phone = w.phone)
-   ORDER BY t.organization_id, t.contact_id, t.created_at, t.id
-), ins AS (
-  INSERT INTO public.opportunities(organization_id, contact_id, operation, initial_operation, stage, status, owner_id, owner_assigned_at, last_progress_at)
-  SELECT p.organization_id, p.contact_id, op.operation, op.operation, 'interest_received', 'open',
-         rep.user_id, CASE WHEN rep.user_id IS NOT NULL THEN now() END, now()
-    FROM pick p
-    CROSS JOIN LATERAL (SELECT coalesce((SELECT o.operation FROM public.opportunities o WHERE o.organization_id = p.organization_id AND o.contact_id = p.contact_id ORDER BY o.created_at DESC, o.id LIMIT 1), 'vehicle_sale') AS operation) op
-    LEFT JOIN LATERAL (SELECT r.user_id FROM public.sales_reps r WHERE r.organization_id = p.organization_id AND r.user_id = p.assignee_id LIMIT 1) rep ON true
-  RETURNING id, organization_id, contact_id, operation
-), ev AS (
-  INSERT INTO public.opportunity_events(organization_id, opportunity_id, event_type, new_value, evidence, changed_by_type)
-  SELECT i.organization_id, i.id, 'created', jsonb_build_object('operation', i.operation, 'stage', 'interest_received', 'backfill', '20261020_open_opportunities_for_human_tasks'),
-         'Negócio criado porque o vendedor recebeu uma tarefa sem negócio', 'system'
-    FROM ins i
-  RETURNING opportunity_id
-)
-UPDATE public.tasks t SET opportunity_id = i.id
-  FROM pick p JOIN ins i ON i.organization_id = p.organization_id AND i.contact_id = p.contact_id
- WHERE t.id = p.task_id AND t.opportunity_id IS NULL;
-
+SELECT public._open_opportunity_for_task(p.task_id, 'human_task_backfill') AS opportunity_id
+  FROM (
+    SELECT DISTINCT ON (t.organization_id, t.contact_id) t.id AS task_id
+      FROM public.tasks t
+     WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled') AND t.opportunity_id IS NULL
+       AND public._task_type_operation(t.type) IS NOT NULL
+     ORDER BY t.organization_id, t.contact_id, t.created_at, t.id
+  ) p;
 -- Confira antes de confirmar:
--- SELECT count(*) FROM public.opportunity_events WHERE new_value->>'backfill' = '20261020_open_opportunities_for_human_tasks';
-COMMIT;  -- ou ROLLBACK;
+-- SELECT count(*) FROM public.opportunity_events WHERE new_value->>'source' = 'human_task_backfill' AND created_at >= now() - interval '1 hour';
+ROLLBACK;  -- troque por COMMIT; só depois de conferir
 
--- ===== 3) REVERSÃO =====
--- Desvincula as tarefas e apaga SOMENTE os negócios criados por este backfill que ninguém mexeu depois (sem outros eventos):
+-- ===== 3) REVERSÃO (só negócios criados por este backfill; recusa se alguém já usou) =====
 -- BEGIN;
--- WITH mine AS (
---   SELECT e.opportunity_id FROM public.opportunity_events e
---    WHERE e.new_value->>'backfill' = '20261020_open_opportunities_for_human_tasks'
---      AND NOT EXISTS (SELECT 1 FROM public.opportunity_events x WHERE x.opportunity_id = e.opportunity_id AND x.id <> e.id)
--- ), unl AS (UPDATE public.tasks SET opportunity_id = NULL WHERE opportunity_id IN (SELECT opportunity_id FROM mine) RETURNING 1)
--- DELETE FROM public.opportunities WHERE id IN (SELECT opportunity_id FROM mine);
--- COMMIT;
--- (tasks.opportunity_id tem ON DELETE SET NULL e opportunity_events ON DELETE CASCADE; o UPDATE explícito é só por clareza.)
+-- DO $$
+-- DECLARE n_used integer;
+-- BEGIN
+--   CREATE TEMP TABLE _bf_opps ON COMMIT DROP AS
+--     SELECT e.opportunity_id AS id FROM public.opportunity_events e WHERE e.new_value->>'source' = 'human_task_backfill' AND e.event_type = 'created';
+--   SELECT count(*) INTO n_used FROM _bf_opps b JOIN public.opportunities o ON o.id = b.id
+--    WHERE EXISTS (SELECT 1 FROM public.lead_assignments l WHERE l.opportunity_id = b.id)
+--       OR EXISTS (SELECT 1 FROM public.sales_call_logs c WHERE c.opportunity_id = b.id)
+--       OR EXISTS (SELECT 1 FROM public.opportunity_events x WHERE x.opportunity_id = b.id AND x.id NOT IN (SELECT id FROM public.opportunity_events WHERE new_value->>'source' = 'human_task_backfill'))
+--       OR o.updated_at > o.created_at + interval '1 minute' OR o.status <> 'open';
+--   IF n_used > 0 THEN RAISE EXCEPTION 'Reversão recusada: % negócio(s) do backfill já foram usados (distribuição, ligações, eventos, edição ou fechamento); trate-os manualmente', n_used; END IF;
+--   UPDATE public.tasks SET opportunity_id = NULL WHERE opportunity_id IN (SELECT id FROM _bf_opps);
+--   DELETE FROM public.opportunities WHERE id IN (SELECT id FROM _bf_opps);
+-- END $$;
+-- COMMIT;  -- confira antes; use ROLLBACK para desistir
