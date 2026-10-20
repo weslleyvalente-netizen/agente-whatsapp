@@ -49,3 +49,9 @@ Documentação descreve sandbox com chave de teste, consulta assíncrona e polli
 ## Riscos / próximos passos antes de produção
 
 Confirmar licença/termos FIPE e regras do provedor. Validar migrações e comportamento no ambiente Supabase hospedado (testes atuais são locais). Definir retenção/expurgo de fichas e evidências; hoje não há expurgo automático. Revalidar veículo e dados atuais antes de eventual consulta REAL/reconsulta; snapshots atuais são a ficha original, apropriada ao mock. Alertas são internos com polling de 30s, sem push de financiamento nem envio ao cliente. Definir formulário de consentimento/disparo e revisão humana da ficha antes de integrar provedor real.
+
+## Área dos vendedores e portal Ferramentas
+
+A rota autenticada `/financiamento` reúne cliente/negócio atribuído, veículo disponível, autorização com validade, bancos mock, criação idempotente e histórico. O menu de vendedores inclui Financiamento. `GET /organizations/:id/financing/workspace` aplica isolamento estrito e não projeta dados privados do estoque ou qualificação. A referência de tentativa pendente sobrevive à navegação na mesma sessão e é reconciliada por chave antes de criar nova consulta. Sem armazenamento de sessão, o POST é bloqueado.
+
+O card do portal público é aplicado separadamente com `integrations/ferramentas/add_financing_card.py`; aponta para `https://crm.motoetrilha.com.br/financiamento`, com indicação de testes. Não publicar antes da rota/API e das configurações pendentes. Nenhuma chave CredPro é solicitada na tela dos vendedores. O modo continua mock, mesmo após a homologação isolada do sandbox 1082.

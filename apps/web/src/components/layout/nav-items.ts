@@ -1,4 +1,4 @@
-import { Home, Inbox, Kanban, Bot, Radio, Users, Settings, DollarSign, ListChecks, Phone, ShoppingBag } from "lucide-react";
+import { Home, Inbox, Kanban, Bot, Radio, Users, Settings, DollarSign, ListChecks, Phone, ShoppingBag, Landmark } from "lucide-react";
 
 export interface NavItem { name: string; href: string; icon: typeof Home; managerOnly?: boolean }
 
@@ -9,6 +9,7 @@ export const navigation: NavItem[] = [
   { name: "Tarefas", href: "/tasks", icon: ListChecks },
   { name: "Ligações", href: "/calls", icon: Phone, managerOnly: true },
   { name: "Catálogo", href: "/catalog", icon: ShoppingBag },
+  { name: "Financiamento", href: "/financiamento", icon: Landmark },
   { name: "Agentes", href: "/agents", icon: Bot, managerOnly: true },
   { name: "Instancias", href: "/instances", icon: Radio, managerOnly: true },
   { name: "Custos", href: "/costs", icon: DollarSign, managerOnly: true },

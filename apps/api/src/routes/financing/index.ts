@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { getAdminClient, getOpportunityById, decryptCpf, sealFinancingApplication } from '@aula-agente/database';
 import { authMiddleware } from '../../middleware/auth.js';
+import { registerFinancingWorkspace } from './workspace.js';
 import { isManager } from '../../lib/lead-visibility.js';
 
 const mockBank = z.enum(['mock-approved','mock-rejected','mock-error','mock-simulation']);
@@ -15,6 +16,8 @@ const requestSchema = z.object({ consent_id: z.string().uuid(), vehicle_id: z.nu
 
 export default async function financingRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
+  app.addHook('onRequest',async(_req,reply)=>{reply.header('Cache-Control','no-store');});
+  registerFinancingWorkspace(app);
   // Stricter than legacy feature flags: financial data always belongs to its
   // assigned seller or an organization manager. AI cannot call these routes.
   async function authorize(req: FastifyRequest, reply: FastifyReply, id: string) {
@@ -28,6 +31,16 @@ export default async function financingRoutes(app: FastifyInstance) {
     }
     return {db,opportunity};
   }
+  app.get<{Params:{opportunityId:string;requestKey:string}}>('/opportunities/:opportunityId/financing/requests/:requestKey',async(req,reply)=>{
+    reply.header('Cache-Control','no-store');
+    const ctx=await authorize(req,reply,req.params.opportunityId);if(!ctx)return;
+    if(!z.string().uuid().safeParse(req.params.requestKey).success)return reply.code(400).send({error:'Referência inválida.'});
+    const {data,error}=await ctx.db.from('financing_requests').select('id')
+      .eq('organization_id',ctx.opportunity.organization_id).eq('opportunity_id',ctx.opportunity.id)
+      .eq('idempotency_key',req.params.requestKey).maybeSingle();
+    if(error)return reply.code(503).send({error:'Não foi possível recuperar a consulta. Tente novamente.'});
+    return {request:data};
+  });
   app.get<{Params:{organizationId:string}}>('/organizations/:organizationId/financing/alerts',async(req,reply)=>{
     const membership=req.user.memberships.find(m=>m.organization_id===req.params.organizationId);
     if(!membership)return reply.code(403).send({error:'Acesso restrito.'});

@@ -16,7 +16,7 @@ describe("isManagerOnlyPath", () => {
   it.each(["/agents", "/agents/new", "/agents/abc/knowledge", "/instances", "/instances/x", "/costs", "/team", "/settings", "/calls"])("%s é restrita", (p) => {
     expect(isManagerOnlyPath(p)).toBe(true);
   });
-  it.each(["/", "/inbox", "/inbox/123", "/opportunities", "/tasks", "/catalog", "/notificacoes", "/agentsx", "/teams"])("%s é livre", (p) => {
+  it.each(["/", "/inbox", "/inbox/123", "/opportunities", "/tasks", "/catalog", "/notificacoes", "/financiamento", "/agentsx", "/teams"])("%s é livre", (p) => {
     expect(isManagerOnlyPath(p)).toBe(false);
   });
 });
@@ -46,8 +46,8 @@ describe("guardDecision", () => {
 });
 
 describe("menu por papel", () => {
-  it("vendedor vê apenas Início, Conversas, Funil, Tarefas e Catálogo", () => {
-    expect(visibleNavigation(false).map((i) => i.name)).toEqual(["Início", "Conversas", "Funil de vendas", "Tarefas", "Catálogo"]);
+  it("vendedor vê apenas Início, Conversas, Funil, Tarefas, Catálogo e Financiamento", () => {
+    expect(visibleNavigation(false).map((i) => i.name)).toEqual(["Início", "Conversas", "Funil de vendas", "Tarefas", "Catálogo", "Financiamento"]);
   });
   it("gestor vê tudo", () => {
     const names = visibleNavigation(true).map((i) => i.name);
