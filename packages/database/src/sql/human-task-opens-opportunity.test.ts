@@ -5,6 +5,7 @@ import { createRlsDb } from "./rls-harness.js";
 const M = (f: string) => new URL(`../../../../supabase/migrations/${f}`, import.meta.url);
 const OWNER_OPEN = M("20261020120000_owner_on_opportunity_create.sql");
 const SYNC_OWNER = M("20261015120000_sync_owner_on_conversation_assign.sql");
+const BACKFILL = M("../backfills/20261020_open_opportunities_for_human_tasks.sql");
 const MIGRATION = M("20261021120000_human_task_opens_opportunity.sql");
 
 async function setup(settings: object = { sales_auto_pipeline_enabled: true }, { apply = true } = {}) {
@@ -14,7 +15,7 @@ async function setup(settings: object = { sales_auto_pipeline_enabled: true }, {
     ALTER TABLE public.opportunities ADD COLUMN owner_assigned_at timestamptz, ADD COLUMN operation text NOT NULL DEFAULT 'vehicle_sale',
       ADD COLUMN stage text NOT NULL DEFAULT 'interest_received', ADD COLUMN initial_operation text NOT NULL DEFAULT 'vehicle_sale',
       ADD COLUMN last_progress_at timestamptz, ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
-    ALTER TABLE public.tasks ADD COLUMN assignee_type text, ADD COLUMN type text NOT NULL DEFAULT 'return_customer';
+    ALTER TABLE public.tasks ADD COLUMN assignee_type text, ADD COLUMN type text NOT NULL DEFAULT 'return_customer', ADD COLUMN created_at timestamptz NOT NULL DEFAULT clock_timestamp();
     ALTER TABLE public.wa_contacts ADD COLUMN phone text;
     ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS last_message_at timestamptz; ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
     ALTER TABLE public.opportunity_events ADD COLUMN previous_value jsonb, ADD COLUMN new_value jsonb, ADD COLUMN evidence text, ADD COLUMN changed_by_type text, ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
@@ -165,6 +166,30 @@ describe("human_task_opens_opportunity", () => {
     const s = await setup();
     await s.db.exec(readFileSync(MIGRATION, "utf8"));
     await s.task(s.org, s.contact, "human", s.marina);
+    expect(await s.opps(s.org, s.contact)).toHaveLength(1);
+  });
+
+  it("backfill: aplica a mesma regra às tarefas humanas existentes (1 negócio por contato, sem IA, sem duplicar)", async () => {
+    const s = await setup({ sales_auto_pipeline_enabled: true }, { apply: false });
+    const c2 = (await s.q("insert into public.wa_contacts(organization_id) values ($1) returning id", [s.org]))[0].id;
+    const c3 = (await s.q("insert into public.wa_contacts(organization_id) values ($1) returning id", [s.org]))[0].id;
+    const c4 = (await s.q("insert into public.wa_contacts(organization_id) values ($1) returning id", [s.org]))[0].id;
+    const t1 = await s.task(s.org, s.contact, "human", s.marina);
+    const t1b = await s.task(s.org, s.contact, "human", s.marina);
+    await s.task(s.org, c2, "ai", null);
+    await s.task(s.org, c3, "human", s.shared);
+    await s.q("insert into public.opportunities(organization_id,contact_id) values ($1,$2)", [s.org, c4]);
+    await s.task(s.org, c4, "human", s.marina);
+    await s.db.exec(readFileSync(BACKFILL, "utf8"));
+    const [o] = await s.opps(s.org, s.contact);
+    expect(await s.opps(s.org, s.contact)).toHaveLength(1);
+    expect(o).toMatchObject({ owner_id: s.marina, stage: "interest_received", status: "open" });
+    expect((await s.q("select id from public.tasks where opportunity_id=$1", [o.id])).map(r => r.id)).toEqual([t1]);
+    expect(t1b).toBeTruthy();
+    expect(await s.opps(s.org, c2)).toHaveLength(0);
+    expect((await s.opps(s.org, c3))[0].owner_id).toBeNull();
+    expect(await s.opps(s.org, c4)).toHaveLength(1);
+    await s.db.exec(readFileSync(BACKFILL, "utf8")); // reexecutar não duplica
     expect(await s.opps(s.org, s.contact)).toHaveLength(1);
   });
 });
