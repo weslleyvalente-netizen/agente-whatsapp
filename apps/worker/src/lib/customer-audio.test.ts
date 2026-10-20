@@ -19,8 +19,12 @@ const fetchAudio = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   m.getMessageById.mockResolvedValue({ id: "msg", organization_id: "org", conversation_id: "conv", role: "contact", media_type: "audio", media_url: null, evolution_message_id: "EVO1" });
-  m.getConversationById.mockResolvedValue({ id: "conv", instance_id: "inst" });
-  m.getInstanceById.mockResolvedValue({ instance_name: "minha-instancia" });
+  // O nome do campo é o da tabela real (conversations.evolution_instance_id); um nome errado aqui já derrubou toda a captura em produção.
+  m.getConversationById.mockResolvedValue({ id: "conv", evolution_instance_id: "inst" });
+  m.getInstanceById.mockImplementation(async (_db: unknown, id: string) => {
+    if (id !== "inst") throw new Error(`instância não encontrada: ${id}`);
+    return { instance_name: "minha-instancia" };
+  });
   m.setMessageMediaUrlIfEmpty.mockResolvedValue(true);
   fetchAudio.mockResolvedValue({ base64: Buffer.from("abc").toString("base64"), mimetype: "audio/mp4" });
 });
