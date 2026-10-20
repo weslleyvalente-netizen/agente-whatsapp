@@ -15,7 +15,7 @@ ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS evolution_message_id text;
 ALTER TABLE public.opportunities ADD COLUMN initial_operation text, ADD COLUMN sale_amount numeric, ADD COLUMN credit_amount numeric, ADD COLUMN down_payment_amount numeric,
   ADD COLUMN bid_amount numeric, ADD COLUMN target_installment_amount numeric, ADD COLUMN term_months integer, ADD COLUMN usage_purpose text, ADD COLUMN urgency text,
   ADD COLUMN commercial_notes text, ADD COLUMN last_interaction_at timestamptz, ADD COLUMN last_progress_at timestamptz, ADD COLUMN next_action text,
-  ADD COLUMN frozen_until date, ADD COLUMN waiting_on text, ADD COLUMN next_action_due_date date;
+  ADD COLUMN waiting_on text, ADD COLUMN next_action_due_date date, ADD COLUMN waiting_on_until date;
 CREATE TABLE public.opportunity_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, opportunity_id uuid, event_type text, previous_value jsonb, new_value jsonb, evidence text, changed_by_type text);
 CREATE TABLE public.conversation_qualifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, conversation_id uuid, opportunity_id uuid,
   cpf_encrypted text, birth_date date, has_driver_license boolean, down_payment_amount numeric, product_model text);
@@ -27,6 +27,7 @@ ALTER TABLE public.handoff_events ADD COLUMN motivo text, ADD COLUMN resumo text
 `;
 const EXTRA = `
 ALTER TABLE public.wa_contacts ADD COLUMN phone text;
+ALTER TABLE public.conversations ADD COLUMN status text NOT NULL DEFAULT 'open'; ALTER TABLE public.task_events ADD COLUMN created_by_id uuid; ALTER TABLE public.opportunity_events ADD COLUMN changed_by_id uuid;
 CREATE TABLE public.organization_ignored_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, phone text NOT NULL);
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS last_message_at timestamptz; ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
@@ -34,6 +35,9 @@ ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS last_message_at timest
 
 async function setup() {
   await db.exec(PIPELINE_FIXTURE); await db.exec(EXTRA);
+  // só colunas de congelamento + refresh_freeze_task (linhas 1-31) do arquivo original; o resto dele (sync_sales_pipeline antigo) já vem do harness
+  await db.exec(readFileSync(M("20261001194818_sales_opportunity_freeze.sql"), "utf8").split("\n").slice(0, 31).join("\n"));
+  await db.exec(readFileSync(M("20261013120000_freeze_no_flag_gate.sql"), "utf8"));
   await db.exec(readFileSync(M("20261020120000_owner_on_opportunity_create.sql"), "utf8"));
   await db.exec(readFileSync(M("20261021120000_human_task_opens_opportunity.sql"), "utf8"));
   const def = await uuid(db);
@@ -78,13 +82,47 @@ describe("gatilho de tarefa humana x sync_sales_pipeline / distribute_lead", () 
     expect(all.map(r => r.id)).toEqual([opp]);
   });
 
-  it("distribute_lead promove tarefas da IA a humanas: roda sem erro e deixa no máximo um negócio por contato", async () => {
-    const { org } = await setup(); await seedRep(db, org, "Marina", 1);
+  it("distribute_lead com tarefa humana já aberta e sem negócio: o negócio nasce com o vendedor distribuído como dono e a atribuição aponta para ele", async () => {
+    const { org, def } = await setup(); const marina = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org);
+    await humanTask(org, h.contactId, def);
+    const id = (await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [org, h.conversationId, h.handoffId, inMinutes(15)]))[0].id;
+    expect(id).toBeTruthy();
+    const opps = await q("select id, owner_id, operation from public.opportunities where contact_id=$1", [h.contactId]);
+    expect(opps).toHaveLength(1);
+    expect(opps[0]).toMatchObject({ owner_id: marina.userId, operation: "consortium" });
+    expect((await q("select opportunity_id from public.lead_assignments where id=$1", [id]))[0].opportunity_id).toBe(opps[0].id);
+    expect((await q("select assignee_id from public.tasks where contact_id=$1", [h.contactId]))[0].assignee_id).toBe(marina.userId);
+  });
+
+  it("distribute_lead promovendo tarefa da IA (tipo mapeável) a humana: no máximo um negócio, dono = vendedor", async () => {
+    const { org } = await setup(); const marina = await seedRep(db, org, "Marina", 1);
     const h = await seedHandoff(db, org);
     await q("insert into public.tasks(organization_id,contact_id,assignee_type,type,due_date,created_by_type) values ($1,$2,'ai','consortium_followup',current_date,'ai')", [org, h.contactId]);
     await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [org, h.conversationId, h.handoffId, inMinutes(15)]);
-    const opps = await q("select id, owner_id, operation from public.opportunities where contact_id=$1", [h.contactId]);
+    const opps = await q("select owner_id from public.opportunities where contact_id=$1", [h.contactId]);
     expect(opps.length).toBeLessThanOrEqual(1);
+    if (opps.length) expect(opps[0].owner_id).toBe(marina.userId);
     expect((await q("select assignee_type from public.tasks where contact_id=$1", [h.contactId]))[0].assignee_type).toBe("human");
+  });
+
+  it("tipos de tarefa mistos (consórcio + veículo) no mesmo contato: nada é criado, nem após distribute_lead", async () => {
+    const { org } = await setup(); await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org);
+    await q("insert into public.tasks(organization_id,contact_id,assignee_type,type,due_date,created_by_type) values ($1,$2,'ai','consortium_followup',current_date,'ai'),($1,$2,'ai','vehicle_followup',current_date,'ai')", [org, h.contactId]);
+    await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [org, h.conversationId, h.handoffId, inMinutes(15)]);
+    expect(await q("select id from public.opportunities where contact_id=$1", [h.contactId])).toHaveLength(0);
+  });
+
+  it("congelamento (set_opportunity_freeze) de negócio criado pelo gatilho: segue funcionando e não cria outro negócio", async () => {
+    const { org } = await setup(); const marina = await seedRep(db, org, "Marina", 1);
+    const h = await seedHandoff(db, org);
+    await humanTask(org, h.contactId, marina.userId);
+    const opp = (await q("select id from public.opportunities where contact_id=$1", [h.contactId]))[0].id;
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+    await q("select public.set_opportunity_freeze($1,$2,$3,$4::date,'Cliente viaja') as r", [org, opp, marina.userId, until]);
+    expect((await q("select frozen_until::text as f from public.opportunities where id=$1", [opp]))[0].f).toBe(until);
+    expect(await q("select id from public.opportunities where contact_id=$1", [h.contactId])).toHaveLength(1);
+    expect((await q("select count(*)::int as n from public.tasks where contact_id=$1 and opportunity_id=$2", [h.contactId, opp]))[0].n).toBeGreaterThan(0);
   });
 });
