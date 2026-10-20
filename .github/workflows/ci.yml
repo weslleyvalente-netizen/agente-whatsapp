@@ -1,0 +1,62 @@
+# Verificação automática de cada PR e de cada push no main.
+# O job "build" roda os MESMOS comandos dos Dockerfiles do EasyPanel (api, worker, web): se ele passa, o deploy compila.
+# Foi criado depois que dois deploys falharam em produção por erro de compilação e a versão antiga ficou no ar sem ninguém notar.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build (igual ao Dockerfile)
+        env:
+          # Só o web lê estas variáveis no build; valores de mentira, sem segredo.
+          NEXT_PUBLIC_API_URL: http://localhost:3001
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+        run: pnpm turbo build --filter=@aula-agente/${{ matrix.app }}
+
+  test:
+    name: test (informativo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Vira obrigatório (remova a linha abaixo) quando a suíte se mostrar estável no GitHub:
+    # localmente alguns testes estouram o tempo quando rodam todos em paralelo e passam isolados.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo test --concurrency=1
