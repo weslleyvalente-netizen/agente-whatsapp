@@ -4,7 +4,7 @@
 
 CRM/Mariana: `apps/web` (Next.js), `apps/api` (Fastify), `apps/worker` (BullMQ), Supabase por organização. Catálogo: repositório independente `catalogo-motos-site`, Supabase próprio, incorporado por iframe. `packages/agent-runtime/src/tools/search-catalog.ts` usa exclusivamente estoque público; não recebe placa/FIPE nem ferramenta de crédito.
 
-O adaptador `CredProMockAdapter` é uma fixture LOCAL. Seus bancos `mock-approved`, `mock-rejected`, `mock-error`, `mock-simulation` e parcelas são fictícios. Não representa o contrato HTTP da CredPro, cobertura bancária ou condições comerciais. Não há implementação de produção nem requisições de rede de crédito. Modo `sandbox` é apenas interface futura; ainda não conectado.
+O adaptador `CredProMockAdapter` é uma fixture LOCAL. Seus bancos `mock-approved`, `mock-rejected`, `mock-error`, `mock-simulation` e parcelas são fictícios. Não representa o contrato HTTP da CredPro, cobertura bancária ou condições comerciais. Não há implementação de produção nem requisições de rede de crédito no fluxo CRM. O modo `sandbox` do worker continua bloqueado. Há um cliente HTTP separado, exclusivamente para exemplos sintéticos; ver docs/credpro-sandbox.md. Ele não lê fichas reais nem usa a fila CRM.
 
 ## Fluxo backend
 
