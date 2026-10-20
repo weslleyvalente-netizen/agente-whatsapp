@@ -17,6 +17,8 @@
 --          WHEN EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id) THEN 'pula: contato ja tem historico de negocio'
 --          WHEN EXISTS (SELECT 1 FROM public.organization_ignored_contacts i WHERE i.organization_id = w.organization_id AND i.phone = w.phone) THEN 'pula: contato ignorado'
 --          WHEN public._task_type_operation(t.type) IS NULL THEN 'pula: operacao nao inferivel pelo tipo da tarefa'
+--          WHEN (SELECT count(DISTINCT public._task_type_operation(x.type)) FROM public.tasks x WHERE x.organization_id = t.organization_id AND x.contact_id = t.contact_id AND x.assignee_type = 'human'
+--                   AND x.status IN ('pending','in_progress','rescheduled') AND public._task_type_operation(x.type) IS NOT NULL) > 1 THEN 'pula: tipos de tarefa com operacoes diferentes (ambiguo)'
 --          ELSE 'CRIA' END AS decisao
 --   FROM public.tasks t
 --   JOIN public.organizations org ON org.id = t.organization_id
@@ -24,10 +26,13 @@
 --  WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled')
 --    AND NOT EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = t.organization_id AND o.contact_id = t.contact_id AND o.status = 'open')
 --  ORDER BY decisao, t.organization_id, t.contact_id, t.created_at, t.id;
--- Resumo: troque o SELECT acima por  SELECT decisao, count(*) ... GROUP BY decisao  (ou envolva em subconsulta).
+-- Resumo (conte também contatos: count(DISTINCT contact_id) FILTER (WHERE decisao = 'CRIA')): troque o SELECT acima por  SELECT decisao, count(*) ... GROUP BY decisao  (ou envolva em subconsulta).
 
 -- ===== 2) APLICAR (transação; termina em ROLLBACK) =====
 BEGIN;
+-- Ambíguos (operações diferentes entre as tarefas do contato) são pulados pelo próprio núcleo; nunca se escolhe a "mais antiga" no chute.
+-- Rode no psql, ou cada instrução separada no editor; o resultado mostra criados x pulados.
+SELECT count(*) FILTER (WHERE s.opportunity_id IS NOT NULL) AS criados, count(*) FILTER (WHERE s.opportunity_id IS NULL) AS pulados FROM (
 SELECT public._open_opportunity_for_task(p.task_id, 'human_task_backfill') AS opportunity_id
   FROM (
     SELECT DISTINCT ON (t.organization_id, t.contact_id) t.id AS task_id
@@ -35,7 +40,8 @@ SELECT public._open_opportunity_for_task(p.task_id, 'human_task_backfill') AS op
      WHERE t.assignee_type = 'human' AND t.status IN ('pending','in_progress','rescheduled') AND t.opportunity_id IS NULL
        AND public._task_type_operation(t.type) IS NOT NULL
      ORDER BY t.organization_id, t.contact_id, t.created_at, t.id
-  ) p;
+  ) p
+) s;
 -- Confira antes de confirmar:
 -- SELECT count(*) FROM public.opportunity_events WHERE new_value->>'source' = 'human_task_backfill' AND created_at >= now() - interval '1 hour';
 ROLLBACK;  -- troque por COMMIT; só depois de conferir

@@ -240,6 +240,29 @@ describe("human_task_opens_opportunity", () => {
     }
   });
 
+  it("tipos de tarefa com operações diferentes no mesmo contato: não cria (ambíguo), nem por ordem de linha", async () => {
+    const s = await setup();
+    await s.task(s.org, s.contact, "human", s.marina, { type: "return_customer" });
+    const a = await s.task(s.org, s.contact, "human", s.marina, { type: "consortium_followup" }); // sozinha já abriria
+    expect(await s.opps(s.org, s.contact)).toHaveLength(1);
+    const s2 = await setup();
+    await s2.db.exec("DROP TRIGGER trg_human_task_opens_opportunity ON public.tasks");
+    await s2.task(s2.org, s2.contact, "human", s2.marina, { type: "consortium_followup" });
+    await s2.task(s2.org, s2.contact, "human", s2.marina, { type: "vehicle_followup" });
+    await s2.db.exec(readFileSync(MIGRATION, "utf8")); // religa o gatilho
+    await s2.q("update public.tasks set assignee_type='human' where organization_id=$1", [s2.org]);
+    expect(await s2.opps(s2.org, s2.contact)).toHaveLength(0);
+    // mesmo tipo repetido não é ambíguo
+    const s3 = await setup();
+    await s3.db.exec("DROP TRIGGER trg_human_task_opens_opportunity ON public.tasks");
+    await s3.task(s3.org, s3.contact, "human", s3.marina, { type: "consortium_followup" });
+    await s3.task(s3.org, s3.contact, "human", s3.marina, { type: "consortium_followup" });
+    await s3.db.exec(readFileSync(MIGRATION, "utf8"));
+    await s3.q("update public.tasks set assignee_type='human' where organization_id=$1", [s3.org]);
+    expect(await s3.opps(s3.org, s3.contact)).toHaveLength(1);
+    expect(a).toBeTruthy();
+  });
+
   it("migration é idempotente (pode rodar duas vezes) e continua funcionando", async () => {
     const s = await setup();
     await s.db.exec(readFileSync(MIGRATION, "utf8"));
@@ -260,8 +283,10 @@ describe("backfill", () => {
     await s.opp(s.org, c4); await s.task(s.org, c4, "human", s.marina); // negócio aberto
     await s.opp(s.org, c5, "lost"); await s.task(s.org, c5, "human", s.marina); // só fechado
     await s.task(s.org, c6, "human", s.marina, { type: "return_customer" }); // operação não inferível
+    const c7 = await mk();
+    await s.task(s.org, c7, "human", s.marina, { type: "consortium_followup" }); await s.task(s.org, c7, "human", s.marina, { type: "vehicle_followup" }); // ambíguo
     await s.db.exec(readFileSync(MIGRATION, "utf8")); // depois dos dados, como em produção
-    return { s, c2, c3, c4, c5, c6, t1, t1b };
+    return { s, c2, c3, c4, c5, c6, c7, t1, t1b };
   }
   const apply = (sql: string) => sql.replace(/\nROLLBACK;[^\n]*/, "\nCOMMIT;");
 
@@ -273,7 +298,7 @@ describe("backfill", () => {
   });
 
   it("com COMMIT: mesma regra do gatilho, um negócio por contato, pula histórico/IA/tipo ambíguo, e reexecutar não duplica", async () => {
-    const { s, c2, c3, c4, c5, c6, t1, t1b } = await seed();
+    const { s, c2, c3, c4, c5, c6, c7, t1, t1b } = await seed();
     await s.db.exec(apply(readFileSync(BACKFILL, "utf8")));
     const [o] = await s.opps(s.org, s.contact);
     expect(await s.opps(s.org, s.contact)).toHaveLength(1);
@@ -285,6 +310,7 @@ describe("backfill", () => {
     expect(await s.opps(s.org, c4)).toHaveLength(1);
     expect((await s.opps(s.org, c5)).map(x => x.status)).toEqual(["lost"]);
     expect(await s.opps(s.org, c6)).toHaveLength(0);
+    expect(await s.opps(s.org, c7)).toHaveLength(0);
     await s.db.exec(apply(readFileSync(BACKFILL, "utf8")));
     expect(await s.opps(s.org, s.contact)).toHaveLength(1);
     expect((await s.q("select 1 from public.opportunity_events where new_value->>'source'='human_task_backfill'")).length).toBe(2);
