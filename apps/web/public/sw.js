@@ -10,8 +10,8 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(title, {
       body: data.body || "",
       tag: data.tag || undefined,
-      icon: "/icons/icon-192.png?v=2",
-      badge: "/icons/icon-192.png?v=2",
+      icon: "/icons/icon-192.png?v=3",
+      badge: "/icons/icon-192.png?v=3",
       data: { url: data.url || "/" },
     }),
   );
