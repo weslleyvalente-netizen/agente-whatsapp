@@ -10,13 +10,36 @@ async function setup() {
     insert into organizations values('00000000-0000-0000-0000-000000000001');
     insert into opportunities values('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','open',null);`);
   await db.exec(migration);
+  await db.exec(readFileSync(new URL('../../../../supabase/migrations/20261022122000_financing_external_vehicle.sql',import.meta.url),'utf8'));
   const q = async (sql: string, p: unknown[] = []) => (await db.query<any>(sql, p)).rows;
   const consent = (await q(`insert into financing_consents(organization_id,opportunity_id,recorded_by,evidence,banks,allow_requery,expires_at)
     values('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002',gen_random_uuid(),'Consentimento registrado',array['mock-rejected'],true,now()+interval '60 days') returning id`))[0].id;
-  const create = async (key = '00000000-0000-0000-0000-000000000003', fingerprint = 'same') => (await q(`select financing_create('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002',$1,$2,$3,1,'ciphertext') id`, [consent,key,fingerprint]))[0].id;
+  const create = async (key = '00000000-0000-0000-0000-000000000003', fingerprint = 'same', vehicle: number|null = 1) => (await q(`select financing_create('00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002',$1,$2,$3,$4,'ciphertext') id`, [consent,key,fingerprint,vehicle]))[0].id;
   return { db,q,consent,create };
 }
 describe('durable financing workflow', () => {
+  it('keeps external applications idempotent and preserves their vehicle on the single requery',async()=>{
+    const {db,q,create}=await setup();
+    try{
+      const id=await create(undefined,'external',null);expect(await create(undefined,'external',null)).toBe(id);
+      expect((await q('select vehicle_id,vehicle_source from financing_requests where id=$1',[id]))[0]).toEqual({vehicle_id:null,vehicle_source:'external'});
+      const claim=(await q('select * from financing_claim()'))[0];
+      await q("update financing_requests set first_started_at=now()-interval '40 days'");
+      const today=(await q("select (now() at time zone 'America/Sao_Paulo')::date::text d"))[0].d;
+      await q('select financing_complete($1,$2,$3,$4)',[id,claim.lease_token,JSON.stringify([{bank:'mock-rejected',status:'rejected',offers:[]}]),today]);
+      await q('select financing_schedule_requeries()');
+      const child=(await q('select vehicle_id,vehicle_source,application_encrypted from financing_requests where attempt=1'))[0];
+      expect(child).toEqual({vehicle_id:null,vehicle_source:'external',application_encrypted:'ciphertext'});
+    }finally{await db.close();}
+  });
+  it('keeps stock origin generated and rejects nonpositive inventory IDs',async()=>{
+    const {db,q,create}=await setup();
+    try{
+      await create();expect((await q('select vehicle_source from financing_requests'))[0].vehicle_source).toBe('stock');
+      await expect(q('update financing_requests set vehicle_id=0')).rejects.toThrow();
+      await expect(q("update financing_requests set vehicle_source='external'")).rejects.toThrow();
+    }finally{await db.close();}
+  });
   it('does not grant sensitive tables or RPCs to public clients', async () => {
     const {db,q} = await setup();
     try {

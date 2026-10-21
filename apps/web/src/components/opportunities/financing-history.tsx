@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 type Result = {bank:string;status:string;offers:{downPayment:number;installments:number;installmentAmount:number}[]};
-type Request = {id:string;mode:string;attempt:number;state:string;created_at:string;requery_on:string|null;financing_results:Result[]};
+type Request = {id:string;vehicle_source?:'stock'|'external';vehicle?:{source:'stock'|'external';marca:string;modelo:string;ano:number;versao?:string}|null;mode:string;attempt:number;state:string;created_at:string;requery_on:string|null;financing_results:Result[]};
 const labels:Record<string,string>={pending:'Aguardando',preapproved:'Pré-aprovado',rejected:'Recusado',simulation:'Simulação sem aprovação',error:'Erro técnico',queued:'Na fila',running:'Em consulta',completed:'Concluído',cancelled:'Cancelado'};
 const bankLabels:Record<string,string>={'mock-approved':'Banco de teste A','mock-rejected':'Banco de teste B','mock-error':'Banco de teste C','mock-simulation':'Banco de teste D'};
 const money=(n:number)=>n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -29,6 +29,7 @@ export function FinancingHistory({opportunityId}:{opportunityId:string}) {
     <h3 className="font-medium">Financiamento — alerta interno</h3>
     <p className="text-sm text-muted-foreground">Ambiente de testes. Propostas fictícias. Nenhuma mensagem é enviada ao cliente.</p>
     {rows.map(r=><div key={r.id} className="mt-3 border-t pt-3">
+      {r.vehicle?<p className="text-sm font-medium">{r.vehicle.source==='external'?'Fora do estoque':'Do estoque'} · {r.vehicle.marca} {r.vehicle.modelo} · {r.vehicle.ano}{r.vehicle.versao?` · ${r.vehicle.versao}`:''}</p>:r.vehicle_source==='external'?<p className="text-sm">Veículo fora do estoque</p>:null}
       <p>{r.attempt===1?'Reconsulta única':'Primeira consulta'} · {labels[r.state]??r.state}</p>
       {r.requery_on&&<p className="text-sm">Reconsulta autorizada para {r.requery_on.split('-').reverse().join('/')}</p>}
       {r.financing_results.map(b=><div key={b.bank} className="mt-2 text-sm" role="status">

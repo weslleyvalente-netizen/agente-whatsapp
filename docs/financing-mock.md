@@ -55,3 +55,11 @@ Confirmar licença/termos FIPE e regras do provedor. Validar migrações e compo
 A rota autenticada `/financiamento` reúne cliente/negócio atribuído, veículo disponível, autorização com validade, bancos mock, criação idempotente e histórico. O menu de vendedores inclui Financiamento. `GET /organizations/:id/financing/workspace` aplica isolamento estrito e não projeta dados privados do estoque ou qualificação. A referência de tentativa pendente sobrevive à navegação na mesma sessão e é reconciliada por chave antes de criar nova consulta. Sem armazenamento de sessão, o POST é bloqueado.
 
 O card do portal público é aplicado separadamente com `integrations/ferramentas/add_financing_card.py`; aponta para `https://crm.motoetrilha.com.br/financiamento`, com indicação de testes. Não publicar antes da rota/API e das configurações pendentes. Nenhuma chave CredPro é solicitada na tela dos vendedores. O modo continua mock, mesmo após a homologação isolada do sandbox 1082.
+
+## Veículos fora do estoque
+
+A mesma tela permite escolher “Do estoque” ou “Fora do estoque”. Na segunda opção, tipo, marca, modelo, ano do modelo e valor de negociação são obrigatórios; versão e código FIPE são opcionais e informados manualmente. Não há exigência de valor/data FIPE, consulta ao catálogo ou inclusão de anúncio. O vínculo ao negócio, vendedor e consentimento permanece obrigatório.
+
+A API aceita exatamente `vehicle_id` ou `external_vehicle`. A migração incremental `20261022122000_financing_external_vehicle.sql` permite vínculo nulo e deriva a origem no banco. A ficha continua cifrada e é copiada para a única reconsulta; o histórico retorna somente um resumo permitido do veículo. Placa, dados de cliente e conteúdo cifrado não entram nesse resumo.
+
+A referência de retomada no navegador contém `vehicleId:null`, nunca os dados do veículo avulso. Após recarregar, o sistema consulta a chave original; se a solicitação avulsa ainda não existir no backend, exige revogar/descartar antes de preparar outra ficha, sem reconstruir dados incompletos ou repetir automaticamente o POST. A consulta avulsa pode ser preparada mesmo com o estoque indisponível. Consultas reais continuam bloqueadas.

@@ -6,6 +6,8 @@ import {Button} from '@/components/ui/button';
 import {FinancingHistory} from '@/components/opportunities/financing-history';
 import {createMockSubmission} from './submission';
 import {pendingStore} from './pending';
+import {ExternalVehicleFields} from './external-vehicle-fields';
+import {emptyVehicleDraft,externalVehicleFromDraft,type VehicleDraft} from './vehicle';
 
 type Opportunity={id:string;operation:string;owner_id:string;wa_contacts:{name:string|null}|null};
 type Vehicle={id:number;marca:string;modelo:string;ano:number;preco:number;tipo:string};
@@ -17,6 +19,7 @@ const money=(n:number)=>n.toLocaleString('pt-BR',{style:'currency',currency:'BRL
 export function FinancingWorkspace({organizationId}:{organizationId:string}){
   const [workspace,setWorkspace]=useState<Workspace|null>(null),[loadError,setLoadError]=useState('');
   const [reload,setReload]=useState(0),[opportunityId,setOpportunityId]=useState(''),[vehicleId,setVehicleId]=useState('');
+  const [vehicleSource,setVehicleSource]=useState<'stock'|'external'>('stock'),[externalDraft,setExternalDraft]=useState<VehicleDraft>({...emptyVehicleDraft});
   const [evidence,setEvidence]=useState(''),[expires,setExpires]=useState(''),[confirmed,setConfirmed]=useState(false),[allowRequery,setAllowRequery]=useState(false);
   const [recoveryBlocked,setRecoveryBlocked]=useState(false);
   const [selectedBanks,setSelectedBanks]=useState<string[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[failed,setFailed]=useState(false),[historyVersion,setHistoryVersion]=useState(0);
@@ -28,14 +31,16 @@ export function FinancingWorkspace({organizationId}:{organizationId:string}){
     return()=>{active=false;};
   },[organizationId,reload]);
   const vehicle=workspace?.vehicles.find(v=>String(v.id)===vehicleId);
+  const externalVehicle=externalVehicleFromDraft(externalDraft);
+  const readyVehicle=vehicleSource==='stock'?!!vehicle&&!!workspace?.inventoryAvailable:!!externalVehicle;
   const locked=busy||failed;
   function changeOpportunity(id:string){
-    submission.current?.cancel();submission.current=null;setOpportunityId(id);setEvidence('');setExpires('');setConfirmed(false);setAllowRequery(false);setSelectedBanks([]);setVehicleId('');setMessage('');setFailed(false);setRecoveryBlocked(false);
+    submission.current?.cancel();submission.current=null;setOpportunityId(id);setEvidence('');setExpires('');setConfirmed(false);setAllowRequery(false);setSelectedBanks([]);setVehicleId('');setVehicleSource('stock');setExternalDraft({...emptyVehicleDraft});setMessage('');setFailed(false);setRecoveryBlocked(false);
     if(!id||!workspace)return;
     try{
       const store=pendingStore(sessionStorage,workspace.userId,organizationId,id),pending=store.load();
       if(pending){
-        setVehicleId(String(pending.vehicleId));setFailed(true);setMessage('Há uma tentativa pendente deste cliente. Retome para verificar se ela já foi registrada.');
+        setVehicleId(pending.vehicleId===null?'':String(pending.vehicleId));setVehicleSource(pending.vehicleId===null?'external':'stock');setFailed(true);setMessage('Há uma tentativa pendente deste cliente. Retome para verificar se ela já foi registrada.');
         submission.current=createMockSubmission({opportunityId:id,vehicleId:pending.vehicleId,evidence:'',expiresAt:'',banks:[],allowRequery:false},apiFetch,undefined,{...store,pending});
       }
     }catch{setRecoveryBlocked(true);setMessage('Não foi possível recuperar a referência da tentativa neste navegador. Verifique o histórico e habilite o armazenamento da sessão antes de consultar.');}
@@ -44,12 +49,12 @@ export function FinancingWorkspace({organizationId}:{organizationId:string}){
     event.preventDefault();if(busy||recoveryBlocked||!workspace||workspace.mode!=='mock')return;
     if(!submission.current){
       const date=new Date(expires);
-      if(!opportunityId||!vehicle||!confirmed||!selectedBanks.length||evidence.trim().length<10||!Number.isFinite(date.getTime())||date.getTime()<=Date.now()){
+      if(!opportunityId||!readyVehicle||!confirmed||!selectedBanks.length||evidence.trim().length<10||!Number.isFinite(date.getTime())||date.getTime()<=Date.now()){
         setMessage('Selecione cliente, veículo e bancos de teste. Informe a evidência e uma validade futura para a autorização.');return;
       }
       try{
         const store=pendingStore(sessionStorage,workspace.userId,organizationId,opportunityId);
-        submission.current=createMockSubmission({opportunityId,vehicleId:vehicle.id,evidence:evidence.trim(),expiresAt:date.toISOString(),banks:selectedBanks,allowRequery},apiFetch,undefined,store);
+        submission.current=createMockSubmission({opportunityId,vehicleId:vehicleSource==='stock'?vehicle!.id:null,...(vehicleSource==='external'?{externalVehicle:externalVehicle!}:{}),evidence:evidence.trim(),expiresAt:date.toISOString(),banks:selectedBanks,allowRequery},apiFetch,undefined,store);
       }catch{setMessage('O armazenamento da sessão está indisponível. Habilite-o para preservar a referência da consulta.');return;}
     }
     setBusy(true);setMessage('');
@@ -85,10 +90,14 @@ export function FinancingWorkspace({organizationId}:{organizationId:string}){
         {!workspace.opportunities.length&&<p>Nenhum negócio disponível. Cadastre ou atribua o cliente no <Link className="underline" href="/opportunities">funil de vendas</Link>.</p>}
         {workspace.hasMore&&<p className="text-sm">Exibindo os 500 negócios mais recentes.</p>}
         {workspace.mode==='mock'&&<form className="space-y-5" onSubmit={submit}>
-          <label className="block text-sm font-medium">Veículo do estoque<select className={field} required value={vehicleId} disabled={locked||!workspace.inventoryAvailable} onChange={e=>setVehicleId(e.target.value)}><option value="">Selecione o veículo</option>{workspace.vehicles.map(v=><option key={v.id} value={v.id}>{v.marca} {v.modelo} · {v.ano} · #{v.id}</option>)}</select></label>
-          {!workspace.inventoryAvailable?<p role="status" className="text-sm">O estoque interno está indisponível ou ainda não foi configurado. Solicite a verificação ao administrador.</p>:!workspace.vehicles.length?<p className="text-sm">Nenhum veículo disponível no estoque.</p>:null}
-          {workspace.vehiclesHasMore&&<p className="text-sm">Exibindo os primeiros 500 veículos por modelo.</p>}
-          {vehicle&&<p className="rounded-md bg-muted p-3 text-sm"><strong>{vehicle.marca} {vehicle.modelo}</strong><br/>{vehicle.ano} · {money(vehicle.preco)}<br/>A ficha usa os dados do cliente já registrados na qualificação.</p>}
+          <fieldset disabled={locked} className="space-y-2"><legend className="text-sm font-medium">Origem do veículo</legend><div className="flex flex-wrap gap-4">{[{id:'stock',label:'Do estoque'},{id:'external',label:'Fora do estoque'}].map(option=><label key={option.id} className="flex min-h-11 items-center gap-2 text-sm"><input type="radio" name="vehicle-source" value={option.id} checked={vehicleSource===option.id} onChange={()=>{setVehicleSource(option.id as 'stock'|'external');setVehicleId('');setExternalDraft({...emptyVehicleDraft});}}/>{option.label}</label>)}</div></fieldset>
+          {vehicleSource==='stock'?<>
+            <label className="block text-sm font-medium">Veículo do estoque<select className={field} required value={vehicleId} disabled={locked||!workspace.inventoryAvailable} onChange={e=>setVehicleId(e.target.value)}><option value="">Selecione o veículo</option>{workspace.vehicles.map(v=><option key={v.id} value={v.id}>{v.marca} {v.modelo} · {v.ano} · #{v.id}</option>)}</select></label>
+            {!workspace.inventoryAvailable?<p role="status" className="text-sm">O estoque interno está indisponível ou ainda não foi configurado. Você pode informar um veículo fora do estoque.</p>:!workspace.vehicles.length?<p className="text-sm">Nenhum veículo disponível no estoque.</p>:null}
+            {workspace.vehiclesHasMore&&<p className="text-sm">Exibindo os primeiros 500 veículos por modelo.</p>}
+            {vehicle&&<p className="rounded-md bg-muted p-3 text-sm"><strong>{vehicle.marca} {vehicle.modelo}</strong><br/>{vehicle.ano} · {money(vehicle.preco)}</p>}
+          </>:<ExternalVehicleFields value={externalDraft} onChange={setExternalDraft} disabled={locked}/>}
+          <p className="text-sm text-muted-foreground">A ficha usa os dados do cliente já registrados na qualificação.</p>
           <fieldset disabled={locked} className="space-y-3"><legend className="mb-2 text-sm font-medium">Bancos de teste</legend>{banks.map(bank=><label className="flex min-h-9 items-center gap-3 text-sm" key={bank.id}><input type="checkbox" className="size-4 shrink-0" checked={selectedBanks.includes(bank.id)} onChange={e=>setSelectedBanks(current=>e.target.checked?[...current,bank.id]:current.filter(id=>id!==bank.id))}/>{bank.name}</label>)}</fieldset>
           <fieldset disabled={locked} className="space-y-4 border-t pt-4"><legend className="text-lg font-medium">Autorização do cliente</legend>
             <label className="block text-sm font-medium">Onde a autorização foi registrada<textarea className={field} required minLength={10} maxLength={2000} rows={3} value={evidence} onChange={e=>setEvidence(e.target.value)} placeholder="Ex.: autorização no atendimento de hoje, com identificação da mensagem."/></label>
@@ -98,7 +107,7 @@ export function FinancingWorkspace({organizationId}:{organizationId:string}){
             <label className="flex items-start gap-3 text-sm"><input className="mt-1 size-4 shrink-0" type="checkbox" checked={allowRequery} onChange={e=>setAllowRequery(e.target.checked)}/>A autorização também permite uma única reconsulta no último dia útil, conforme as regras aplicáveis.</label>
           </fieldset>
           {failed&&<div className="space-y-3"><p className="text-sm">Ao tentar novamente, a mesma solicitação será retomada para evitar duplicidade.</p><Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={busy} onClick={discard}>Revogar autorização e descartar tentativa</Button></div>}
-          <Button className="min-h-11 w-full" type="submit" disabled={busy||recoveryBlocked||!opportunityId||(!failed&&(!workspace.inventoryAvailable||!vehicle||!confirmed||!selectedBanks.length))}>{busy?'Registrando consulta…':failed?'Retomar mesma consulta de teste':'Consultar em teste'}</Button>
+          <Button className="min-h-11 w-full" type="submit" disabled={busy||recoveryBlocked||!opportunityId||(!failed&&(!readyVehicle||!confirmed||!selectedBanks.length))}>{busy?'Registrando consulta…':failed?'Retomar mesma consulta de teste':'Consultar em teste'}</Button>
         </form>}
         {message&&<p className="text-sm" role={failed?'alert':'status'}>{message}</p>}
         <Link className="inline-block text-sm underline underline-offset-4" href="/opportunities">Abrir funil e completar cadastro</Link>

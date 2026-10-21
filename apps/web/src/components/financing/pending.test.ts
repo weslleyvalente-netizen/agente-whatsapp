@@ -8,6 +8,8 @@ describe('pending financing reference',()=>{
     expect(pendingStore(storage,'user','org','opp').load()).toEqual(ref);
     for(const args of [['other','org','opp'],['user','other','opp'],['user','org','other']])expect(pendingStore(storage,...args as [string,string,string]).load()).toBeNull();
     expect([...data.values()]).toEqual([JSON.stringify(ref)]);
+    pendingStore(storage,'user','org','opp').save({...ref,vehicleId:null});
+    expect(pendingStore(storage,'user','org','opp').load()?.vehicleId).toBeNull();
     pendingStore(storage,'user','org','opp').clear();expect(data.size).toBe(0);
   });
 });

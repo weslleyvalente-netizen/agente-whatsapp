@@ -41,3 +41,20 @@ describe('pending recovery',()=>{
     expect(save).toHaveBeenCalledWith({key:'key-a',consentId:'consent-a',vehicleId:7});
   });
 });
+
+describe('external vehicle submissions',()=>{
+  const external={tipo:'moto' as const,marca:'Yamaha',modelo:'Fazer FZ25',ano:2025,preco:24900};
+  it('sends the external vehicle exclusively and keeps its fields out of the recovery journal',async()=>{
+    const api=vi.fn().mockResolvedValueOnce({id:'consent-a'}).mockResolvedValueOnce({id:'request-a'}),save=vi.fn();
+    const draft={...input,vehicleId:null,externalVehicle:{...external}};
+    const submit=createMockSubmission(draft,api,()=> 'key-a',{save,clear:vi.fn()});draft.externalVehicle.modelo='Modified';await submit.run();
+    expect(JSON.parse(api.mock.calls[1][1].body)).toEqual({consent_id:'consent-a',external_vehicle:external});
+    expect(save).toHaveBeenCalledWith({key:'key-a',consentId:'consent-a',vehicleId:null});
+  });
+  it('never reconstructs a missing external application after refresh',async()=>{
+    const api=vi.fn().mockResolvedValue({request:null});
+    const submit=createMockSubmission({...input,vehicleId:null},api,undefined,{pending:{key:'old-key',consentId:'old-consent',vehicleId:null},save:vi.fn(),clear:vi.fn()});
+    await expect(submit.run()).rejects.toThrow('Revogue');await expect(submit.run()).rejects.toThrow('Revogue');
+    expect(api).toHaveBeenCalledTimes(2);expect(api.mock.calls.every(call=>call[1].method==='GET')).toBe(true);
+  });
+});

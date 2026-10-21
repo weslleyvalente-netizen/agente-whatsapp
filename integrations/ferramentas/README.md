@@ -24,3 +24,7 @@ Os vendedores precisam ser membros da organização CRM e responsáveis pelos ne
 Retomada da tentativa: `sessionStorage` guarda apenas chave de idempotência, ID de consentimento e ID de veículo, separados por usuário/organização/negócio. Ao voltar, o vendedor seleciona o negócio e usa “Retomar mesma consulta de teste”; o backend procura a solicitação original antes de um novo POST. Sem armazenamento disponível, a criação é bloqueada antes do POST. Limpar dados da sessão ou encerrar o navegador pode apagar a referência; conferir o histórico antes de preparar outra consulta. Revogar e descartar cancela solicitações/reconsultas do negócio e limpa a referência.
 
 Pendências para produção: contrato de idempotência/recuperação CredPro, credenciais em segredo do backend, regras do provedor, autorização e homologação real específicas. A consulta sandbox 1082 não habilita consultas reais.
+
+## Simulação com veículo fora do estoque
+
+A área agora também aceita veículo avulso: tipo, marca, modelo, ano e valor de negociação; versão/código FIPE opcionais e manuais. O veículo fica apenas na ficha cifrada da consulta, sem criar item no catálogo. Estoque e sua configuração são necessários somente para a opção “Do estoque”. Aplicar também a migração `20261022122000_financing_external_vehicle.sql`, após a migração mock anterior, antes de implantar a nova API. A simulação avulsa continua exigindo negócio/cliente atribuído e autorização válida.
