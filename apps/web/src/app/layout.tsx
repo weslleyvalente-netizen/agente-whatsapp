@@ -24,6 +24,7 @@ export const metadata: Metadata = {
   title: "Moto e Trilha — Atendimento",
   description: "Atendimento e vendas da Moto e Trilha Veículos",
   applicationName: "Moto e Trilha",
+  manifest: "/app.webmanifest",
   appleWebApp: { capable: true, title: "Moto e Trilha", statusBarStyle: "default" },
   icons: { apple: [{ url: "/icons/app-icon-180.png", sizes: "180x180", type: "image/png" }] },
 };
