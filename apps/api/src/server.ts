@@ -23,6 +23,9 @@ import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
 import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
 
+import financingRoutes from './routes/financing/index.js';
+import manualFinancingRoutes from './routes/manual-financing/index.js';
+
 const server = Fastify({ logger: true });
 
 if (!process.env.WEBHOOK_SECRET) {
@@ -45,6 +48,8 @@ server.get("/health", async () => {
 });
 
 // Routes
+server.register(financingRoutes);
+server.register(manualFinancingRoutes);
 server.register(evolutionWebhookRoutes);
 server.register(wixLeadWebhookRoutes);
 server.register(messageSendRoutes);

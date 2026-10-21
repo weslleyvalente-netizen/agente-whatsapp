@@ -46,3 +46,4 @@ export * from "./contact-state.js";
 export * from "./chat-day.js";
 export * from "./customer-audio.js";
 export * from "./ai-after-hours.js";
+export * from './manual-financing.js';
