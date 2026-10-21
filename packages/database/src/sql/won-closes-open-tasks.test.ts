@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createRlsDb } from "./rls-harness.js";
 
@@ -12,21 +13,20 @@ const SCHEMA = `
   ALTER TABLE public.opportunities ADD COLUMN operation text NOT NULL DEFAULT 'consortium', ADD COLUMN stage text NOT NULL DEFAULT 'interest_received',
     ADD COLUMN initial_operation text NOT NULL DEFAULT 'consortium', ADD COLUMN owner_assigned_at timestamptz, ADD COLUMN last_progress_at timestamptz,
     ADD COLUMN created_at timestamptz NOT NULL DEFAULT clock_timestamp(), ADD COLUMN updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    ADD CONSTRAINT opp_status_chk CHECK (status IN ('open','won','lost'));
+    ADD COLUMN frozen_until date, ADD CONSTRAINT opp_status_chk CHECK (status IN ('open','won','lost'));
   ALTER TABLE public.tasks ADD COLUMN assignee_type text CHECK (assignee_type IN ('human','ai')), ADD COLUMN type text NOT NULL DEFAULT 'other',
-    ADD COLUMN due_date date NOT NULL DEFAULT current_date, ADD COLUMN completed_at timestamptz,
+    ADD COLUMN due_date date NOT NULL DEFAULT current_date, ADD COLUMN completed_at timestamptz, ADD COLUMN consolidated_pendencies jsonb NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN updated_at timestamptz NOT NULL DEFAULT '2020-01-01', ADD COLUMN created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     ADD CONSTRAINT tasks_status_chk CHECK (status IN ('pending','in_progress','completed','cancelled','rescheduled')),
     ADD CONSTRAINT tasks_assignee_consistency CHECK ((assignee_type IS NULL AND assignee_id IS NULL) OR (assignee_type = 'ai' AND assignee_id IS NULL) OR (assignee_type = 'human' AND assignee_id IS NOT NULL));
   CREATE FUNCTION public.test_touch_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at = clock_timestamp(); RETURN NEW; END $$;
   CREATE TRIGGER trg_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.test_touch_updated_at();
   ALTER TABLE public.wa_contacts ADD COLUMN phone text;
-  ALTER TABLE public.opportunity_events ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT clock_timestamp();
+  ALTER TABLE public.opportunity_events ADD COLUMN previous_value jsonb, ADD COLUMN new_value jsonb, ADD COLUMN evidence text NOT NULL, ADD COLUMN changed_by_type text NOT NULL, ADD COLUMN created_at timestamptz NOT NULL DEFAULT clock_timestamp();
   ALTER TABLE public.task_events ADD COLUMN note text, ADD COLUMN created_by_id uuid, ADD COLUMN created_by_type text NOT NULL CHECK (created_by_type IN ('ai','human'));
 `;
 const HUMAN_OPENS_SCHEMA = `
   ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS last_message_at timestamptz; ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
-  ALTER TABLE public.opportunity_events ADD COLUMN previous_value jsonb, ADD COLUMN new_value jsonb, ADD COLUMN evidence text NOT NULL, ADD COLUMN changed_by_type text NOT NULL;
   CREATE TABLE public.organization_ignored_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES public.organizations(id), phone text NOT NULL);
 `;
 
@@ -42,10 +42,10 @@ async function setup({ withHumanOpens = false, apply = true } = {}) {
   const contact = await mkContact();
   const user = crypto.randomUUID();
   const opp = async (o: string, c: string, status = "open") => (await q("insert into public.opportunities(organization_id,contact_id,status) values ($1,$2,$3) returning id", [o, c, status]))[0].id as string;
-  const task = async (o: string, c: string, opts: { status?: string; kind?: "human" | "ai"; opp?: string | null } = {}) => {
+  const task = async (o: string, c: string, opts: { status?: string; kind?: "human" | "ai"; opp?: string | null; createdAt?: string } = {}) => {
     const kind = opts.kind ?? "human";
-    return (await q("insert into public.tasks(organization_id,contact_id,assignee_type,assignee_id,status,opportunity_id) values ($1,$2,$3,$4,$5,$6) returning id",
-      [o, c, kind, kind === "human" ? user : null, opts.status ?? "pending", opts.opp ?? null]))[0].id as string;
+    return (await q("insert into public.tasks(organization_id,contact_id,assignee_type,assignee_id,status,opportunity_id,created_at) values ($1,$2,$3,$4,$5,$6,coalesce($7::timestamptz, clock_timestamp())) returning id",
+      [o, c, kind, kind === "human" ? user : null, opts.status ?? "pending", opts.opp ?? null, opts.createdAt ?? null]))[0].id as string;
   };
   const st = async (t: string) => (await q("select status, completed_at, updated_at from public.tasks where id=$1", [t]))[0];
   const win = (id: string) => q("update public.opportunities set status='won' where id=$1", [id]);
@@ -58,12 +58,13 @@ describe("won_closes_open_tasks", { timeout: 60_000 }, () => {
     const o = await s.opp(s.org, s.contact);
     const ts = [await s.task(s.org, s.contact, { opp: o, status: "pending" }), await s.task(s.org, s.contact, { opp: o, status: "in_progress", kind: "ai" }), await s.task(s.org, s.contact, { opp: o, status: "rescheduled" })];
     await s.win(o);
-    for (const t of ts) {
+    const prev = ["pending", "in_progress", "rescheduled"];
+    for (const [i, t] of ts.entries()) {
       const r = await s.st(t);
       expect(r.status).toBe("completed");
       expect(r.completed_at).not.toBeNull();
       expect(new Date(r.updated_at).getFullYear()).toBeGreaterThan(2020);
-      expect(await s.q("select event_type, note, created_by_type, created_by_id from public.task_events where task_id=$1", [t])).toEqual([{ event_type: "completed", note: `Encerrada automaticamente: negócio ${o} ganho`, created_by_type: "ai", created_by_id: null }]);
+      expect(await s.q("select event_type, note, created_by_type, created_by_id from public.task_events where task_id=$1", [t])).toEqual([{ event_type: "completed", note: `Encerrada automaticamente; status anterior: ${prev[i]}; negócio ganho ${o}`, created_by_type: "ai", created_by_id: null }]);
     }
   });
 
@@ -168,6 +169,27 @@ describe("won_closes_open_tasks", { timeout: 60_000 }, () => {
     expect(await s.q("select 1 from public.task_events where task_id=$1", [t])).toHaveLength(1);
   });
 
+  it("negócio congelado que é ganho: tarefa de congelamento fecha, frozen_until fica, nada reabre", async () => {
+    const s = await setup();
+    const o = await s.opp(s.org, s.contact);
+    await s.q("update public.opportunities set frozen_until = current_date + 30 where id=$1", [o]);
+    const t = await s.task(s.org, s.contact, { opp: o, status: "pending" });
+    await s.q("update public.tasks set consolidated_pendencies = '[{\"type\":\"scheduled_callback\"}]'::jsonb where id=$1", [t]);
+    await s.win(o);
+    expect((await s.st(t)).status).toBe("completed");
+    expect((await s.q("select frozen_until is not null as f from public.opportunities where id=$1", [o]))[0].f).toBe(true);
+  });
+
+  it("o gatilho só pega tarefas criadas até o ganho (corte de tempo)", async () => {
+    const s = await setup();
+    const o = await s.opp(s.org, s.contact);
+    const before = await s.task(s.org, s.contact, { opp: o });
+    const future = await s.task(s.org, s.contact, { opp: o, createdAt: "2999-01-01" });
+    await s.win(o);
+    expect((await s.st(before)).status).toBe("completed");
+    expect((await s.st(future)).status).toBe("pending");
+  });
+
   it("aplicar a migration duas vezes é seguro (um gatilho, mesma regra)", async () => {
     const s = await setup();
     await s.db.exec(readFileSync(MIGRATION, "utf8"));
@@ -180,28 +202,95 @@ describe("won_closes_open_tasks", { timeout: 60_000 }, () => {
   });
 });
 
+// Executa o arquivo como um operador no editor do Supabase: instrução por instrução (comentários de linha removidos); devolve o resultado de cada uma.
+function statements(file: string): string[] {
+  return readFileSync(file, "utf8").split("\n").filter(l => !l.trim().startsWith("--")).join("\n").split(";").map(x => x.trim()).filter(Boolean);
+}
+
 describe("backfill 20261022_complete_tasks_of_won_deals", { timeout: 60_000 }, () => {
-  it("preview lista só o que seria concluído; aplicar devolve os ids; arquivo termina em ROLLBACK com COMMIT comentado", async () => {
+  const run = async (s: Awaited<ReturnType<typeof setup>>) => {
+    const stmts = statements(fileURLToPath(BACKFILL));
+    expect(stmts).toHaveLength(2); // preview + aplicar, sem BEGIN/ROLLBACK
+    expect(stmts.join(";")).not.toMatch(/\b(BEGIN|ROLLBACK|COMMIT)\b/i);
+    return { preview: () => s.q(stmts[0]!), apply: () => s.q(stmts[1]!) };
+  };
+  const wonDeal = async (s: Awaited<ReturnType<typeof setup>>, contact: string, daysAgo: number, withEvent = true) => {
+    const o = await s.opp(s.org, contact, "won");
+    if (withEvent) await s.q("insert into public.opportunity_events(organization_id,opportunity_id,event_type,evidence,changed_by_type,created_at) values ($1,$2,'won','x','human', now() - ($3 || ' days')::interval)", [s.org, o, String(daysAgo)]);
+    return o;
+  };
+
+  it("preview = dry-run; aplicar conclui o mesmo conjunto, devolve ids e status anterior; reexecutar não faz nada", async () => {
     const s = await setup();
-    const sql = readFileSync(BACKFILL, "utf8");
-    expect(sql).toMatch(/^ROLLBACK;/m);
-    expect(sql).toMatch(/^-- COMMIT;/m);
-    const o = await s.opp(s.org, s.contact, "won"); // nasceu ganho: o gatilho de UPDATE não rodou
-    const linked = await s.task(s.org, s.contact, { opp: o }), loose = await s.task(s.org, s.contact, { kind: "ai" });
+    const { preview, apply } = await run(s);
+    const o = await wonDeal(s, s.contact, 10);
+    const linked = await s.task(s.org, s.contact, { opp: o, status: "in_progress", createdAt: new Date(Date.now() - 20 * 864e5).toISOString() });
+    const loose = await s.task(s.org, s.contact, { kind: "ai", createdAt: new Date(Date.now() - 30 * 864e5).toISOString() });
     const c2 = await s.mkContact();
     await s.opp(s.org, c2); // aberto
     const keep = await s.task(s.org, c2);
-    const closed = await s.task(s.org, s.contact, { opp: o, status: "cancelled" });
-    const preview = sql.slice(sql.indexOf("SELECT DISTINCT"), sql.indexOf("-- ===== 2)"));
-    const rows = await s.q(preview);
+    const closed = await s.task(s.org, s.contact, { opp: o, status: "cancelled", createdAt: new Date(Date.now() - 20 * 864e5).toISOString() });
+    const rows = await preview();
     expect(rows.map((r: any) => r.task_id).sort()).toEqual([linked, loose].sort());
-    expect(rows.find((r: any) => r.task_id === linked)).toMatchObject({ opportunity_id: o, dias_desde_ganho: 0 });
-    const apply = sql.split("BEGIN;")[1]!.split("ROLLBACK;")[0]!;
-    const out = await s.q(apply);
+    expect(rows.find((r: any) => r.task_id === linked)).toMatchObject({ decisao: "CONCLUI", opportunity_id: o, dias_desde_ganho: 10, status_atual: "in_progress" });
+    expect(rows[0].tarefa_criada_em).toBeTruthy();
+    expect((await s.st(linked)).status).toBe("in_progress"); // preview não altera
+    const out = await apply();
     expect(out.map((r: any) => r.task_id).sort()).toEqual([linked, loose].sort());
+    expect(out.find((r: any) => r.task_id === linked)).toMatchObject({ opportunity_id: o, previous_status: "in_progress" });
     expect((await s.st(linked)).status).toBe("completed");
     expect((await s.st(keep)).status).toBe("pending");
     expect((await s.st(closed)).status).toBe("cancelled");
-    expect(await s.q(apply)).toHaveLength(0); // idempotente
+    expect(await apply()).toHaveLength(0);
+    expect(await preview()).toHaveLength(0);
+  });
+
+  it("H1: negócio ganho há 180 dias + tarefa criada hoje (cliente que voltou) continua aberta; criada antes do ganho é concluída", async () => {
+    const s = await setup();
+    const { preview, apply } = await run(s);
+    const o = await wonDeal(s, s.contact, 180);
+    const old = await s.task(s.org, s.contact, { createdAt: new Date(Date.now() - 200 * 864e5).toISOString() });
+    const fresh = await s.task(s.org, s.contact);
+    const freshLinked = await s.task(s.org, s.contact, { opp: o }); // vinculada à mão depois do ganho
+    expect((await preview()).map((r: any) => r.task_id)).toEqual([old]);
+    expect((await apply()).map((r: any) => r.task_id)).toEqual([old]);
+    expect((await s.st(old)).status).toBe("completed");
+    expect((await s.st(fresh)).status).toBe("pending");
+    expect((await s.st(freshLinked)).status).toBe("pending");
+  });
+
+  it("ganho sem evento won é pulado e listado no preview; nada é concluído", async () => {
+    const s = await setup();
+    const { preview, apply } = await run(s);
+    const o = await wonDeal(s, s.contact, 0, false);
+    const t = await s.task(s.org, s.contact, { opp: o });
+    const rows = await preview();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decisao: "PULA: ganho sem evento won", task_id: null, opportunity_id: o });
+    expect(Number(rows[0].tarefas_abertas_do_contato)).toBe(1);
+    expect(await apply()).toHaveLength(0);
+    expect((await s.st(t)).status).toBe("pending");
+  });
+
+  it("contato com 2 negócios ganhos: preview e aplicar nomeiam o ganho mais recente para a tarefa sem negócio", async () => {
+    const s = await setup();
+    const { preview, apply } = await run(s);
+    const older = await wonDeal(s, s.contact, 100), newer = await wonDeal(s, s.contact, 5);
+    const t = await s.task(s.org, s.contact, { createdAt: new Date(Date.now() - 200 * 864e5).toISOString() });
+    expect((await preview())[0]).toMatchObject({ task_id: t, opportunity_id: newer });
+    expect((await apply())[0]).toMatchObject({ task_id: t, opportunity_id: newer });
+    expect(older).not.toBe(newer);
+    expect((await s.q("select note from public.task_events where task_id=$1", [t]))[0].note).toContain(newer);
+  });
+
+  it("a consulta de reversão documentada devolve o status anterior", async () => {
+    const s = await setup();
+    const { apply } = await run(s);
+    const o = await wonDeal(s, s.contact, 3);
+    const a = await s.task(s.org, s.contact, { opp: o, status: "rescheduled", createdAt: new Date(Date.now() - 9 * 864e5).toISOString() });
+    await apply();
+    await s.q(`UPDATE public.tasks t SET status = substring(e.note from 'status anterior: ([a-z_]+)'), completed_at = NULL FROM public.task_events e
+      WHERE e.task_id = t.id AND e.event_type = 'completed' AND e.note LIKE 'Encerrada automaticamente; status anterior: %' AND t.status = 'completed'`);
+    expect((await s.st(a)).status).toBe("rescheduled");
   });
 });
