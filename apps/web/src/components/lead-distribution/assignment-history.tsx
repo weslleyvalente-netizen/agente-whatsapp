@@ -12,12 +12,21 @@ export function AssignmentHistory({ contactId }: { contactId: string }) {
   const [rows, setRows] = useState<LeadAssignment[] | null>(null);
   const [reps, setReps] = useState<SalesRep[]>([]);
   useEffect(() => {
-    setRows(null);
+    setRows(null); // eslint-disable-line react-hooks/set-state-in-effect
     if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) return;
     Promise.all([apiFetch(`/organizations/${currentOrg.id}/contacts/${contactId}/lead-assignments`), apiFetch(`/organizations/${currentOrg.id}/sales-reps`)])
       .then(([h, r]) => { setRows(h); setReps(r); }).catch(() => setRows([]));
   }, [currentOrg, contactId]);
-  if (!rows?.length) return null;
+  if (!currentOrg || currentOrg.settings.lead_distribution_enabled !== true) return null;
+  if (rows === null) return <p className="text-sm text-muted-foreground">Carregando…</p>;
+  if (rows.length === 0) {
+    return (
+      <section className="rounded-lg border p-4" aria-label="Histórico de atribuição">
+        <h3 className="mb-1 font-medium">Atribuição do lead</h3>
+        <p className="text-sm text-muted-foreground">Nenhuma atribuição registrada para este cliente. É um cliente que já estava com o vendedor antes do rodízio, ou a conversa foi passada sem o fluxo de atribuição.</p>
+      </section>
+    );
+  }
   const name = (id: string | null) => reps.find(r => r.id === id)?.display_name ?? "—";
   return (
     <section className="rounded-lg border p-4" aria-label="Histórico de atribuição">

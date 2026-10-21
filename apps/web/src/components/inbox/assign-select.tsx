@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { apiFetch } from "@/lib/api";
+import { useOrganization } from "@/providers/organization-provider";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
+import { shouldUseManualAssign } from "@/lib/lead-assign";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AssignSelectProps {
@@ -21,6 +25,9 @@ export function AssignSelect({
 }: AssignSelectProps) {
   const [members, setMembers] = useState<Array<{ user_id: string; role: string }>>([]);
   const [repNames, setRepNames] = useState<Record<string, string>>({});
+  const [repIds, setRepIds] = useState<Record<string, string>>({});
+  const { currentOrg } = useOrganization();
+  const { role } = useMyRole();
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +39,9 @@ export function AssignSelect({
         .select("user_id, role")
         .eq("organization_id", organizationId);
       setMembers(data || []);
-      const { data: reps } = await supabase.from("sales_reps").select("user_id, display_name").eq("organization_id", organizationId);
+      const { data: reps } = await supabase.from("sales_reps").select("id, user_id, display_name").eq("organization_id", organizationId);
       setRepNames(Object.fromEntries((reps ?? []).map((r: { user_id: string; display_name: string }) => [r.user_id, r.display_name])));
+      setRepIds(Object.fromEntries((reps ?? []).map((r: { id: string; user_id: string }) => [r.user_id, r.id])));
     };
     fetchMembers();
     supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
@@ -42,6 +50,17 @@ export function AssignSelect({
   const handleAssign = async (userId: string) => {
     const supabase = createClient();
     setError(null);
+    const targetRepId = userId === "none" ? null : repIds[userId] ?? null;
+    if (shouldUseManualAssign({ distributionOn: currentOrg?.settings.lead_distribution_enabled === true, role, targetRepId })) {
+      // Reatribuição do rodízio: grava o histórico, inicia o prazo de resposta e avisa o vendedor. O banco move conversa, negócio e tarefas.
+      try {
+        await apiFetch(`/organizations/${organizationId}/lead-assignments/manual`, { method: "POST", body: JSON.stringify({ conversationId, repId: targetRepId }) });
+      } catch (err) {
+        setError((err as { message?: string }).message ?? "Não foi possível reatribuir o lead.");
+      }
+      onUpdate();
+      return;
+    }
     // select() permite detectar 0 linhas: com o isolamento por vendedor o banco ignora (sem erro) a conversa que o usuário não vê.
     const { data, error: updateError } = await supabase
       .from("conversations")
