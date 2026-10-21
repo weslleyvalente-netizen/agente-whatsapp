@@ -193,6 +193,9 @@ export const defaultDeps: HealthDeps = {
     return counts.reduce((a, b) => a + b, 0) / 7;
   },
   async pingRedis() {
+    // Falha única não vira alerta (deploy, reconexão): confirma uma segunda vez após uma pausa curta.
+    if (await probeRedis()) return "ok";
+    await new Promise((r) => setTimeout(r, 8_000));
     return (await probeRedis()) ? "ok" : "down";
   },
   async evolutionState(organizationId) {
