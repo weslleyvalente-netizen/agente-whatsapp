@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect } from 'vitest';
-const migration = readFileSync(new URL('../../../../supabase/migrations/20261022120000_financing_mock.sql', import.meta.url), 'utf8');
+const migration = readFileSync(new URL('../../../../supabase/migrations/20261022121000_financing_mock.sql', import.meta.url), 'utf8');
 async function setup() {
   const db = new PGlite();
   await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;

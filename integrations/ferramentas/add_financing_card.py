@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse
 
 DESTINATION = 'https://crm.motoetrilha.com.br/financiamento'
-CARD = '''<a class="portal-tool" href="https://crm.motoetrilha.com.br/financiamento"><div class="portal-tool-top"><svg class="portal-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 10h18M5 10v9m5-9v9m4-9v9m5-9v9M3 21h18M2 7l10-5 10 5z"/></svg><span class="portal-access restricted">Login do CRM · Testes</span></div><h2>Consulta de financiamento</h2><p>Prepare a ficha do cliente e acompanhe os resultados por banco no ambiente de testes.</p><span class="portal-action">Abrir consultas<span aria-hidden="true">↗</span></span></a>'''
+CARD = '''<a class="portal-tool" href="https://crm.motoetrilha.com.br/financiamento"><div class="portal-tool-top"><svg class="portal-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 10h18M5 10v9m5-9v9m4-9v9m5-9v9M3 21h18M2 7l10-5 10 5z"/></svg><span class="portal-access restricted">Login do CRM</span></div><h2>Consulta de financiamento</h2><p>Simule com veículos do estoque ou avulsos e acompanhe as respostas de cada banco.</p><span class="portal-action">Abrir consultas<span aria-hidden="true">↗</span></span></a>'''
 
 
 def add_card(source: str) -> str:

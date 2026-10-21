@@ -30,7 +30,7 @@ Não há formulário de disparo no painel nesta etapa: a entrega prioriza cadast
 
 ## Configuração pendente (servidor)
 
-Aplicar a migração `supabase/migrations/20261022120000_financing_mock.sql` no Supabase do CRM, após revisão/homologação. Não foi aplicada remotamente.
+Aplicar a migração `supabase/migrations/20261022121000_financing_mock.sql` no Supabase do CRM, após revisão/homologação. Não foi aplicada remotamente.
 
 - API + worker: `FINANCING_MODE=mock` (ausente = desativado).
 - API: `CATALOG_ORGANIZATION_ID`, `CATALOG_SUPABASE_URL`, `CATALOG_SUPABASE_SERVICE_ROLE_KEY`, somente servidor. Vinculam o estoque externo à organização correta.
