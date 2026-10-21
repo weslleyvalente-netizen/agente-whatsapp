@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   description: "Atendimento e vendas da Moto e Trilha Veículos",
   applicationName: "Moto e Trilha",
   appleWebApp: { capable: true, title: "Moto e Trilha", statusBarStyle: "default" },
-  icons: { apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
+  icons: { apple: [{ url: "/icons/apple-touch-icon.png?v=2", sizes: "180x180", type: "image/png" }] },
 };
 
 export const viewport: Viewport = {
