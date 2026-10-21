@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { UserNav } from "@/components/layout/user-nav";
 import { RouteGuard } from "@/components/layout/route-guard";
 import { HealthBanner } from "@/components/layout/health-banner";
+import { PushPromptBanner } from "@/components/layout/push-prompt-banner";
 import { AvailabilitySelect } from "@/components/lead-distribution/availability-select";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -28,6 +29,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <UserNav email={user.email!} />
           </header>
           <HealthBanner />
+          <PushPromptBanner />
           <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-6"><RouteGuard>{children}</RouteGuard></main>
         </div>
       </div>
