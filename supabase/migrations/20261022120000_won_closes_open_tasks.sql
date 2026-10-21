@@ -41,7 +41,7 @@
 --   Para pegar as puladas, rode o backfill de novo (ele é reexecutável: só pega tarefas criadas até o ganho e ainda abertas).
 --   Leituras (existência de outro negócio aberto) são sem lock.
 --
--- Idempotente. NÃO altera dados existentes (backfill separado: supabase/backfills/20261022_complete_tasks_of_won_deals.sql).
+-- Idempotente. NÃO altera dados existentes (backfill separado em 2 arquivos: supabase/backfills/20261022_complete_tasks_of_won_deals_1_preview.sql e _2_apply.sql).
 -- Reverter: DROP TRIGGER IF EXISTS trg_won_closes_open_tasks ON public.opportunities;
 --   DROP FUNCTION IF EXISTS public.won_closes_open_tasks(); DROP FUNCTION IF EXISTS public._complete_tasks_of_won_opportunity(uuid, timestamptz);
 --   Desfazer tarefas já concluídas por ele (o status anterior está na nota do task_event):

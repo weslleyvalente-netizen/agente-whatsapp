@@ -6,7 +6,8 @@ import { createRlsDb } from "./rls-harness.js";
 const M = (f: string) => new URL(`../../../../supabase/migrations/${f}`, import.meta.url);
 const MIGRATION = M("20261022120000_won_closes_open_tasks.sql");
 const HUMAN_OPENS = M("20261021120000_human_task_opens_opportunity.sql");
-const BACKFILL = M("../backfills/20261022_complete_tasks_of_won_deals.sql");
+const BACKFILL_PREVIEW = M("../backfills/20261022_complete_tasks_of_won_deals_1_preview.sql");
+const BACKFILL_APPLY = M("../backfills/20261022_complete_tasks_of_won_deals_2_apply.sql");
 
 // Colunas/constraints de produção (00010, 00024) que o esquema mínimo do rls-fixture não tem.
 const SCHEMA = `
@@ -207,12 +208,15 @@ function statements(file: string): string[] {
   return readFileSync(file, "utf8").split("\n").filter(l => !l.trim().startsWith("--")).join("\n").split(";").map(x => x.trim()).filter(Boolean);
 }
 
-describe("backfill 20261022_complete_tasks_of_won_deals", { timeout: 60_000 }, () => {
+describe("backfill 20261022_complete_tasks_of_won_deals (preview e aplicar em arquivos separados)", { timeout: 60_000 }, () => {
   const run = async (s: Awaited<ReturnType<typeof setup>>) => {
-    const stmts = statements(fileURLToPath(BACKFILL));
-    expect(stmts).toHaveLength(2); // preview + aplicar, sem BEGIN/ROLLBACK
-    expect(stmts.join(";")).not.toMatch(/\b(BEGIN|ROLLBACK|COMMIT)\b/i);
-    return { preview: () => s.q(stmts[0]!), apply: () => s.q(stmts[1]!) };
+    const prev = statements(fileURLToPath(BACKFILL_PREVIEW));
+    const app = statements(fileURLToPath(BACKFILL_APPLY));
+    expect(prev).toHaveLength(1); // cada arquivo é UMA instrução: nunca preview e aplicar juntos
+    expect(app).toHaveLength(1);
+    expect(app[0]).toMatch(/^WITH\b/i); // começa com WITH: o editor não acrescenta "limit 100"
+    expect([...prev, ...app].join(";")).not.toMatch(/\b(BEGIN|ROLLBACK|COMMIT)\b/i);
+    return { preview: () => s.q(prev[0]!), apply: () => s.q(app[0]!) };
   };
   const wonDeal = async (s: Awaited<ReturnType<typeof setup>>, contact: string, daysAgo: number, withEvent = true) => {
     const o = await s.opp(s.org, contact, "won");
