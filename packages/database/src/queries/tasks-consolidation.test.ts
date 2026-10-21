@@ -438,6 +438,23 @@ describe("customer reply resolves unresponsive pendencies",()=>{
   await resolveUnresponsiveTasksOnReply(client,reply);
   expect(tables.tasks[0]).toMatchObject({status:"pending",type:"return_customer",due_date:"2026-10-03",consolidated_pendencies:[remaining]});
  });
+ it("a resposta do cliente também conclui o alerta de negociação parada (e só ele)",async()=>{
+  const {client,tables}=makeFakeClient({tasks:[row({id:"stalled",type:"stalled_negotiation"}),row({id:"acao",type:"financing_followup"}),row({id:"outro",type:"stalled_negotiation",conversation_id:"other"})]});
+  await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks.find(t=>t.id==="stalled")!.status).toBe("completed");
+  expect(tables.tasks.find(t=>t.id==="acao")!.status).toBe("pending"); // tarefa de ação do vendedor continua com ele
+  expect(tables.tasks.find(t=>t.id==="outro")!.status).toBe("pending"); // outra conversa
+  expect(tables.task_events.some(e=>String(e.note).includes("negociação parada retomada"))).toBe(true);
+ });
+ it("alerta de negociação parada criado depois da resposta não é fechado, e as outras pendências consolidadas ficam",async()=>{
+  const newer=row({id:"novo",type:"stalled_negotiation",created_at:"2026-10-02T17:00:00Z"});
+  const remaining={type:"proposal_followup",description:"Acompanhar proposta",priority:"normal",due_date:"2026-10-03",due_time:null,added_at:"2026-10-02T12:00:00Z",reason:null};
+  const merged=row({id:"mesclada",type:"stalled_negotiation",consolidated_pendencies:[{...remaining,type:"stalled_negotiation"},remaining]});
+  const {client,tables}=makeFakeClient({tasks:[newer,merged]});
+  await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks.find(t=>t.id==="novo")!.status).toBe("pending");
+  expect(tables.tasks.find(t=>t.id==="mesclada")).toMatchObject({status:"pending",type:"proposal_followup",consolidated_pendencies:[remaining]});
+ });
  it("preserves an unresponsive pendency added after the reply",async()=>{
   const {client,tables}=makeFakeClient({tasks:[row({consolidated_pendencies:[{type:"customer_unresponsive",added_at:"2026-10-02T17:00:00Z",priority:"high",due_date:"2026-10-03",description:"Novo silêncio"}]})]});
   await resolveUnresponsiveTasksOnReply(client,reply);expect(tables.tasks[0].status).toBe("pending");expect(tables.task_events).toHaveLength(0);

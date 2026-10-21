@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import { APP_ICON_DATA_URI } from "@/lib/app-icon";
 
 const fontDisplay = Space_Grotesk({
   variable: "--font-display",
@@ -24,8 +25,9 @@ export const metadata: Metadata = {
   title: "Moto e Trilha — Atendimento",
   description: "Atendimento e vendas da Moto e Trilha Veículos",
   applicationName: "Moto e Trilha",
+  manifest: "/app.webmanifest",
   appleWebApp: { capable: true, title: "Moto e Trilha", statusBarStyle: "default" },
-  icons: { apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
+  icons: { apple: [{ url: APP_ICON_DATA_URI, sizes: "180x180", type: "image/png" }] },
 };
 
 export const viewport: Viewport = {

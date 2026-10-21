@@ -283,7 +283,11 @@ export async function resolveAwaitingCustomerPendency(
   return { taskCompleted: true };
 }
 
-/** Resolve silence only on a persisted inbound reply, even during human takeover. */
+// Alertas de "cliente parado": a premissa deles ("sem mensagem de nenhum lado") deixa de valer quando o cliente responde.
+// Tarefas de AÇÃO do vendedor (follow-up, cobrar documentos, retornar) NÃO entram aqui: o cliente responder não quer dizer que a ação foi feita.
+const RESOLVED_ON_CUSTOMER_REPLY: TaskType[] = ["customer_unresponsive", "stalled_negotiation"];
+
+/** Resolve silence / stalled-negotiation alerts only on a persisted inbound reply, even during human takeover. */
 export async function resolveUnresponsiveTasksOnReply(
   client: SupabaseClient,
   input: { organizationId: string; contactId: string; conversationId: string; role: string; createdAt: string; messageId: string }
@@ -292,9 +296,13 @@ export async function resolveUnresponsiveTasksOnReply(
   const tasks = await getOpenTasksByContact(client, input.organizationId, input.contactId);
   for (const task of tasks) {
     if (task.conversation_id !== input.conversationId) continue;
-    if (task.type !== "customer_unresponsive" && !(task.consolidated_pendencies ?? []).some(p => p.type === "customer_unresponsive")) continue;
-    await resolveAwaitingCustomerPendency(client, input.organizationId, task.id, "customer_unresponsive",
-      `Cliente respondeu — pendência sem resposta resolvida. Mensagem: ${input.messageId}`, 0, input.createdAt);
+    for (const type of RESOLVED_ON_CUSTOMER_REPLY) {
+      if (task.type !== type && !(task.consolidated_pendencies ?? []).some(p => p.type === type)) continue;
+      await resolveAwaitingCustomerPendency(client, input.organizationId, task.id, type,
+        type === "stalled_negotiation"
+          ? `Cliente respondeu — negociação parada retomada. Mensagem: ${input.messageId}`
+          : `Cliente respondeu — pendência sem resposta resolvida. Mensagem: ${input.messageId}`, 0, input.createdAt);
+    }
   }
 }
 

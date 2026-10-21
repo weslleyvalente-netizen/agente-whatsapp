@@ -38,3 +38,20 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
+
+export const PUSH_BANNER_DISMISS_MS = 24 * 60 * 60 * 1000;
+export const PUSH_BANNER_STORAGE_KEY = "push-banner-dismissed-until";
+
+/** Aviso no topo do CRM para quem ainda não ativou as notificações neste aparelho. Só com o recurso ligado na organização. */
+export function shouldShowPushBanner(opts: {
+  flagOn: boolean;
+  status: PushStatus | null;
+  pathname: string;
+  dismissedUntil: number | null;
+  now: number;
+}): boolean {
+  if (!opts.flagOn || opts.status === null) return false;
+  if (opts.pathname.startsWith("/notificacoes")) return false; // já está na tela de ativar
+  if (opts.status !== "inactive" && opts.status !== "needs-install" && opts.status !== "denied") return false;
+  return opts.dismissedUntil === null || opts.now >= opts.dismissedUntil;
+}
