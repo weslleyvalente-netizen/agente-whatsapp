@@ -56,7 +56,10 @@ export default async function manualFinancingRoutes(app:FastifyInstance){
   const gate=await db().rpc('manual_financing_gate',{p_org:req.params.organizationId,p_case:null,p_account:s.account_hash,p_action:'test'});
   if(gate.error)throw Error('gate');if(!gate.data)return reply.code(429).send({error:'Aguarde alguns segundos antes de testar.'});
   const credentials=open(s.credentials_encrypted),client=new CredProManualClient(s.mode,credentials.key);
-  try{return {connected:true,banks:(await client.banks()).filter(b=>s.banks.includes(b.bank))};}catch{return reply.code(503).send({error:'Conexão não confirmada. Confira a chave e a disponibilidade da CredPro.'});}
+  try{return {connected:true,banks:(await client.banks()).filter(b=>s.banks.includes(b.bank))};}catch(error){
+   const messages:Record<string,string>={http_401:'A CredPro recusou a chave salva. Confira se a chave deste ambiente está ativa.',http_429:'A CredPro limitou as chamadas. Aguarde antes de testar novamente.',transport_failed:'A CredPro não respondeu ao teste de conexão. Tente novamente em alguns instantes.',sandbox_unconfirmed:'A CredPro não identificou a resposta como sandbox. O acesso de teste permanece protegido.',wrong_environment:'A CredPro respondeu em um ambiente diferente do configurado.',invalid_response:'A resposta de disponibilidade da CredPro não veio no formato esperado.'};
+   return reply.code(503).send({error:error instanceof CredProManualError?(messages[error.code]??'Conexão não confirmada. Confira a chave e a disponibilidade da CredPro.'):'Conexão não confirmada. Confira a configuração.'});
+  }
  });
  app.get<{Params:Params}>(prefix+'/cases',async(req)=>{
   let q=db().from('manual_financing_cases').select('*').eq('organization_id',req.params.organizationId).order('created_at',{ascending:false}).limit(50);
