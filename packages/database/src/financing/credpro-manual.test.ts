@@ -15,4 +15,16 @@ describe('documented CredPro manual transport',()=>{
   await expect(unknown.start({})).rejects.toMatchObject({code:'http_500'});
  });
 
+ it('accepts environment-neutral bank availability but keeps credit sandbox guards strict',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({bancos:[{banco:'PAN',disponivel_agora:true}]})));
+  const client=new CredProManualClient('sandbox','cpk_test_fakekey00',fetcher);
+  await expect(client.banks()).resolves.toEqual([{bank:'PAN',available:true}]);
+  expect(fetcher.mock.calls[0][1].method).toBe('GET');expect(fetcher.mock.calls[0][0]).toBe('https://cred-pro.com/v1/bancos');
+  const explicitWrong=new CredProManualClient('sandbox','cpk_test_fakekey00',async()=>new Response(JSON.stringify({sandbox:false,bancos:[]})));
+  await expect(explicitWrong.banks()).rejects.toMatchObject({code:'sandbox_unconfirmed'});
+  const noMarker=new CredProManualClient('sandbox','cpk_test_fakekey00',async()=>new Response(JSON.stringify({consulta_id:42,status:'processando',resultados:[]})));
+  await expect(noMarker.start({})).rejects.toMatchObject({code:'sandbox_unconfirmed'});
+  await expect(noMarker.result(42,['PAN'])).rejects.toMatchObject({code:'sandbox_unconfirmed'});
+ });
+
 });

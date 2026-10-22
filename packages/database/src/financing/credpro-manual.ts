@@ -47,7 +47,10 @@ export class CredProManualClient{
    fail(`http_${response.status}`);
   }
   let raw:unknown;try{raw=await response.json();}catch{return fail(body?'creation_unknown':'invalid_response');}
-  const data=obj(raw);modeOf(data,this.#mode);return data;
+  const data=obj(raw);
+  // Verified provider behavior: the read-only bank directory has no sandbox marker.
+  // Credit creation/results still require it; explicit wrong markers always fail.
+  if(path!=='/bancos'||data.sandbox!==undefined)modeOf(data,this.#mode);return data;
  }
  async start(body:Record<string,unknown>){const data=await this.#request('/simulacoes',body);if(!['processando','concluida'].includes(String(data.status)))fail('creation_unknown');return id(data.consulta_id);}
  async result(consultationId:number,banks:string[]){const value=id(consultationId),result=normalizeCredProManualResult(await this.#request(`/simulacoes/${value}`),this.#mode,banks);if(result.consultationId!==value)fail('wrong_consultation');return result;}
