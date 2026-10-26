@@ -1,12 +1,12 @@
 // Decisão pura da varredura de cliente sem resposta. Nenhum acesso a banco, Redis ou relógio global.
 export const MIN_AGE_MS = 10 * 60_000;
-export const MAX_AGE_MS = 6 * 60 * 60_000;
+export const MAX_AGE_MS = 24 * 60 * 60_000;
 export const ESCALATE_AFTER_RETRY_MS = 15 * 60_000;
 // Conversa com humano (takeover/handoff aberto): não há retry da IA, o aviso sai após 10 + 15 min.
 export const ESCALATE_HUMAN_PENDING_MS = MIN_AGE_MS + ESCALATE_AFTER_RETRY_MS;
 
 export type SkipReason =
-  | "too_recent" | "too_old" | "answered" | "ignored" | "ai_disabled" | "frozen" | "no_content"
+  | "too_recent" | "too_old" | "answered" | "ai_processed" | "not_ai_routed" | "ignored" | "ai_disabled" | "frozen" | "no_content"
   | "human_pending" | "retry_pending" | "already_alerted" | "outside_business_hours";
 export type SweepDecision = { action: "retry" } | { action: "alert" } | { action: "skip"; reason: SkipReason };
 
@@ -16,6 +16,10 @@ export interface SweepFacts {
   content: string;
   mediaType: string | null;
   hasOutboundAfter: boolean;
+  /** metadata.ai_routed_at presente: o webhook encaminhou a mensagem à IA. Sem a marca, nunca há retry da IA. */
+  aiRouted: boolean;
+  /** metadata.ai_processed_at presente: o pipeline da IA já tratou a mensagem (mesmo sem responder). */
+  aiProcessed: boolean;
   ignored: boolean;
   aiDisabled: boolean;
   frozen: boolean;
@@ -34,6 +38,7 @@ export function decideSweepAction(f: SweepFacts): SweepDecision {
   if (age > MAX_AGE_MS) return skip("too_old");
   if (age < MIN_AGE_MS) return skip("too_recent");
   if (f.hasOutboundAfter) return skip("answered");
+  if (f.aiProcessed) return skip("ai_processed");
   if (f.ignored) return skip("ignored");
   if (f.aiDisabled) return skip("ai_disabled");
   if (f.frozen) return skip("frozen");
@@ -46,6 +51,7 @@ export function decideSweepAction(f: SweepFacts): SweepDecision {
     return f.businessOpen ? { action: "alert" } : skip("outside_business_hours");
   }
 
+  if (!f.aiRouted) return skip("not_ai_routed");
   if (!f.retriedAt) return { action: "retry" };
   if (f.alerted) return skip("already_alerted");
   if (f.now.getTime() - f.retriedAt.getTime() < ESCALATE_AFTER_RETRY_MS) return skip("retry_pending");

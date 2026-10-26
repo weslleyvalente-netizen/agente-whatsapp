@@ -4,7 +4,7 @@ import { decideSweepAction, type SweepFacts } from "./unanswered-sweep.js";
 const now = new Date("2026-10-26T15:00:00Z");
 const ago = (min: number) => new Date(now.getTime() - min * 60_000);
 const facts = (o: Partial<SweepFacts> = {}): SweepFacts => ({
-  now, createdAt: ago(30), content: "Quero um consórcio", mediaType: null, hasOutboundAfter: false,
+  now, createdAt: ago(30), content: "Quero um consórcio", mediaType: null, hasOutboundAfter: false, aiRouted: true, aiProcessed: false,
   ignored: false, aiDisabled: false, frozen: false, isHumanTakeover: false, openHandoff: false,
   retriedAt: null, alerted: false, businessOpen: true, ...o,
 });
@@ -16,17 +16,30 @@ describe("decideSweepAction", () => {
   it("espera quando a mensagem tem menos de 10 min", () => {
     expect(decideSweepAction(facts({ createdAt: ago(9) }))).toEqual({ action: "skip", reason: "too_recent" });
   });
-  it("fora de escopo acima de 6 h", () => {
-    expect(decideSweepAction(facts({ createdAt: ago(361) }))).toEqual({ action: "skip", reason: "too_old" });
+  it("fora de escopo acima de 24 h", () => {
+    expect(decideSweepAction(facts({ createdAt: ago(24 * 60 + 1) }))).toEqual({ action: "skip", reason: "too_old" });
   });
   it.each([
     ["answered", { hasOutboundAfter: true }],
     ["ignored", { ignored: true }],
     ["ai_disabled", { aiDisabled: true }],
     ["frozen", { frozen: true }],
+    ["ai_processed", { aiProcessed: true }],
+    ["not_ai_routed", { aiRouted: false }],
     ["no_content", { content: "  ", mediaType: null }],
   ] as const)("pula: %s", (reason, o) => {
     expect(decideSweepAction(facts(o as any))).toEqual({ action: "skip", reason });
+  });
+  it("mensagem processada pela IA (silêncio deliberado) nunca é retentada nem avisada, nem no caminho humano", () => {
+    expect(decideSweepAction(facts({ aiProcessed: true, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "ai_processed" });
+    expect(decideSweepAction(facts({ aiProcessed: true, isHumanTakeover: true, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "ai_processed" });
+  });
+  it("sem a marca ai_routed_at nunca há retry (takeover liberado depois, IA reativada)", () => {
+    expect(decideSweepAction(facts({ aiRouted: false, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "not_ai_routed" });
+    expect(decideSweepAction(facts({ aiRouted: false, retriedAt: ago(40) }))).toEqual({ action: "skip", reason: "not_ai_routed" });
+  });
+  it("caminho humano não depende da marca", () => {
+    expect(decideSweepAction(facts({ aiRouted: false, isHumanTakeover: true, createdAt: ago(30) }))).toEqual({ action: "alert" });
   });
   it("mídia sem texto não é pulada", () => {
     expect(decideSweepAction(facts({ content: "", mediaType: "audio" }))).toEqual({ action: "retry" });

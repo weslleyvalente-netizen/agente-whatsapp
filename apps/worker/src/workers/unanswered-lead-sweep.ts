@@ -3,7 +3,7 @@ import { QUEUE_NAMES, isBusinessOpen, resolveBusinessCalendar } from "@aula-agen
 import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue, type ProcessMessageJobData } from "@aula-agente/queue";
 import {
   getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
-  hasOutboundMessageAfter, listLatestInboundMessages, listUnansweredSweepOrganizations,
+  hasOutboundMessageAfter, listLatestInboundMessages, listStaleUnprocessedRouted, listUnansweredSweepOrganizations,
   type SweepOrganization, type UnansweredCandidate,
 } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -17,22 +17,38 @@ const MESSAGE_GROUPING_DELAY_MS = 6000;
 
 export const retriedKey = (messageId: string) => `unanswered-sweep:retried:${messageId}`;
 export const alertedKey = (messageId: string) => `unanswered-sweep:alerted:${messageId}`;
+export const attemptsKey = (messageId: string) => `unanswered-sweep:attempts:${messageId}`;
 /** jobId determinístico (BullMQ não aceita ":" em id customizado). */
 export const retryJobId = (messageId: string) => `unanswered-sweep-${messageId}`;
+export const MAX_ENQUEUE_ATTEMPTS = 3;
+export const MAX_DIGEST_ITEMS = 5;
+const STALE_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+
+export interface EnqueueResult { ok: boolean; reason?: string }
+
+/** Erro de envio com resposta definitiva (HTTP 4xx/5xx): a mensagem NÃO foi entregue, então a chave pode ser liberada. */
+export class DefinitiveSendError extends Error {}
 
 export interface SweepDeps {
   redisReady(): boolean;
   listOrganizations(): Promise<SweepOrganization[]>;
   listInbound(organizationId: string, since: Date): Promise<UnansweredCandidate[]>;
+  /** Mensagens encaminhadas à IA e nunca processadas entre from e to (só para o contador de "mais de 24 h"). */
+  listStale(organizationId: string, from: Date, to: Date): Promise<UnansweredCandidate[]>;
   hasOutboundAfter(conversationId: string, afterIso: string): Promise<boolean>;
   isIgnored(organizationId: string, phone: string): Promise<boolean>;
   isFrozen(organizationId: string, contactId: string): Promise<boolean>;
   hasOpenHandoff(conversationId: string): Promise<boolean>;
   resolveAgentId(evolutionInstanceId: string): Promise<string | null>;
-  redis: { get(key: string): Promise<string | null>; setNx(key: string, value: string, ttlSec: number): Promise<boolean>; del(key: string): Promise<void> };
+  redis: {
+    get(key: string): Promise<string | null>;
+    setNx(key: string, value: string, ttlSec: number): Promise<boolean>;
+    del(key: string): Promise<void>;
+    incr(key: string, ttlSec: number): Promise<number>;
+  };
   acquireLock(conversationId: string): Promise<string | null>;
   releaseLock(conversationId: string, value: string): Promise<void>;
-  enqueue(data: ProcessMessageJobData, jobId: string): Promise<void>;
+  enqueue(data: ProcessMessageJobData, jobId: string): Promise<EnqueueResult>;
   sendAlert(organizationId: string, phone: string, text: string): Promise<void>;
   log: { info(msg: string): void; error(msg: string): void };
 }
@@ -43,15 +59,34 @@ export interface SweepSummary {
 }
 
 const last4 = (p: string) => p.replace(/\D/g, "").slice(-4);
-const errName = (e: unknown) => (e as Error)?.name ?? "Error";
+const errText = (e: unknown) => {
+  const x = e as { name?: string; message?: string; code?: string } | null;
+  return `${x?.name ?? "Error"}${x?.code ? `/${x.code}` : ""}: ${String(x?.message ?? "").replace(/\d{8,}/g, "***").slice(0, 200)}`;
+};
+
+interface AlertItem { c: UnansweredCandidate; minutes: number }
+
+export function buildDigest(items: AlertItem[], moreCount: number, staleCount: number): string {
+  const lines = items.map(({ c, minutes }) => {
+    const excerpt = c.content.replace(/\s+/g, " ").trim().slice(0, 40) || "(mídia)";
+    return `- ${c.contactName ?? "Sem nome"} (final ${last4(c.contactPhone)}), há ${minutes} min: ${excerpt}`;
+  });
+  const total = items.length + moreCount;
+  return [
+    `Leads sem resposta (${total}):`, ...lines,
+    ...(moreCount > 0 ? [`+${moreCount} outros.`] : []),
+    ...(staleCount > 0 ? [`${staleCount} leads com mais de 24 h sem resposta.`] : []),
+    "Abra o CRM e responda.",
+  ].join("\n");
+}
 
 export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()): Promise<SweepSummary> {
   const summary: SweepSummary = { organizations: 0, candidates: 0, retried: 0, alerted: 0, errors: 0, skipped: {} };
-  const skip = (reason: SkipReason | string) => { summary.skipped[reason] = (summary.skipped[reason] ?? 0) + 1; };
+  const skip = (reason: SkipReason | string, n = 1) => { summary.skipped[reason] = (summary.skipped[reason] ?? 0) + n; };
   if (!deps.redisReady()) { deps.log.info("unanswered-sweep: redis not ready, skipping run"); return summary; }
 
   let orgs: SweepOrganization[];
-  try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error(`unanswered-sweep: listing organizations failed (${errName(err)})`); summary.errors++; return summary; }
+  try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error(`unanswered-sweep: listing organizations failed (${errText(err)})`); summary.errors++; return summary; }
   // Defesa extra: só quem tem a flag === true.
   orgs = orgs.filter((o) => o.settings?.unanswered_lead_sweep_enabled === true);
   const since = new Date(now.getTime() - MAX_AGE_MS);
@@ -61,9 +96,10 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
   for (const org of orgs) {
     summary.organizations++;
     let inbound: UnansweredCandidate[];
-    try { inbound = await deps.listInbound(org.id, since); } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} listing failed (${errName(err)})`); summary.errors++; continue; }
+    try { inbound = await deps.listInbound(org.id, since); } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} listing failed (${errText(err)})`); summary.errors++; continue; }
     const settings = org.settings as { business_calendar?: unknown; health_alert_phone?: string | null };
     const businessOpen = isBusinessOpen(now, resolveBusinessCalendar(settings.business_calendar));
+    const alertItems: AlertItem[] = [];
 
     for (const c of inbound) {
       if (c.organizationId !== org.id) { skip("other_org"); continue; }
@@ -73,15 +109,19 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
         const age = now.getTime() - createdAt.getTime();
         if (age > MAX_AGE_MS) { skip("too_old"); continue; }
         const retriedRaw = await deps.redis.get(retriedKey(c.messageId));
-        const retriedAt = retriedRaw && !Number.isNaN(Date.parse(retriedRaw)) ? new Date(retriedRaw) : retriedRaw ? createdAt : null;
+        let retriedAt = retriedRaw && !Number.isNaN(Date.parse(retriedRaw)) ? new Date(retriedRaw) : retriedRaw ? createdAt : null;
+        // Esgotou as tentativas de enfileirar (BullMQ descartou o job): segue direto para o aviso.
+        if (!retriedAt && Number(await deps.redis.get(attemptsKey(c.messageId)) ?? 0) >= MAX_ENQUEUE_ATTEMPTS) retriedAt = createdAt;
         const alerted = (await deps.redis.get(alertedKey(c.messageId))) !== null;
-        const hasOutboundAfter = age < 10 * 60_000 ? false : await deps.hasOutboundAfter(c.conversationId, c.createdAt);
-        const early = age < 10 * 60_000 || hasOutboundAfter;
-        const [ignored, frozen, openHandoff] = early ? [false, false, false] : await Promise.all([
+        const early = age < 10 * 60_000;
+        const hasOutboundAfter = early ? false : await deps.hasOutboundAfter(c.conversationId, c.createdAt);
+        const skipHeavy = early || hasOutboundAfter || !!c.aiProcessedAt;
+        const [ignored, frozen, openHandoff] = skipHeavy ? [false, false, false] : await Promise.all([
           deps.isIgnored(org.id, c.contactPhone), deps.isFrozen(org.id, c.contactId), deps.hasOpenHandoff(c.conversationId),
         ]);
         const decision = decideSweepAction({
-          now, createdAt, content: c.content, mediaType: c.mediaType, hasOutboundAfter, ignored, aiDisabled: c.aiDisabled, frozen,
+          now, createdAt, content: c.content, mediaType: c.mediaType, hasOutboundAfter, aiRouted: !!c.aiRoutedAt, aiProcessed: !!c.aiProcessedAt,
+          ignored, aiDisabled: c.aiDisabled, frozen,
           isHumanTakeover: c.isHumanTakeover, openHandoff, retriedAt, alerted, businessOpen,
         });
         if (decision.action === "skip") { skip(decision.reason); continue; }
@@ -97,44 +137,77 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
             // Reconfere sob o lock: a IA pode ter respondido entre a leitura e agora.
             if (await deps.hasOutboundAfter(c.conversationId, c.createdAt)) { skip("answered"); continue; }
             if (!(await deps.redis.setNx(retriedKey(c.messageId), now.toISOString(), KEY_TTL_SEC))) { skip("already_retried"); continue; }
+            let result: EnqueueResult;
             try {
-              await deps.enqueue({ conversationId: c.conversationId, messageId: c.messageId, agentId, organizationId: org.id }, retryJobId(c.messageId));
+              result = await deps.enqueue({ conversationId: c.conversationId, messageId: c.messageId, agentId, organizationId: org.id }, retryJobId(c.messageId));
             } catch (err) {
               await deps.redis.del(retriedKey(c.messageId)).catch(() => {});
               throw err;
             }
+            if (!result.ok) {
+              // O BullMQ descartou o job em silêncio (deduplicação apontando para job inexistente): não conta como retry.
+              await deps.redis.del(retriedKey(c.messageId)).catch(() => {});
+              const n = await deps.redis.incr(attemptsKey(c.messageId), KEY_TTL_SEC);
+              deps.log.error(`unanswered-sweep: enqueue dropped (${result.reason ?? "unknown"}) conv ${c.conversationId} msg ${c.messageId} attempt ${n}/${MAX_ENQUEUE_ATTEMPTS}`);
+              skip("enqueue_dropped");
+              continue;
+            }
             retriesLeft--; summary.retried++;
-            deps.log.info(`unanswered-sweep: retried message ${c.messageId} conv ${c.conversationId} phone ***${last4(c.contactPhone)}`);
+            deps.log.info(`unanswered-sweep: retried msg ${c.messageId} conv ${c.conversationId} phone ***${last4(c.contactPhone)}${result.reason ? ` (${result.reason})` : ""}`);
           } finally {
             await deps.releaseLock(c.conversationId, lock).catch(() => {});
           }
           continue;
         }
 
-        // alert
-        const phone = settings.health_alert_phone?.trim();
-        if (!phone) { skip("no_alert_phone"); continue; }
+        // alert: reconfere e junta ao resumo da organização
         if (await deps.hasOutboundAfter(c.conversationId, c.createdAt)) { skip("answered"); continue; }
-        if (!(await deps.redis.setNx(alertedKey(c.messageId), now.toISOString(), KEY_TTL_SEC))) { skip("already_alerted"); continue; }
-        const minutes = Math.floor(age / 60_000);
-        const snippet = c.content.replace(/\s+/g, " ").trim().slice(0, 60);
-        const text = `Lead sem resposta há ${minutes} min: ${c.contactName ?? "Sem nome"} ${c.contactPhone} (último contato: ${snippet}). Abra o CRM e responda.`;
-        try {
-          await deps.sendAlert(org.id, phone, text);
-        } catch (err) {
-          await deps.redis.del(alertedKey(c.messageId)).catch(() => {}); // só fica marcado quando realmente enviou
-          throw err;
-        }
-        summary.alerted++;
-        deps.log.info(`unanswered-sweep: alerted message ${c.messageId} conv ${c.conversationId} phone ***${last4(c.contactPhone)}`);
+        alertItems.push({ c, minutes: Math.floor(age / 60_000) });
       } catch (err) {
         summary.errors++;
-        deps.log.error(`unanswered-sweep: conversation ${c.conversationId} failed (${errName(err)})`);
+        deps.log.error(`unanswered-sweep: conv ${c.conversationId} msg ${c.messageId} failed (${errText(err)})`);
       }
+    }
+
+    if (alertItems.length) {
+      try { await sendDigest(deps, org, settings, alertItems, now, summary, skip); }
+      catch (err) { summary.errors++; deps.log.error(`unanswered-sweep: org ${org.id} digest failed (${errText(err)})`); }
     }
   }
   deps.log.info(`unanswered-sweep: orgs=${summary.organizations} candidates=${summary.candidates} retried=${summary.retried} alerted=${summary.alerted} errors=${summary.errors} skipped=${JSON.stringify(summary.skipped)}`);
   return summary;
+}
+
+async function sendDigest(
+  deps: SweepDeps, org: SweepOrganization, settings: { health_alert_phone?: string | null },
+  items: AlertItem[], now: Date, summary: SweepSummary, skip: (r: string, n?: number) => void,
+) {
+  const phone = settings.health_alert_phone?.trim();
+  if (!phone) { skip("no_alert_phone", items.length); return; }
+  items.sort((a, b) => b.minutes - a.minutes); // mais antigos primeiro
+  const claimed: AlertItem[] = [];
+  let more = 0;
+  for (const item of items) {
+    if (claimed.length >= MAX_DIGEST_ITEMS) { more++; continue; } // sem chave: entram no próximo resumo
+    // A chave é marcada ANTES do envio: um timeout da Evolution não pode repetir o aviso a cada varredura.
+    if (await deps.redis.setNx(alertedKey(item.c.messageId), now.toISOString(), KEY_TTL_SEC)) claimed.push(item);
+    else skip("already_alerted");
+  }
+  if (!claimed.length) return;
+  let stale = 0;
+  try {
+    const old = await deps.listStale(org.id, new Date(now.getTime() - STALE_LOOKBACK_MS), new Date(now.getTime() - MAX_AGE_MS));
+    for (const o of old) if (!(await deps.hasOutboundAfter(o.conversationId, o.createdAt))) stale++;
+  } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} stale count failed (${errText(err)})`); }
+  try {
+    await deps.sendAlert(org.id, phone, buildDigest(claimed, more, stale));
+  } catch (err) {
+    // Só libera as chaves quando a Evolution respondeu com erro definitivo; timeout/rede pode ter entregue.
+    if (err instanceof DefinitiveSendError) for (const i of claimed) await deps.redis.del(alertedKey(i.c.messageId)).catch(() => {});
+    throw err;
+  }
+  summary.alerted += claimed.length;
+  deps.log.info(`unanswered-sweep: digest sent org ${org.id} items=${claimed.length} more=${more} stale=${stale}`);
 }
 
 async function sendEvolutionAlert(organizationId: string, phone: string, text: string) {
@@ -148,7 +221,7 @@ async function sendEvolutionAlert(organizationId: string, phone: string, text: s
     body: JSON.stringify({ number: phone, text }),
     signal: AbortSignal.timeout(15_000),
   });
-  if (!response.ok) throw new Error(`Evolution API send error ${response.status}`);
+  if (!response.ok) throw new DefinitiveSendError(`Evolution API send error ${response.status}`);
 }
 
 export function buildRealDeps(): SweepDeps {
@@ -158,6 +231,7 @@ export function buildRealDeps(): SweepDeps {
     redisReady: () => redis.status === "ready",
     listOrganizations: () => listUnansweredSweepOrganizations(db),
     listInbound: (orgId, since) => listLatestInboundMessages(db, orgId, since),
+    listStale: (orgId, from, to) => listStaleUnprocessedRouted(db, orgId, from, to),
     hasOutboundAfter: (conversationId, afterIso) => hasOutboundMessageAfter(db, conversationId, afterIso),
     isIgnored: async (orgId, phone) => !!(await getIgnoredContact(db, orgId, phone)),
     isFrozen: (orgId, contactId) => hasFrozenContact(db, orgId, contactId),
@@ -167,16 +241,22 @@ export function buildRealDeps(): SweepDeps {
       get: (key) => redis.get(key),
       setNx: async (key, value, ttl) => (await redis.set(key, value, "EX", ttl, "NX")) === "OK",
       del: async (key) => { await redis.del(key); },
+      incr: async (key, ttl) => { const n = await redis.incr(key); if (n === 1) await redis.expire(key, ttl); return n; },
     },
     acquireLock: acquireConversationLock,
     releaseLock: releaseConversationLock,
     // Mesmas opções do webhook (enqueueProcessMessage) + jobId determinístico: a reentrada é ignorada pelo BullMQ.
     enqueue: async (data, jobId) => {
-      await getProcessMessageQueue().add("process-message", data, {
+      const queue = getProcessMessageQueue();
+      const job = await queue.add("process-message", data, {
         jobId,
         delay: MESSAGE_GROUPING_DELAY_MS,
         deduplication: { id: data.conversationId, replace: true, keepLastIfActive: true },
       });
+      if (job?.id === jobId) return { ok: true };
+      // O BullMQ devolveu o id de OUTRO job (deduplicação): vale só se esse job ainda existe (vai tratar a mensagem pendente).
+      const existing = job?.id ? await queue.getJob(job.id) : undefined;
+      return existing ? { ok: true, reason: "merged_into_existing_job" } : { ok: false, reason: "dedup_orphan" };
     },
     sendAlert: sendEvolutionAlert,
     log: console,

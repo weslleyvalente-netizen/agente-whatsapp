@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getProcessMessageQueue: () => ({}), getUnansweredLeadSweepQueue: () => ({}) }));
 vi.mock("@aula-agente/database", () => ({}));
 vi.mock("../lib/lock.js", () => ({ acquireConversationLock: vi.fn(), releaseConversationLock: vi.fn() }));
-import { runUnansweredLeadSweep, MAX_RETRIES_PER_SWEEP, retryJobId, type SweepDeps } from "./unanswered-lead-sweep.js";
+import { runUnansweredLeadSweep, MAX_RETRIES_PER_SWEEP, MAX_DIGEST_ITEMS, DefinitiveSendError, retryJobId, type SweepDeps, type EnqueueResult } from "./unanswered-lead-sweep.js";
 
 const T0 = new Date("2026-10-26T15:00:00Z"); // segunda-feira 12:00 em São Paulo (expediente aberto)
 const min = (n: number) => new Date(T0.getTime() + n * 60_000);
@@ -13,16 +13,17 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
   const msgs = (opts.convs ?? [{ id: "c1" }]).map((c, i) => ({
     messageId: `m-${c.id}`, conversationId: c.id, organizationId: "org1", evolutionInstanceId: "inst1", content: "Quero um consórcio de caminhão",
     mediaType: null, createdAt: c.createdAt ?? T0.toISOString(), isHumanTakeover: c.takeover ?? false, contactId: `ct-${c.id}`,
-    contactName: "Junior", contactPhone: `55119999${String(1000 + i)}`, aiDisabled: c.aiDisabled ?? false, ...c.over,
+    contactName: "Junior", contactPhone: `55119999${String(1000 + i)}`, aiDisabled: c.aiDisabled ?? false, aiRoutedAt: c.notRouted ? null : T0.toISOString(), aiProcessedAt: c.processed ? T0.toISOString() : null, ...c.over,
   }));
   const outbound = new Set<string>(); // conversas que já tiveram resposta
   const ignored = new Set<string>(); const handoff = new Set<string>(); const failOn = new Set<string>();
   const kv = new Map<string, string>(); const locks = new Set<string>();
   const jobs = new Map<string, unknown>(); const enqueueCalls: string[] = []; const alerts: Array<{ phone: string; text: string }> = [];
-  const logs: string[] = [];
+  const logs: string[] = []; const attempts = new Map<string, number>(); let enqueueResult: EnqueueResult = { ok: true }; let stale: any[] = [];
   const deps: SweepDeps = {
     redisReady: () => true,
     listOrganizations: async () => [{ id: "org1", settings: orgSettings }],
+    listStale: async () => stale,
     listInbound: async (orgId) => { if (orgId !== "org1") return []; if (failOn.has("list")) throw new Error("boom"); return msgs as any; },
     hasOutboundAfter: async (cid) => { await tick(); return outbound.has(cid); },
     isIgnored: async (_o, phone) => ignored.has(phone),
@@ -33,17 +34,19 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
       get: async (k) => kv.get(k) ?? null,
       setNx: async (k, v) => { await tick(); if (kv.has(k)) return false; kv.set(k, v); return true; },
       del: async (k) => { kv.delete(k); },
+      incr: async (k) => { const n = (attempts.get(k) ?? 0) + 1; attempts.set(k, n); kv.set(k, String(n)); return n; },
     },
     acquireLock: async (cid) => { for (let i = 0; i < 50; i++) { if (!locks.has(cid)) { locks.add(cid); return "lv"; } await tick(); } return null; },
     releaseLock: async (cid) => { locks.delete(cid); },
     enqueue: async (data, jobId) => {
       if (failOn.has(`enqueue:${data.conversationId}`)) throw new Error("redis down");
-      enqueueCalls.push(jobId); if (!jobs.has(jobId)) jobs.set(jobId, data); // BullMQ ignora jobId repetido
+      enqueueCalls.push(jobId); if (!enqueueResult.ok) return enqueueResult; if (!jobs.has(jobId)) jobs.set(jobId, data); // BullMQ ignora jobId repetido
+      return { ok: true };
     },
-    sendAlert: async (_o, phone, text) => { if (failOn.has("alert")) throw new Error("evolution down"); alerts.push({ phone, text }); },
+    sendAlert: async (_o, phone, text) => { if (failOn.has("alert")) throw new Error("timeout"); if (failOn.has("alert-definitive")) throw new DefinitiveSendError("500"); alerts.push({ phone, text }); },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
+  return { deps, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
 }
 // mensagem de 11 min atrás no instante T0+0 => createdAt = T0-11min
 const old = (m: number) => ({ createdAt: min(-m).toISOString() });
@@ -80,10 +83,10 @@ describe("runUnansweredLeadSweep", () => {
     expect(w.enqueueCalls).toEqual([]);
   });
 
-  it("mensagem com mais de 6 h só aparece no resumo", async () => {
-    const w = world({ convs: [{ id: "c1", ...old(400) }] });
+  it("mensagem com mais de 24 h só aparece no resumo", async () => {
+    const w = world({ convs: [{ id: "c1", ...old(25 * 60) }] });
     const s = await runUnansweredLeadSweep(w.deps, T0);
-    expect(s.skipped.too_old).toBe(1); expect(w.enqueueCalls).toEqual([]); expect(w.alerts).toEqual([]);
+    expect(s.skipped.too_old ?? 0).toBe(1); expect(w.enqueueCalls).toEqual([]); expect(w.alerts).toEqual([]);
   });
 
   it("takeover, ai_disabled, ignorado e handoff aberto não recebem retry", async () => {
@@ -102,7 +105,7 @@ describe("runUnansweredLeadSweep", () => {
     expect(s.alerted).toBe(1);
     expect(w.alerts).toHaveLength(1);
     expect(w.alerts[0].phone).toBe("5511999990000");
-    expect(w.alerts[0].text).toMatch(/^Lead sem resposta há 27 min: Junior 55119999\d+ \(último contato: Quero um consórcio de caminhão\)\. Abra o CRM e responda\.$/);
+    expect(w.alerts[0].text).toBe("Leads sem resposta (1):\n- Junior (final 1000), há 27 min: Quero um consórcio de caminhão\nAbra o CRM e responda.");
     expect((await runUnansweredLeadSweep(w.deps, min(20))).alerted).toBe(0);
     expect(w.alerts).toHaveLength(1);
   });
@@ -116,14 +119,21 @@ describe("runUnansweredLeadSweep", () => {
     expect((await runUnansweredLeadSweep(w.deps, new Date("2026-10-26T20:50:00Z"))).alerted).toBe(1); // 17:50 SP
   });
 
-  it("falha no envio do aviso libera a chave para tentar de novo", async () => {
+  it("falha DEFINITIVA no envio libera a chave; timeout ambíguo mantém (sem repetir a cada varredura)", async () => {
     const w = world({ convs: [{ id: "c1", ...old(30) }] });
     w.kv.set("unanswered-sweep:retried:m-c1", min(-16).toISOString());
-    w.failOn.add("alert");
+    w.failOn.add("alert-definitive");
     const s = await runUnansweredLeadSweep(w.deps, T0);
     expect(s.errors).toBe(1); expect(w.kv.has("unanswered-sweep:alerted:m-c1")).toBe(false);
-    w.failOn.delete("alert");
+    w.failOn.delete("alert-definitive");
     expect((await runUnansweredLeadSweep(w.deps, min(5))).alerted).toBe(1);
+    const w2 = world({ convs: [{ id: "c1", ...old(30) }] });
+    w2.kv.set("unanswered-sweep:retried:m-c1", min(-16).toISOString());
+    w2.failOn.add("alert");
+    expect((await runUnansweredLeadSweep(w2.deps, T0)).errors).toBe(1);
+    expect(w2.kv.has("unanswered-sweep:alerted:m-c1")).toBe(true);
+    w2.failOn.delete("alert");
+    expect((await runUnansweredLeadSweep(w2.deps, min(5))).alerted).toBe(0);
   });
 
   it("flag desligada: nada é varrido", async () => {
@@ -161,5 +171,71 @@ describe("runUnansweredLeadSweep", () => {
     expect((await runUnansweredLeadSweep(w.deps, T0)).alerted).toBe(1);
     expect((await runUnansweredLeadSweep(w.deps, min(5))).alerted).toBe(0);
     expect(w.enqueueCalls).toEqual([]);
+  });
+
+  it("H1: silêncio deliberado (processada pela IA, sem resposta) não é retentado nem avisado", async () => {
+    const w = world({ convs: [{ id: "c1", processed: true, ...old(40) }] });
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.retried + s.alerted).toBe(0); expect(s.skipped.ai_processed).toBe(1);
+    expect(w.enqueueCalls).toEqual([]); expect(w.alerts).toEqual([]);
+  });
+
+  it("H2: mensagem que o webhook não encaminhou à IA (takeover liberado depois, IA reativada) nunca é retentada", async () => {
+    const w = world({ convs: [{ id: "c1", notRouted: true, ...old(40) }] });
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.retried).toBe(0); expect(s.skipped.not_ai_routed).toBe(1); expect(w.enqueueCalls).toEqual([]);
+  });
+
+  it("M2: um único resumo por organização, no máximo 5 leads, '+N outros' e contador de mais de 24 h", async () => {
+    const convs = Array.from({ length: 7 }, (_, i) => ({ id: `c${i}`, ...old(30 + i) }));
+    const w = world({ convs });
+    for (const c of convs) w.kv.set(`unanswered-sweep:retried:m-${c.id}`, min(-20).toISOString());
+    w.setStale([{ conversationId: "old1", createdAt: min(-30 * 60) }, { conversationId: "old2", createdAt: min(-40 * 60) }]);
+    w.outbound.add("old2");
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(w.alerts).toHaveLength(1);
+    expect(s.alerted).toBe(MAX_DIGEST_ITEMS);
+    const text = w.alerts[0].text;
+    expect(text).toContain("Leads sem resposta (7):");
+    expect(text.match(/^- /gm)).toHaveLength(5);
+    expect(text).toContain("+2 outros.");
+    expect(text).toContain("1 leads com mais de 24 h sem resposta.");
+    expect(text).not.toMatch(/55119999\d{4}/); // só os 4 últimos dígitos
+    // os 2 que ficaram de fora saem no próximo resumo
+    const s2 = await runUnansweredLeadSweep(w.deps, min(5));
+    expect(s2.alerted).toBe(2); expect(w.alerts).toHaveLength(2);
+  });
+
+  it("M2: as chaves de aviso são marcadas ANTES do envio", async () => {
+    const w = world({ convs: [{ id: "c1", ...old(30) }] });
+    w.kv.set("unanswered-sweep:retried:m-c1", min(-20).toISOString());
+    let seen = false;
+    const orig = w.deps.sendAlert;
+    w.deps.sendAlert = async (...a) => { seen = w.kv.has("unanswered-sweep:alerted:m-c1"); return orig(...a); };
+    await runUnansweredLeadSweep(w.deps, T0);
+    expect(seen).toBe(true);
+  });
+
+  it("M3: retry roda de madrugada (fora do expediente); o aviso espera o expediente; 20 h depois ainda entra", async () => {
+    const night = new Date("2026-10-26T06:00:00Z"); // 03:00 SP
+    const w = world({ convs: [{ id: "c1", createdAt: new Date(night.getTime() - 20 * 60_000).toISOString() }] });
+    expect((await runUnansweredLeadSweep(w.deps, night)).retried).toBe(1);
+    const later = new Date("2026-10-26T14:00:00Z"); // 11:00 SP, mensagem com ~11 h
+    expect((await runUnansweredLeadSweep(w.deps, later)).alerted).toBe(1);
+  });
+
+  it("M4: job descartado pelo BullMQ não conta como retry, libera a chave, e após 3 tentativas segue para o aviso", async () => {
+    const w = world({ convs: [{ id: "c1", ...old(20) }] });
+    w.setEnqueueResult({ ok: false, reason: "dedup_orphan" });
+    for (let i = 0; i < 3; i++) {
+      const s = await runUnansweredLeadSweep(w.deps, min(i * 5));
+      expect(s.retried).toBe(0);
+      expect(w.kv.has("unanswered-sweep:retried:m-c1")).toBe(false);
+    }
+    expect(w.enqueueCalls).toHaveLength(3);
+    const s4 = await runUnansweredLeadSweep(w.deps, min(15));
+    expect(w.enqueueCalls).toHaveLength(3); // não tenta uma 4ª vez
+    expect(s4.alerted).toBe(1);
+    expect(w.logs.some((l) => l.includes("dedup_orphan") && l.includes("m-c1") && l.includes("c1"))).toBe(true);
   });
 });

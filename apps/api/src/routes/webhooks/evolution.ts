@@ -25,6 +25,7 @@ import {
   findPendingOutboundMessages,
   findRecentAfterHoursAgentMessages,
   setMessageEvolutionId,
+  stampMessageMetadata,
 } from "@aula-agente/database";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
@@ -96,6 +97,31 @@ export function resolveReplayCreatedAt(
   const ms = messageTimestamp * 1000;
   if (ms > now) return undefined; // nunca no futuro
   return new Date(ms).toISOString();
+}
+
+const internalPhoneCache = new Map<string, { at: number; phones: string[] }>();
+export function resetInternalPhoneCache() { internalPhoneCache.clear(); }
+const digitsOf = (v: unknown) => (typeof v === "string" ? v.replace(/\D/g, "") : "");
+/** Compara pelos 10 últimos dígitos (DDD + número), tolerando presença/ausência do código do país. */
+export function samePhone(a: string, b: string): boolean {
+  const x = digitsOf(a); const y = digitsOf(b);
+  if (!x || !y) return false;
+  return x === y || (x.length >= 10 && y.length >= 10 && x.slice(-10) === y.slice(-10));
+}
+async function isInternalNotificationPhone(organizationId: string, phone: string, log: { error(o: unknown, m: string): void }): Promise<boolean> {
+  try {
+    let entry = internalPhoneCache.get(organizationId);
+    if (!entry || Date.now() - entry.at > 60_000) {
+      const org = await getOrganizationById(getAdminClient(), organizationId);
+      const s = (org?.settings ?? {}) as { health_alert_phone?: string | null; handoff_notification_phone?: string | null };
+      entry = { at: Date.now(), phones: [s.health_alert_phone, s.handoff_notification_phone].map(digitsOf).filter(Boolean) };
+      internalPhoneCache.set(organizationId, entry);
+    }
+    return entry.phones.some((p) => samePhone(p, phone));
+  } catch (err) {
+    log.error({ err, organizationId }, "Failed to check internal notification phones — processing normally");
+    return false;
+  }
 }
 
 export function isNonContentMessageType(messageType: string): boolean {
@@ -239,6 +265,11 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // migration for organization_ignored_contacts not deployed yet must
       // never take down message processing for every other contact.
       let ignoredContact: Awaited<ReturnType<typeof getIgnoredContact>> = null;
+      // Telefones internos de aviso (alerta de saúde / notificação de handoff) recebem mensagens NOSSAS vindas da própria
+      // instância (eco). Tratados como contato ignorado "no_store": não viram contato, conversa nem takeover.
+      if (await isInternalNotificationPhone(organizationId, phone, request.log)) {
+        return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
+      }
       try {
         ignoredContact = await getIgnoredContact(getAdminClient(), organizationId, phone);
       } catch (err) {
@@ -521,6 +552,16 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // takeover state.
       if (contact.ai_disabled) {
         return reply.status(200).send({ ok: true, skipped: "ai_disabled" });
+      }
+
+      // Marca ANTES de enfileirar que o webhook encaminhou esta mensagem à IA (a varredura de cliente sem resposta só
+      // reenvia mensagens com esta marca). Falha na marca nunca impede o atendimento.
+      if (!afterHoursPending) {
+        try {
+          await stampMessageMetadata(getAdminClient(), message.id, { ai_routed_at: new Date().toISOString() });
+        } catch (err) {
+          request.log.error({ err, messageId: message.id }, "Failed to stamp ai_routed_at");
+        }
       }
 
       // Enqueue for LLM processing

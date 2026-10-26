@@ -12,7 +12,7 @@ import {
   getConversationById,
   getLastContactMessage,
 } from "@aula-agente/database";
-import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent } from "@aula-agente/database";
+import { createMessage, updateConversation, updateMessageContent, recordAiUsageEvent, markMessagesAiProcessed } from "@aula-agente/database";
 import { getInstanceById } from "@aula-agente/database";
 import { evaluateAfterHours } from "../lib/after-hours.js";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -62,6 +62,11 @@ export function startProcessMessageWorker() {
   const worker = new Worker<ProcessMessageJobData>(
     QUEUE_NAMES.PROCESS_MESSAGE,
     async (job) => {
+      // Marca como "processadas pela IA" as mensagens do cliente deste lote em QUALQUER saída normal (resposta, silêncio
+      // deliberado, só ferramentas, agente inativo, guardas). Se lançar exceção NÃO marca: o BullMQ tenta de novo e,
+      // esgotadas as tentativas, a varredura de cliente sem resposta ainda enxerga a mensagem.
+      const startedAt = new Date();
+      await (async () => {
       // messageId in job.data is only the message that triggered this
       // particular enqueue call — with deduplication+replace (see
       // apps/api/src/lib/queue.ts) it's whichever message was most recent
@@ -432,6 +437,12 @@ export function startProcessMessageWorker() {
         });
       } finally {
         await releaseConversationLock(conversationId, lockValue);
+      }
+      })();
+      try {
+        await markMessagesAiProcessed(getAdminClient(), job.data.conversationId, startedAt, new Date().toISOString());
+      } catch (err) {
+        console.error(`Failed to stamp ai_processed_at for conversation ${job.data.conversationId}:`, (err as Error)?.message);
       }
     },
     {
