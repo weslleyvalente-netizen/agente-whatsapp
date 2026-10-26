@@ -38,7 +38,10 @@ export function phoneMatchKey(phone: string | null | undefined): string {
   if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) {
     return digits.slice(2, 4) + digits.slice(-8);
   }
-  if (digits.length === 10 || digits.length === 11) return digits.slice(0, 2) + digits.slice(-8);
+  // Nacional sem 55: 11 dígitos só se o 3º for 9 (celular); 10 dígitos se o 3º for 2-9.
+  if ((digits.length === 11 && digits[2] === "9") || (digits.length === 10 && /[2-9]/.test(digits[2]))) {
+    return digits.slice(0, 2) + digits.slice(-8);
+  }
   return digits;
 }
 
