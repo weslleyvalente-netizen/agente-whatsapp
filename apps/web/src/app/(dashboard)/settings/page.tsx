@@ -722,10 +722,18 @@ export default function SettingsPage() {
   <Label htmlFor="seller-isolation">Isolamento por vendedor (cada vendedor só vê o que é dele e o que está sem dono)</Label>
   <Switch id="seller-isolation" checked={currentOrg?.settings.seller_isolation_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "seller_isolation_enabled")} />
 </div>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="unanswered-lead-sweep">Reenviar à IA e avisar quando um cliente fica sem resposta</Label>
-            <Switch id="unanswered-lead-sweep" checked={currentOrg?.settings.unanswered_lead_sweep_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "unanswered_lead_sweep_enabled")} />
-          </div>
+          {isManager && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="unanswered-lead-sweep">Reenviar à IA e avisar quando um cliente fica sem resposta</Label>
+                <Switch id="unanswered-lead-sweep" checked={currentOrg?.settings.unanswered_lead_sweep_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "unanswered_lead_sweep_enabled")} />
+              </div>
+              <p className="text-xs text-muted-foreground">O aviso vai por WhatsApp para o telefone de alertas do sistema (Configurações &gt; Alertas); sem ele só o reenvio à IA funciona.</p>
+              {currentOrg?.settings.unanswered_lead_sweep_enabled === true && !currentOrg?.settings.health_alert_phone?.trim() && (
+                <p className="text-xs text-amber-600" role="alert">Atenção: o telefone de alertas não está configurado, então ninguém será avisado.</p>
+              )}
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="push-notifications">Notificações push para vendedores (novo lead, mensagem do cliente, prazo)</Label>
             <Switch id="push-notifications" checked={currentOrg?.settings.push_notifications_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "push_notifications_enabled")} />

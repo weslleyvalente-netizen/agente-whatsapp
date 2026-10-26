@@ -1,21 +1,30 @@
 # Varredura de cliente sem resposta
 
 ## O que faz
-A cada 5 minutos o worker (`unanswered-lead-sweep`) procura conversas em que a última mensagem é do cliente, tem entre 10 minutos e 6 horas e não tem nenhuma resposta nossa (IA, humano ou sistema) depois dela. Caso típico: o job `process-message` se perdeu num deploy ou reinício.
+A cada 5 minutos o worker (`unanswered-lead-sweep`) procura conversas em que a última mensagem é do cliente, tem entre 10 minutos e 24 horas e não tem nenhuma resposta nossa (IA, humano ou sistema) depois dela. Caso típico: o job `process-message` se perdeu num deploy ou reinício.
 
-1. **Retry**: reenfileira o mesmo processamento do webhook (`process-message`, mesmo agrupamento de 6 s). A IA responde como se a mensagem tivesse acabado de chegar. Uma vez por mensagem, no máximo 10 por varredura.
-2. **Aviso**: 15 minutos depois do retry, se ainda não houver resposta, manda UM WhatsApp para `settings.health_alert_phone` direto pela Evolution (sem fila): "Lead sem resposta há N min: nome telefone (último contato: ...). Abra o CRM e responda." Só dentro do horário comercial; fora dele o aviso espera a próxima varredura dentro do expediente (enquanto a mensagem tiver menos de 6 h).
+## Quais mensagens podem ser reenviadas à IA
+Somente mensagens que **o webhook realmente encaminhou à IA** (`messages.metadata.ai_routed_at`, gravado antes de enfileirar) e que **o pipeline da IA nunca terminou de tratar** (`metadata.ai_processed_at` ausente). O `process-message` grava `ai_processed_at` em toda saída normal: resposta enviada, silêncio deliberado ("ok, obrigado"), só ferramentas, agente inativo, IA desativada. Se o job der exceção, não grava, e a varredura enxerga a mensagem.
+- Mensagem sem `ai_routed_at` **nunca** é reenviada: takeover liberado depois, IA reativada depois, modo noite, mensagens anteriores a este deploy (não têm marca, então não são reenviadas; vale só para mensagens novas).
 
-Conversas em atendimento humano (takeover) ou com handoff aberto nunca recebem retry da IA; recebem só o aviso, 25 minutos após a mensagem. São puladas: contato ignorado, IA desativada, oportunidade congelada, mensagem sem texto e sem mídia, mensagens com mais de 6 h (aparecem só no resumo como `too_old`).
+## Passos
+1. **Retry**: reenfileira o mesmo `process-message` do webhook (mesmo agrupamento de 6 s), uma vez por mensagem, no máximo 10 por varredura, a qualquer hora (a IA responde a qualquer hora). Depois do `queue.add` confere se o job existe; se o BullMQ descartou (deduplicação apontando para job inexistente), não conta como retry, apaga a chave e tenta de novo na próxima varredura (máx. 3 tentativas; depois segue para o aviso).
+2. **Aviso**: 15 min após o retry (ou 25 min após a mensagem, nas conversas com humano) sem resposta, manda **um resumo por organização por varredura** (até 5 leads: nome, final do telefone, minutos de espera, trecho; "+N outros"; "N leads com mais de 24 h sem resposta") para `settings.health_alert_phone`, direto pela Evolution. Só em horário comercial; fora dele o aviso espera. As chaves de aviso são gravadas **antes** do envio, para um timeout da Evolution não repetir o aviso; só são apagadas se a Evolution respondeu com erro HTTP.
+3. Conversas com atendimento humano (takeover) ou handoff aberto: nunca recebem retry da IA; entram no resumo após 25 min se o humano não respondeu e a IA não tratou a mensagem. Nunca há aviso duplicado para a mesma mensagem (mesma chave).
+4. São puladas: contato ignorado, IA desativada, oportunidade congelada, mensagem sem texto e sem mídia, mensagens com mais de 24 h (só entram como contagem no resumo, dentro de 7 dias).
+
+Os telefones `health_alert_phone` e `handoff_notification_phone` são tratados pelo webhook como contato ignorado (`no_store`): o aviso enviado pela instância volta como eco e não vira contato, conversa nem takeover.
 
 ## Idempotência
-Trava por conversa (a mesma dos outros workers), reconferência de resposta sob a trava, chaves Redis `unanswered-sweep:retried:<messageId>` e `unanswered-sweep:alerted:<messageId>` (SET NX, 24 h) e jobId determinístico `unanswered-sweep-<messageId>`. Se o enfileiramento ou o envio falhar, a chave é apagada para a próxima varredura tentar de novo.
+Trava por conversa, reconferência de resposta sob a trava, chaves Redis `unanswered-sweep:retried:<messageId>`, `unanswered-sweep:alerted:<messageId>` e `unanswered-sweep:attempts:<messageId>` (24 h) e jobId `unanswered-sweep-<messageId>`.
 
 ## Ligar / desligar
-Configurações > Distribuição > "Reenviar à IA e avisar quando um cliente fica sem resposta" (`organizations.settings.unanswered_lead_sweep_enabled`). Desligado por padrão; só organizações com `true` são varridas. Desligar vale na próxima varredura (até 5 min). Sem Redis pronto, a varredura não faz nada.
+Configurações > Distribuição > "Reenviar à IA e avisar quando um cliente fica sem resposta" (`organizations.settings.unanswered_lead_sweep_enabled`, só gestores). Desligado por padrão. Configure antes o telefone de alertas (`health_alert_phone`); sem ele só o retry funciona (o painel mostra um aviso). Desligar vale na próxima varredura. Sem Redis pronto, a varredura não faz nada.
 
 ## Ler os logs
 Uma linha por execução:
 `unanswered-sweep: orgs=1 candidates=4 retried=1 alerted=0 errors=0 skipped={"answered":2,"too_recent":1}`
-Motivos de skipped: too_recent, too_old, answered, ignored, ai_disabled, frozen, no_content, human_pending, retry_pending, already_alerted, already_retried, outside_business_hours, retry_cap, lock_busy, no_agent, no_alert_phone. Linhas `retried message ... phone ***1234` mostram só os 4 últimos dígitos. `errors>0` traz uma linha `ERR` por conversa (sem dados do cliente).
-Para refazer um retry manualmente: apague a chave `unanswered-sweep:retried:<messageId>` no Redis.
+Motivos de skipped: too_recent, too_old, answered, ai_processed, not_ai_routed, ignored, ai_disabled, frozen, no_content, human_pending, retry_pending, already_alerted, already_retried, outside_business_hours, retry_cap, lock_busy, no_agent, no_alert_phone, enqueue_dropped. Linhas de erro trazem conversa e mensagem (`conv <id> msg <id>`) e o motivo, sem telefones.
+
+## Refazer um retry manualmente
+Apague no Redis `unanswered-sweep:retried:<messageId>` **e** `unanswered-sweep:attempts:<messageId>`, e remova da fila `process-message` o job `unanswered-sweep-<messageId>` (jobs concluídos/falhos ficam retidos e o BullMQ ignora um jobId repetido). Para reavisar, apague também `unanswered-sweep:alerted:<messageId>`.
