@@ -28,3 +28,24 @@ export function brazilPhoneVariants(phone: string): string[] {
   const alternate = brazilPhoneAlternate(phone);
   return alternate ? [phone, alternate] : [phone];
 }
+
+// Chave canônica para COMPARAR telefones: ignora formatação, "+", código do país e o 9º dígito.
+// Número brasileiro (55 + 12/13 dígitos, ou nacional com 10/11) vira DDD + últimos 8 dígitos;
+// qualquer outro número usa os dígitos completos.
+export function phoneMatchKey(phone: string | null | undefined): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) {
+    return digits.slice(2, 4) + digits.slice(-8);
+  }
+  // Nacional sem 55: 11 dígitos só se o 3º for 9 (celular); 10 dígitos se o 3º for 2-9.
+  if ((digits.length === 11 && digits[2] === "9") || (digits.length === 10 && /[2-9]/.test(digits[2]))) {
+    return digits.slice(0, 2) + digits.slice(-8);
+  }
+  return digits;
+}
+
+export function samePhoneNumber(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = phoneMatchKey(a);
+  return x !== "" && x === phoneMatchKey(b);
+}

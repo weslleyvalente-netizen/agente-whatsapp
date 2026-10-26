@@ -7,6 +7,7 @@ export {
   getStaleConversationFollowupQueue,
   getLeadSlaQueue,
   getPushNotificationsQueue,
+  getUnansweredLeadSweepQueue,
   getStoreCustomerAudioQueue,
   getCustomerAudioRetentionQueue,
 } from "./queues.js";

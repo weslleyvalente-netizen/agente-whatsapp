@@ -186,6 +186,7 @@ export const QUEUE_NAMES = {
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
   STORE_CUSTOMER_AUDIO: "store-customer-audio",
   CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",
+  UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
 } as const;
 
 export const OPERATIONS = [

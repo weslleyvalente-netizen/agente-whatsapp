@@ -77,6 +77,12 @@ export function getLeadSlaQueue() {
   return leadSlaQueue;
 }
 
+let unansweredLeadSweepQueue: Queue<{}> | undefined;
+export function getUnansweredLeadSweepQueue() {
+  if (!unansweredLeadSweepQueue) unansweredLeadSweepQueue = new Queue<{}>(QUEUE_NAMES.UNANSWERED_LEAD_SWEEP, { connection: getRedisConnection() });
+  return unansweredLeadSweepQueue;
+}
+
 let pushNotificationsQueue: Queue<{}> | undefined;
 export function getPushNotificationsQueue() {
   if (!pushNotificationsQueue) pushNotificationsQueue = new Queue<{}>(QUEUE_NAMES.PUSH_NOTIFICATIONS, { connection: getRedisConnection() });

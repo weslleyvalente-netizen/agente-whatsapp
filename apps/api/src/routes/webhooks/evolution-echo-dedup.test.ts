@@ -110,7 +110,8 @@ describe("evolution webhook — echo of our own outbound message (dedup)", () =>
     expect(updateConversation).not.toHaveBeenCalled();
     expect(handleConversationTakeover).not.toHaveBeenCalled();
     expect(createHandoffEvent).not.toHaveBeenCalled();
-    expect(getOrganizationById).not.toHaveBeenCalled();
+    // Só a consulta dos telefones internos de aviso (cacheada); nenhuma avaliação de configuração do eco.
+    expect(getOrganizationById.mock.calls.length).toBeLessThanOrEqual(1);
     expect(enqueueProcessMessage).not.toHaveBeenCalled();
 
     await app.close();

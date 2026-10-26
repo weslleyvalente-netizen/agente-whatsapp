@@ -21,6 +21,9 @@ export interface MessageMetadata {
   audio_transcribed_at?: string;
   low_intent_followup?: { anchor: string; stage: 1 | 2 | 3; confirmed_at?: string };
   scheduled_ad_closure?: { batch_id:string; attempted_at?:string; cancelled_at?:string; confirmed_at?:string };
+  // Varredura de cliente sem resposta: o webhook encaminhou à IA / o pipeline da IA terminou de tratar (ISO).
+  ai_routed_at?: string;
+  ai_processed_at?: string;
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
