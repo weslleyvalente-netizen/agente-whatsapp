@@ -27,6 +27,7 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
 } from "@aula-agente/database";
+import { samePhoneNumber } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -102,12 +103,7 @@ export function resolveReplayCreatedAt(
 const internalPhoneCache = new Map<string, { at: number; phones: string[] }>();
 export function resetInternalPhoneCache() { internalPhoneCache.clear(); }
 const digitsOf = (v: unknown) => (typeof v === "string" ? v.replace(/\D/g, "") : "");
-/** Compara pelos 10 últimos dígitos (DDD + número), tolerando presença/ausência do código do país. */
-export function samePhone(a: string, b: string): boolean {
-  const x = digitsOf(a); const y = digitsOf(b);
-  if (!x || !y) return false;
-  return x === y || (x.length >= 10 && y.length >= 10 && x.slice(-10) === y.slice(-10));
-}
+export const samePhone = samePhoneNumber;
 async function isInternalNotificationPhone(organizationId: string, phone: string, log: { error(o: unknown, m: string): void }): Promise<boolean> {
   try {
     let entry = internalPhoneCache.get(organizationId);

@@ -68,7 +68,7 @@ describe("webhook: marca ai_routed_at", () => {
 });
 
 describe("webhook: telefones internos de aviso são contato ignorado", () => {
-  it.each([["5511988887777"], ["11988887777"], ["5521977776666"]])("%s (alerta de saúde / handoff) -> ignored_contact, nada gravado", async (jid) => {
+  it.each([["5511988887777"], ["11988887777"], ["551188887777"], ["5521977776666"]])("%s (alerta de saúde / handoff) -> ignored_contact, nada gravado", async (jid) => {
     const r = await post(payload(jid));
     expect(r.json()).toMatchObject({ skipped: "ignored_contact" });
     expect(m.ensureConversation).not.toHaveBeenCalled();
