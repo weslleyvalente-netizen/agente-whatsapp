@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldUseManualAssign } from "./lead-assign";
+import { isNoAssignmentError, shouldUseManualAssign } from "./lead-assign";
 
 describe("shouldUseManualAssign", () => {
   const base = { distributionOn: true, role: "owner" as string | null, targetRepId: "rep-1" as string | null };
@@ -12,5 +12,15 @@ describe("shouldUseManualAssign", () => {
     expect(shouldUseManualAssign({ ...base, role: null })).toBe(false);
     expect(shouldUseManualAssign({ ...base, distributionOn: false })).toBe(false);
     expect(shouldUseManualAssign({ ...base, targetRepId: null })).toBe(false);
+  });
+});
+
+describe("isNoAssignmentError", () => {
+  it("reconhece a recusa do rodízio para conversa sem atribuição e só ela", () => {
+    expect(isNoAssignmentError("Conversa sem atribuição ou exceção para reatribuir")).toBe(true);
+    expect(isNoAssignmentError("Conversa sem atribuicao ou excecao para reatribuir")).toBe(true);
+    expect(isNoAssignmentError("Vendedor fora da distribuição")).toBe(false);
+    expect(isNoAssignmentError("Lead já está com este vendedor")).toBe(false);
+    expect(isNoAssignmentError(undefined)).toBe(false);
   });
 });
