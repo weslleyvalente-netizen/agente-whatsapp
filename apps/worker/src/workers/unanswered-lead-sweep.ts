@@ -115,7 +115,7 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
         const alerted = (await deps.redis.get(alertedKey(c.messageId))) !== null;
         const early = age < 10 * 60_000;
         const hasOutboundAfter = early ? false : await deps.hasOutboundAfter(c.conversationId, c.createdAt);
-        const skipHeavy = early || hasOutboundAfter || !!c.aiProcessedAt;
+        const skipHeavy = early || hasOutboundAfter;
         const [ignored, frozen, openHandoff] = skipHeavy ? [false, false, false] : await Promise.all([
           deps.isIgnored(org.id, c.contactPhone), deps.isFrozen(org.id, c.contactId), deps.hasOpenHandoff(c.conversationId),
         ]);
@@ -199,25 +199,37 @@ async function sendDigest(
     const old = await deps.listStale(org.id, new Date(now.getTime() - STALE_LOOKBACK_MS), new Date(now.getTime() - MAX_AGE_MS));
     for (const o of old) if (!(await deps.hasOutboundAfter(o.conversationId, o.createdAt))) stale++;
   } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} stale count failed (${errText(err)})`); }
+  const release = async () => { for (const i of claimed) await deps.redis.del(alertedKey(i.c.messageId)).catch(() => {}); };
+  let text: string;
+  try { text = buildDigest(claimed, more, stale); } catch (err) { await release(); throw err; } // nada foi enviado
   try {
-    await deps.sendAlert(org.id, phone, buildDigest(claimed, more, stale));
+    await deps.sendAlert(org.id, phone, text);
   } catch (err) {
-    // Só libera as chaves quando a Evolution respondeu com erro definitivo; timeout/rede pode ter entregue.
-    if (err instanceof DefinitiveSendError) for (const i of claimed) await deps.redis.del(alertedKey(i.c.messageId)).catch(() => {});
+    // Só mantém as chaves em erro ambíguo (timeout/rede com a requisição já emitida); qualquer falha anterior ao envio libera.
+    if (err instanceof DefinitiveSendError) await release();
     throw err;
   }
   summary.alerted += claimed.length;
   deps.log.info(`unanswered-sweep: digest sent org ${org.id} items=${claimed.length} more=${more} stale=${stale}`);
 }
 
-async function sendEvolutionAlert(organizationId: string, phone: string, text: string) {
+export async function sendEvolutionAlert(organizationId: string, phone: string, text: string) {
   // Direto pela Evolution, de propósito (como o health-monitor): a fila send-message depende do Redis, que pode ser a causa.
-  const instances = (await getInstancesByOrganization(getAdminClient(), organizationId)) as Array<{ instance_name: string; active_agent_id: string | null }>;
-  const instance = instances.find((i) => i.active_agent_id);
-  if (!instance) throw new Error("no active instance");
-  const response = await fetch(`${process.env.EVOLUTION_API_URL}/message/sendText/${instance.instance_name}`, {
+  // Tudo que falha ANTES de a requisição HTTP ser emitida é DefinitiveSendError (nada foi enviado: as chaves são liberadas).
+  let url: string; let apiKey: string; let instanceName: string;
+  try {
+    const instances = (await getInstancesByOrganization(getAdminClient(), organizationId)) as Array<{ instance_name: string; active_agent_id: string | null }>;
+    const instance = instances.find((i) => i.active_agent_id);
+    if (!instance) throw new Error("no active instance");
+    if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) throw new Error("Evolution env not configured");
+    instanceName = instance.instance_name; url = `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`; apiKey = process.env.EVOLUTION_API_KEY;
+  } catch (err) {
+    throw new DefinitiveSendError(`pre-send failure: ${(err as Error)?.message ?? "unknown"}`);
+  }
+  // Daqui em diante um timeout/erro de rede é ambíguo (pode ter entregado): erro comum, as chaves ficam.
+  const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: process.env.EVOLUTION_API_KEY! },
+    headers: { "Content-Type": "application/json", apikey: apiKey },
     body: JSON.stringify({ number: phone, text }),
     signal: AbortSignal.timeout(15_000),
   });

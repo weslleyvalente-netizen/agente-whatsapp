@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getProcessMessageQueue: () => ({}), getUnansweredLeadSweepQueue: () => ({}) }));
-vi.mock("@aula-agente/database", () => ({}));
+const db = vi.hoisted(() => ({ getInstancesByOrganization: vi.fn() }));
+vi.mock("@aula-agente/database", () => ({ getAdminClient: () => ({}), getInstancesByOrganization: db.getInstancesByOrganization }));
 vi.mock("../lib/lock.js", () => ({ acquireConversationLock: vi.fn(), releaseConversationLock: vi.fn() }));
-import { runUnansweredLeadSweep, MAX_RETRIES_PER_SWEEP, MAX_DIGEST_ITEMS, DefinitiveSendError, retryJobId, type SweepDeps, type EnqueueResult } from "./unanswered-lead-sweep.js";
+import { sendEvolutionAlert, runUnansweredLeadSweep, MAX_RETRIES_PER_SWEEP, MAX_DIGEST_ITEMS, DefinitiveSendError, retryJobId, type SweepDeps, type EnqueueResult } from "./unanswered-lead-sweep.js";
 
 const T0 = new Date("2026-10-26T15:00:00Z"); // segunda-feira 12:00 em São Paulo (expediente aberto)
 const min = (n: number) => new Date(T0.getTime() + n * 60_000);
@@ -237,5 +238,70 @@ describe("runUnansweredLeadSweep", () => {
     expect(w.enqueueCalls).toHaveLength(3); // não tenta uma 4ª vez
     expect(s4.alerted).toBe(1);
     expect(w.logs.some((l) => l.includes("dedup_orphan") && l.includes("m-c1") && l.includes("c1"))).toBe(true);
+  });
+
+  it("M-C: mensagem com 5 h sem retry anterior não vai para a IA; entra no resumo humano", async () => {
+    const w = world({ convs: [{ id: "c1", ...old(5 * 60) }] });
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.retried).toBe(0); expect(w.enqueueCalls).toEqual([]); expect(s.alerted).toBe(1);
+    expect(w.alerts[0].text).toContain("há 300 min");
+  });
+
+  it("M-C: backlog antigo (flag ligada depois) em horário fechado não envia nada à IA nem avisa", async () => {
+    const night = new Date("2026-10-27T01:00:00Z"); // 22:00 SP
+    const w = world({ convs: [{ id: "c1", createdAt: new Date(night.getTime() - 5 * 3_600_000).toISOString() }] });
+    const s = await runUnansweredLeadSweep(w.deps, night);
+    expect(s.retried + s.alerted).toBe(0); expect(w.enqueueCalls).toEqual([]);
+  });
+
+  it("L2: takeover com ai_processed ainda gera aviso aos 25 min", async () => {
+    const w = world({ convs: [{ id: "t", takeover: true, processed: true, ...old(26) }] });
+    expect((await runUnansweredLeadSweep(w.deps, T0)).alerted).toBe(1);
+    expect(w.enqueueCalls).toEqual([]);
+  });
+
+  it("M-A: falha ao montar o texto libera as chaves (nada foi enviado)", async () => {
+    const w = world({ convs: [{ id: "c1", ...old(30), over: { contactPhone: undefined } }] });
+    w.kv.set("unanswered-sweep:retried:m-c1", min(-20).toISOString());
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.errors).toBe(1); expect(w.kv.has("unanswered-sweep:alerted:m-c1")).toBe(false);
+  });
+});
+
+describe("sendEvolutionAlert: falhas antes do HTTP são definitivas (liberam as chaves)", () => {
+  const env = { ...process.env };
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "http://evo"; process.env.EVOLUTION_API_KEY = "k";
+    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "inst", active_agent_id: "a" }]);
+    vi.stubGlobal("fetch", fetchMock); fetchMock.mockReset();
+  });
+  afterEach(() => { process.env = { ...env }; vi.unstubAllGlobals(); });
+
+  it("erro de banco", async () => {
+    db.getInstancesByOrganization.mockRejectedValue(new Error("db"));
+    await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("sem instância ativa", async () => {
+    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "i", active_agent_id: null }]);
+    await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("variáveis de ambiente ausentes", async () => {
+    delete process.env.EVOLUTION_API_URL;
+    await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("HTTP 500 é definitivo; timeout/rede é ambíguo (erro comum)", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+    await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+    fetchMock.mockRejectedValue(new Error("The operation was aborted due to timeout"));
+    const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+    expect(err).toBeInstanceOf(Error); expect(err).not.toBeInstanceOf(DefinitiveSendError);
+  });
+  it("sucesso", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 201 });
+    await expect(sendEvolutionAlert("o", "1", "t")).resolves.toBeUndefined();
   });
 });

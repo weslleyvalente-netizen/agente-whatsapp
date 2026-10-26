@@ -30,9 +30,21 @@ describe("decideSweepAction", () => {
   ] as const)("pula: %s", (reason, o) => {
     expect(decideSweepAction(facts(o as any))).toEqual({ action: "skip", reason });
   });
-  it("mensagem processada pela IA (silêncio deliberado) nunca é retentada nem avisada, nem no caminho humano", () => {
+  it("mensagem processada pela IA (silêncio deliberado) nunca é retentada nem avisada no caminho da IA", () => {
     expect(decideSweepAction(facts({ aiProcessed: true, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "ai_processed" });
-    expect(decideSweepAction(facts({ aiProcessed: true, isHumanTakeover: true, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "ai_processed" });
+  });
+  it("L2: no caminho humano a marca ai_processed NÃO suprime o aviso (e a IA nunca é retentada)", () => {
+    expect(decideSweepAction(facts({ aiProcessed: true, isHumanTakeover: true, createdAt: ago(30) }))).toEqual({ action: "alert" });
+    expect(decideSweepAction(facts({ aiProcessed: true, openHandoff: true, createdAt: ago(10) }))).toEqual({ action: "skip", reason: "human_pending" });
+  });
+  it("M-C: mais de 2 h sem retry anterior nunca vai para a IA; vai direto ao aviso humano (só em expediente, uma vez)", () => {
+    expect(decideSweepAction(facts({ createdAt: ago(121) }))).toEqual({ action: "alert" });
+    expect(decideSweepAction(facts({ createdAt: ago(121), businessOpen: false }))).toEqual({ action: "skip", reason: "outside_business_hours" });
+    expect(decideSweepAction(facts({ createdAt: ago(121), alerted: true }))).toEqual({ action: "skip", reason: "already_alerted" });
+    expect(decideSweepAction(facts({ createdAt: ago(119) }))).toEqual({ action: "retry" });
+  });
+  it("mensagem com mais de 2 h que já tinha retry segue o fluxo normal de espera de 15 min", () => {
+    expect(decideSweepAction(facts({ createdAt: ago(200), retriedAt: ago(5) }))).toEqual({ action: "skip", reason: "retry_pending" });
   });
   it("sem a marca ai_routed_at nunca há retry (takeover liberado depois, IA reativada)", () => {
     expect(decideSweepAction(facts({ aiRouted: false, createdAt: ago(40) }))).toEqual({ action: "skip", reason: "not_ai_routed" });

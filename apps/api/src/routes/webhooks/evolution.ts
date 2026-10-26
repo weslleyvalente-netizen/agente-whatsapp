@@ -100,6 +100,8 @@ export function resolveReplayCreatedAt(
   return new Date(ms).toISOString();
 }
 
+// Teto para as marcas no caminho quente: uma chamada pendurada ao banco nunca atrasa o enfileiramento.
+export const STAMP_TIMEOUT_MS = 2000;
 const internalPhoneCache = new Map<string, { at: number; phones: string[] }>();
 export function resetInternalPhoneCache() { internalPhoneCache.clear(); }
 const digitsOf = (v: unknown) => (typeof v === "string" ? v.replace(/\D/g, "") : "");
@@ -261,9 +263,11 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // migration for organization_ignored_contacts not deployed yet must
       // never take down message processing for every other contact.
       let ignoredContact: Awaited<ReturnType<typeof getIgnoredContact>> = null;
-      // Telefones internos de aviso (alerta de saúde / notificação de handoff) recebem mensagens NOSSAS vindas da própria
-      // instância (eco). Tratados como contato ignorado "no_store": não viram contato, conversa nem takeover.
-      if (await isInternalNotificationPhone(organizationId, phone, request.log)) {
+      // Eco dos avisos internos (alerta de saúde / notificação de handoff) que a própria instância enviou: tratado como contato
+      // ignorado "no_store" (não vira contato, conversa nem takeover).
+      // Só o eco SAÍDO (fromMe) para esses telefones: mensagens que o dono ou um lead mandam desses números seguem o fluxo normal.
+      if (payload.data.key.fromMe && await isInternalNotificationPhone(organizationId, phone, request.log)) {
+        request.log.info({ organizationId, reason: "internal_notification_echo", last4: phone.replace(/\D/g, "").slice(-4) }, "internal notification echo ignored");
         return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
       }
       try {
@@ -554,7 +558,10 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // reenvia mensagens com esta marca). Falha na marca nunca impede o atendimento.
       if (!afterHoursPending) {
         try {
-          await stampMessageMetadata(getAdminClient(), message.id, { ai_routed_at: new Date().toISOString() });
+          await Promise.race([
+            stampMessageMetadata(getAdminClient(), message.id, { ai_routed_at: new Date().toISOString() }),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error("stamp timeout")), STAMP_TIMEOUT_MS).unref?.()),
+          ]);
         } catch (err) {
           request.log.error({ err, messageId: message.id }, "Failed to stamp ai_routed_at");
         }

@@ -440,7 +440,12 @@ export function startProcessMessageWorker() {
       }
       })();
       try {
-        await markMessagesAiProcessed(getAdminClient(), job.data.conversationId, startedAt, new Date().toISOString());
+        // Teto de 2 s: uma chamada pendurada ao banco não pode segurar o próximo job desta conversa.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          markMessagesAiProcessed(getAdminClient(), job.data.conversationId, startedAt, new Date().toISOString()),
+          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("stamp timeout")), 2000); }),
+        ]).finally(() => clearTimeout(timer));
       } catch (err) {
         console.error(`Failed to stamp ai_processed_at for conversation ${job.data.conversationId}:`, (err as Error)?.message);
       }

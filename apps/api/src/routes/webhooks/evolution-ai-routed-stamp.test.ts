@@ -67,26 +67,49 @@ describe("webhook: marca ai_routed_at", () => {
   });
 });
 
-describe("webhook: telefones internos de aviso são contato ignorado", () => {
-  it.each([["5511988887777"], ["11988887777"], ["551188887777"], ["5521977776666"]])("%s (alerta de saúde / handoff) -> ignored_contact, nada gravado", async (jid) => {
-    const r = await post(payload(jid));
+describe("webhook: só o eco SAÍDO para telefones internos é ignorado", () => {
+  it.each([["5511988887777"], ["11988887777"], ["551188887777"], ["5521977776666"]])("eco (fromMe) para %s -> ignored_contact, nada gravado", async (jid) => {
+    const r = await post(payload(jid, true));
     expect(r.json()).toMatchObject({ skipped: "ignored_contact" });
     expect(m.ensureConversation).not.toHaveBeenCalled();
     expect(m.saveMessage).not.toHaveBeenCalled();
     expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
   });
-  it("eco (fromMe) do aviso para o telefone interno também é ignorado", async () => {
-    expect((await post(payload("5511988887777", true))).json()).toMatchObject({ skipped: "ignored_contact" });
-    expect(m.saveMessage).not.toHaveBeenCalled();
+  it("mensagem ENTRANTE do telefone de alerta segue o fluxo normal (o dono testa a IA)", async () => {
+    const r = await post(payload("5511988887777"));
+    expect(r.json()).toMatchObject({ ok: true, messageId: "msg-1" });
+    expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
   });
-  it("cliente comum segue normal; falha ao ler a organização falha aberto", async () => {
-    expect((await post(payload("5511999990000"))).json()).toMatchObject({ ok: true, messageId: "msg-1" });
+  it("configuração vazia nunca casa", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { health_alert_phone: "", handoff_notification_phone: null } });
+    resetInternalPhoneCache();
+    const r = await post(payload("5511988887777", true));
+    expect(r.json()).not.toMatchObject({ skipped: "ignored_contact" });
+    expect(m.ensureConversation).toHaveBeenCalled();
+  });
+  it("variantes do 9º dígito casam (5562996188374 x 556296188374)", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { health_alert_phone: "5562996188374" } });
+    resetInternalPhoneCache();
+    expect((await post(payload("556296188374", true))).json()).toMatchObject({ skipped: "ignored_contact" });
+  });
+  it("cliente comum e falha ao ler a organização seguem normal", async () => {
+    expect((await post(payload("5511999990000", true))).json()).not.toMatchObject({ skipped: "ignored_contact" });
     resetInternalPhoneCache(); m.getOrganizationById.mockRejectedValue(new Error("db"));
-    expect((await post(payload("5511999990000"))).json()).toMatchObject({ ok: true });
+    expect((await post(payload("5511988887777", true))).json()).not.toMatchObject({ skipped: "ignored_contact" });
   });
   it("samePhone compara dígitos normalizados", () => {
     expect(samePhone("+55 (11) 98888-7777", "5511988887777")).toBe(true);
     expect(samePhone("", "5511988887777")).toBe(false);
     expect(samePhone("5511988887777", "5511988887778")).toBe(false);
   });
+});
+
+describe("L1: a marca nunca atrasa o enfileiramento", () => {
+  it("marca que nunca resolve: enfileira após o teto (~2 s)", async () => {
+    m.stampMessageMetadata.mockImplementation(() => new Promise(() => {}));
+    const t0 = Date.now();
+    await post(payload("5511999990000"));
+    expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
+    expect(Date.now() - t0).toBeLessThan(4000);
+  }, 8000);
 });

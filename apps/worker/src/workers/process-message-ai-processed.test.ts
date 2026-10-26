@@ -65,4 +65,11 @@ describe("process-message marca ai_processed_at em toda saída normal", () => {
     m.markMessagesAiProcessed.mockRejectedValue(new Error("db"));
     await expect(m.processor!(job)).resolves.toBeUndefined();
   });
+  it("L1: marca que nunca resolve não prende o job (teto ~2 s)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    m.markMessagesAiProcessed.mockImplementation(() => new Promise(() => {}));
+    const t0 = Date.now();
+    await expect(m.processor!(job)).resolves.toBeUndefined();
+    expect(Date.now() - t0).toBeLessThan(4000);
+  }, 8000);
 });
