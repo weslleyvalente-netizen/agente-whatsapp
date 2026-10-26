@@ -3,3 +3,9 @@
 export function shouldUseManualAssign(opts: { distributionOn: boolean; role: string | null; targetRepId: string | null }): boolean {
   return opts.distributionOn && (opts.role === "owner" || opts.role === "admin") && opts.targetRepId !== null;
 }
+
+/** O fluxo de reatribuição do rodízio só existe para quem já tem uma atribuição (encaminhamento). Para lead novo, cliente antigo da carteira
+ *  ou conversa sem encaminhamento, o banco responde "Conversa sem atribuição…": aí a troca deve ser feita direto na conversa. */
+export function isNoAssignmentError(message: string | null | undefined): boolean {
+  return /sem atribui[cç][aã]o/i.test(message ?? "");
+}

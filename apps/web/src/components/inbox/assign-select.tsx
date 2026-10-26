@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
-import { shouldUseManualAssign } from "@/lib/lead-assign";
+import { isNoAssignmentError, shouldUseManualAssign } from "@/lib/lead-assign";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AssignSelectProps {
@@ -47,21 +47,10 @@ export function AssignSelect({
     supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
   }, [organizationId]);
 
-  const handleAssign = async (userId: string) => {
+  // Troca simples: só altera a conversa (o banco leva negócio e tarefas junto).
+  // select() permite detectar 0 linhas: com o isolamento por vendedor o banco ignora (sem erro) a conversa que o usuário não vê.
+  const assignDirectly = async (userId: string) => {
     const supabase = createClient();
-    setError(null);
-    const targetRepId = userId === "none" ? null : repIds[userId] ?? null;
-    if (shouldUseManualAssign({ distributionOn: currentOrg?.settings.lead_distribution_enabled === true, role, targetRepId })) {
-      // Reatribuição do rodízio: grava o histórico, inicia o prazo de resposta e avisa o vendedor. O banco move conversa, negócio e tarefas.
-      try {
-        await apiFetch(`/organizations/${organizationId}/lead-assignments/manual`, { method: "POST", body: JSON.stringify({ conversationId, repId: targetRepId }) });
-      } catch (err) {
-        setError((err as { message?: string }).message ?? "Não foi possível reatribuir o lead.");
-      }
-      onUpdate();
-      return;
-    }
-    // select() permite detectar 0 linhas: com o isolamento por vendedor o banco ignora (sem erro) a conversa que o usuário não vê.
     const { data, error: updateError } = await supabase
       .from("conversations")
       .update({ assigned_to: userId === "none" ? null : userId })
@@ -70,6 +59,25 @@ export function AssignSelect({
     if (updateError || !data || data.length === 0) {
       setError("Não foi possível atribuir a conversa. Somente o gestor passa uma conversa para outro vendedor.");
     }
+  };
+
+  const handleAssign = async (userId: string) => {
+    setError(null);
+    const targetRepId = userId === "none" ? null : repIds[userId] ?? null;
+    if (shouldUseManualAssign({ distributionOn: currentOrg?.settings.lead_distribution_enabled === true, role, targetRepId })) {
+      // Reatribuição do rodízio: grava o histórico, inicia o prazo de resposta e avisa o vendedor. O banco move conversa, negócio e tarefas.
+      try {
+        await apiFetch(`/organizations/${organizationId}/lead-assignments/manual`, { method: "POST", body: JSON.stringify({ conversationId, repId: targetRepId }) });
+      } catch (err) {
+        const message = (err as { message?: string }).message;
+        // Lead novo / cliente da carteira sem atribuição no rodízio: a reatribuição não se aplica, então troca direto (como antes).
+        if (isNoAssignmentError(message)) await assignDirectly(userId);
+        else setError(message ?? "Não foi possível reatribuir o lead.");
+      }
+      onUpdate();
+      return;
+    }
+    await assignDirectly(userId);
     onUpdate();
   };
 
