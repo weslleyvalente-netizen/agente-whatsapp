@@ -47,6 +47,8 @@ export interface OrganizationSettings {
   seller_isolation_enabled?: boolean;
   // Notificações push (PWA) para vendedores. Desligado por padrão (ausente = desligado).
   push_notifications_enabled?: boolean;
+  // Varredura de cliente sem resposta: reenvia à IA a última mensagem que ficou sem resposta e avisa o responsável. Desligado por padrão.
+  unanswered_lead_sweep_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;
