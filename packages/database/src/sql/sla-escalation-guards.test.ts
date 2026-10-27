@@ -14,30 +14,39 @@ async function lead(w: Awaited<ReturnType<typeof seedWorld>>, dueInMinutes = -70
   const id = (await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [w.org, h.conversationId, h.handoffId, inMinutes(dueInMinutes)]))[0].id as string;
   return { ...h, id };
 }
-const escalate = async (id: string) => (await q("select public.escalate_alert_assignment($1,$2,$3) as id", [id, inMinutes(-1), inMinutes(60)]))[0].id as string | null;
+const escalate = async (id: string, escalateAtMinutes = -1) => (await q("select public.escalate_alert_assignment($1,$2,$3) as id", [id, inMinutes(escalateAtMinutes), inMinutes(60)]))[0].id as string | null;
 const candidates = async (perOrg = 50) => (await q("select * from public.list_escalation_candidates($1)", [perOrg])).map(r => r.id as string);
 const setSettings = (org: string, patch: object) => q("update public.organizations set settings = settings || $2::jsonb where id=$1", [org, JSON.stringify(patch)]);
 
 describe("janela de ativação e idade", () => {
-  it("ligar a chave não move carteira antiga: pendente que estourou antes da ativação, ou há mais de 24h, nunca escala", async () => {
+  it("ligar a chave não move carteira antiga: escalada devida antes da ativação, ou há mais de 24h, nunca acontece", async () => {
     const w = await seedWorld(db, ON, THREE);
     const old = await lead(w, -60 * 30, -60 * 31); // estourou há 30h
     const beforeActivation = await lead(w, -70);
     await setSettings(w.org, { sla_alert_escalation_activated_at: inMinutes(-10) });
-    const fresh = await lead(w, -5, -60); // vence DEPOIS da ativação
-    for (const l of [old, beforeActivation]) { expect(await escalate(l.id)).toBeNull(); }
-    expect(await candidates()).toEqual([fresh.id]);
+    const fresh = await lead(w, -5, -60);
+    expect(await escalate(old.id, -60 * 29)).toBeNull(); // instante de 2x há 29h
+    expect(await escalate(beforeActivation.id, -60)).toBeNull(); // 2x aconteceu antes de ligar a chave
+    expect((await candidates())[0]).toBe(fresh.id); // mais recente primeiro
     expect(await escalate(fresh.id)).toBeTruthy();
     expect((await q("select status from public.lead_assignments where id=$1", [old.id]))[0].status).toBe("pending");
   });
 
-  it("sem timestamp de ativação (ligado por SQL) vale só o teto de 24h", async () => {
+  it("sem timestamp de ativação (ligado por SQL) vale só o teto de 24h sobre o instante da escalada", async () => {
     const w = await seedWorld(db, ON, THREE);
     const a = await lead(w, -70); const stale = await lead(w, -60 * 25, -60 * 26);
-    expect(await candidates()).toEqual([a.id]);
-    expect(await escalate(stale.id)).toBeNull();
+    expect(await escalate(stale.id, -60 * 25)).toBeNull();
+    expect(await escalate(a.id)).toBeTruthy();
   });
-});
+
+  it("sexta 17:45 estoura, escalada segunda 08:15 (62h depois): a janela é do instante de 2x, então ESCALA; feriado idem", async () => {
+    const w = await seedWorld(db, ON, THREE);
+    const weekend = await lead(w, -62 * 60, -62 * 60 - 15);
+    const holiday = await lead(w, -90 * 60, -90 * 60 - 15); // estourou há 90h (feriado prolongado), instante de 2x agora
+    expect((await candidates()).sort()).toEqual([weekend.id, holiday.id].sort());
+    expect(await escalate(weekend.id, -1)).toBeTruthy();
+    expect(await escalate(holiday.id, -1)).toBeTruthy();
+  });
 
 describe("fila de candidatas", () => {
   it("mais de 100 antigas recusadas + 1 estouro novo: o novo continua na fila e escala", async () => {
@@ -45,15 +54,16 @@ describe("fila de candidatas", () => {
     for (let i = 0; i < 110; i++) await lead(w, -60 * 30, -60 * 31);
     const fresh = await lead(w, -70);
     const list = await candidates(50);
-    expect(list).toEqual([fresh.id]);
+    expect(list).toHaveLength(50); // limite por organização
+    expect(list[0]).toBe(fresh.id); // o estouro novo nunca é empurrado para fora pelos antigos
     expect(await escalate(list[0])).toBeTruthy();
   });
 
-  it("limite é por organização e em ordem de vencimento; outra organização sem a chave não aparece", async () => {
+  it("limite é por organização, mais recentes primeiro; outra organização sem a chave não aparece", async () => {
     const w = await seedWorld(db, ON, THREE);
     const a = await lead(w, -90, -150); const b = await lead(w, -80); const c = await lead(w, -70);
     const other = await seedWorld(db, ALL_ON, THREE); await lead(other, -70);
-    expect(await candidates(2)).toEqual([a.id, b.id]);
+    expect(await candidates(2)).toEqual([c.id, b.id]); // os mais recentes primeiro
     expect((await candidates(10)).sort()).toEqual([a.id, b.id, c.id].sort());
   });
 
@@ -81,6 +91,9 @@ describe("sinais de 'já atendido' (a função recusa e a fila não lista)", () 
     ["conversa fechada", (_w, l) => q("update public.conversations set status='closed' where id=$1", [l.conversationId])],
     ["negócio ganho", (_w, l) => q("update public.opportunities set status='won', updated_at=now() where contact_id=$1", [l.contactId])],
     ["negócio perdido", (_w, l) => q("update public.opportunities set status='lost', updated_at=now() where contact_id=$1", [l.contactId])],
+    ["tarefa mexida por humano", (w, l) => q("insert into public.tasks(organization_id,contact_id,assignee_type,assignee_id,type,due_date,created_by_type) values ($1,$2,'human',$3,'return_customer',current_date,'ai') returning id", [w.org, l.contactId, w.reps["Marina"].userId]).then(r => q("insert into public.task_events(task_id,organization_id,event_type,created_by_type) values ($1,$2,'completed','human')", [r[0].id, w.org]))],
+    ["evento humano no negócio (etapa mudada à mão)", (w, l) => q("insert into public.opportunity_events(organization_id,opportunity_id,event_type,evidence,changed_by_type) select $1,id,'stage_changed','mudou','human' from public.opportunities where contact_id=$2", [w.org, l.contactId])],
+    ["nota do vendedor na conversa", (w, l) => q("insert into public.conversation_notes(conversation_id,organization_id,user_id,content) values ($1,$2,$3,'liguei')", [l.conversationId, w.org, w.reps["Marina"].userId])],
     ["aceite registrado", (_w, l) => q("update public.lead_assignments set accepted_at=now() where id=$1", [l.id])],
     ["primeira resposta humana registrada", (_w, l) => q("update public.lead_assignments set first_human_message_at=now() where id=$1", [l.id])],
     ["mensagem humana depois do handoff", (w, l) => q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','oi',$3)", [w.org, l.conversationId, inMinutes(-30)])],

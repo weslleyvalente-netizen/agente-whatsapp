@@ -5,11 +5,16 @@
 -- Qualquer chamada com evidência (mudou a operação, ou confirmou a mesma) limpa a marca (gatilho trg_clear_operation_is_default / UPDATE explícito): a partir daí vale a regra antiga (só pedido explícito troca).
 -- Negócios sem a marca (todos os existentes) se comportam exatamente como antes. Resto do corpo copiado de 20261007120500.
 -- Depende de 20261027120000 (coluna operation_is_default).
--- Reverter: restaurar a função de 20261007120500_lead_distribution_sales_pipeline.sql (CREATE OR REPLACE do sync_sales_pipeline).
+-- SEGURANÇA DE ORDEM: só o worker NOVO manda p_default_correction=true; o worker antigo contra esta migração nunca limpa a marca.
+-- Também troca a regra de histórico por _contact_has_deal_history (card de encaminhamento perdido e nunca confirmado não bloqueia).
+-- Reverter: DROP FUNCTION public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb,boolean); e recriar a função de
+-- 20261007120500_lead_distribution_sales_pipeline.sql (assinatura de 8 argumentos, com os GRANTs de lá).
 
-CREATE OR REPLACE FUNCTION public.sync_sales_pipeline(p_organization_id uuid,p_conversation_id uuid,p_customer_message_id uuid,p_response_message_id uuid,p_operation text,p_stage text,p_explicit_operation boolean,p_fields jsonb)
+-- Assinatura nova (9º parâmetro com DEFAULT): a de 8 argumentos sai para não haver chamada ambígua.
+DROP FUNCTION IF EXISTS public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb);
+CREATE OR REPLACE FUNCTION public.sync_sales_pipeline(p_organization_id uuid,p_conversation_id uuid,p_customer_message_id uuid,p_response_message_id uuid,p_operation text,p_stage text,p_explicit_operation boolean,p_fields jsonb,p_default_correction boolean DEFAULT false)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-DECLARE c public.conversations; m public.messages; o public.opportunities; candidates integer; stages text[]; old_value jsonb; h public.handoff_events; t public.tasks; assignee uuid; due_at timestamp; start_hour int; end_hour int; handoff_note text;
+DECLARE v_correct boolean; c public.conversations; m public.messages; o public.opportunities; candidates integer; stages text[]; old_value jsonb; h public.handoff_events; t public.tasks; assignee uuid; due_at timestamp; start_hour int; end_hour int; handoff_note text;
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM public.organizations WHERE id=p_organization_id AND settings->>'sales_auto_pipeline_enabled'='true') THEN RETURN NULL; END IF;
  SELECT * INTO STRICT c FROM public.conversations WHERE id=p_conversation_id AND organization_id=p_organization_id;
@@ -32,7 +37,7 @@ BEGIN
  IF candidates>1 THEN RETURN NULL; END IF;
  SELECT * INTO o FROM public.opportunities WHERE organization_id=p_organization_id AND contact_id=c.contact_id AND status='open' FOR UPDATE;
  IF o.id IS NULL THEN
-  IF EXISTS(SELECT 1 FROM public.opportunities WHERE organization_id=p_organization_id AND contact_id=c.contact_id) THEN RETURN NULL; END IF;
+  IF public._contact_has_deal_history(p_organization_id,c.contact_id) THEN RETURN NULL; END IF;
   INSERT INTO public.opportunities(organization_id,contact_id,operation,initial_operation,stage,product_model,sale_amount,credit_amount,down_payment_amount,bid_amount,target_installment_amount,term_months,usage_purpose,urgency,commercial_notes,last_interaction_at,last_progress_at,next_action)
   VALUES(p_organization_id,c.contact_id,p_operation,p_operation,p_stage,p_fields->>'product_model',(p_fields->>'sale_amount')::numeric,(p_fields->>'credit_amount')::numeric,(p_fields->>'down_payment_amount')::numeric,(p_fields->>'bid_amount')::numeric,(p_fields->>'target_installment_amount')::numeric,(p_fields->>'term_months')::integer,p_fields->>'usage_purpose',p_fields->>'urgency',p_fields->>'commercial_notes',m.created_at,now(),p_fields->>'next_action') RETURNING * INTO o;
   INSERT INTO public.opportunity_events(organization_id,opportunity_id,event_type,new_value,evidence,changed_by_type)
@@ -41,16 +46,22 @@ BEGIN
   IF o.frozen_until IS NOT NULL THEN RETURN o.id; END IF;
   IF o.operation='financing' AND o.stage IN ('bank_analysis','conditions_approved_negotiation','financing_rejected','formalization') THEN RETURN o.id; END IF;
   old_value:=jsonb_build_object('operation',o.operation,'stage',o.stage);
+  -- Só o código NOVO (p_default_correction=true: passou operation undefined e tem evidência) corrige/confirma um card com operação padrão.
+  -- Código antigo nunca manda o parâmetro e, portanto, nunca apaga a marca.
+  v_correct:=coalesce(o.operation_is_default,false) AND coalesce(p_default_correction,false);
   IF o.operation<>p_operation THEN
    -- Operação só no padrão (negócio criado no encaminhamento para humano): a conversa pode defini-la sem pedido explícito, uma vez.
-   IF NOT p_explicit_operation AND NOT o.operation_is_default THEN RETURN o.id; END IF;
+   IF NOT p_explicit_operation AND NOT v_correct THEN RETURN o.id; END IF;
    UPDATE public.opportunities SET operation=p_operation,stage=stages[1],last_progress_at=now(),sale_amount=NULL,credit_amount=NULL,down_payment_amount=NULL,bid_amount=NULL,target_installment_amount=NULL,term_months=NULL WHERE id=o.id;
    INSERT INTO public.opportunity_events(organization_id,opportunity_id,event_type,previous_value,new_value,evidence,changed_by_type)
    VALUES(p_organization_id,o.id,'operation_changed',old_value,jsonb_build_object('operation',p_operation,'stage',stages[1]),CASE WHEN p_explicit_operation THEN 'Interesse explícito: ' ELSE 'Operação a confirmar definida pela conversa: ' END||left(m.content,2000),'ai');
    o.stage:=stages[1];
   END IF;
-  -- Evidência da conversa para a MESMA operação também confirma o padrão (a mudança de operação acima já limpa a marca pelo gatilho).
-  IF o.operation_is_default THEN UPDATE public.opportunities SET operation_is_default=false WHERE id=o.id; END IF;
+  -- Evidência da conversa confirma o card com operação padrão (mesma operação ou corrigida): grava TUDO o que o caminho de criação gravaria
+  -- (campos da qualificação, initial_operation, last_interaction_at) e limpa a marca. COALESCE: nunca sobrescreve valor humano.
+  IF v_correct THEN
+   UPDATE public.opportunities SET operation_is_default=false,initial_operation=p_operation,product_model=coalesce(product_model,p_fields->>'product_model'),sale_amount=coalesce(sale_amount,(p_fields->>'sale_amount')::numeric),credit_amount=coalesce(credit_amount,(p_fields->>'credit_amount')::numeric),down_payment_amount=coalesce(down_payment_amount,(p_fields->>'down_payment_amount')::numeric),bid_amount=coalesce(bid_amount,(p_fields->>'bid_amount')::numeric),target_installment_amount=coalesce(target_installment_amount,(p_fields->>'target_installment_amount')::numeric),term_months=coalesce(term_months,(p_fields->>'term_months')::integer),usage_purpose=coalesce(usage_purpose,p_fields->>'usage_purpose'),urgency=coalesce(urgency,p_fields->>'urgency'),commercial_notes=coalesce(commercial_notes,p_fields->>'commercial_notes'),next_action=coalesce(next_action,p_fields->>'next_action'),last_interaction_at=m.created_at WHERE id=o.id;
+  END IF;
   IF o.stage NOT IN ('financing_rejected','bank_analysis','conditions_approved_negotiation','formalization') AND array_position(stages,p_stage)>array_position(stages,o.stage) THEN
    UPDATE public.opportunities SET stage=p_stage,last_progress_at=now() WHERE id=o.id;
    INSERT INTO public.opportunity_events(organization_id,opportunity_id,event_type,previous_value,new_value,evidence,changed_by_type)
@@ -107,5 +118,5 @@ BEGIN
  END IF;
  RETURN o.id;
 END $$;
-REVOKE ALL ON FUNCTION public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb) TO service_role;
+REVOKE ALL ON FUNCTION public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb,boolean) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.sync_sales_pipeline(uuid,uuid,uuid,uuid,text,text,boolean,jsonb,boolean) TO service_role;

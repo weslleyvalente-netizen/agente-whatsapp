@@ -186,9 +186,10 @@ describe("cartão de encaminhamento (distribute_lead)", () => {
 });
 
 describe("sync_sales_pipeline x negócio com operação a confirmar", () => {
-  const turn = async (org: string, h: { conversationId: string }, operation: string, stage: string, explicit = false) => {
+  const fields = { credit_amount: 26500, term_months: 80, usage_purpose: "trabalho", urgency: "alta", commercial_notes: "quer carta", bid_amount: 3000, next_action: "ligar", product_model: "CG160" };
+  const turn = async (org: string, h: { conversationId: string }, operation: string, stage: string, explicit = false, correction = true) => {
     const msg = (await q("insert into public.messages(organization_id,conversation_id,role,content) values ($1,$2,'contact','quero uma carta de crédito') returning id", [org, h.conversationId]))[0].id;
-    return (await q("select public.sync_sales_pipeline($1,$2,$3,null,$4,$5,$6,'{}'::jsonb) as id", [org, h.conversationId, msg, operation, stage, explicit]))[0].id as string;
+    return (await q("select public.sync_sales_pipeline($1,$2,$3,null,$4,$5,$6,$7::jsonb,$8) as id", [org, h.conversationId, msg, operation, stage, explicit, JSON.stringify(fields), correction]))[0].id as string;
   };
   const created = async () => {
     const w = await seedWorld(db);
@@ -204,7 +205,7 @@ describe("sync_sales_pipeline x negócio com operação a confirmar", () => {
     expect(id).toBe(opp);
     const o = (await q("select * from public.opportunities where id=$1", [opp]))[0];
     expect(o).toMatchObject({ operation: "consortium", stage: "qualification", operation_is_default: false });
-    expect(o.initial_operation).toBe("vehicle_sale"); // histórico do que nasceu
+    expect(o.initial_operation).toBe("consortium"); // igual ao negócio criado pelo sync antes do card
     const ev = await q("select event_type, evidence from public.opportunity_events where opportunity_id=$1 order by created_at", [opp]);
     expect(ev.map(e => e.event_type)).toEqual(["created", "operation_changed", "stage_changed"]);
     expect(ev[1].evidence).toContain("Operação a confirmar");
@@ -248,5 +249,86 @@ describe("sync_sales_pipeline x negócio com operação a confirmar", () => {
     const { org, h } = await created();
     await turn(org, h, "consortium", "interest_received");
     expect(await oppsOf(h.contactId)).toHaveLength(1);
+  });
+});
+
+describe("ordem de deploy, paridade com o caminho de criação, histórico e chave de desligar", () => {
+  const COLS = "operation, initial_operation, stage, product_model, sale_amount, credit_amount, down_payment_amount, bid_amount, target_installment_amount, term_months, usage_purpose, urgency, commercial_notes, next_action";
+  const fields = { credit_amount: 26500, term_months: 80, usage_purpose: "trabalho", urgency: "alta", commercial_notes: "quer carta", bid_amount: 3000, next_action: "ligar", product_model: "CG160", down_payment_amount: 2000 };
+  const sync = async (org: string, conversationId: string, operation: string, stage: string, correction: boolean | undefined, explicit = false) => {
+    const msg = (await q("insert into public.messages(organization_id,conversation_id,role,content) values ($1,$2,'contact','quero uma carta') returning id", [org, conversationId]))[0].id;
+    if (correction === undefined) // chamada de 8 argumentos, como o worker ANTIGO
+      return (await q("select public.sync_sales_pipeline($1,$2,$3,null,$4,$5,$6,$7::jsonb) as id", [org, conversationId, msg, operation, stage, explicit, JSON.stringify(fields)]))[0].id;
+    return (await q("select public.sync_sales_pipeline($1,$2,$3,null,$4,$5,$6,$7::jsonb,$8) as id", [org, conversationId, msg, operation, stage, explicit, JSON.stringify(fields), correction]))[0].id;
+  };
+
+  it("worker ANTIGO (8 argumentos / sem p_default_correction) nunca limpa a marca nem corrige a operação", async () => {
+    const w = await seedWorld(db); const h = await seedLead(db, w.org);
+    await distribute(w.org, h);
+    await sync(w.org, h.conversationId, "vehicle_sale", "qualification", undefined); // mesma operação, sem sinal novo
+    await sync(w.org, h.conversationId, "consortium", "qualification", false);
+    const [o] = await oppsOf(h.contactId);
+    expect(o).toMatchObject({ operation: "vehicle_sale", operation_is_default: true });
+  });
+
+  it("card corrigido pelo sync fica IGUAL ao negócio que o sync criaria antes do card (todos os campos da qualificação e initial_operation)", async () => {
+    const withCard = await seedWorld(db); const a = await seedLead(db, withCard.org);
+    await distribute(withCard.org, a);
+    await sync(withCard.org, a.conversationId, "consortium", "qualification", true);
+    const noCard = await seedWorld(db, { ...ALL_ON, handoff_card_enabled: false }); const b = await seedLead(db, noCard.org);
+    await distribute(noCard.org, b);
+    expect(await oppsOf(b.contactId)).toHaveLength(0);
+    await sync(noCard.org, b.conversationId, "consortium", "qualification", false);
+    const pick = async (c: string) => (await q(`select ${COLS} from public.opportunities where contact_id=$1`, [c]))[0];
+    const ra = await pick(a.contactId); const rb = await pick(b.contactId);
+    expect(ra).toEqual(rb);
+    expect(ra).toMatchObject({ operation: "consortium", initial_operation: "consortium", credit_amount: "26500", term_months: 80, usage_purpose: "trabalho", bid_amount: "3000" });
+    expect((await oppsOf(a.contactId))[0].operation_is_default).toBe(false);
+  });
+
+  it("chave handoff_card_enabled: ausente = ligada; só false explícito desliga (distribute_lead e ensure_handoff_cards)", async () => {
+    const off = await seedWorld(db, { ...ALL_ON, handoff_card_enabled: false }); const h = await seedLead(db, off.org);
+    expect(await distribute(off.org, h)).toBeTruthy();
+    expect(await oppsOf(h.contactId)).toHaveLength(0);
+    expect((await q("select public.ensure_handoff_cards(50) as n"))[0].n).toBe(0);
+    await q("update public.organizations set settings = settings || '{\"handoff_card_enabled\":true}' where id=$1", [off.org]);
+    expect((await q("select public.ensure_handoff_cards(50) as n"))[0].n).toBe(1);
+    const on = await seedWorld(db, ALL_ON); const h2 = await seedLead(db, on.org); // sem a chave: liga
+    await distribute(on.org, h2);
+    expect(await oppsOf(h2.contactId)).toHaveLength(1);
+  });
+
+  it("card perdido que nunca foi confirmado e sem ação humana (além de 'perdido') NÃO bloqueia o card/negócio automático seguinte", async () => {
+    const w = await seedWorld(db); const h = await seedLead(db, w.org);
+    const id = await distribute(w.org, h);
+    const [card] = await oppsOf(h.contactId);
+    await q("update public.opportunities set status='lost' where id=$1", [card.id]);
+    await q("insert into public.opportunity_events(organization_id,opportunity_id,event_type,evidence,changed_by_type) values ($1,$2,'lost','sumiu','human')", [w.org, card.id]);
+    await q("update public.lead_assignments set status='accepted', accepted_at=now() where id=$1", [id]);
+    const h2 = (await q("insert into public.handoff_events(organization_id,conversation_id) values ($1,$2) returning id", [w.org, h.conversationId]))[0].id;
+    await distribute(w.org, { conversationId: h.conversationId, handoffId: h2 });
+    expect((await q("select status from public.opportunities where contact_id=$1 order by created_at", [h.contactId])).map(r => r.status)).toEqual(["lost", "open"]);
+    // e a automação (sync) também cria quando o cliente volta
+    const w2 = await seedWorld(db); const g = await seedLead(db, w2.org);
+    await distribute(w2.org, g);
+    const [c2] = await oppsOf(g.contactId);
+    await q("update public.opportunities set status='lost' where id=$1", [c2.id]);
+    await q("update public.lead_assignments set status='expired' where conversation_id=$1", [g.conversationId]);
+    expect(await sync(w2.org, g.conversationId, "consortium", "interest_received", false)).toBeTruthy();
+    expect((await q("select status from public.opportunities where contact_id=$1 order by created_at", [g.contactId])).map(r => r.status)).toEqual(["lost", "open"]);
+  });
+
+  it("negócio perdido que o vendedor trabalhou (confirmou a operação, ou evento humano) CONTINUA bloqueando (regra de histórico)", async () => {
+    const w = await seedWorld(db); const h = await seedLead(db, w.org);
+    await distribute(w.org, h);
+    const [card] = await oppsOf(h.contactId);
+    await q("update public.opportunities set operation='financing', status='lost' where id=$1", [card.id]); // confirmou a operação: marca cai
+    expect((await q("select public._contact_has_deal_history($1,$2) as b", [w.org, h.contactId]))[0].b).toBe(true);
+    const w2 = await seedWorld(db); const g = await seedLead(db, w2.org);
+    await distribute(w2.org, g);
+    const [c2] = await oppsOf(g.contactId);
+    await q("update public.opportunities set status='lost' where id=$1", [c2.id]);
+    await q("insert into public.opportunity_events(organization_id,opportunity_id,event_type,evidence,changed_by_type) values ($1,$2,'stage_changed','mexeu','human')", [w2.org, c2.id]);
+    expect((await q("select public._contact_has_deal_history($1,$2) as b", [w2.org, g.contactId]))[0].b).toBe(true);
   });
 });

@@ -28,12 +28,13 @@ ALTER TABLE public.tasks ADD COLUMN conversation_id uuid, ADD COLUMN opportunity
   ADD COLUMN reason text, ADD COLUMN priority text NOT NULL DEFAULT 'normal', ADD COLUMN due_date date, ADD COLUMN due_time time, ADD COLUMN created_by_type text, ADD COLUMN created_by_id uuid,
   ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(), ADD COLUMN consolidated_pendencies jsonb NOT NULL DEFAULT '[]',
   ADD CONSTRAINT tasks_status_chk CHECK (status IN ('pending','in_progress','completed','cancelled','rescheduled'));
-CREATE TABLE public.task_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid, organization_id uuid, event_type text, note text, created_by_type text NOT NULL CHECK (created_by_type IN ('ai','human')), created_by_id uuid);
+CREATE TABLE public.task_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid, organization_id uuid, event_type text, note text, created_at timestamptz NOT NULL DEFAULT now(), created_by_type text NOT NULL CHECK (created_by_type IN ('ai','human')), created_by_id uuid);
 ALTER TABLE public.handoff_events ADD COLUMN motivo text, ADD COLUMN resumo text, ADD COLUMN first_human_reply_at timestamptz;
 ALTER TABLE public.wa_contacts ADD COLUMN phone text;
 ALTER TABLE public.conversations ADD COLUMN status text NOT NULL DEFAULT 'open', ADD COLUMN last_message_at timestamptz, ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.opportunity_events ADD COLUMN changed_by_id uuid;
 CREATE TABLE public.sales_call_logs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, opportunity_id uuid NOT NULL REFERENCES public.opportunities(id) ON DELETE CASCADE, contact_id uuid, called_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE public.conversation_notes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid NOT NULL, organization_id uuid, user_id uuid, content text, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.organization_ignored_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, phone text NOT NULL);
 `;
 

@@ -64,8 +64,25 @@ it('card do encaminhamento com operação padrão (27/10): a decisão usa a conv
  const withoutCard=await run([]);
  const withDefaultCard=await run([{operation:'vehicle_sale',operation_is_default:true}]);
  expect(withoutCard).toMatchObject({p_operation:'consortium',p_stage:'decision_negotiation'});
- expect(withDefaultCard).toEqual(withoutCard); // idêntico ao comportamento de antes do card
+ const {p_default_correction,...rest}=withDefaultCard;
+ expect(p_default_correction).toBe(true); // único acréscimo: o sinal novo
+ expect(rest).toEqual(withoutCard); // idêntico ao comportamento de antes do card
  // card com operação confirmada continua usando a operação dele como prior
  const confirmed=await run([{operation:'vehicle_sale',operation_is_default:false}]);
  expect(confirmed).toMatchObject({p_operation:'vehicle_sale'});
+});
+
+it('card padrão: manda p_default_correction=true; sem a migração (função não encontrada) repete sem o parâmetro; sem card nunca manda',async()=>{
+ const mk=(opps:any[],rpc:any)=>({rpc,from:(table:string)=>{
+  const q:any={select:()=>q,eq:()=>q,is:()=>q,order:()=>q,limit:()=>q,single:()=>Promise.resolve({data:{contact_id:'contact'},error:null}),maybeSingle:()=>Promise.resolve({data:null,error:null}),then:(resolve:any)=>resolve({data:table==='messages'?[{id:'m',organization_id:'org',content:'quero consorcio'}]:table==='opportunities'?opps:[],error:null})};return q;
+ }});
+ const ok=vi.fn().mockResolvedValue({data:'opp',error:null});
+ await syncSalesPipeline(mk([{operation:'vehicle_sale',operation_is_default:true}],ok) as any,'org','conversation');
+ expect(ok).toHaveBeenCalledWith('sync_sales_pipeline',expect.objectContaining({p_default_correction:true}));
+ const old=vi.fn().mockResolvedValueOnce({data:null,error:{code:'PGRST202'}}).mockResolvedValueOnce({data:'opp',error:null});
+ expect(await syncSalesPipeline(mk([{operation:'vehicle_sale',operation_is_default:true}],old) as any,'org','conversation')).toBe('opp');
+ expect(old.mock.calls[1][1]).not.toHaveProperty('p_default_correction');
+ const none=vi.fn().mockResolvedValue({data:'opp',error:null});
+ await syncSalesPipeline(mk([],none) as any,'org','conversation');
+ expect(none.mock.calls[0][1]).not.toHaveProperty('p_default_correction');
 });
