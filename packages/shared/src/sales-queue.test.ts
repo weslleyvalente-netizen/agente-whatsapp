@@ -58,7 +58,7 @@ describe('ordenação por interesse',()=>{
  });
 });
 describe('handoff card (negócio criado no encaminhamento para humano)',()=>{
- const handoff={motivo:'cliente_pediu',resumo:'Quer carta de crédito',first_human_reply_at:null};
+ const handoff:{motivo:string|null;resumo:string|null;first_human_reply_at:string|null}={motivo:'cliente_pediu',resumo:'Quer carta de crédito',first_human_reply_at:null};
  const card=(openOpportunityCount:number,h:typeof handoff|null=handoff)=>classifySalesCard({openOpportunityCount,handoff:h,latestRole:'contact',taskCount:2},now);
  it('handoff pendente + exatamente um negócio aberto cai em "Pronto para assumir"',()=>{
   const state=card(1);

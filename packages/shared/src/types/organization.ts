@@ -37,6 +37,8 @@ export interface OrganizationSettings {
   lead_distribution_enabled?: boolean;
   lead_distribution_activated_at?: string;
   lead_sla_minutes?: number;
+  // Escalada de lead da carteira (dono existente / atribuição manual) sem resposta: aviso ao dono ao estourar o SLA (1x) e passa ao próximo vendedor aos 2x o SLA. Desligada por padrão.
+  sla_alert_escalation_enabled?: boolean;
   owner_lookback_days?: number;
   business_calendar?: import("../business-calendar.js").BusinessCalendar;
   // Modo noite: depois de um requestHuman fora do horário comercial a IA continua respondendo (sem requestHuman) até um humano responder. Desligado por padrão.

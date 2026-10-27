@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface PushCandidate {
-  kind: "assign" | "message" | "sla";
+  kind: "assign" | "message" | "sla" | "sla_breach";
   organizationId: string;
   userId: string;
   /** Chaves de idempotência (push_notification_log). Mais de uma quando várias mensagens viram uma notificação. */
@@ -142,6 +142,42 @@ export async function listSlaRiskCandidates(db: SupabaseClient, now: Date, orgId
     out.push({
       kind: "sla", organizationId: row.organization_id, userId, dedupeKeys: [`sla:${row.id}`],
       title: `Responda ${contactLabel(first(row.wa_contacts))} — faltam ${minutes} min`, body: "O prazo para assumir o lead está acabando.",
+      url: inboxUrl(row.conversation_id), tag: row.conversation_id,
+    });
+  }
+  return out;
+}
+
+/** Organizações (entre `orgIds`) com a escalada de SLA ligada: organizations.settings.sla_alert_escalation_enabled === true. */
+export async function listSlaEscalationOrganizationIds(db: SupabaseClient, orgIds: string[]): Promise<string[]> {
+  if (!orgIds.length) return [];
+  const { data, error } = await db.from("organizations").select("id").in("id", orgIds).eq("settings->>sla_alert_escalation_enabled", "true");
+  if (error) throw error;
+  return ((data ?? []) as Array<{ id: string }>).map(o => o.id);
+}
+
+/** Estourou o SLA há mais que isto: não avisa (evita enxurrada de avisos antigos ao ligar a chave). */
+export const SLA_BREACH_MAX_AGE_HOURS = 24;
+
+/**
+ * Estágio 1 da escalada: atribuições 'alert' (dono existente / manual) pendentes cujo SLA já estourou, sem primeira resposta humana:
+ * "SLA estourado: responda {nome}" para o DONO da atribuição, uma vez por atribuição (dedupe `sla_breach:{id}`).
+ * `orgIds` já deve conter só as organizações com sla_alert_escalation_enabled.
+ */
+export async function listSlaBreachCandidates(db: SupabaseClient, now: Date, orgIds: string[]): Promise<PushCandidate[]> {
+  if (!orgIds.length) return [];
+  const oldest = new Date(now.getTime() - SLA_BREACH_MAX_AGE_HOURS * 3_600_000);
+  const { data, error } = await db.from("lead_assignments").select(ASSIGNMENT_SELECT).in("organization_id", orgIds)
+    .eq("status", "pending").eq("sla_action", "alert").not("rep_id", "is", null).is("first_human_message_at", null)
+    .lte("sla_due_at", now.toISOString()).gte("sla_due_at", oldest.toISOString()).order("sla_due_at").limit(ASSIGNMENT_LIMIT);
+  if (error) throw error;
+  const out: PushCandidate[] = [];
+  for (const row of (data ?? []) as unknown as AssignmentRow[]) {
+    const userId = first(row.sales_reps)?.user_id;
+    if (!userId) continue;
+    out.push({
+      kind: "sla_breach", organizationId: row.organization_id, userId, dedupeKeys: [`sla_breach:${row.id}`],
+      title: `SLA estourado: responda ${contactLabel(first(row.wa_contacts))}`, body: "O prazo para responder este cliente passou. Toque para atender.",
       url: inboxUrl(row.conversation_id), tag: row.conversation_id,
     });
   }

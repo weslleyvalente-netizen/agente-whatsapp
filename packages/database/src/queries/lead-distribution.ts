@@ -13,6 +13,13 @@ export function computeSlaDueAt(settings: Partial<OrganizationSettings>, from: D
   try { return addBusinessMinutes(from, minutes, calendar); } catch { return addBusinessMinutes(from, minutes); }
 }
 
+/** Prazo do estágio 2 da escalada: 2x o SLA da organização a partir do momento da atribuição, no mesmo calendário comercial. */
+export function computeEscalationDueAt(settings: Partial<OrganizationSettings>, assignedAt: Date): Date {
+  const minutes = Number.isFinite(settings.lead_sla_minutes) && (settings.lead_sla_minutes as number) > 0 ? (settings.lead_sla_minutes as number) : DEFAULT_LEAD_SLA_MINUTES;
+  const calendar = resolveBusinessCalendar(settings.business_calendar);
+  try { return addBusinessMinutes(assignedAt, minutes * 2, calendar); } catch { return addBusinessMinutes(assignedAt, minutes * 2); }
+}
+
 export async function distributeLeadForHandoff(
   db: SupabaseClient,
   p: { organizationId: string; conversationId: string; handoffEventId: string; context?: DistributionContext; now?: Date }
@@ -64,6 +71,27 @@ export async function listExpiredAssignments(db: SupabaseClient, limit = 50) {
     .eq("status", "pending").eq("sla_action", "redistribute").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
   if (error) throw error;
   return (data ?? []) as Array<{ id: string; organization_id: string }>;
+}
+
+/**
+ * Atribuições 'alert' (dono existente ou manual) pendentes, com o SLA vencido e sem primeira resposta humana: candidatas ao estágio 2
+ * da escalada. Quem decide de fato é escalate_alert_assignment (relê tudo sob lock).
+ */
+export async function listEscalationCandidates(db: SupabaseClient, limit = 100) {
+  const { data, error } = await db.from("lead_assignments").select("id, organization_id, assigned_at")
+    .eq("status", "pending").eq("sla_action", "alert").in("reason", ["existing_owner", "manual"]).is("first_human_message_at", null)
+    .lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
+  if (error) throw error;
+  return (data ?? []) as Array<{ id: string; organization_id: string; assigned_at: string }>;
+}
+
+/** Estágio 2: passa o lead ao próximo vendedor elegível (uma vez por cadeia). Devolve a nova atribuição ou null se não agiu. */
+export async function escalateAlertAssignment(db: SupabaseClient, id: string, escalateAt: Date, newSlaDueAt: Date): Promise<string | null> {
+  const { data, error } = await db.rpc("escalate_alert_assignment", {
+    p_assignment_id: id, p_escalate_at: escalateAt.toISOString(), p_new_sla_due_at: newSlaDueAt.toISOString(),
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
 }
 
 export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {

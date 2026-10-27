@@ -4,7 +4,7 @@ import { QUEUE_NAMES } from "@aula-agente/shared";
 import { getPushNotificationsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
   claimPushDedupe, deletePushSubscriptionsForUser, getAdminClient, isPushConfigured, listCurrentMemberIds,
-  listCustomerMessageCandidates, listNewAssignmentCandidates, listPushEnabledOrganizationIds, listSlaRiskCandidates,
+  listCustomerMessageCandidates, listNewAssignmentCandidates, listPushEnabledOrganizationIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds, listSlaRiskCandidates,
   purgePushNotificationLog, releasePushDedupe, sendPushToUser, type PushCandidate,
 } from "@aula-agente/database";
 
@@ -30,7 +30,7 @@ export function createPushCursor(startedAt = new Date()): PushCursor {
 type Fresh = { organizationId: string; userId: string; items: Array<{ c: PushCandidate; keys: string[] }> };
 
 /**
- * Varredura dos três gatilhos (lead novo, mensagem do cliente, SLA em risco). Só organizações com a flag ligada;
+ * Varredura dos gatilhos (lead novo, mensagem do cliente, SLA em risco, SLA estourado). Só organizações com a flag ligada;
  * cada vendedor só recebe o que é dele e só enquanto for membro da organização.
  */
 export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now = new Date()) {
@@ -55,6 +55,8 @@ export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now =
   await run("assignments", () => listNewAssignmentCandidates(db, cursor.assignmentsSince, orgIds), (to) => { cursor.assignmentsSince = to; });
   await run("messages", () => listCustomerMessageCandidates(db, cursor.messagesSince, orgIds), (to) => { cursor.messagesSince = to; });
   await run("sla", () => listSlaRiskCandidates(db, now, orgIds, SLA_WINDOW_MINUTES));
+  // Estágio 1 da escalada de SLA (chave sla_alert_escalation_enabled): avisa o dono quando o SLA estoura, uma vez por atribuição.
+  await run("sla_breach", async () => listSlaBreachCandidates(db, now, await listSlaEscalationOrganizationIds(db, orgIds)));
 
   // Membros atuais por organização (um vendedor removido não recebe nada e perde as assinaturas).
   const usersByOrg = new Map<string, Set<string>>();
