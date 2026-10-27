@@ -7,5 +7,6 @@ export function shouldUseManualAssign(opts: { distributionOn: boolean; role: str
 /** O fluxo de reatribuição do rodízio só existe para quem já tem uma atribuição (encaminhamento). Para lead novo, cliente antigo da carteira
  *  ou conversa sem encaminhamento, o banco responde "Conversa sem atribuição…": aí a troca deve ser feita direto na conversa. */
 export function isNoAssignmentError(message: string | null | undefined): boolean {
-  return /sem atribui[cç][aã]o/i.test(message ?? "");
+  // Casa só o começo ("sem atribui"): em produção a mensagem do banco está com os acentos corrompidos (atribui√ß√£o) por codificação antiga.
+  return /sem atribui/i.test(message ?? "");
 }

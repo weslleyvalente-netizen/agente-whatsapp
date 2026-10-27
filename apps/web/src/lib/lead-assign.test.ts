@@ -19,6 +19,7 @@ describe("isNoAssignmentError", () => {
   it("reconhece a recusa do rodízio para conversa sem atribuição e só ela", () => {
     expect(isNoAssignmentError("Conversa sem atribuição ou exceção para reatribuir")).toBe(true);
     expect(isNoAssignmentError("Conversa sem atribuicao ou excecao para reatribuir")).toBe(true);
+    expect(isNoAssignmentError("Conversa sem atribui\u221A\u00DF\u221A\u00A3o ou exce\u221A\u00DF\u221A\u00A3o para reatribuir")).toBe(true); // texto corrompido real de produção
     expect(isNoAssignmentError("Vendedor fora da distribuição")).toBe(false);
     expect(isNoAssignmentError("Lead já está com este vendedor")).toBe(false);
     expect(isNoAssignmentError(undefined)).toBe(false);
