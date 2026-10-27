@@ -230,10 +230,10 @@ describe("sync_sales_pipeline x negócio com operação a confirmar", () => {
     expect((await q("select operation from public.opportunities where id=$1", [o.id]))[0].operation).toBe("consortium");
   });
 
-  it("mesma operação do padrão: nada muda além do avanço de etapa; a marca fica até alguém definir a operação", async () => {
+  it("mesma operação do padrão com evidência: só avança a etapa e a marca é limpa (confirmada)", async () => {
     const { org, h, opp } = await created();
     await turn(org, h, "vehicle_sale", "qualification");
-    expect((await q("select operation, stage, operation_is_default from public.opportunities where id=$1", [opp]))[0]).toMatchObject({ operation: "vehicle_sale", stage: "qualification", operation_is_default: true });
+    expect((await q("select operation, stage, operation_is_default from public.opportunities where id=$1", [opp]))[0]).toMatchObject({ operation: "vehicle_sale", stage: "qualification", operation_is_default: false });
   });
 
   it("vendedor que muda a operação na tela confirma: a marca é limpa e a IA não sobrescreve depois", async () => {

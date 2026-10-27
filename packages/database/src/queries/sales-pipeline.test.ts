@@ -47,3 +47,25 @@ it('creates Alessandro missing card from chronological contact history',async()=
  await syncSalesPipeline(db as any,'org','conversation');
  expect(rpc).toHaveBeenCalledWith('sync_sales_pipeline',expect.objectContaining({p_operation:'consortium',p_stage:'interest_received',p_customer_message_id:'0'}));
 });
+
+
+it('card do encaminhamento com operação padrão (27/10): a decisão usa a conversa, não o padrão vehicle_sale',async()=>{
+ const qual={attendance_type:'consortium',product_model:'moto',cpf_encrypted:null};
+ const run=async(opps:any[])=>{
+  vi.mocked(getQualificationByConversationId).mockResolvedValueOnce(qual as any);
+  const rpc=vi.fn().mockResolvedValue({data:'opp',error:null});
+  const history=[{id:'m2',organization_id:'org',content:'quero uma carta de crédito'},{id:'m1',organization_id:'org',content:'quero consorcio'}];
+  const db={rpc,from:(table:string)=>{
+   const q:any={select:()=>q,eq:()=>q,is:()=>q,order:()=>q,limit:()=>q,single:()=>Promise.resolve({data:{contact_id:'contact'},error:null}),maybeSingle:()=>Promise.resolve({data:table==='handoff_events'?{id:'h',motivo:'cliente_pediu'}:null,error:null}),then:(resolve:any)=>resolve({data:table==='messages'?history:table==='opportunities'?opps:[],error:null})};return q;
+  }};
+  await syncSalesPipeline(db as any,'org','conversation');
+  return rpc.mock.calls[0]?.[1];
+ };
+ const withoutCard=await run([]);
+ const withDefaultCard=await run([{operation:'vehicle_sale',operation_is_default:true}]);
+ expect(withoutCard).toMatchObject({p_operation:'consortium',p_stage:'decision_negotiation'});
+ expect(withDefaultCard).toEqual(withoutCard); // idêntico ao comportamento de antes do card
+ // card com operação confirmada continua usando a operação dele como prior
+ const confirmed=await run([{operation:'vehicle_sale',operation_is_default:false}]);
+ expect(confirmed).toMatchObject({p_operation:'vehicle_sale'});
+});

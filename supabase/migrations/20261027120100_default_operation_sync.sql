@@ -2,7 +2,7 @@
 -- ver 20261027120000_handoff_card.sql) NÃO trava a automação. Antes, qualquer operação diferente da do negócio exigia
 -- p_explicit_operation=true; como o padrão ('vehicle_sale') é um palpite, a primeira operação identificada pela IA (mesmo sem pedido
 -- explícito do cliente) passa a corrigi-lo, com evento 'operation_changed' ("Operação a confirmar definida pela conversa: ...").
--- Ao mudar a operação o gatilho trg_clear_operation_is_default limpa a marca: a partir daí vale a regra antiga (só pedido explícito troca).
+-- Qualquer chamada com evidência (mudou a operação, ou confirmou a mesma) limpa a marca (gatilho trg_clear_operation_is_default / UPDATE explícito): a partir daí vale a regra antiga (só pedido explícito troca).
 -- Negócios sem a marca (todos os existentes) se comportam exatamente como antes. Resto do corpo copiado de 20261007120500.
 -- Depende de 20261027120000 (coluna operation_is_default).
 -- Reverter: restaurar a função de 20261007120500_lead_distribution_sales_pipeline.sql (CREATE OR REPLACE do sync_sales_pipeline).
@@ -49,6 +49,8 @@ BEGIN
    VALUES(p_organization_id,o.id,'operation_changed',old_value,jsonb_build_object('operation',p_operation,'stage',stages[1]),CASE WHEN p_explicit_operation THEN 'Interesse explícito: ' ELSE 'Operação a confirmar definida pela conversa: ' END||left(m.content,2000),'ai');
    o.stage:=stages[1];
   END IF;
+  -- Evidência da conversa para a MESMA operação também confirma o padrão (a mudança de operação acima já limpa a marca pelo gatilho).
+  IF o.operation_is_default THEN UPDATE public.opportunities SET operation_is_default=false WHERE id=o.id; END IF;
   IF o.stage NOT IN ('financing_rejected','bank_analysis','conditions_approved_negotiation','formalization') AND array_position(stages,p_stage)>array_position(stages,o.stage) THEN
    UPDATE public.opportunities SET stage=p_stage,last_progress_at=now() WHERE id=o.id;
    INSERT INTO public.opportunity_events(organization_id,opportunity_id,event_type,previous_value,new_value,evidence,changed_by_type)
