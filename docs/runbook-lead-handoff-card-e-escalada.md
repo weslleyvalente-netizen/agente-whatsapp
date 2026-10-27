@@ -62,12 +62,46 @@ Configurações, junto dos de distribuição de leads. Vale só para atribuiçã
 - M4: `ensure_handoff_cards` chamada a cada varredura do `lead-sla` repara o card pulado por contato travado (atribuições pendentes < 24 h).
   `lead_assignments.opportunity_id` é imutável e continua nulo nessas linhas.
 
-## Como ligar
+## Segunda revisão (incorporada)
 
-1. Aplicar as 3 migrações (não aplicadas automaticamente), em ordem. Sem as chaves o efeito do item 2 é nulo; o item 1 já vale para organizações com
-   `sales_auto_pipeline_enabled` e `lead_distribution_enabled`.
-2. Deploy do worker/web (a `main` faz deploy automático ao merge).
-3. Ligar `sla_alert_escalation_enabled` em Configurações (gestor) quando quiser a escalada.
+- Ordem segura de deploy (migração 2 só limpa a marca com o sinal NOVO `p_default_correction`, que só o worker novo manda; worker antigo nunca apaga a marca).
+  A API lê o card com `select("*")` (não quebra se a coluna ainda não existir) e o worker repete o rpc sem o parâmetro se a função ainda não o tem.
+- Janela da escalada medida no instante de 2x o SLA (`p_escalate_at >= greatest(ativação, agora-24h)`): estouro de sexta 17:45 escala na segunda 08:15.
+  A fila (`list_escalation_candidates`) usa janela larga de 5 dias, mais recentes primeiro; o worker descarta o que está fora da janela exata.
+- Sync que corrige um card padrão grava os mesmos campos do caminho de criação (campos da qualificação, `initial_operation`, `last_interaction_at`).
+- `POST /opportunities` num card padrão grava tudo o que o vendedor enviou (mesmo schema), exige `canViewLead`, só muda o dono se `canAssignLead` permitir, e devolve 409 se a marca caiu no meio.
+- "Já atendido" também considera tarefa/evento humano e nota na conversa desde a atribuição.
+- Regra de histórico: um card do encaminhamento PERDIDO, nunca confirmado (`operation_is_default` ainda true) e sem ação humana além de "perdido" NÃO conta como histórico
+  (`_contact_has_deal_history`): o cliente que voltar volta a ganhar card/negócio automático (handoff e `sync_sales_pipeline`). Qualquer outro negócio fechado continua bloqueando.
+  Obs.: o gatilho de tarefa humana (`human_task_opens_opportunity`, migração 20261021) mantém a regra antiga (qualquer histórico bloqueia).
+- Chave de desligar: `organizations.settings.handoff_card_enabled` (ligada a menos que seja `false` explícito; interruptor em Configurações). Vale para `_open_opportunity_for_handoff` e `ensure_handoff_cards`.
+- Índices (migração 3): `lead_assignments_alert_pending_due`, `lead_assignments_chain`, `lead_assignments_pending_without_opportunity`. A varredura `lead-sla` roda a cada 60 s (não 5 min);
+  `flag_sla_alerts` tira as linhas do índice parcial antigo (`NOT sla_breached`), por isso o índice novo.
+- Na primeira execução do worker novo, `ensure_handoff_cards` faz um reparo único: toda atribuição pendente das últimas 24 h sem nenhum negócio (inclusive a de 27/10, se ainda estiver na janela) ganha o card.
+
+## Antes de aplicar: conferir as funções de produção (SQL foi aplicado à mão)
+
+1. Gerar a lista esperada (já commitada em `docs/function-fingerprints-before-handoff-card.tsv`):
+   `pnpm --filter @aula-agente/database build && node packages/database/scripts/function-fingerprints.mjs` (`--check` compara com o arquivo).
+2. No editor SQL do Supabase de produção, rodar e comparar linha a linha (nome, argumentos, md5):
+
+```sql
+select p.proname, pg_get_function_identity_arguments(p.oid) as args, md5(p.prosrc) as md5
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public'
+   and p.proname in ('sync_sales_pipeline','_lead_apply_effects','distribute_lead','redistribute_assignment','manual_assign','flag_sla_alerts')
+ order by 1, 2;
+```
+
+Diferença em qualquer md5 = produção divergiu do repositório: parar e revisar antes de aplicar (as migrações novas substituem `sync_sales_pipeline`, `_lead_apply_effects` e `distribute_lead`).
+
+## Como ligar (ORDEM OBRIGATÓRIA)
+
+1. Conferir os md5 acima.
+2. Aplicar a migração 1 (`20261027120000_handoff_card.sql`): cria a coluna, o card e a chave `handoff_card_enabled` (o card já passa a valer com distribuição + `sales_auto_pipeline_enabled` ligadas; para adiar, definir `handoff_card_enabled=false` antes).
+3. Deploy de api/worker/web (merge na `main`).
+4. Aplicar as migrações 2 e 3 (`...120100`, `...120200`). Aplicar a 2 com worker antigo rodando não causa dano (a marca só cai com o sinal novo), mas o card padrão não será corrigido até o deploy.
+5. Ligar `sla_alert_escalation_enabled` em Configurações quando quiser a escalada (grava `sla_alert_escalation_activated_at`).
 
 ## Como reverter
 

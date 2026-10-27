@@ -100,6 +100,16 @@ describe("runLeadSlaSweep", () => {
       expect(m.escalateAlertAssignment).not.toHaveBeenCalled();
     });
 
+    it("escalada devida há mais de 24 h ou antes da ativação da chave: não chama o banco", async () => {
+      m.listEscalationCandidates.mockResolvedValue([cand("old", "2026-10-02T11:00:00Z")]); // 2x = 02/10 11:30, 3 dias atrás
+      m.getOrganizationById.mockResolvedValue(ON);
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      m.listEscalationCandidates.mockResolvedValue([cand("a1")]); // 2x = 11:30
+      m.getOrganizationById.mockResolvedValue({ settings: { ...ON.settings, sla_alert_escalation_activated_at: "2026-10-05T11:45:00Z" } });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      expect(m.escalateAlertAssignment).not.toHaveBeenCalled();
+    });
+
     it("banco devolve null (respondida, sem outro vendedor, já escalada ou outro worker): não conta", async () => {
       m.getOrganizationById.mockResolvedValue(ON);
       m.listEscalationCandidates.mockResolvedValue([cand("a1")]);

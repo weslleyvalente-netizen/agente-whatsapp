@@ -43,6 +43,9 @@ export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
         if (settings.lead_distribution_enabled !== true || settings.sla_alert_escalation_enabled !== true) continue;
         const escalateAt = computeEscalationDueAt(settings, new Date(item.assigned_at));
         if (escalateAt.getTime() > now.getTime()) continue;
+        // Janela: o instante de 2x o SLA (em minutos úteis) não pode ser anterior à ativação da chave nem a 24 h atrás (a função confere de novo).
+        const activatedAt = settings.sla_alert_escalation_activated_at ? new Date(settings.sla_alert_escalation_activated_at).getTime() : 0;
+        if (escalateAt.getTime() < Math.max(activatedAt || 0, now.getTime() - 24 * 3_600_000)) continue;
         if (await escalateAlertAssignment(db, item.id, escalateAt, computeSlaDueAt(settings, now))) escalated++;
       } catch (err) {
         console.error("Lead SLA sweep: escalation failed", item.id, err);

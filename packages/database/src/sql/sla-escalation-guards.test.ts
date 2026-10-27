@@ -47,6 +47,7 @@ describe("janela de ativação e idade", () => {
     expect(await escalate(weekend.id, -1)).toBeTruthy();
     expect(await escalate(holiday.id, -1)).toBeTruthy();
   });
+});
 
 describe("fila de candidatas", () => {
   it("mais de 100 antigas recusadas + 1 estouro novo: o novo continua na fila e escala", async () => {

@@ -1,7 +1,7 @@
 // packages/database/src/queries/lead-distribution.test.ts
 import { describe, expect, it, vi } from "vitest";
 import {
-  acceptAssignment, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
+  acceptAssignment, computeEscalationDueAt, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
   recordDistributionError, recordHumanMessage, redistributeAssignment,
 } from "./lead-distribution.js";
 
@@ -120,5 +120,12 @@ describe("recordDistributionError (I2)", () => {
   });
   it("propaga o erro (quem chama decide engolir)", async () => {
     await expect(recordDistributionError(rpcDb(null, { message: "down" }).db, { organizationId: "o", conversationId: "c", handoffEventId: "h", message: "m" })).rejects.toEqual({ message: "down" });
+  });
+});
+
+describe("computeEscalationDueAt (2x o SLA em minutos úteis)", () => {
+  it("estouro na sexta 17:45 (SP) escala na segunda 08:15; dentro do expediente é só 2x", () => {
+    expect(computeEscalationDueAt({ lead_sla_minutes: 15 }, new Date("2026-10-23T20:45:00Z")).toISOString()).toBe("2026-10-26T11:15:00.000Z"); // sexta 17:45 + 30 min úteis
+    expect(computeEscalationDueAt({ lead_sla_minutes: 15 }, new Date("2026-10-26T12:00:00Z")).toISOString()).toBe("2026-10-26T12:30:00.000Z");
   });
 });

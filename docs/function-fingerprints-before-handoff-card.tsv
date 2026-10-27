@@ -1,0 +1,6 @@
+_lead_apply_effects	p_org uuid, p_conversation uuid, p_contact uuid, p_user uuid	1e91f23b187983b7dfb8f1e145897db1
+distribute_lead	p_organization_id uuid, p_conversation_id uuid, p_handoff_event_id uuid, p_sla_due_at timestamp with time zone, p_context jsonb	789347ac9d4f4c5c9af3a17b226232a6
+flag_sla_alerts		7753e0b21d40eb1d9e18c19966adcca1
+manual_assign	p_organization_id uuid, p_conversation_id uuid, p_rep_id uuid, p_actor uuid, p_sla_due_at timestamp with time zone	d2d571f050d6a67db3f451c63d7cf09c
+redistribute_assignment	p_assignment_id uuid, p_new_sla_due_at timestamp with time zone	eb0bebb7d61d9fa8b1943c5c5f6a4892
+sync_sales_pipeline	p_organization_id uuid, p_conversation_id uuid, p_customer_message_id uuid, p_response_message_id uuid, p_operation text, p_stage text, p_explicit_operation boolean, p_fields jsonb	67d0e61ec60e2bedf98c6427516d47c6
