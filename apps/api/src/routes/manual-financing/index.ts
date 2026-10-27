@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import type {FastifyInstance,FastifyRequest} from 'fastify';
 import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
-import {manualLiveSchema,manualSandboxSchema,manualSettingsSchema} from '@aula-agente/shared';
+import {manualLiveSchema,manualSandboxSchema,manualSettingsSchema,manualVehicleDetailsSchema,manualFinancingCompatibility} from '@aula-agente/shared';
 import {getAdminClient,encryptCpf,decryptCpf,hashCpf,CredProManualClient,CredProManualError} from '@aula-agente/database';
 import {authMiddleware} from '../../middleware/auth.js';
 import {isManager} from '../../lib/lead-visibility.js';
@@ -84,7 +84,10 @@ export default async function manualFinancingRoutes(app:FastifyInstance){
    if(Date.parse(input.consent.expiresAt)<=Date.now())return reply.code(400).send({error:'A autorização deve ter validade futura.'});
    const vehicle=input.vehicle.source==='external'?input.vehicle:(await inventory(req.params.organizationId)).find(v=>v.id===('vehicleId' in input.vehicle?input.vehicle.vehicleId:0));
    if(!vehicle)return reply.code(409).send({notPrepared:true,error:'Veículo indisponível. Atualize o estoque ou informe um veículo avulso.'});
-   application={...input,vehicle:{...vehicle,source:input.vehicle.source}};
+   const resolvedVehicle={...vehicle,...manualVehicleDetailsSchema.parse(input.vehicle),source:input.vehicle.source};
+   const incompatibility=manualFinancingCompatibility(resolvedVehicle,input.banks);
+   if(incompatibility)return reply.code(400).send({notPrepared:true,error:incompatibility});
+   application={...input,vehicle:resolvedVehicle};
   }
   const expires='scenario' in input?new Date(Date.now()+86400000).toISOString():input.consent.expiresAt;
   const r=await db().from('manual_financing_cases').insert({organization_id:req.params.organizationId,seller_id:req.user.id,idempotency_key:key.data,fingerprint,config_revision:s.revision,account_hash:s.account_hash,mode:s.mode,banks:input.banks,application_encrypted:seal(application),credentials_encrypted:s.credentials_encrypted,consent_expires_at:expires}).select('*').single();
@@ -95,7 +98,15 @@ export default async function manualFinancingRoutes(app:FastifyInstance){
  app.post<{Params:Params}>(prefix+'/cases/:caseId/start',async(req,reply)=>{
   const row=await owned(req);if(!row)return reply.code(404).send({error:'Consulta não encontrada.'});
   if(row.state!=='prepared')return publicCase(row,open(row.application_encrypted));
-  const application=open(row.application_encrypted),credentials=open(row.credentials_encrypted);
+  const application=open(row.application_encrypted);
+  if(row.mode==='live'){
+   const details=manualVehicleDetailsSchema.safeParse(application.vehicle);
+   if(!details.success)return reply.code(409).send({error:'Ficha anterior à atualização de veículos ou com dados inválidos. Cancele esta ficha e prepare outra, selecionando novo ou usado e conferindo a placa.'});
+   application.vehicle={...application.vehicle,...details.data};
+   const incompatibility=manualFinancingCompatibility(application.vehicle,row.banks);
+   if(incompatibility)return reply.code(409).send({error:incompatibility});
+  }
+  const credentials=open(row.credentials_encrypted);
   const client=new CredProManualClient(row.mode,credentials.key),payload=providerPayload(application,credentials,row.mode);
   const g=await db().rpc('manual_financing_gate',{p_org:row.organization_id,p_case:row.id,p_account:row.account_hash,p_action:'start'});
   if(g.error)throw Error('gate');if(!g.data)return reply.code(409).send({error:'Envio não iniciado: aguarde alguns segundos, confira a autorização e a configuração. Há limite de três consultas em andamento.'});
