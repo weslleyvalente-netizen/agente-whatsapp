@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES, type OrganizationSettings } from "@aula-agente/shared";
 import { getLeadSlaQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  computeEscalationDueAt, computeSlaDueAt, escalateAlertAssignment, flagSlaAlerts, getAdminClient, getOrganizationById, listEscalationCandidates, listExpiredAssignments, redistributeAssignment,
+  computeEscalationDueAt, computeSlaDueAt, ensureHandoffCards, escalateAlertAssignment, flagSlaAlerts, getAdminClient, getOrganizationById, listEscalationCandidates, listExpiredAssignments, redistributeAssignment,
 } from "@aula-agente/database";
 
 const SWEEP_EVERY_MS = 60_000;
@@ -34,7 +34,9 @@ export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
   // passa ao próximo vendedor, uma vez por cadeia. escalate_alert_assignment trava e relê tudo (só age se ainda pendente, vencida e sem resposta).
   let escalated = 0;
   try {
-    for (const item of await listEscalationCandidates(db)) {
+    const candidates = await listEscalationCandidates(db);
+    if (candidates.length) console.log(`Lead SLA: ${candidates.length} candidata(s) à escalada`);
+    for (const item of candidates) {
       try {
         if (!settingsByOrg.has(item.organization_id)) settingsByOrg.set(item.organization_id, (await getOrganizationById(db, item.organization_id)).settings);
         const settings = settingsByOrg.get(item.organization_id)!;
@@ -47,13 +49,16 @@ export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
       }
     }
   } catch (err) { console.error("Lead SLA sweep: listing escalation candidates failed", err); }
-  return { checked: expired.length, redistributed, alerted, escalated };
+  // Reparo: card do encaminhamento pulado por contato travado (SKIP LOCKED) é criado na varredura seguinte.
+  let cardsRepaired = 0;
+  try { cardsRepaired = await ensureHandoffCards(db); } catch (err) { console.error("Lead SLA sweep: repairing handoff cards failed", err); }
+  return { checked: expired.length, redistributed, alerted, escalated, cardsRepaired };
 }
 
 export function startLeadSlaWorker() {
   const worker = new Worker(QUEUE_NAMES.LEAD_SLA, async () => {
     const result = await runLeadSlaSweep(getAdminClient());
-    if (result.redistributed || result.alerted || result.escalated) console.log(`Lead SLA: ${result.redistributed} redistribuído(s), ${result.alerted} alerta(s) de atraso, ${result.escalated} escalado(s)`);
+    if (result.redistributed || result.alerted || result.escalated || result.cardsRepaired) console.log(`Lead SLA: ${result.redistributed} redistribuído(s), ${result.alerted} alerta(s) de atraso, ${result.escalated} escalado(s), ${result.cardsRepaired} card(s) reparado(s)`);
   }, { connection: getRedisConnection(), concurrency: 1 });
   getLeadSlaQueue().upsertJobScheduler("lead-sla-scheduler", { every: SWEEP_EVERY_MS }, { name: "sweep-lead-sla" });
   worker.on("failed", (job, err) => console.error(`Lead SLA job ${job?.id} failed:`, err.message));

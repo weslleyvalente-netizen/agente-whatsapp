@@ -146,7 +146,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       // Tarefas humanas já abrem o negócio sozinhas (gatilho trg_human_task_opens_opportunity): devolve o existente em vez de duplicar.
       const { data: existingOpen, error: existingError } = await db
         .from("opportunities")
-        .select("id")
+        .select("id, operation, stage, operation_is_default")
         .eq("organization_id", organizationId)
         .eq("contact_id", parseResult.data.contact_id)
         .eq("status", "open")
@@ -154,6 +154,20 @@ export default async function opportunityRoutes(app: FastifyInstance) {
         .limit(1)
         .maybeSingle();
       if (existingError) throw existingError;
+      if (existingOpen?.operation_is_default === true) {
+        // Card criado no encaminhamento para humano com operação só no padrão ("a confirmar"): o vendedor define o produto aqui; não é conflito.
+        const d = parseResult.data;
+        const { data: updated, error: updateError } = await db.from("opportunities")
+          .update({ operation: d.operation, stage: d.stage, operation_is_default: false, ...(d.product !== undefined ? { product: d.product } : {}), ...(d.product_model !== undefined ? { product_model: d.product_model } : {}) })
+          .eq("id", existingOpen.id).eq("organization_id", organizationId).eq("status", "open").select("*").single();
+        if (updateError) throw updateError;
+        await addOpportunityEvent(db, {
+          organization_id: organizationId, opportunity_id: existingOpen.id, event_type: "operation_changed",
+          previous_value: { operation: existingOpen.operation, stage: existingOpen.stage }, new_value: { operation: d.operation, stage: d.stage },
+          evidence: d.evidence ?? "Operação a confirmar definida pelo vendedor", changed_by_type: "human", changed_by_id: request.user.id,
+        });
+        return reply.status(200).send(updated);
+      }
       if (existingOpen) {
         return reply.status(409).send({ error: "Este cliente já tem um negócio aberto. Abra o card existente em vez de criar outro.", opportunity_id: existingOpen.id });
       }

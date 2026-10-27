@@ -15,6 +15,8 @@ export interface Opportunity {
   product: Product | null;
   product_model: string | null;
   initial_operation: Operation;
+  /** true = card criado no encaminhamento para humano com operação só no padrão: o vendedor deve confirmar o produto. */
+  operation_is_default?: boolean;
   frozen_until?: string | null;
   freeze_reason?: string | null;
   freeze_task_id?: string | null;

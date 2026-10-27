@@ -1,4 +1,4 @@
-# Runbook: card no funil em todo encaminhamento + escalada de lead da carteira sem resposta
+# Runbook: card no funil em todo encaminhamento (com distribuição ativa) + escalada de lead da carteira sem resposta
 
 Origem: caso de 27/10 (cliente Márcio, da carteira da Marina, pediu carta de crédito; a IA chamou `requestHuman` às 09:40). Nasceram a
 atribuição (`existing_owner`, `sla_action='alert'`, prazo 10:40) e duas tarefas humanas (`run_quote`, `other`), mas o contato não tinha
@@ -32,7 +32,7 @@ Quando a distribuição aplica uma atribuição (`distribute_lead`, `redistribut
 
 ### 2. Escalada em dois estágios (migração `20261027120200_sla_alert_escalation.sql` + worker)
 
-Chave: `organizations.settings.sla_alert_escalation_enabled` (**desligada por padrão**; exige `lead_distribution_enabled`). Interruptor em
+Chave: `organizations.settings.sla_alert_escalation_enabled` (**desligada por padrão**; exige `lead_distribution_enabled`; ao ligar grava `sla_alert_escalation_activated_at`). Interruptor em
 Configurações, junto dos de distribuição de leads. Vale só para atribuição `alert` (`existing_owner` e `manual`).
 
 - Estágio 1 (1x o SLA): o worker de push (`apps/worker/src/workers/push-notifications.ts`) envia ao **dono** "SLA estourado: responda <cliente>",
@@ -50,6 +50,18 @@ Configurações, junto dos de distribuição de leads. Vale só para atribuiçã
 - O novo dono recebe o push normal "Novo lead" (atribuição pendente nova).
 - Vendedor `paused` não recebe escalada automática (mesma regra do rodízio e de `redistribute_assignment`).
 
+## Correções da revisão independente (incorporadas)
+
+- H1: `syncSalesPipeline` (TS) ignora a operação de um card com `operation_is_default` (não é evidência); a decisão usa explícito/tipo de atendimento/histórico, igual a antes do card.
+  No SQL, qualquer chamada com evidência corrige a operação OU confirma a mesma e limpa a marca.
+- H2: `organizations.settings.sla_alert_escalation_activated_at` (gravado pelo interruptor ao LIGAR; mantido ao desligar, como `lead_distribution_activated_at`).
+  Só escala/lista atribuição com `sla_due_at >= greatest(ativação, agora - 24h)`. Ligar a chave não move carteira antiga.
+- M1: fila de candidatas em SQL (`list_escalation_candidates(p_per_org)`), mesmos filtros da função, ordem por vencimento, limite por organização.
+- M2: "já atendido" (`_alert_assignment_answered`): resposta humana, aceite, ligação (`sales_call_logs`), `last_commercial_activity_at`, conversa fechada, negócio ganho/perdido.
+- M3: selo "Operação a confirmar" no card e no detalhe; `POST /opportunities` com card marcado atualiza a operação (200) em vez de 409.
+- M4: `ensure_handoff_cards` chamada a cada varredura do `lead-sla` repara o card pulado por contato travado (atribuições pendentes < 24 h).
+  `lead_assignments.opportunity_id` é imutável e continua nulo nessas linhas.
+
 ## Como ligar
 
 1. Aplicar as 3 migrações (não aplicadas automaticamente), em ordem. Sem as chaves o efeito do item 2 é nulo; o item 1 já vale para organizações com
@@ -58,6 +70,9 @@ Configurações, junto dos de distribuição de leads. Vale só para atribuiçã
 3. Ligar `sla_alert_escalation_enabled` em Configurações (gestor) quando quiser a escalada.
 
 ## Como reverter
+
+Reverter na ordem inversa das migrações (120200 -> 120100 -> 120000): `escalate_alert_assignment` chama a `_lead_apply_effects` de 5 argumentos.
+Também: `DROP FUNCTION IF EXISTS public.ensure_handoff_cards(integer), public.list_escalation_candidates(integer), public._alert_assignment_answered(public.lead_assignments);`
 
 - Escalada: desligar a chave `sla_alert_escalation_enabled`. Remover: `DROP FUNCTION IF EXISTS public.escalate_alert_assignment(uuid, timestamptz, timestamptz);`
 - `sync_sales_pipeline`: restaurar a função de `20261007120500_lead_distribution_sales_pipeline.sql`.

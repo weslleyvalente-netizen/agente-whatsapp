@@ -3,7 +3,7 @@ const m = vi.hoisted(() => ({
   listExpiredAssignments: vi.fn(), redistributeAssignment: vi.fn(), getOrganizationById: vi.fn(), flagSlaAlerts: vi.fn(),
   computeSlaDueAt: vi.fn((_s: unknown, from: Date) => new Date(from.getTime() + 15 * 60_000)),
   computeEscalationDueAt: vi.fn((_s: unknown, from: Date) => new Date(from.getTime() + 30 * 60_000)),
-  listEscalationCandidates: vi.fn(), escalateAlertAssignment: vi.fn(),
+  listEscalationCandidates: vi.fn(), escalateAlertAssignment: vi.fn(), ensureHandoffCards: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getLeadSlaQueue: () => ({ upsertJobScheduler: vi.fn() }) }));
@@ -17,12 +17,13 @@ beforeEach(() => {
   m.flagSlaAlerts.mockResolvedValue(0);
   m.listEscalationCandidates.mockResolvedValue([]);
   m.escalateAlertAssignment.mockResolvedValue("escalated-id");
+  m.ensureHandoffCards.mockResolvedValue(0);
 });
 
 describe("runLeadSlaSweep", () => {
   it("não faz nada quando não há atribuições vencidas", async () => {
     m.listExpiredAssignments.mockResolvedValue([]);
-    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 0, escalated: 0 });
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 0, escalated: 0, cardsRepaired: 0 });
     expect(m.redistributeAssignment).not.toHaveBeenCalled();
   });
 
@@ -50,7 +51,7 @@ describe("runLeadSlaSweep", () => {
   it("sinaliza os alertas de dono existente sem redistribuir ninguém", async () => {
     m.listExpiredAssignments.mockResolvedValue([]);
     m.flagSlaAlerts.mockResolvedValue(2);
-    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 2, escalated: 0 });
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 2, escalated: 0, cardsRepaired: 0 });
     expect(m.redistributeAssignment).not.toHaveBeenCalled();
   });
 
@@ -86,16 +87,16 @@ describe("runLeadSlaSweep", () => {
     it("chave desligada (padrão) ou distribuição desligada: não escala nada", async () => {
       m.listEscalationCandidates.mockResolvedValue([cand("a1")]);
       m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } });
-      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0, cardsRepaired: 0 });
       m.getOrganizationById.mockResolvedValue({ settings: { sla_alert_escalation_enabled: true } });
-      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0, cardsRepaired: 0 });
       expect(m.escalateAlertAssignment).not.toHaveBeenCalled();
     });
 
     it("ainda antes de 2x o SLA: não chama o banco", async () => {
       m.getOrganizationById.mockResolvedValue(ON);
       m.listEscalationCandidates.mockResolvedValue([cand("a1", "2026-10-05T11:50:00Z")]); // 2x = 12:20 > 12:00
-      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0, cardsRepaired: 0 });
       expect(m.escalateAlertAssignment).not.toHaveBeenCalled();
     });
 
@@ -103,7 +104,7 @@ describe("runLeadSlaSweep", () => {
       m.getOrganizationById.mockResolvedValue(ON);
       m.listEscalationCandidates.mockResolvedValue([cand("a1")]);
       m.escalateAlertAssignment.mockResolvedValue(null);
-      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0 });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 0, cardsRepaired: 0 });
     });
 
     it("erro numa candidata não impede as outras nem a redistribuição; erro ao listar não derruba a varredura", async () => {
@@ -114,8 +115,18 @@ describe("runLeadSlaSweep", () => {
       expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ escalated: 1 });
       m.listEscalationCandidates.mockRejectedValue(new Error("db"));
       m.listExpiredAssignments.mockResolvedValue([{ id: "x", organization_id: "o" }]);
-      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ redistributed: 1, escalated: 0 });
+      expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ redistributed: 1, escalated: 0, cardsRepaired: 0 });
       log.mockRestore();
     });
+  });
+
+  it("repara cards de encaminhamento pulados a cada varredura; falha no reparo não derruba a varredura", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.listExpiredAssignments.mockResolvedValue([]);
+    m.ensureHandoffCards.mockResolvedValueOnce(2);
+    expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ cardsRepaired: 2 });
+    m.ensureHandoffCards.mockRejectedValueOnce(new Error("db"));
+    expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ cardsRepaired: 0 });
+    log.mockRestore();
   });
 });

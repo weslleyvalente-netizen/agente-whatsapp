@@ -33,6 +33,7 @@ ALTER TABLE public.handoff_events ADD COLUMN motivo text, ADD COLUMN resumo text
 ALTER TABLE public.wa_contacts ADD COLUMN phone text;
 ALTER TABLE public.conversations ADD COLUMN status text NOT NULL DEFAULT 'open', ADD COLUMN last_message_at timestamptz, ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.opportunity_events ADD COLUMN changed_by_id uuid;
+CREATE TABLE public.sales_call_logs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, opportunity_id uuid NOT NULL REFERENCES public.opportunities(id) ON DELETE CASCADE, contact_id uuid, called_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.organization_ignored_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, phone text NOT NULL);
 `;
 

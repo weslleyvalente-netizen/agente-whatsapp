@@ -33,9 +33,40 @@
 --   -> [dentro de _lead_apply_effects] conversations -> wa_contacts (NO KEY UPDATE SKIP LOCKED) -> opportunities -> tasks.
 --   O estado da organização é sempre o primeiro; nunca se toma o lock do contato antes dele.
 --
+-- JANELA: só escala atribuição cujo sla_due_at está dentro de [greatest(sla_alert_escalation_activated_at, agora - 24h), agora]. O web grava
+--   sla_alert_escalation_activated_at ao LIGAR a chave; assim ligar a chave nunca move carteira antiga parada (pendentes velhas ficam como estão).
+-- "RESPONDIDO" (_alert_assignment_answered): first_human_message_at, accepted_at, mensagem role='human_agent' desde o handoff (desde a atribuição
+--   nas manuais), ligação registrada (sales_call_logs) desde a atribuição, last_commercial_activity_at do negócio aberto desde a atribuição,
+--   conversa fora de open/waiting, ou negócio do contato ganho/perdido desde o handoff.
+-- list_escalation_candidates: lista as candidatas JÁ com os mesmos filtros (chave, janela, não respondida, cadeia não escalada, 'sem vendedor'
+--   só se surgiu vendedor), ordem sla_due_at crescente, limite POR organização: linhas que a função sempre recusa não ocupam a fila.
+-- ensure_handoff_cards (M4): repara cards pulados por contato ocupado (SKIP LOCKED) em atribuições pendentes < 24h; idempotente, limitado.
+--
 -- Idempotente (CREATE OR REPLACE). NÃO aplicada automaticamente.
--- Reverter: DROP FUNCTION IF EXISTS public.escalate_alert_assignment(uuid, timestamptz, timestamptz);
+-- Reverter (ordem inversa das migrações: 120200 antes de 120100 e 120000):
+--   DROP FUNCTION IF EXISTS public.ensure_handoff_cards(integer); DROP FUNCTION IF EXISTS public.list_escalation_candidates(integer);
+--   DROP FUNCTION IF EXISTS public.escalate_alert_assignment(uuid, timestamptz, timestamptz); DROP FUNCTION IF EXISTS public._alert_assignment_answered(public.lead_assignments);
 --   (as linhas já escaladas ficam no histórico: redistribution_reason = 'sla_escalation' / 'sla_escalation_no_rep').
+
+
+-- Cliente já atendido (por mensagem, ligação, atividade comercial) ou negócio encerrado: não há o que escalar.
+CREATE OR REPLACE FUNCTION public._alert_assignment_answered(a public.lead_assignments)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE since timestamptz := CASE WHEN a.reason = 'manual' THEN a.assigned_at ELSE a.handoff_at END; conv_status text;
+BEGIN
+  IF a.first_human_message_at IS NOT NULL OR a.accepted_at IS NOT NULL THEN RETURN true; END IF;
+  IF EXISTS (SELECT 1 FROM public.messages m WHERE m.conversation_id = a.conversation_id AND m.organization_id = a.organization_id
+               AND m.role = 'human_agent' AND m.created_at >= since) THEN RETURN true; END IF;
+  IF EXISTS (SELECT 1 FROM public.sales_call_logs l WHERE l.organization_id = a.organization_id AND l.called_at >= a.assigned_at
+               AND (l.contact_id = a.contact_id OR l.opportunity_id IN (SELECT o.id FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id))) THEN RETURN true; END IF;
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id AND o.status = 'open'
+               AND o.last_commercial_activity_at >= a.assigned_at) THEN RETURN true; END IF;
+  SELECT status INTO conv_status FROM public.conversations WHERE id = a.conversation_id;
+  IF conv_status IS NOT NULL AND conv_status NOT IN ('open', 'waiting') THEN RETURN true; END IF;
+  IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id
+               AND o.status IN ('won', 'lost') AND o.updated_at >= a.handoff_at) THEN RETURN true; END IF;
+  RETURN false;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.escalate_alert_assignment(p_assignment_id uuid, p_escalate_at timestamptz, p_new_sla_due_at timestamptz)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
@@ -58,10 +89,10 @@ BEGIN
   IF s->>'lead_distribution_activated_at' IS NOT NULL AND (s->>'lead_distribution_activated_at')::timestamptz > a.assigned_at THEN RETURN NULL; END IF;
   -- No máximo uma escalada por cadeia.
   IF EXISTS (SELECT 1 FROM public.lead_assignments x WHERE x.chain_id = a.chain_id AND x.redistribution_reason = 'sla_escalation') THEN RETURN NULL; END IF;
-  -- Cliente já atendido por humano: nada a escalar.
-  IF a.first_human_message_at IS NOT NULL THEN RETURN NULL; END IF;
-  IF EXISTS (SELECT 1 FROM public.messages m WHERE m.conversation_id = a.conversation_id AND m.organization_id = a.organization_id
-                AND m.role = 'human_agent' AND m.created_at >= a.handoff_at) THEN RETURN NULL; END IF;
+  -- Janela: nunca escala o que estourou antes de a chave ser ligada nem há mais de 24 h.
+  IF a.sla_due_at < GREATEST(COALESCE((s->>'sla_alert_escalation_activated_at')::timestamptz, '-infinity'::timestamptz), now() - interval '24 hours') THEN RETURN NULL; END IF;
+  -- Cliente já atendido (mensagem, ligação, atividade comercial, conversa/negócio encerrados): nada a escalar.
+  IF public._alert_assignment_answered(a) THEN RETURN NULL; END IF;
 
   SELECT * INTO cur FROM public.sales_reps WHERE id = a.rep_id;
   SELECT r.* INTO nxt FROM public.sales_reps r
@@ -93,3 +124,51 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.escalate_alert_assignment(uuid, timestamptz, timestamptz) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.escalate_alert_assignment(uuid, timestamptz, timestamptz) TO service_role;
+
+-- Candidatas à escalada, com os mesmos filtros de escalate_alert_assignment (que continua sendo a autoridade).
+CREATE OR REPLACE FUNCTION public.list_escalation_candidates(p_per_org integer DEFAULT 50)
+RETURNS TABLE(id uuid, organization_id uuid, assigned_at timestamptz) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT x.id, x.organization_id, x.assigned_at FROM (
+    SELECT a.id, a.organization_id, a.assigned_at, a.sla_due_at, row_number() OVER (PARTITION BY a.organization_id ORDER BY a.sla_due_at, a.id) AS rn
+      FROM public.lead_assignments a
+      JOIN public.organizations o ON o.id = a.organization_id
+     WHERE o.settings->'lead_distribution_enabled' = 'true'::jsonb AND o.settings->'sla_alert_escalation_enabled' = 'true'::jsonb
+       AND a.status = 'pending' AND a.sla_action = 'alert' AND a.reason IN ('existing_owner', 'manual') AND a.rep_id IS NOT NULL
+       AND a.first_human_message_at IS NULL AND a.accepted_at IS NULL
+       AND a.sla_due_at <= now()
+       AND a.sla_due_at >= GREATEST(COALESCE((o.settings->>'sla_alert_escalation_activated_at')::timestamptz, '-infinity'::timestamptz), now() - interval '24 hours')
+       AND (o.settings->>'lead_distribution_activated_at' IS NULL OR (o.settings->>'lead_distribution_activated_at')::timestamptz <= a.assigned_at)
+       AND NOT EXISTS (SELECT 1 FROM public.lead_assignments c WHERE c.chain_id = a.chain_id AND c.redistribution_reason = 'sla_escalation')
+       -- já tentou e não havia vendedor: só volta à fila quando existe alguém elegível
+       AND (a.redistribution_reason IS DISTINCT FROM 'sla_escalation_no_rep' OR EXISTS (
+             SELECT 1 FROM public.sales_reps r WHERE r.organization_id = a.organization_id AND r.availability = 'available' AND r.id <> a.rep_id
+               AND EXISTS (SELECT 1 FROM public.organization_members m WHERE m.organization_id = r.organization_id AND m.user_id = r.user_id)
+               AND NOT EXISTS (SELECT 1 FROM public.lead_assignments y WHERE y.chain_id = a.chain_id AND y.rep_id = r.id)))
+       AND NOT public._alert_assignment_answered(a)
+  ) x WHERE x.rn <= GREATEST(1, p_per_org) ORDER BY x.sla_due_at, x.id
+$$;
+
+-- Repara o card do encaminhamento que foi pulado porque o contato estava travado: atribuições pendentes recentes (< 24h) sem negócio.
+-- Devolve quantos cards nasceram. Idempotente; cada um é SKIP LOCKED (nunca espera). A coluna lead_assignments.opportunity_id é imutável e
+-- continua nula nessas linhas; o negócio é ligado ao contato, às tarefas e à conversa.
+CREATE OR REPLACE FUNCTION public.ensure_handoff_cards(p_limit integer DEFAULT 50)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE r record; n integer := 0;
+BEGIN
+  FOR r IN
+    SELECT a.organization_id, a.conversation_id, a.contact_id, a.operation, rep.user_id
+      FROM public.lead_assignments a
+      JOIN public.sales_reps rep ON rep.id = a.rep_id
+      JOIN public.organizations o ON o.id = a.organization_id
+     WHERE a.status = 'pending' AND a.opportunity_id IS NULL AND a.rep_id IS NOT NULL AND a.created_at >= now() - interval '24 hours'
+       AND o.settings->'lead_distribution_enabled' = 'true'::jsonb AND o.settings->'sales_auto_pipeline_enabled' = 'true'::jsonb
+       AND NOT EXISTS (SELECT 1 FROM public.opportunities p WHERE p.organization_id = a.organization_id AND p.contact_id = a.contact_id)
+     ORDER BY a.created_at LIMIT GREATEST(1, p_limit)
+  LOOP
+    IF public._open_opportunity_for_handoff(r.organization_id, r.conversation_id, r.contact_id, r.user_id, r.operation) IS NOT NULL THEN n := n + 1; END IF;
+  END LOOP;
+  RETURN n;
+END $$;
+
+REVOKE ALL ON FUNCTION public._alert_assignment_answered(public.lead_assignments), public.list_escalation_candidates(integer), public.ensure_handoff_cards(integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._alert_assignment_answered(public.lead_assignments), public.list_escalation_candidates(integer), public.ensure_handoff_cards(integer) TO service_role;

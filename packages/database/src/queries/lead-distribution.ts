@@ -74,15 +74,20 @@ export async function listExpiredAssignments(db: SupabaseClient, limit = 50) {
 }
 
 /**
- * Atribuições 'alert' (dono existente ou manual) pendentes, com o SLA vencido e sem primeira resposta humana: candidatas ao estágio 2
- * da escalada. Quem decide de fato é escalate_alert_assignment (relê tudo sob lock).
+ * Candidatas ao estágio 2 da escalada, já filtradas no banco (chave, janela de ativação/24 h, não respondida, cadeia não escalada),
+ * em ordem de vencimento e com limite POR organização. Quem decide de fato é escalate_alert_assignment.
  */
-export async function listEscalationCandidates(db: SupabaseClient, limit = 100) {
-  const { data, error } = await db.from("lead_assignments").select("id, organization_id, assigned_at")
-    .eq("status", "pending").eq("sla_action", "alert").in("reason", ["existing_owner", "manual"]).is("first_human_message_at", null)
-    .lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
+export async function listEscalationCandidates(db: SupabaseClient, perOrg = 50) {
+  const { data, error } = await db.rpc("list_escalation_candidates", { p_per_org: perOrg });
   if (error) throw error;
   return (data ?? []) as Array<{ id: string; organization_id: string; assigned_at: string }>;
+}
+
+/** Repara cards de encaminhamento pulados (contato travado na hora): atribuições pendentes < 24 h sem negócio. Devolve quantos nasceram. */
+export async function ensureHandoffCards(db: SupabaseClient, limit = 50): Promise<number> {
+  const { data, error } = await db.rpc("ensure_handoff_cards", { p_limit: limit });
+  if (error) throw error;
+  return typeof data === "number" ? data : 0;
 }
 
 /** Estágio 2: passa o lead ao próximo vendedor elegível (uma vez por cadeia). Devolve a nova atribuição ou null se não agiu. */
