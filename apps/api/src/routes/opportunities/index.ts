@@ -28,7 +28,7 @@ import {
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
-import { canViewLead } from "../../lib/lead-access.js";
+import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
 
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
@@ -146,7 +146,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       // Tarefas humanas já abrem o negócio sozinhas (gatilho trg_human_task_opens_opportunity): devolve o existente em vez de duplicar.
       const { data: existingOpen, error: existingError } = await db
         .from("opportunities")
-        .select("id")
+        .select("*")
         .eq("organization_id", organizationId)
         .eq("contact_id", parseResult.data.contact_id)
         .eq("status", "open")
@@ -154,6 +154,33 @@ export default async function opportunityRoutes(app: FastifyInstance) {
         .limit(1)
         .maybeSingle();
       if (existingError) throw existingError;
+      if (existingOpen?.operation_is_default === true) {
+        // Card criado no encaminhamento para humano com operação só no padrão ("a confirmar"): o vendedor define o produto aqui; não é conflito.
+        // Grava TUDO o que o vendedor enviou (mesmo schema/validação do create). `select("*")` mantém a rota viva se a coluna ainda não existir.
+        if (!(await canViewLead(db, organizationId, membership.role, request.user.id, existingOpen.owner_id))) {
+          return reply.status(403).send({ error: "Este lead pertence a outro vendedor" });
+        }
+        const d = parseResult.data;
+        const optional = ["product", "product_model", "sale_amount", "credit_amount", "down_payment_amount", "bid_amount", "target_installment_amount", "term_months", "usage_purpose", "urgency", "main_objection", "commercial_notes", "last_interaction_at"] as const;
+        const values: Record<string, unknown> = {
+          operation: d.operation, initial_operation: d.operation, stage: d.stage, operation_is_default: false, next_action: d.next_action, next_action_due_date: d.next_action_due_date,
+          last_progress_at: new Date().toISOString(),
+        };
+        for (const key of optional) if (d[key] !== undefined) values[key] = d[key];
+        // Dono: só muda se a regra de atribuição do create permitir (gestor, a si mesmo ou a quem não é vendedor).
+        if (d.owner_id !== existingOpen.owner_id && (await canAssignLead(db, organizationId, membership.role, request.user.id, d.owner_id))) values.owner_id = d.owner_id;
+        const { data: updated, error: updateError } = await db.from("opportunities").update(values)
+          .eq("id", existingOpen.id).eq("organization_id", organizationId).eq("status", "open").eq("operation_is_default", true).select("*").maybeSingle();
+        if (updateError) throw updateError;
+        // A marca caiu no meio do caminho (a automação confirmou o card): é o conflito normal.
+        if (!updated) return reply.status(409).send({ error: "Este cliente já tem um negócio aberto. Abra o card existente em vez de criar outro.", opportunity_id: existingOpen.id });
+        await addOpportunityEvent(db, {
+          organization_id: organizationId, opportunity_id: existingOpen.id, event_type: "operation_changed",
+          previous_value: { operation: existingOpen.operation, stage: existingOpen.stage }, new_value: { operation: d.operation, stage: d.stage },
+          evidence: d.evidence ?? "Operação a confirmar definida pelo vendedor", changed_by_type: "human", changed_by_id: request.user.id,
+        });
+        return reply.status(200).send(updated);
+      }
       if (existingOpen) {
         return reply.status(409).send({ error: "Este cliente já tem um negócio aberto. Abra o card existente em vez de criar outro.", opportunity_id: existingOpen.id });
       }

@@ -40,6 +40,9 @@ async function setup() {
   await db.exec(readFileSync(M("20261013120000_freeze_no_flag_gate.sql"), "utf8"));
   await db.exec(readFileSync(M("20261020120000_owner_on_opportunity_create.sql"), "utf8"));
   await db.exec(readFileSync(M("20261021120000_human_task_opens_opportunity.sql"), "utf8"));
+  // Convive com o card do encaminhamento (20261027): o comportamento esperado abaixo já é o novo.
+  await db.exec(`ALTER TABLE public.opportunities ALTER COLUMN operation SET NOT NULL, ALTER COLUMN initial_operation SET NOT NULL`);
+  for (const f of ["20261027120000_handoff_card.sql", "20261027120100_default_operation_sync.sql"]) await db.exec(readFileSync(M(f), "utf8"));
   const def = await uuid(db);
   const org = await seedOrg(db, { sales_auto_pipeline_enabled: true, sales_qualified_handoff_task_enabled: true, lead_distribution_enabled: true });
   await db.query("update public.organizations set settings = settings || jsonb_build_object('default_handoff_assignee_id', $2::text) where id=$1", [org, def]);
@@ -106,12 +109,13 @@ describe("gatilho de tarefa humana x sync_sales_pipeline / distribute_lead", () 
     expect((await q("select assignee_type from public.tasks where contact_id=$1", [h.contactId]))[0].assignee_type).toBe("human");
   });
 
-  it("tipos de tarefa mistos (consórcio + veículo) no mesmo contato: nada é criado, nem após distribute_lead", async () => {
+  it("tipos de tarefa mistos (consórcio + veículo) no mesmo contato: o gatilho de tarefa não cria; o encaminhamento cria 1 card com operação padrão 'a confirmar' (nunca chuta)", async () => {
     const { org } = await setup(); await seedRep(db, org, "Marina", 1);
     const h = await seedHandoff(db, org);
     await q("insert into public.tasks(organization_id,contact_id,assignee_type,type,due_date,created_by_type) values ($1,$2,'ai','consortium_followup',current_date,'ai'),($1,$2,'ai','vehicle_followup',current_date,'ai')", [org, h.contactId]);
     await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [org, h.conversationId, h.handoffId, inMinutes(15)]);
-    expect(await q("select id from public.opportunities where contact_id=$1", [h.contactId])).toHaveLength(0);
+    const opps = await q("select operation, operation_is_default from public.opportunities where contact_id=$1", [h.contactId]);
+    expect(opps).toEqual([{ operation: "vehicle_sale", operation_is_default: true }]);
   });
 
   it("congelamento (set_opportunity_freeze) de negócio criado pelo gatilho: segue funcionando e não cria outro negócio", async () => {

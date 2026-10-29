@@ -3,6 +3,7 @@ const m = vi.hoisted(() => ({
   claimPushDedupe: vi.fn(), releasePushDedupe: vi.fn(), sendPushToUser: vi.fn(), isPushConfigured: vi.fn(() => true),
   listPushEnabledOrganizationIds: vi.fn(), listCurrentMemberIds: vi.fn(), deletePushSubscriptionsForUser: vi.fn(), purgePushNotificationLog: vi.fn(),
   listNewAssignmentCandidates: vi.fn(), listCustomerMessageCandidates: vi.fn(), listSlaRiskCandidates: vi.fn(),
+  listSlaBreachCandidates: vi.fn(), listSlaEscalationOrganizationIds: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getPushNotificationsQueue: () => ({ upsertJobScheduler: vi.fn() }) }));
@@ -23,6 +24,8 @@ beforeEach(() => {
   m.listNewAssignmentCandidates.mockResolvedValue(list([]));
   m.listCustomerMessageCandidates.mockResolvedValue(list([]));
   m.listSlaRiskCandidates.mockResolvedValue([]);
+  m.listSlaEscalationOrganizationIds.mockResolvedValue([]);
+  m.listSlaBreachCandidates.mockResolvedValue([]);
 });
 
 describe("runPushSweep", () => {
@@ -149,5 +152,50 @@ describe("runPushSweep", () => {
     expect(m.purgePushNotificationLog).toHaveBeenCalledWith(db, new Date("2026-10-10T12:00:00Z"));
     await runPushSweep(db, cursor, new Date(now.getTime() + 61 * 60_000));
     expect(m.purgePushNotificationLog).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("runPushSweep: SLA estourado (estágio 1 da escalada)", () => {
+  const breach = (over: Record<string, unknown> = {}) => cand({ kind: "sla_breach", userId: "owner", dedupeKeys: ["sla_breach:a9"], title: "SLA estourado: responda Márcio", ...over });
+
+  it("só consulta as organizações com sla_alert_escalation_enabled e envia ao dono, uma vez por atribuição", async () => {
+    m.listSlaEscalationOrganizationIds.mockResolvedValue(["o"]);
+    m.listSlaBreachCandidates.mockResolvedValue([breach()]);
+    const r = await runPushSweep(db, createPushCursor(now), now);
+    expect(m.listSlaEscalationOrganizationIds).toHaveBeenCalledWith(db, ["o"]);
+    expect(m.listSlaBreachCandidates).toHaveBeenCalledWith(db, now, ["o"]);
+    expect(m.claimPushDedupe).toHaveBeenCalledWith(db, "sla_breach:a9", "owner");
+    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "owner", expect.objectContaining({ title: "SLA estourado: responda Márcio" }), { organizationId: "o" });
+    expect(r.sent).toBe(1);
+  });
+
+  it("segunda varredura da mesma atribuição: a chave já foi reservada, não reenvia", async () => {
+    m.listSlaEscalationOrganizationIds.mockResolvedValue(["o"]);
+    m.listSlaBreachCandidates.mockResolvedValue([breach()]);
+    m.claimPushDedupe.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await runPushSweep(db, createPushCursor(now), now);
+    await runPushSweep(db, createPushCursor(now), now);
+    expect(m.sendPushToUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("chave desligada em todas as organizações: nenhum aviso de SLA estourado", async () => {
+    m.listSlaEscalationOrganizationIds.mockResolvedValue([]);
+    await runPushSweep(db, createPushCursor(now), now);
+    expect(m.listSlaBreachCandidates).toHaveBeenCalledWith(db, now, []);
+    expect(m.sendPushToUser).not.toHaveBeenCalled();
+  });
+
+  it("erro na fonte de SLA estourado não derruba os outros gatilhos", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.listSlaEscalationOrganizationIds.mockRejectedValue(new Error("db"));
+    m.listNewAssignmentCandidates.mockResolvedValue(list([cand()]));
+    expect((await runPushSweep(db, createPushCursor(now), now)).sent).toBe(1);
+    log.mockRestore();
+  });
+
+  it("o novo dono de uma atribuição escalada recebe o 'Novo lead' normal (atribuição pendente nova)", async () => {
+    m.listNewAssignmentCandidates.mockResolvedValue(list([cand({ userId: "novo-dono", dedupeKeys: ["assign:escalada"], title: "Novo lead: Márcio" })]));
+    await runPushSweep(db, createPushCursor(now), now);
+    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "novo-dono", expect.objectContaining({ title: "Novo lead: Márcio" }), { organizationId: "o" });
   });
 });

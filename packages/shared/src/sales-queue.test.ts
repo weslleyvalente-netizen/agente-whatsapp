@@ -1,5 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {classifySalesQueue,sortSalesQueue} from './sales-queue.js';
+import {classifySalesCard} from './sales-workspace.js';
 const now='2026-10-02T11:00:00Z';
 const base={id:'a',created_at:'2026-10-01',status:'open',stage:'qualification',waiting_on:null,next_action_due_date:null,frozen_until:null,sales_state:{readyForHuman:false,customerReplied:false,humanPending:false,taskCount:1},tasks:[]};
 describe('Marina operational queue',()=>{
@@ -54,5 +55,24 @@ describe('ordenação por interesse',()=>{
   const a=overdue('old','qualification','2026-09-01',{last_interaction_at:'2026-09-02T10:00:00Z'});
   const b=overdue('recent','qualification','2026-09-20',{last_interaction_at:'2026-10-01T10:00:00Z'});
   expect(sortSalesQueue([a,b],now).map(x=>x.id)).toEqual(['recent','old']);
+ });
+});
+describe('handoff card (negócio criado no encaminhamento para humano)',()=>{
+ const handoff:{motivo:string|null;resumo:string|null;first_human_reply_at:string|null}={motivo:'cliente_pediu',resumo:'Quer carta de crédito',first_human_reply_at:null};
+ const card=(openOpportunityCount:number,h:typeof handoff|null=handoff)=>classifySalesCard({openOpportunityCount,handoff:h,latestRole:'contact',taskCount:2},now);
+ it('handoff pendente + exatamente um negócio aberto cai em "Pronto para assumir"',()=>{
+  const state=card(1);
+  expect(state.readyForHuman).toBe(true);
+  const row={...base,stage:'interest_received',sales_state:{...state},tasks:[{type:'run_quote',due_date:'2026-10-02',priority:'high'},{type:'other',due_date:'2026-10-02',priority:'normal'}]};
+  expect(classifySalesQueue(row,now)).toMatchObject({group:'ready',label:'Pronto para assumir'});
+ });
+ it('sem negócio (0) ou com dois abertos (2) não é "pronto": por isso o card precisa existir e ser único',()=>{
+  expect(card(0).readyForHuman).toBe(false);
+  expect(card(2).readyForHuman).toBe(false);
+ });
+ it('depois da primeira resposta humana o card sai de "Pronto para assumir"',()=>{
+  const answered=card(1,{...handoff,first_human_reply_at:'2026-10-02T10:50:00Z'});
+  expect(answered.readyForHuman).toBe(false);
+  expect(classifySalesQueue({...base,stage:'interest_received',sales_state:{...answered}},now).group).not.toBe('ready');
  });
 });

@@ -4,6 +4,8 @@ import {getOrganizationById} from "./organizations.js";
 import {getQualificationByConversationId} from "./conversation-qualification.js";
 import {getMessageById} from "./messages.js";
 const FIELDS=["product_model","sale_amount","credit_amount","down_payment_amount","bid_amount","target_installment_amount","term_months","usage_purpose","urgency","commercial_notes","next_action"];
+/** Card criado no encaminhamento com operação só no padrão (operation_is_default): NÃO é evidência; a decisão ignora a operação dele e usa só
+ * o que o cliente disse (explícito, tipo de atendimento, histórico), como se o contato ainda não tivesse negócio. */
 /** Best-effort at call sites. Never called from sandboxed Playground tools. */
 export async function syncSalesPipeline(db:SupabaseClient,organizationId:string,conversationId:string,responseMessageId?:string):Promise<string|null>{
  const org=await getOrganizationById(db,organizationId);
@@ -16,10 +18,15 @@ export async function syncSalesPipeline(db:SupabaseClient,organizationId:string,
  if(!message||message.organization_id!==organizationId||(opps.data??[]).length>1)return null;
  const response=responseMessageId?await getMessageById(db,responseMessageId):null;
  const confirmed=response?.role==="agent"&&response.evolution_message_id&&response.conversation_id===conversationId&&response.organization_id===organizationId;
- const decision=decideSalesPipeline({customerText:message.content,customerHistory:customerMessages.slice(1).reverse().map((m)=>m.content),qualification:qualification as unknown as Record<string,unknown>|null,operation:opps.data?.[0]?.operation as Operation|undefined,agentText:confirmed?response.content:undefined,humanHandoffMotive:handoff.data?.motivo,humanHandoff:!!handoff.data && org.settings.sales_qualified_handoff_task_enabled===true});
+ const decision=decideSalesPipeline({customerText:message.content,customerHistory:customerMessages.slice(1).reverse().map((m)=>m.content),qualification:qualification as unknown as Record<string,unknown>|null,operation:(opps.data?.[0]?.operation_is_default===true?undefined:opps.data?.[0]?.operation) as Operation|undefined,agentText:confirmed?response.content:undefined,humanHandoffMotive:handoff.data?.motivo,humanHandoff:!!handoff.data && org.settings.sales_qualified_handoff_task_enabled===true});
  if(!decision)return null;
  const fields=Object.fromEntries(FIELDS.map(key=>[key,(qualification as unknown as Record<string,unknown>|null)?.[key]??null]));
- const result=await db.rpc("sync_sales_pipeline",{p_organization_id:organizationId,p_conversation_id:conversationId,p_customer_message_id:message.id,p_response_message_id:confirmed?responseMessageId:null,p_operation:decision.operation,p_stage:decision.stage,p_explicit_operation:decision.explicitOperation,p_fields:fields});
+ const defaultCard=opps.data?.[0]?.operation_is_default===true;
+ const args={p_organization_id:organizationId,p_conversation_id:conversationId,p_customer_message_id:message.id,p_response_message_id:confirmed?responseMessageId:null,p_operation:decision.operation,p_stage:decision.stage,p_explicit_operation:decision.explicitOperation,p_fields:fields};
+ // p_default_correction: sinal NOVO de que a decisão veio de evidência (operation undefined) sobre um card com operação padrão. A migração
+ // 20261027120100 só corrige/limpa a marca com ele; se o banco ainda não a tem (código antes da migração), repete sem o parâmetro.
+ let result=await db.rpc("sync_sales_pipeline",defaultCard?{...args,p_default_correction:true}:args);
+ if(defaultCard&&result.error&&(result.error.code==="PGRST202"||result.error.code==="42883"))result=await db.rpc("sync_sales_pipeline",args);
  if(result.error)throw result.error;return result.data as string|null;
 }
 

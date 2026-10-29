@@ -70,16 +70,16 @@ export default function SettingsPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" | "sla_alert_escalation_enabled" | "handoff_card_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled";
+    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled" || flag === "sla_alert_escalation_enabled" || flag === "handoff_card_enabled";
     const setErr = isLead ? setLeadError : setWorkspaceError;
     setSavingWorkspace(true); setErr(null);
     try {
       const client = createClient();
       const { data: org, error: readError } = await client.from("organizations").select("settings").eq("id", currentOrg.id).single();
       if (readError) throw readError;
-      let query = client.from("organizations").update({ settings: { ...org.settings, [flag]: enabled, ...(flag === "sales_low_intent_cadence_enabled" && enabled ? { sales_low_intent_cadence_started_at: new Date().toISOString() } : {}), ...(flag === "lead_distribution_enabled" && enabled ? { lead_distribution_activated_at: new Date().toISOString() } : {}) } }).eq("id", currentOrg.id);
+      let query = client.from("organizations").update({ settings: { ...org.settings, [flag]: enabled, ...(flag === "sales_low_intent_cadence_enabled" && enabled ? { sales_low_intent_cadence_started_at: new Date().toISOString() } : {}), ...(flag === "lead_distribution_enabled" && enabled ? { lead_distribution_activated_at: new Date().toISOString() } : {}), ...(flag === "sla_alert_escalation_enabled" && enabled ? { sla_alert_escalation_activated_at: new Date().toISOString() } : {}) } }).eq("id", currentOrg.id);
       query = org.settings == null ? query.is("settings", null) : query.eq("settings", JSON.stringify(org.settings));
       const { data, error } = await query.select("id").maybeSingle();
       if (error) throw error;
@@ -741,6 +741,14 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-shadow">Modo de teste (simulação)</Label><Switch id="lead-dist-shadow" checked={currentOrg?.settings.lead_distribution_shadow_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_shadow_enabled")}/></div>
           <p className="text-xs text-muted-foreground">Calcula quem receberia cada lead e registra, sem alterar nada. Use antes de ativar.</p>
           <div className="flex items-center justify-between gap-3"><Label htmlFor="lead-dist-enabled">Distribuição de leads ativa</Label><Switch id="lead-dist-enabled" checked={currentOrg?.settings.lead_distribution_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "lead_distribution_enabled")}/></div>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-3"><Label htmlFor="handoff-card">Criar negócio no funil quando a IA encaminha para humano</Label><Switch id="handoff-card" checked={currentOrg?.settings.handoff_card_enabled !== false} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "handoff_card_enabled")}/></div>
+            <p className="text-xs text-muted-foreground">Ligado por padrão: todo cliente encaminhado sem negócio ganha um card em Interesse recebido, com o selo &quot;Operação a confirmar&quot; quando o produto ainda não foi identificado. Exige a distribuição ativa e a criação automática de negócios.</p>
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-3"><Label htmlFor="sla-alert-escalation">Escalar lead da carteira sem resposta (aviso aos {Number(slaMinutes) || 15} min, passa ao outro vendedor aos {2 * (Number(slaMinutes) || 15)} min)</Label><Switch id="sla-alert-escalation" checked={currentOrg?.settings.sla_alert_escalation_enabled === true} disabled={savingWorkspace || currentOrg?.settings.lead_distribution_enabled !== true} onCheckedChange={v => toggleWorkspace(v, "sla_alert_escalation_enabled")}/></div>
+            <p className="text-xs text-muted-foreground">Vale para cliente que já é da carteira de um vendedor e para atribuição manual. Os minutos acompanham o prazo para assumir (1x avisa o dono por push; 2x passa ao próximo vendedor disponível, uma única vez). Exige a distribuição ativa.</p>
+          </div>
           <div className="flex items-end gap-3"><div className="space-y-1"><Label htmlFor="lead-sla-minutes">Prazo para o vendedor assumir (minutos)</Label><Input id="lead-sla-minutes" type="number" min={5} max={240} className="w-32" value={slaMinutes} onChange={e => setSlaMinutes(e.target.value)}/></div><Button size="sm" disabled={savingSla} onClick={saveSlaMinutes}>Salvar prazo</Button></div>
           {currentOrg?.settings.lead_distribution_enabled === true && (
             <div className="space-y-2" aria-label="Vendedores">

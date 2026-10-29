@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   claimPushDedupe, deletePushSubscription, listCustomerMessageCandidates, listNewAssignmentCandidates,
   listSlaRiskCandidates, upsertPushSubscription, releasePushDedupe, purgePushNotificationLog,
-  listPushEnabledOrganizationIds, listCurrentMemberIds,
+  listPushEnabledOrganizationIds, listCurrentMemberIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds,
 } from "./push.js";
 
 /** Builder encadeável e "await-able" que registra as chamadas e devolve `result` por tabela. */
@@ -173,5 +173,35 @@ describe("listCustomerMessageCandidates", () => {
     const rows = Array.from({ length: 500 }, (_, i) => msg(`m${i}`, "c1", "x", "u1", true, `2026-10-17T12:00:${String(i % 60).padStart(2, "0")}Z`));
     const { db: d } = db({ messages: { data: rows } });
     expect((await listCustomerMessageCandidates(d, since, ["o"])).truncatedAt).toEqual(new Date(rows[499].created_at));
+  });
+});
+
+describe("escalada de SLA: estágio 1", () => {
+  it("organizações com a chave sla_alert_escalation_enabled ligada, dentro das que têm push", async () => {
+    const { db: d, calls } = db({ organizations: { data: [{ id: "o1" }] } });
+    expect(await listSlaEscalationOrganizationIds(d, ["o1", "o2"])).toEqual(["o1"]);
+    has(calls, 0, "in", "id", ["o1", "o2"]); has(calls, 0, "eq", "settings->>sla_alert_escalation_enabled", "true");
+    expect(await listSlaEscalationOrganizationIds(d, [])).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("'SLA estourado: responda {nome}' ao dono, chave sla_breach:{id}, só 'alert' pendente vencido e sem primeira resposta", async () => {
+    const now = new Date("2026-10-27T12:00:00Z");
+    const { db: d, calls } = db({ lead_assignments: { data: [
+      { id: "a1", organization_id: "o", conversation_id: "c1", sla_due_at: "2026-10-27T10:40:00Z", sales_reps: { user_id: "marina" }, wa_contacts: { name: "Márcio", phone: "55" } },
+      { id: "a2", organization_id: "o", conversation_id: "c2", sla_due_at: "2026-10-27T11:00:00Z", sales_reps: null, wa_contacts: null },
+    ] } });
+    const r = await listSlaBreachCandidates(d, now, ["o"]);
+    expect(r).toEqual([{ kind: "sla_breach", organizationId: "o", userId: "marina", dedupeKeys: ["sla_breach:a1"], title: "SLA estourado: responda Márcio",
+      body: "O prazo para responder este cliente passou. Toque para atender.", url: "/inbox?id=c1", tag: "c1" }]);
+    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "pending"); has(calls, 0, "eq", "sla_action", "alert");
+    has(calls, 0, "not", "rep_id", "is", null); has(calls, 0, "is", "first_human_message_at", null);
+    has(calls, 0, "lte", "sla_due_at", now.toISOString()); has(calls, 0, "gte", "sla_due_at", "2026-10-26T12:00:00.000Z");
+  });
+
+  it("sem organizações: não consulta", async () => {
+    const { db: d, calls } = db({});
+    expect(await listSlaBreachCandidates(d, new Date(), [])).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
 });
