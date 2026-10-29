@@ -21,6 +21,7 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
   const kv = new Map<string, string>(); const locks = new Set<string>();
   const jobs = new Map<string, unknown>(); const enqueueCalls: string[] = []; const alerts: Array<{ phone: string; text: string }> = [];
   const pushes: Array<{ userId: string; payload: any }> = []; const pushDedupe = new Set<string>(); const pushUsers = new Set<string>(); let pushSent = 1;
+  const ackCalls: string[] = []; const ackCtx: Record<string, { earlierInboundUnanswered: boolean; lastOutboundAsksQuestion: boolean }> = {};
   const logs: string[] = []; const attempts = new Map<string, number>(); let enqueueResult: EnqueueResult = { ok: true }; let stale: any[] = [];
   const deps: SweepDeps = {
     redisReady: () => true,
@@ -31,6 +32,7 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
     isIgnored: async (_o, phone) => ignored.has(phone),
     isFrozen: async () => false,
     hasOpenHandoff: async (cid) => handoff.has(cid),
+    ackContext: async (cid) => { ackCalls.push(cid); return ackCtx[cid] ?? { earlierInboundUnanswered: false, lastOutboundAsksQuestion: false }; },
     resolveAgentId: async () => "agent1",
     redis: {
       get: async (k) => kv.get(k) ?? null,
@@ -52,7 +54,7 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
     sendPush: async (_o, userId, payload) => { if (failOn.has("push")) throw new Error("push down"); pushes.push({ userId, payload }); return pushSent; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, pushes, pushDedupe, pushUsers, setPushSent: (n: number) => { pushSent = n; }, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
+  return { deps, ackCalls, ackCtx, pushes, pushDedupe, pushUsers, setPushSent: (n: number) => { pushSent = n; }, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
 }
 // mensagem de 11 min atrás no instante T0+0 => createdAt = T0-11min
 const old = (m: number) => ({ createdAt: min(-m).toISOString() });
@@ -350,6 +352,20 @@ describe("aviso ao vendedor dono (push) e segundo estágio ao dono da loja", () 
     const w = pushWorld([{ id: "c1", owner: "seller1", over: { content: "Ok" }, ...old(30) }]);
     const s = await runUnansweredLeadSweep(w.deps, T0);
     expect(s.skipped.acknowledgement).toBe(1); expect(w.pushes).toEqual([]); expect(w.alerts).toEqual([]);
+  });
+
+  it("'Obrigado' depois de pergunta pendente do cliente, ou de pergunta nossa, ainda alerta", async () => {
+    const w = pushWorld([{ id: "a", owner: "seller1", over: { content: "Obrigado" }, ...old(30) }, { id: "b", over: { content: "Combinado" }, ...old(31) }]);
+    w.ackCtx.a = { earlierInboundUnanswered: true, lastOutboundAsksQuestion: false };
+    w.ackCtx.b = { earlierInboundUnanswered: false, lastOutboundAsksQuestion: true };
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.skipped.acknowledgement ?? 0).toBe(0); expect(s.pushed).toBe(1); expect(s.alerted).toBe(1);
+  });
+
+  it("encerramento nunca cancela o retry da IA e a consulta de contexto só ocorre quando o aviso sairia", async () => {
+    const w = world({ convs: [{ id: "r", over: { content: "Ok" }, ...old(12) }, { id: "x", ...old(12) }] });
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.retried).toBe(2); expect(w.ackCalls).toEqual([]);
   });
 });
 

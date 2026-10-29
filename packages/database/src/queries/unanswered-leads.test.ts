@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listLatestInboundMessages, markMessagesAiProcessed } from "./unanswered-leads.js";
+import { getAckContext, listLatestInboundMessages, markMessagesAiProcessed } from "./unanswered-leads.js";
 
 // Fake mínimo do query builder do Supabase: encadeia e resolve com as linhas pedidas em range().
 function fakeDb(rows: any[], updates: any[] = []) {
@@ -36,5 +36,19 @@ describe("markMessagesAiProcessed", () => {
     const { db } = fakeDb([{ id: "m1", metadata: { ai_routed_at: "x", duration_seconds: 3 } }], updates);
     expect(await markMessagesAiProcessed(db, "c", new Date(), "T")).toBe(1);
     expect(updates[0]).toEqual({ id: "m1", v: { metadata: { ai_routed_at: "x", duration_seconds: 3, ai_processed_at: "T" } } });
+  });
+});
+
+describe("getAckContext", () => {
+  const dbWith = (rows: any[]) => { const b: any = { select: () => b, eq: () => b, lt: () => b, order: () => b, limit: async () => ({ data: rows, error: null }) }; return { from: () => b } as any; };
+  it("mensagem anterior do cliente sem resposta nossa", async () => {
+    expect(await getAckContext(dbWith([{ role: "contact", content: "qual o valor?" }]), "c", "t")).toEqual({ earlierInboundUnanswered: true, lastOutboundAsksQuestion: false });
+  });
+  it("última mensagem nossa termina em pergunta (ignora 'system')", async () => {
+    expect(await getAckContext(dbWith([{ role: "system", content: "x" }, { role: "agent", content: "Posso reservar a cota? " }]), "c", "t")).toEqual({ earlierInboundUnanswered: false, lastOutboundAsksQuestion: true });
+  });
+  it("contexto limpo", async () => {
+    expect(await getAckContext(dbWith([{ role: "human_agent", content: "Fechado, qualquer coisa chame." }]), "c", "t")).toEqual({ earlierInboundUnanswered: false, lastOutboundAsksQuestion: false });
+    expect(await getAckContext(dbWith([]), "c", "t")).toEqual({ earlierInboundUnanswered: false, lastOutboundAsksQuestion: false });
   });
 });

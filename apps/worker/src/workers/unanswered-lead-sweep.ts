@@ -2,13 +2,13 @@ import { Worker } from "bullmq";
 import { QUEUE_NAMES, isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
 import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue, type ProcessMessageJobData } from "@aula-agente/queue";
 import {
-  claimPushDedupe, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
+  claimPushDedupe, getAckContext, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
   hasOutboundMessageAfter, hasPushSubscription, isPushConfigured, listCurrentMemberIds, listLatestInboundMessages, listStaleUnprocessedRouted,
   listUnansweredSweepOrganizations, releasePushDedupe, sendPushToUser,
   type PushPayload, type SweepOrganization, type UnansweredCandidate,
 } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
-import { decideSweepAction, ESCALATE_OWNER_AFTER_MS, MAX_AGE_MS, type SkipReason } from "../lib/unanswered-sweep.js";
+import { decideSweepAction, ESCALATE_OWNER_AFTER_MS, isClosingAcknowledgement, MAX_AGE_MS, type SkipReason, type SweepFacts } from "../lib/unanswered-sweep.js";
 
 const SWEEP_EVERY_MS = 5 * 60_000;
 const KEY_TTL_SEC = 24 * 60 * 60;
@@ -46,6 +46,8 @@ export interface SweepDeps {
   isIgnored(organizationId: string, phone: string): Promise<boolean>;
   isFrozen(organizationId: string, contactId: string): Promise<boolean>;
   hasOpenHandoff(conversationId: string): Promise<boolean>;
+  /** Contexto de um possível encerramento ("ok"): só é consultado quando o texto já casa com isClosingAcknowledgement. */
+  ackContext(conversationId: string, beforeIso: string): Promise<{ earlierInboundUnanswered: boolean; lastOutboundAsksQuestion: boolean }>;
   resolveAgentId(evolutionInstanceId: string): Promise<string | null>;
   redis: {
     get(key: string): Promise<string | null>;
@@ -138,11 +140,18 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
         const [ignored, frozen, openHandoff] = skipHeavy ? [false, false, false] : await Promise.all([
           deps.isIgnored(org.id, c.contactPhone), deps.isFrozen(org.id, c.contactId), deps.hasOpenHandoff(c.conversationId),
         ]);
-        const decision = decideSweepAction({
+        const facts: SweepFacts = {
           now, createdAt, content: c.content, mediaType: c.mediaType, hasOutboundAfter, aiRouted: !!c.aiRoutedAt, aiProcessed: !!c.aiProcessedAt,
           ignored, aiDisabled: c.aiDisabled, frozen,
           isHumanTakeover: c.isHumanTakeover, openHandoff, retriedAt, alerted, businessOpen,
-        });
+        };
+        let decision = decideSweepAction(facts);
+        // Encerramento ("ok", "obrigado") só silencia o AVISO, e só com contexto limpo: sem outra mensagem do cliente pendente
+        // antes e sem pergunta nossa por último. A consulta só ocorre quando o aviso sairia e o texto casa com o filtro.
+        if (decision.action === "alert" && (!c.mediaType || c.mediaType === "text") && isClosingAcknowledgement(c.content)) {
+          const ctx = await deps.ackContext(c.conversationId, c.createdAt);
+          if (!ctx.earlierInboundUnanswered && !ctx.lastOutboundAsksQuestion) decision = decideSweepAction({ ...facts, closingAck: true });
+        }
         if (decision.action === "skip") { skip(decision.reason); continue; }
 
         if (decision.action === "retry") {
@@ -303,6 +312,7 @@ export function buildRealDeps(): SweepDeps {
     isIgnored: async (orgId, phone) => !!(await getIgnoredContact(db, orgId, phone)),
     isFrozen: (orgId, contactId) => hasFrozenContact(db, orgId, contactId),
     hasOpenHandoff: async (conversationId) => !!(await getOpenHandoffEvent(db, conversationId)),
+    ackContext: (conversationId, beforeIso) => getAckContext(db, conversationId, beforeIso),
     resolveAgentId: async (instanceId) => (await getInstanceById(db, instanceId)).active_agent_id ?? null,
     redis: {
       get: (key) => redis.get(key),

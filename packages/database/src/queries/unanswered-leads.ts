@@ -93,6 +93,26 @@ export async function hasOutboundMessageAfter(db: SupabaseClient, conversationId
   return (count ?? 0) > 0;
 }
 
+export interface AckContext {
+  /** A mensagem imediatamente anterior da conversa também é do cliente (sem resposta nossa no meio). */
+  earlierInboundUnanswered: boolean;
+  /** A última mensagem nossa (agent/human_agent) antes dela termina em "?". */
+  lastOutboundAsksQuestion: boolean;
+}
+
+/**
+ * Contexto para decidir se um "ok"/"obrigado" é mesmo um encerramento: lê só as últimas mensagens da conversa antes de
+ * `beforeIso` (a mensagem do cliente em análise). Chamada só para mensagens que já casam com o filtro de encerramento.
+ */
+export async function getAckContext(db: SupabaseClient, conversationId: string, beforeIso: string): Promise<AckContext> {
+  const { data, error } = await db.from("messages").select("role, content")
+    .eq("conversation_id", conversationId).lt("created_at", beforeIso).order("created_at", { ascending: false }).limit(10);
+  if (error) throw error;
+  const rows = (data ?? []) as Array<{ role: string; content: string | null }>;
+  const lastOut = rows.find((r) => r.role === "agent" || r.role === "human_agent");
+  return { earlierInboundUnanswered: rows[0]?.role === "contact", lastOutboundAsksQuestion: !!lastOut && (lastOut.content ?? "").trim().endsWith("?") };
+}
+
 /** Mescla `patch` em messages.metadata. */
 export async function stampMessageMetadata(db: SupabaseClient, messageId: string, patch: Record<string, unknown>): Promise<void> {
   const { data, error } = await db.from("messages").select("metadata").eq("id", messageId).single();

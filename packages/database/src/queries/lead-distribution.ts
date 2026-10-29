@@ -5,6 +5,7 @@ import {
   type DistributionContext, type LeadAssignment, type OrganizationSettings, type SalesRep, type SalesRepAvailability,
 } from "@aula-agente/shared";
 import { getOrganizationById } from "./organizations.js";
+import { fetchAllPages } from "../pagination.js";
 
 /** Prazo do SLA em minutos úteis. Nunca lança: calendário inválido cai no padrão. */
 export function computeSlaDueAt(settings: Partial<OrganizationSettings>, from: Date): Date {
@@ -115,10 +116,12 @@ export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
  * de autoria humana; nesses casos o alerta permanece no painel até a escalada/ação do gestor.
  */
 export async function listSlaAlerts(db: SupabaseClient, organizationId: string): Promise<LeadAssignment[]> {
-  const { data, error } = await db.from("lead_assignments").select("*").eq("organization_id", organizationId)
-    .eq("status", "pending").eq("sla_action", "alert").eq("sla_breached", true).order("sla_due_at");
-  if (error) throw error;
-  const rows = (data ?? []) as LeadAssignment[];
+  const rows = await fetchAllPages<LeadAssignment>(async (from, to) => {
+    const { data, error } = await db.from("lead_assignments").select("*").eq("organization_id", organizationId)
+      .eq("status", "pending").eq("sla_action", "alert").eq("sla_breached", true).order("sla_due_at").order("id").range(from, to);
+    if (error) throw error;
+    return (data ?? []) as LeadAssignment[];
+  });
   if (!rows.length) return rows;
 
   const conversationIds = [...new Set(rows.map((r) => r.conversation_id))];
@@ -128,30 +131,47 @@ export async function listSlaAlerts(db: SupabaseClient, organizationId: string):
   const minHandoff = Math.min(...rows.map((r) => Math.min(sinceOf(r), t(r.assigned_at), t(r.handoff_at))));
   const minIso = new Date(minHandoff).toISOString();
 
-  const [messages, conversations, notes, opportunities] = await Promise.all([
-    db.from("messages").select("conversation_id, created_at").eq("organization_id", organizationId).eq("role", "human_agent")
-      .in("conversation_id", conversationIds).gte("created_at", minIso),
-    db.from("conversations").select("id, status").in("id", conversationIds),
-    db.from("conversation_notes").select("conversation_id, created_at").in("conversation_id", conversationIds).gte("created_at", minIso),
-    db.from("opportunities").select("id, contact_id, status, last_commercial_activity_at, updated_at").eq("organization_id", organizationId).in("contact_id", contactIds),
+  // Ids em lotes de 100 (limite de URL do PostgREST) e cada lote paginado (teto de 1000 linhas por resposta). Sem janela de data:
+  // alertas antigos sem resposta continuam visíveis.
+  const chunks = <T>(ids: T[]): T[][] => { const out: T[][] = []; for (let i = 0; i < ids.length; i += 100) out.push(ids.slice(i, i + 100)); return out; };
+  const fetchIn = async <T>(ids: string[], build: (batch: string[]) => any, order: string): Promise<T[]> => {
+    const all: T[] = [];
+    for (const batch of chunks(ids)) {
+      all.push(...await fetchAllPages<T>(async (from, to) => {
+        const { data: page, error: e } = await build(batch).order(order).order("id").range(from, to);
+        if (e) throw e;
+        return (page ?? []) as T[];
+      }));
+    }
+    return all;
+  };
+  const [messageRows, conversationRows, noteRows, oppRows] = await Promise.all([
+    fetchIn<{ conversation_id: string; created_at: string }>(conversationIds, (ids) =>
+      db.from("messages").select("id, conversation_id, created_at").eq("organization_id", organizationId).eq("role", "human_agent").in("conversation_id", ids).gte("created_at", minIso), "created_at"),
+    fetchIn<{ id: string; status: string }>(conversationIds, (ids) => db.from("conversations").select("id, status").in("id", ids), "id"),
+    fetchIn<{ conversation_id: string; created_at: string }>(conversationIds, (ids) =>
+      db.from("conversation_notes").select("id, conversation_id, created_at").in("conversation_id", ids).gte("created_at", minIso), "created_at"),
+    fetchIn<{ id: string; contact_id: string; status: string; last_commercial_activity_at: string | null; updated_at: string | null }>(contactIds, (ids) =>
+      db.from("opportunities").select("id, contact_id, status, last_commercial_activity_at, updated_at").eq("organization_id", organizationId).in("contact_id", ids), "id"),
   ]);
-  for (const r of [messages, conversations, notes, opportunities]) if (r.error) throw r.error;
-  const oppRows = (opportunities.data ?? []) as Array<{ id: string; contact_id: string; status: string; last_commercial_activity_at: string | null; updated_at: string | null }>;
   const oppIds = oppRows.map((o) => o.id);
-  const calls = await db.from("sales_call_logs").select("contact_id, opportunity_id, called_at").eq("organization_id", organizationId)
-    .gte("called_at", minIso).or(oppIds.length ? `contact_id.in.(${contactIds.join(",")}),opportunity_id.in.(${oppIds.join(",")})` : `contact_id.in.(${contactIds.join(",")})`);
-  if (calls.error) throw calls.error;
+  type CallRow = { contact_id: string | null; opportunity_id: string | null; called_at: string };
+  const callBase = (db2: SupabaseClient) => db2.from("sales_call_logs").select("id, contact_id, opportunity_id, called_at").eq("organization_id", organizationId).gte("called_at", minIso);
+  const [callsByContact, callsByOpp] = await Promise.all([
+    fetchIn<CallRow>(contactIds, (ids) => callBase(db).in("contact_id", ids), "called_at"),
+    fetchIn<CallRow>(oppIds, (ids) => callBase(db).in("opportunity_id", ids), "called_at"),
+  ]);
 
   const group = <T extends Record<string, any>>(list: T[] | null, key: string) => {
     const m = new Map<string, T[]>();
     for (const x of list ?? []) m.set(x[key], [...(m.get(x[key]) ?? []), x]);
     return m;
   };
-  const humanByConv = group(messages.data as any[], "conversation_id");
-  const notesByConv = group(notes.data as any[], "conversation_id");
+  const humanByConv = group(messageRows, "conversation_id");
+  const notesByConv = group(noteRows, "conversation_id");
   const oppsByContact = group(oppRows, "contact_id");
-  const statusByConv = new Map(((conversations.data ?? []) as Array<{ id: string; status: string }>).map((c) => [c.id, c.status]));
-  const callList = (calls.data ?? []) as Array<{ contact_id: string | null; opportunity_id: string | null; called_at: string }>;
+  const statusByConv = new Map(conversationRows.map((c) => [c.id, c.status]));
+  const callList = [...callsByContact, ...callsByOpp];
 
   const answered = (a: LeadAssignment): boolean => {
     if (a.first_human_message_at || a.accepted_at) return true;

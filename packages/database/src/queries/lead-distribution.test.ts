@@ -136,8 +136,9 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
     assigned_at: "2026-10-27T12:00:00Z", handoff_at: "2026-10-27T11:59:00Z", first_human_message_at: null, accepted_at: null, ...o,
   });
   // Fake do query builder: cada tabela devolve as linhas dadas; filtros são ignorados (a função filtra em memória).
+  const inCalls: number[] = [];
   const fake = (tables: Record<string, any[]>) => {
-    const builder = (rows: any[]) => { const b: any = { select: () => b, eq: () => b, in: () => b, gte: () => b, or: () => b, order: () => b, then: (res: any) => res({ data: rows, error: null }) }; return b; };
+    const builder = (rows: any[]) => { const b: any = { select: () => b, eq: () => b, in: (_c: string, ids: string[]) => { inCalls.push(ids.length); return b; }, gte: () => b, or: () => b, order: () => b, range: async (a: number, z: number) => ({ data: rows.slice(a, z + 1), error: null }) }; return b; };
     return { from: (t: string) => builder(tables[t] ?? []) } as any;
   };
   const run = async (assignments: any[], extra: Record<string, any[]> = {}) =>
@@ -170,8 +171,19 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
     expect(out.map((a: any) => a.id)).toEqual(["keep"]);
   });
   it("sem alertas não consulta as demais tabelas", async () => {
-    const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, order: () => b, then: (res: any) => res({ data: [], error: null }) }; return b; });
+    const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, order: () => b, range: async () => ({ data: [], error: null }) }; return b; });
     expect(await listSlaAlerts({ from } as any, "org")).toEqual([]);
     expect(from).toHaveBeenCalledTimes(1);
+  });
+  it("mais de 100 atribuições: ids em lotes de até 100 e leitura paginada além de 1000 linhas", async () => {
+    inCalls.length = 0;
+    const as = Array.from({ length: 1250 }, (_, i) => base(`n${i}`));
+    const answeredIds = new Set(["n7", "n1200"]);
+    const out = await listSlaAlerts(fake({
+      lead_assignments: as, conversations: as.map((a) => ({ id: a.conversation_id, status: answeredIds.has(a.id) ? "closed" : "open" })),
+    }), "org");
+    expect(out).toHaveLength(1248); // as 1250 passam da primeira página de 1000 e as duas encerradas somem
+    expect(inCalls.length).toBeGreaterThan(0);
+    expect(Math.max(...inCalls)).toBeLessThanOrEqual(100);
   });
 });

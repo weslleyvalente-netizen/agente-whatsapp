@@ -33,9 +33,15 @@ export interface SweepFacts {
   retriedAt: Date | null;
   alerted: boolean;
   businessOpen: boolean;
+  /**
+   * A mensagem é só um encerramento ("ok", "obrigado", "amanhã eu pego") E o contexto confirma (sem outra mensagem do cliente
+   * pendente antes, última nossa mensagem sem "?"). Só suprime o AVISO; nunca cancela o retry da IA.
+   */
+  closingAck?: boolean;
 }
 
 const skip = (reason: SkipReason): SweepDecision => ({ action: "skip", reason });
+const alertUnlessAck = (f: SweepFacts): SweepDecision => (f.closingAck ? skip("acknowledgement") : { action: "alert" });
 
 export function decideSweepAction(f: SweepFacts): SweepDecision {
   const age = f.now.getTime() - f.createdAt.getTime();
@@ -46,15 +52,12 @@ export function decideSweepAction(f: SweepFacts): SweepDecision {
   if (f.aiDisabled) return skip("ai_disabled");
   if (f.frozen) return skip("frozen");
   // O webhook nunca grava reação/protocolo; aqui só se descarta mensagem sem texto e sem mídia.
-  const isText = !f.mediaType || f.mediaType === "text";
-  if (!f.content.trim() && isText) return skip("no_content");
-  // "Ok", "obrigado", "amanhã eu pego": o cliente encerrou/adiou, não há o que responder (nem avisar).
-  if (isText && isClosingAcknowledgement(f.content)) return skip("acknowledgement");
+  if (!f.content.trim() && (!f.mediaType || f.mediaType === "text")) return skip("no_content");
 
   if (f.isHumanTakeover || f.openHandoff) {
     if (f.alerted) return skip("already_alerted");
     if (age < ESCALATE_HUMAN_PENDING_MS) return skip("human_pending");
-    return f.businessOpen ? { action: "alert" } : skip("outside_business_hours");
+    return f.businessOpen ? alertUnlessAck(f) : skip("outside_business_hours");
   }
 
   if (!f.aiRouted) return skip("not_ai_routed");
@@ -62,12 +65,12 @@ export function decideSweepAction(f: SweepFacts): SweepDecision {
   if (!f.retriedAt && age > RETRY_MAX_AGE_MS) {
     // Velha demais para a IA responder: vai direto para o aviso ao humano.
     if (f.alerted) return skip("already_alerted");
-    return f.businessOpen ? { action: "alert" } : skip("outside_business_hours");
+    return f.businessOpen ? alertUnlessAck(f) : skip("outside_business_hours");
   }
   if (!f.retriedAt) return { action: "retry" };
   if (f.alerted) return skip("already_alerted");
   if (f.now.getTime() - f.retriedAt.getTime() < ESCALATE_AFTER_RETRY_MS) return skip("retry_pending");
-  return f.businessOpen ? { action: "alert" } : skip("outside_business_hours");
+  return f.businessOpen ? alertUnlessAck(f) : skip("outside_business_hours");
 }
 
 // ---- Encerramento / adiamento do próprio cliente (não pede resposta) ----
@@ -78,9 +81,8 @@ const ACK_EMOJI = /^[\s\u{1F44D}\u{1F44C}\u{1F64F}\u{1F91D}\u{1F44F}\u{1F64C}\u{
 // Palavras de encerramento. "ta bom" vira um token só (antes de dividir) para "bom" sozinho não contar ("bom dia" é saudação).
 const ACK_CORE = new Set(["ok", "okay", "blz", "beleza", "certo", "combinado", "entendi", "perfeito", "show", "valeu", "obrigado", "obrigada", "obg", "brigado", "brigada", "tmj", "tranquilo", "tabom"]);
 const ACK_FILLER = new Set(["muito", "mto", "demais", "mesmo", "viu", "ai", "pela", "atencao"]);
-const TIME_MARKER = /\b(amanha|depois|mais tarde|hoje a noite|semana que vem|proxima semana|mes que vem|daqui a pouco|logo mais|mais pra frente|mais para frente|de manha|na parte da (manha|tarde)|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/;
-const SUBJECT = /\b(eu|vou)\b/;
-const POSTPONE_VERB = /\b(pego|passo|ligo|retorno|vejo|volto|falo|pegar|passar|ligar|retornar|ver|voltar|falar)\b/;
+// Adiamento: frase INTEIRA de lista fechada ("amanhã na parte da manhã eu pego", "depois eu passo aí"); qualquer coisa a mais é conversa.
+const POSTPONE = /^(amanha|depois|mais tarde|semana que vem|hoje a noite)( na parte da (manha|tarde))?( eu)?( vou)?( (pego|passo|ligo|retorno|vejo|volto|falo))( ai| la)?$/;
 
 function normalizeClosing(text: string): string {
   return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -104,6 +106,5 @@ export function isClosingAcknowledgement(content: string): boolean {
   // "okkk", "valeuuu": letras repetidas colapsadas só para comparar com a lista.
   const squashed = words.map((w) => w.replace(/(.)\1{2,}/g, "$1"));
   if (squashed.some((w) => ACK_CORE.has(w) || w === "ok") && squashed.every((w) => ACK_CORE.has(w) || ACK_FILLER.has(w) || w === "ok")) return true;
-  const joined = words.join(" ");
-  return TIME_MARKER.test(joined) && SUBJECT.test(joined) && POSTPONE_VERB.test(joined);
+  return POSTPONE.test(words.join(" "));
 }
