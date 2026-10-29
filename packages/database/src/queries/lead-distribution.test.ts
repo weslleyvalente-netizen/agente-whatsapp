@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   acceptAssignment, computeEscalationDueAt, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
-  recordDistributionError, recordHumanMessage, redistributeAssignment,
+  listSlaAlerts, recordDistributionError, recordHumanMessage, redistributeAssignment,
 } from "./lead-distribution.js";
 
 vi.mock("./organizations.js", () => ({ getOrganizationById: vi.fn() }));
@@ -127,5 +127,51 @@ describe("computeEscalationDueAt (2x o SLA em minutos úteis)", () => {
   it("estouro na sexta 17:45 (SP) escala na segunda 08:15; dentro do expediente é só 2x", () => {
     expect(computeEscalationDueAt({ lead_sla_minutes: 15 }, new Date("2026-10-23T20:45:00Z")).toISOString()).toBe("2026-10-26T11:15:00.000Z"); // sexta 17:45 + 30 min úteis
     expect(computeEscalationDueAt({ lead_sla_minutes: 15 }, new Date("2026-10-26T12:00:00Z")).toISOString()).toBe("2026-10-26T12:30:00.000Z");
+  });
+});
+
+describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
+  const base = (id: string, o: Record<string, unknown> = {}) => ({
+    id, organization_id: "org", conversation_id: `conv-${id}`, contact_id: `ct-${id}`, reason: "existing_owner",
+    assigned_at: "2026-10-27T12:00:00Z", handoff_at: "2026-10-27T11:59:00Z", first_human_message_at: null, accepted_at: null, ...o,
+  });
+  // Fake do query builder: cada tabela devolve as linhas dadas; filtros são ignorados (a função filtra em memória).
+  const fake = (tables: Record<string, any[]>) => {
+    const builder = (rows: any[]) => { const b: any = { select: () => b, eq: () => b, in: () => b, gte: () => b, or: () => b, order: () => b, then: (res: any) => res({ data: rows, error: null }) }; return b; };
+    return { from: (t: string) => builder(tables[t] ?? []) } as any;
+  };
+  const run = async (assignments: any[], extra: Record<string, any[]> = {}) =>
+    (await listSlaAlerts(fake({ lead_assignments: assignments, conversations: assignments.map((a) => ({ id: a.conversation_id, status: "open" })), ...extra }), "org")).map((a: any) => a.id);
+
+  it("mantém só a atribuição realmente sem resposta", async () => {
+    expect(await run([base("a")])).toEqual(["a"]);
+  });
+  it("some quando há mensagem human_agent depois do handoff (resposta pelo celular), mas não uma anterior", async () => {
+    const as = [base("a"), base("b")];
+    expect(await run(as, { messages: [{ conversation_id: "conv-a", created_at: "2026-10-27T12:30:00Z" }, { conversation_id: "conv-b", created_at: "2026-10-27T11:00:00Z" }] })).toEqual(["b"]);
+  });
+  it("atribuição manual conta a mensagem desde assigned_at, não desde o handoff", async () => {
+    const m = base("m", { reason: "manual", handoff_at: "2026-10-27T10:00:00Z" });
+    expect(await run([m], { messages: [{ conversation_id: "conv-m", created_at: "2026-10-27T11:00:00Z" }] })).toEqual(["m"]);
+  });
+  it("some com first_human_message_at, accepted_at, conversa encerrada, nota, ligação, atividade comercial ou negócio ganho", async () => {
+    const as = [base("fh", { first_human_message_at: "2026-10-27T12:10:00Z" }), base("ac", { accepted_at: "2026-10-27T12:10:00Z" }), base("cl"), base("nt"), base("ca"), base("co"), base("wo"), base("keep")];
+    const out = await listSlaAlerts(fake({
+      lead_assignments: as,
+      conversations: as.map((a) => ({ id: a.conversation_id, status: a.id === "cl" ? "closed" : "open" })),
+      conversation_notes: [{ conversation_id: "conv-nt", created_at: "2026-10-27T12:20:00Z" }],
+      opportunities: [
+        { id: "o-co", contact_id: "ct-co", status: "open", last_commercial_activity_at: "2026-10-27T12:40:00Z", updated_at: null },
+        { id: "o-wo", contact_id: "ct-wo", status: "won", last_commercial_activity_at: null, updated_at: "2026-10-27T12:50:00Z" },
+        { id: "o-ca", contact_id: "ct-ca", status: "open", last_commercial_activity_at: "2026-10-27T10:00:00Z", updated_at: null },
+      ],
+      sales_call_logs: [{ contact_id: null, opportunity_id: "o-ca", called_at: "2026-10-27T12:30:00Z" }],
+    }), "org");
+    expect(out.map((a: any) => a.id)).toEqual(["keep"]);
+  });
+  it("sem alertas não consulta as demais tabelas", async () => {
+    const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, order: () => b, then: (res: any) => res({ data: [], error: null }) }; return b; });
+    expect(await listSlaAlerts({ from } as any, "org")).toEqual([]);
+    expect(from).toHaveBeenCalledTimes(1);
   });
 });

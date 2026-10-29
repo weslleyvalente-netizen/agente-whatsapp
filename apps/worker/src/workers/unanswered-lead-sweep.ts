@@ -2,12 +2,13 @@ import { Worker } from "bullmq";
 import { QUEUE_NAMES, isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
 import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue, type ProcessMessageJobData } from "@aula-agente/queue";
 import {
-  getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
-  hasOutboundMessageAfter, listLatestInboundMessages, listStaleUnprocessedRouted, listUnansweredSweepOrganizations,
-  type SweepOrganization, type UnansweredCandidate,
+  claimPushDedupe, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
+  hasOutboundMessageAfter, hasPushSubscription, isPushConfigured, listCurrentMemberIds, listLatestInboundMessages, listStaleUnprocessedRouted,
+  listUnansweredSweepOrganizations, releasePushDedupe, sendPushToUser,
+  type PushPayload, type SweepOrganization, type UnansweredCandidate,
 } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
-import { decideSweepAction, MAX_AGE_MS, type SkipReason } from "../lib/unanswered-sweep.js";
+import { decideSweepAction, ESCALATE_OWNER_AFTER_MS, MAX_AGE_MS, type SkipReason } from "../lib/unanswered-sweep.js";
 
 const SWEEP_EVERY_MS = 5 * 60_000;
 const KEY_TTL_SEC = 24 * 60 * 60;
@@ -17,6 +18,12 @@ const MESSAGE_GROUPING_DELAY_MS = 6000;
 
 export const retriedKey = (messageId: string) => `unanswered-sweep:retried:${messageId}`;
 export const alertedKey = (messageId: string) => `unanswered-sweep:alerted:${messageId}`;
+/** Segundo estágio (resumo ao dono da loja, 60 min): chave própria, para não repetir e não se confundir com o push ao vendedor. */
+export const ownerAlertedKey = (messageId: string) => `unanswered-sweep:alerted-owner:${messageId}`;
+/** Valor de alertedKey quando o estágio 1 foi entregue por push ao vendedor (habilita o segundo estágio). */
+const PUSH_STAGE_PREFIX = "push:";
+/** Chave de idempotência do push (push_notification_log), uma por mensagem do cliente. */
+export const pushDedupeKey = (messageId: string) => `unanswered:${messageId}`;
 export const attemptsKey = (messageId: string) => `unanswered-sweep:attempts:${messageId}`;
 /** jobId determinístico (BullMQ não aceita ":" em id customizado). */
 export const retryJobId = (messageId: string) => `unanswered-sweep-${messageId}`;
@@ -50,11 +57,18 @@ export interface SweepDeps {
   releaseLock(conversationId: string, value: string): Promise<void>;
   enqueue(data: ProcessMessageJobData, jobId: string): Promise<EnqueueResult>;
   sendAlert(organizationId: string, phone: string, text: string): Promise<void>;
+  /** Vendedor ainda é membro da organização, tem assinatura push ativa e o servidor tem as chaves VAPID? */
+  canReceivePush(organizationId: string, userId: string): Promise<boolean>;
+  /** Reserva a chave de idempotência do push (push_notification_log). false = já notificado. */
+  claimPushDedupe(key: string, userId: string): Promise<boolean>;
+  releasePushDedupe(keys: string[]): Promise<void>;
+  /** Envia o push; devolve quantos aparelhos receberam (0 = nada entregue). */
+  sendPush(organizationId: string, userId: string, payload: PushPayload): Promise<number>;
   log: { info(msg: string): void; error(msg: string): void };
 }
 
 export interface SweepSummary {
-  organizations: number; candidates: number; retried: number; alerted: number; errors: number;
+  organizations: number; candidates: number; retried: number; alerted: number; pushed: number; errors: number;
   skipped: Record<string, number>;
 }
 
@@ -64,9 +78,10 @@ const errText = (e: unknown) => {
   return `${x?.name ?? "Error"}${x?.code ? `/${x.code}` : ""}: ${String(x?.message ?? "").replace(/\d{8,}/g, "***").slice(0, 200)}`;
 };
 
-interface AlertItem { c: UnansweredCandidate; minutes: number }
+/** `key` = chave Redis que marca este item como avisado no resumo (alertedKey no fallback; ownerAlertedKey no segundo estágio). */
+interface AlertItem { c: UnansweredCandidate; minutes: number; key: string }
 
-export function buildDigest(items: AlertItem[], moreCount: number, staleCount: number): string {
+export function buildDigest(items: Array<{ c: UnansweredCandidate; minutes: number }>, moreCount: number, staleCount: number): string {
   const lines = items.map(({ c, minutes }) => {
     const excerpt = c.content.replace(/\s+/g, " ").trim().slice(0, 40) || "(mídia)";
     return `- ${c.contactName ?? "Sem nome"} (final ${last4(c.contactPhone)}), há ${minutes} min: ${excerpt}`;
@@ -81,7 +96,7 @@ export function buildDigest(items: AlertItem[], moreCount: number, staleCount: n
 }
 
 export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()): Promise<SweepSummary> {
-  const summary: SweepSummary = { organizations: 0, candidates: 0, retried: 0, alerted: 0, errors: 0, skipped: {} };
+  const summary: SweepSummary = { organizations: 0, candidates: 0, retried: 0, alerted: 0, pushed: 0, errors: 0, skipped: {} };
   const skip = (reason: SkipReason | string, n = 1) => { summary.skipped[reason] = (summary.skipped[reason] ?? 0) + n; };
   if (!deps.redisReady()) { deps.log.info("unanswered-sweep: redis not ready, skipping run"); return summary; }
 
@@ -97,7 +112,8 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
     summary.organizations++;
     let inbound: UnansweredCandidate[];
     try { inbound = await deps.listInbound(org.id, since); } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} listing failed (${errText(err)})`); summary.errors++; continue; }
-    const settings = org.settings as { business_calendar?: unknown; health_alert_phone?: string | null };
+    const settings = org.settings as { business_calendar?: unknown; health_alert_phone?: string | null; push_notifications_enabled?: unknown };
+    const pushEnabled = settings.push_notifications_enabled === true;
     const businessOpen = isBusinessOpen(now, resolveBusinessCalendar(settings.business_calendar));
     const alertItems: AlertItem[] = [];
 
@@ -112,7 +128,10 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
         let retriedAt = retriedRaw && !Number.isNaN(Date.parse(retriedRaw)) ? new Date(retriedRaw) : retriedRaw ? createdAt : null;
         // Esgotou as tentativas de enfileirar (BullMQ descartou o job): segue direto para o aviso.
         if (!retriedAt && Number(await deps.redis.get(attemptsKey(c.messageId)) ?? 0) >= MAX_ENQUEUE_ATTEMPTS) retriedAt = createdAt;
-        const alerted = (await deps.redis.get(alertedKey(c.messageId))) !== null;
+        const alertedRaw = await deps.redis.get(alertedKey(c.messageId));
+        // Segundo estágio: o vendedor recebeu o push e a mensagem segue sem resposta aos 60 min => resumo ao dono da loja (uma vez).
+        const ownerStage = !!alertedRaw?.startsWith(PUSH_STAGE_PREFIX) && age >= ESCALATE_OWNER_AFTER_MS && (await deps.redis.get(ownerAlertedKey(c.messageId))) === null;
+        const alerted = alertedRaw !== null && !ownerStage;
         const early = age < 10 * 60_000;
         const hasOutboundAfter = early ? false : await deps.hasOutboundAfter(c.conversationId, c.createdAt);
         const skipHeavy = early || hasOutboundAfter;
@@ -162,7 +181,15 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
 
         // alert: reconfere e junta ao resumo da organização
         if (await deps.hasOutboundAfter(c.conversationId, c.createdAt)) { skip("answered"); continue; }
-        alertItems.push({ c, minutes: Math.floor(age / 60_000) });
+        const minutes = Math.floor(age / 60_000);
+        if (ownerStage) { alertItems.push({ c, minutes, key: ownerAlertedKey(c.messageId) }); continue; }
+        // Estágio 1: push ao vendedor dono da conversa; sem dono/assinatura/push ligado, cai no resumo imediato ao dono da loja.
+        if (pushEnabled && c.assignedTo && await deps.canReceivePush(org.id, c.assignedTo)) {
+          const r = await pushToSeller(deps, org.id, c, now);
+          if (r === "sent") { summary.pushed++; continue; }
+          if (r === "duplicate") { skip("already_alerted"); continue; }
+        }
+        alertItems.push({ c, minutes, key: alertedKey(c.messageId) });
       } catch (err) {
         summary.errors++;
         deps.log.error(`unanswered-sweep: conv ${c.conversationId} msg ${c.messageId} failed (${errText(err)})`);
@@ -174,8 +201,36 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
       catch (err) { summary.errors++; deps.log.error(`unanswered-sweep: org ${org.id} digest failed (${errText(err)})`); }
     }
   }
-  deps.log.info(`unanswered-sweep: orgs=${summary.organizations} candidates=${summary.candidates} retried=${summary.retried} alerted=${summary.alerted} errors=${summary.errors} skipped=${JSON.stringify(summary.skipped)}`);
+  deps.log.info(`unanswered-sweep: orgs=${summary.organizations} candidates=${summary.candidates} retried=${summary.retried} alerted=${summary.alerted} pushed=${summary.pushed} errors=${summary.errors} skipped=${JSON.stringify(summary.skipped)}`);
   return summary;
+}
+
+/**
+ * Estágio 1: "Cliente sem resposta" por push ao vendedor dono. A chave de aviso (valor "push:<data>") é marcada ANTES do envio;
+ * falha de envio ou nenhum aparelho entregue libera as chaves (e, sem aparelho, o chamador cai no resumo ao dono da loja).
+ */
+async function pushToSeller(deps: SweepDeps, organizationId: string, c: UnansweredCandidate, now: Date): Promise<"sent" | "duplicate" | "fallback"> {
+  const userId = c.assignedTo!;
+  if (!(await deps.redis.setNx(alertedKey(c.messageId), `${PUSH_STAGE_PREFIX}${now.toISOString()}`, KEY_TTL_SEC))) return "duplicate";
+  const dedupe = pushDedupeKey(c.messageId);
+  const undo = async () => {
+    await deps.releasePushDedupe([dedupe]).catch(() => {});
+    await deps.redis.del(alertedKey(c.messageId)).catch(() => {});
+  };
+  try {
+    if (!(await deps.claimPushDedupe(dedupe, userId))) return "duplicate"; // já notificado (chave Redis expirou): nada a repetir; a marca "push:" segue habilitando o estágio 2
+    const excerpt = c.content.replace(/\s+/g, " ").trim().slice(0, 40) || "mídia";
+    const sent = await deps.sendPush(organizationId, userId, {
+      title: `Cliente sem resposta: ${c.contactName?.trim() || "Sem nome"} (${excerpt})`, body: "Toque para responder.",
+      url: `/inbox?id=${c.conversationId}`, tag: c.conversationId,
+    });
+    if (sent <= 0) { await undo(); return "fallback"; }
+  } catch (err) {
+    await undo();
+    throw err;
+  }
+  deps.log.info(`unanswered-sweep: push sent org ${organizationId} conv ${c.conversationId} msg ${c.messageId}`);
+  return "sent";
 }
 
 async function sendDigest(
@@ -190,7 +245,7 @@ async function sendDigest(
   for (const item of items) {
     if (claimed.length >= MAX_DIGEST_ITEMS) { more++; continue; } // sem chave: entram no próximo resumo
     // A chave é marcada ANTES do envio: um timeout da Evolution não pode repetir o aviso a cada varredura.
-    if (await deps.redis.setNx(alertedKey(item.c.messageId), now.toISOString(), KEY_TTL_SEC)) claimed.push(item);
+    if (await deps.redis.setNx(item.key, now.toISOString(), KEY_TTL_SEC)) claimed.push(item);
     else skip("already_alerted");
   }
   if (!claimed.length) return;
@@ -199,7 +254,7 @@ async function sendDigest(
     const old = await deps.listStale(org.id, new Date(now.getTime() - STALE_LOOKBACK_MS), new Date(now.getTime() - MAX_AGE_MS));
     for (const o of old) if (!(await deps.hasOutboundAfter(o.conversationId, o.createdAt))) stale++;
   } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} stale count failed (${errText(err)})`); }
-  const release = async () => { for (const i of claimed) await deps.redis.del(alertedKey(i.c.messageId)).catch(() => {}); };
+  const release = async () => { for (const i of claimed) await deps.redis.del(i.key).catch(() => {}); };
   let text: string;
   try { text = buildDigest(claimed, more, stale); } catch (err) { await release(); throw err; } // nada foi enviado
   try {
@@ -271,6 +326,14 @@ export function buildRealDeps(): SweepDeps {
       return existing ? { ok: true, reason: "merged_into_existing_job" } : { ok: false, reason: "dedup_orphan" };
     },
     sendAlert: sendEvolutionAlert,
+    canReceivePush: async (orgId, userId) => {
+      if (!isPushConfigured()) return false;
+      if (!(await listCurrentMemberIds(db, orgId, [userId])).has(userId)) return false;
+      return hasPushSubscription(db, orgId, userId);
+    },
+    claimPushDedupe: (key, userId) => claimPushDedupe(db, key, userId),
+    releasePushDedupe: (keys) => releasePushDedupe(db, keys),
+    sendPush: async (orgId, userId, payload) => (await sendPushToUser(db, userId, payload, { organizationId: orgId })).sent,
     log: console,
   };
 }

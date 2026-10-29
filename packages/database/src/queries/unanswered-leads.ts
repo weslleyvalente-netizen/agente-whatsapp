@@ -12,6 +12,8 @@ export interface UnansweredCandidate {
   mediaType: string | null;
   createdAt: string;
   isHumanTakeover: boolean;
+  /** conversations.assigned_to: vendedor dono da conversa (quem recebe o aviso por push). */
+  assignedTo: string | null;
   contactId: string;
   contactName: string | null;
   contactPhone: string;
@@ -31,7 +33,7 @@ export async function listUnansweredSweepOrganizations(db: SupabaseClient): Prom
 
 const ONE = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null));
 
-const SELECT = "id, conversation_id, content, media_type, created_at, metadata, conversations!inner(id, evolution_instance_id, is_human_takeover, contact_id, wa_contacts!inner(id, name, phone, ai_disabled))";
+const SELECT = "id, conversation_id, content, media_type, created_at, metadata, conversations!inner(id, evolution_instance_id, is_human_takeover, assigned_to, contact_id, wa_contacts!inner(id, name, phone, ai_disabled))";
 
 function toCandidate(row: any, organizationId: string): UnansweredCandidate | null {
   const conv = ONE<any>(row.conversations);
@@ -40,7 +42,7 @@ function toCandidate(row: any, organizationId: string): UnansweredCandidate | nu
   return {
     messageId: row.id, conversationId: row.conversation_id, organizationId,
     evolutionInstanceId: conv.evolution_instance_id, content: row.content ?? "", mediaType: row.media_type ?? null,
-    createdAt: row.created_at, isHumanTakeover: conv.is_human_takeover === true,
+    createdAt: row.created_at, isHumanTakeover: conv.is_human_takeover === true, assignedTo: conv.assigned_to ?? null,
     contactId: contact.id, contactName: contact.name ?? null, contactPhone: contact.phone, aiDisabled: contact.ai_disabled === true,
     aiRoutedAt: row.metadata?.ai_routed_at ?? null, aiProcessedAt: row.metadata?.ai_processed_at ?? null,
   };

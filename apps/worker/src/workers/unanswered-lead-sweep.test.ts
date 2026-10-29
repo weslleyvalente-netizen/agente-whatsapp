@@ -13,13 +13,14 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
   const orgSettings = { unanswered_lead_sweep_enabled: true, health_alert_phone: "5511999990000", ...(opts.settings ?? {}) };
   const msgs = (opts.convs ?? [{ id: "c1" }]).map((c, i) => ({
     messageId: `m-${c.id}`, conversationId: c.id, organizationId: "org1", evolutionInstanceId: "inst1", content: "Quero um consórcio de caminhão",
-    mediaType: null, createdAt: c.createdAt ?? T0.toISOString(), isHumanTakeover: c.takeover ?? false, contactId: `ct-${c.id}`,
+    mediaType: null, createdAt: c.createdAt ?? T0.toISOString(), isHumanTakeover: c.takeover ?? false, assignedTo: c.owner ?? null, contactId: `ct-${c.id}`,
     contactName: "Junior", contactPhone: `55119999${String(1000 + i)}`, aiDisabled: c.aiDisabled ?? false, aiRoutedAt: c.notRouted ? null : T0.toISOString(), aiProcessedAt: c.processed ? T0.toISOString() : null, ...c.over,
   }));
   const outbound = new Set<string>(); // conversas que já tiveram resposta
   const ignored = new Set<string>(); const handoff = new Set<string>(); const failOn = new Set<string>();
   const kv = new Map<string, string>(); const locks = new Set<string>();
   const jobs = new Map<string, unknown>(); const enqueueCalls: string[] = []; const alerts: Array<{ phone: string; text: string }> = [];
+  const pushes: Array<{ userId: string; payload: any }> = []; const pushDedupe = new Set<string>(); const pushUsers = new Set<string>(); let pushSent = 1;
   const logs: string[] = []; const attempts = new Map<string, number>(); let enqueueResult: EnqueueResult = { ok: true }; let stale: any[] = [];
   const deps: SweepDeps = {
     redisReady: () => true,
@@ -45,9 +46,13 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
       return { ok: true };
     },
     sendAlert: async (_o, phone, text) => { if (failOn.has("alert")) throw new Error("timeout"); if (failOn.has("alert-definitive")) throw new DefinitiveSendError("500"); alerts.push({ phone, text }); },
+    canReceivePush: async (_o, userId) => pushUsers.has(userId),
+    claimPushDedupe: async (k) => { if (pushDedupe.has(k)) return false; pushDedupe.add(k); return true; },
+    releasePushDedupe: async (keys) => { for (const k of keys) pushDedupe.delete(k); },
+    sendPush: async (_o, userId, payload) => { if (failOn.has("push")) throw new Error("push down"); pushes.push({ userId, payload }); return pushSent; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
+  return { deps, pushes, pushDedupe, pushUsers, setPushSent: (n: number) => { pushSent = n; }, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
 }
 // mensagem de 11 min atrás no instante T0+0 => createdAt = T0-11min
 const old = (m: number) => ({ createdAt: min(-m).toISOString() });
@@ -265,6 +270,86 @@ describe("runUnansweredLeadSweep", () => {
     w.kv.set("unanswered-sweep:retried:m-c1", min(-20).toISOString());
     const s = await runUnansweredLeadSweep(w.deps, T0);
     expect(s.errors).toBe(1); expect(w.kv.has("unanswered-sweep:alerted:m-c1")).toBe(false);
+  });
+});
+
+describe("aviso ao vendedor dono (push) e segundo estágio ao dono da loja", () => {
+  const pushWorld = (convs: Array<Record<string, any>>, settings: Record<string, unknown> = { push_notifications_enabled: true }) => {
+    const w = world({ settings, convs });
+    w.pushUsers.add("seller1");
+    for (const c of convs) w.kv.set(`unanswered-sweep:retried:m-${c.id}`, min(-60).toISOString());
+    return w;
+  };
+
+  it("com dono e assinatura: push 'Cliente sem resposta' ao vendedor, sem WhatsApp ao dono da loja", async () => {
+    const w = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.pushed).toBe(1); expect(s.alerted).toBe(0);
+    expect(w.alerts).toEqual([]);
+    expect(w.pushes).toEqual([{ userId: "seller1", payload: { title: "Cliente sem resposta: Junior (Quero um consórcio de caminhão)", body: "Toque para responder.", url: "/inbox?id=c1", tag: "c1" } }]);
+    expect(w.kv.get("unanswered-sweep:alerted:m-c1")).toBe(`push:${T0.toISOString()}`);
+    expect(w.pushDedupe.has("unanswered:m-c1")).toBe(true);
+    // próxima varredura (35 min): nada repetido
+    const s2 = await runUnansweredLeadSweep(w.deps, min(5));
+    expect(s2.pushed + s2.alerted).toBe(0); expect(w.pushes).toHaveLength(1); expect(w.alerts).toEqual([]);
+  });
+
+  it("fallback imediato ao dono da loja: sem dono, sem assinatura ou push desligado", async () => {
+    const w = pushWorld([{ id: "a", ...old(30) }, { id: "b", owner: "sem-assinatura", ...old(31) }]);
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.pushed).toBe(0); expect(s.alerted).toBe(2); expect(w.pushes).toEqual([]);
+    expect(w.alerts).toHaveLength(1); expect(w.alerts[0].text).toContain("Leads sem resposta (2):");
+    const off = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }], {});
+    expect((await runUnansweredLeadSweep(off.deps, T0)).alerted).toBe(1);
+    expect(off.pushes).toEqual([]); expect(off.alerts).toHaveLength(1);
+  });
+
+  it("push sem aparelho entregue (0) ou com erro libera as chaves; 0 cai no resumo, erro tenta de novo depois", async () => {
+    const w = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    w.setPushSent(0);
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.pushed).toBe(0); expect(s.alerted).toBe(1); expect(w.alerts).toHaveLength(1);
+    expect(w.pushDedupe.size).toBe(0);
+    const e = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    e.failOn.add("push");
+    const se = await runUnansweredLeadSweep(e.deps, T0);
+    expect(se.errors).toBe(1); expect(e.kv.has("unanswered-sweep:alerted:m-c1")).toBe(false); expect(e.pushDedupe.size).toBe(0); expect(e.alerts).toEqual([]);
+    e.failOn.delete("push");
+    expect((await runUnansweredLeadSweep(e.deps, min(5))).pushed).toBe(1);
+  });
+
+  it("segundo estágio: aos 60 min sem resposta o resumo vai ao dono da loja, uma única vez", async () => {
+    const w = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    await runUnansweredLeadSweep(w.deps, T0); // push em T0 (mensagem com 30 min)
+    expect((await runUnansweredLeadSweep(w.deps, min(25))).alerted).toBe(0); // 55 min
+    expect(w.alerts).toEqual([]);
+    const s = await runUnansweredLeadSweep(w.deps, min(30)); // 60 min
+    expect(s.alerted).toBe(1); expect(w.alerts).toHaveLength(1);
+    expect(w.alerts[0].text).toContain("há 60 min");
+    expect(w.kv.has("unanswered-sweep:alerted-owner:m-c1")).toBe(true);
+    expect((await runUnansweredLeadSweep(w.deps, min(35))).alerted).toBe(0);
+    expect(w.alerts).toHaveLength(1); expect(w.pushes).toHaveLength(1);
+  });
+
+  it("segundo estágio não sai se o cliente foi respondido, nem fora do expediente; falha definitiva libera a chave do dono", async () => {
+    const w = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    await runUnansweredLeadSweep(w.deps, T0);
+    w.outbound.add("c1");
+    expect((await runUnansweredLeadSweep(w.deps, min(30))).alerted).toBe(0); expect(w.alerts).toEqual([]);
+    const n = pushWorld([{ id: "c1", owner: "seller1", ...old(30) }]);
+    await runUnansweredLeadSweep(n.deps, T0);
+    n.failOn.add("alert-definitive");
+    expect((await runUnansweredLeadSweep(n.deps, min(30))).errors).toBe(1);
+    expect(n.kv.has("unanswered-sweep:alerted-owner:m-c1")).toBe(false);
+    expect(n.kv.get("unanswered-sweep:alerted:m-c1")).toMatch(/^push:/); // o push do estágio 1 não é desfeito
+    n.failOn.delete("alert-definitive");
+    expect((await runUnansweredLeadSweep(n.deps, min(35))).alerted).toBe(1);
+  });
+
+  it("encerramento do cliente ('Ok') não gera aviso nenhum", async () => {
+    const w = pushWorld([{ id: "c1", owner: "seller1", over: { content: "Ok" }, ...old(30) }]);
+    const s = await runUnansweredLeadSweep(w.deps, T0);
+    expect(s.skipped.acknowledgement).toBe(1); expect(w.pushes).toEqual([]); expect(w.alerts).toEqual([]);
   });
 });
 
