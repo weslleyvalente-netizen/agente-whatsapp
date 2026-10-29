@@ -29,6 +29,15 @@ const WORKSPACE_CACHE_MS = 20_000;
 const workspaceInputs = createOrgCache<{ conversations: any[]; handoffs: any[]; tasks: any[]; openBusinesses: any[] }>(WORKSPACE_CACHE_MS);
 const distributionInputs = createOrgCache<{ reps: any[]; active: any[] }>(WORKSPACE_CACHE_MS);
 const orphanInputs = createOrgCache<{ tasks: any[]; businesses: any[]; conversations: any[] }>(WORKSPACE_CACHE_MS);
+export function invalidateSalesWorkspaceCache(organizationId: string) { workspaceInputs.invalidate(organizationId); distributionInputs.invalidate(organizationId); orphanInputs.invalidate(organizationId); }
+// Chamado pelo hook onResponse do servidor: escrita autenticada bem-sucedida descarta o cache da organização
+// (ou de todas as organizações do usuário quando a rota não expõe organizationId), para a tela refeita ver o dado novo.
+export function invalidateSalesWorkspaceCacheOnWrite(request: { method: string; params?: unknown; query?: unknown; user?: { memberships?: Array<{ organization_id: string }> } }, statusCode: number) {
+ if (statusCode >= 400 || ["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) return;
+ const org = (request.params as any)?.organizationId ?? (request.query as any)?.organizationId;
+ const ids = typeof org === "string" ? [org] : (request.user?.memberships ?? []).map(m => m.organization_id);
+ for (const id of ids) invalidateSalesWorkspaceCache(id);
+}
 export function resetSalesWorkspaceCacheForTests() { workspaceInputs.clear(); distributionInputs.clear(); orphanInputs.clear(); }
 
 // Conversas só dos contatos com negócio aberto: conversa de contato sem negócio aberto não altera nenhum card.

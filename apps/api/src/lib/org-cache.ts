@@ -13,8 +13,8 @@ export function createOrgCache<T>(ttlMs: number) {
    if (running) return running;
    const promise = load().then(
     value => {
-     entries.set(organizationId, { at: Date.now(), value });
-     if (pending.get(organizationId) === promise) pending.delete(organizationId);
+     // Se foi invalidada durante a leitura, o valor é entregue mas não fica guardado.
+     if (pending.get(organizationId) === promise) { entries.set(organizationId, { at: Date.now(), value }); pending.delete(organizationId); }
      return value;
     },
     error => {
@@ -25,6 +25,7 @@ export function createOrgCache<T>(ttlMs: number) {
    pending.set(organizationId, promise);
    return promise;
   },
+  invalidate(organizationId: string) { entries.delete(organizationId); pending.delete(organizationId); },
   clear() { entries.clear(); pending.clear(); },
  };
 }

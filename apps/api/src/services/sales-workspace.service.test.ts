@@ -258,3 +258,36 @@ describe("tarefas sem negócio aberto com conversas só dos contatos das tarefas
   expect(calls.length).toBe(n);
  });
 });
+
+describe("invalidação do cache em escritas", () => {
+ const tabelas = () => ({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [conversaDe("c")], handoff_events: [], tasks: [] });
+ async function leituras(escrita?: (m: typeof import("./sales-workspace.service.js")) => void) {
+  const mod = await import("./sales-workspace.service.js");
+  const { db, calls } = filteringDb(tabelas());
+  await mod.enrichSalesWorkspace(db as any, "org", openRows as any, true);
+  const antes = calls.length; escrita?.(mod);
+  await mod.enrichSalesWorkspace(db as any, "org", openRows as any, true);
+  return calls.length - antes;
+ }
+ const user = { memberships: [{ organization_id: "org" }, { organization_id: "outra" }] };
+ it("sem escrita o cache continua valendo", async () => { expect(await leituras()).toBe(0); });
+ it("POST/PATCH com organizationId invalida a organização", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { organizationId: "org" }, user }, 201))).toBeGreaterThan(0);
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "PATCH", params: { organizationId: "org" }, user }, 200))).toBeGreaterThan(0);
+ });
+ it("escrita sem organizationId invalida todas as organizações do usuário", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { id: "x" }, user }, 200))).toBeGreaterThan(0);
+ });
+ it("escrita de outra organização não invalida esta", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { organizationId: "outra" }, user }, 200))).toBe(0);
+ });
+ it.each(["GET", "HEAD", "OPTIONS"])("%s não invalida", async method => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method, params: { organizationId: "org" }, user }, 200))).toBe(0);
+ });
+ it.each([400, 403, 500])("resposta %i não invalida", async status => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { organizationId: "org" }, user }, status))).toBe(0);
+ });
+ it("requisição sem usuário e sem organização (webhook) não invalida", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: {} }, 200))).toBe(0);
+ });
+});

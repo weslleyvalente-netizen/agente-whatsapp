@@ -48,3 +48,11 @@ describe("createOrgCache", () => {
   expect(await cache.get("org", async () => ++n)).toBe(2);
  });
 });
+
+it("invalidar durante a leitura não deixa o valor antigo em cache", async () => {
+ const cache = createOrgCache<string>(20_000); let release!: (v: string) => void;
+ const p = cache.get("org", () => new Promise<string>(r => { release = r; }));
+ cache.invalidate("org"); release("velho");
+ expect(await p).toBe("velho");
+ expect(await cache.get("org", async () => "novo")).toBe("novo");
+});

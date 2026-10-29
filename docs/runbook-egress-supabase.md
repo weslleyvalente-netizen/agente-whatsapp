@@ -45,3 +45,13 @@
 4. Estimativa: antes ~1,5 MB por refresh por aba (802 KB de negócios + ~663 KB de conversas + extras). Agora, no
    pior caso, uma leitura de insumos a cada 20 s por organização (conversas ~250 KB, só dos 652 contatos) mais a lista
    de negócios (um pouco menor) por requisição.
+
+## Invalidação por escrita
+
+Para o vendedor não ver dado antigo por até 20 s depois de agir, `apps/api/src/server.ts` registra um hook
+`onResponse` que chama `invalidateSalesWorkspaceCacheOnWrite`: toda requisição que não seja GET/HEAD/OPTIONS e
+termine com status abaixo de 400 descarta os caches de insumos da organização (`params.organizationId` ou
+`query.organizationId`). Se a rota não expõe a organização (ex.: `/lead-assignments/:id/accept`, `/opportunities/:id/...`),
+descarta os de todas as organizações do usuário (`request.user.memberships`); o custo é só uma releitura.
+Respostas 4xx/5xx e requisições sem usuário (webhooks) não invalidam; escritas do worker/webhook podem aparecer
+até 20 s depois.
