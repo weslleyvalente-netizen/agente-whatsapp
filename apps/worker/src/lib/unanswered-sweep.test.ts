@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideSweepAction, type SweepFacts } from "./unanswered-sweep.js";
+import { decideSweepAction, isClosingAcknowledgement, type SweepFacts } from "./unanswered-sweep.js";
 
 const now = new Date("2026-10-26T15:00:00Z");
 const ago = (min: number) => new Date(now.getTime() - min * 60_000);
@@ -73,5 +73,42 @@ describe("decideSweepAction", () => {
     expect(decideSweepAction(facts({ isHumanTakeover: true, createdAt: ago(25) }))).toEqual({ action: "alert" });
     expect(decideSweepAction(facts({ openHandoff: true, createdAt: ago(40), businessOpen: false }))).toEqual({ action: "skip", reason: "outside_business_hours" });
     expect(decideSweepAction(facts({ openHandoff: true, createdAt: ago(40), alerted: true }))).toEqual({ action: "skip", reason: "already_alerted" });
+  });
+});
+
+describe("isClosingAcknowledgement", () => {
+  it.each([
+    "Ok", "ok", "OK!", "okay", "Blz", "beleza", "Certo", "Combinado", "entendi", "Perfeito", "show", "Valeu", "valeu!!", "Obrigado", "Obrigada!", "obg", "tmj",
+    "tranquilo", "tá bom", "Ta bom", "Muito obrigado", "ok obrigada", "okkk", "👍", "🙏", "❤️", "👍🏽", "ok 👍",
+    "amanhã na parte da manhã eu pego", "depois eu passo aí", "mais tarde eu ligo", "semana que vem eu vejo",
+  ])("encerramento/adiamento: %j", (text) => {
+    expect(isClosingAcknowledgement(text)).toBe(true);
+  });
+  it.each([
+    "Boa-tarde", "Boa tarde", "bom dia", "Oi", "tudo bem", "Tudo bem?", "Eu tenho interesse mas no momento estou", "[audio]", "", "   ",
+    "ok, qual o valor da parcela?", "ok?", "ok 11 99999-0000", "ok pode ser 50000 reais", "ok R$ 1.500", "amanhã eu passo aí com 30 mil de entrada pra fechar tudo",
+    "ok mas queria saber mais sobre o consórcio de moto", "Quero um consórcio de caminhão", "amanhã", "eu quero",
+    "eu quero ver a segunda opção", "eu quero ver amanhã", "Eu vou passar amanhã qual endereço", "amanhã eu passo aí me manda a localização", "segunda eu passo ai mas preciso do boleto",
+    "amanhã eu vou ligar pra cancelar", "eu vejo depois o valor", "Eu vou pegar a moto amanhã, ta pronta", "quero falar com voce amanha eu posso",
+  ])("não filtra: %j", (text) => {
+    expect(isClosingAcknowledgement(text)).toBe(false);
+  });
+  it("texto longo (> 60 caracteres) nunca é encerramento", () => {
+    expect(isClosingAcknowledgement("ok ".repeat(30))).toBe(false);
+  });
+});
+
+describe("decideSweepAction: acknowledgement", () => {
+  it("encerramento confirmado só suprime o aviso (todos os ramos que dariam alert)", () => {
+    expect(decideSweepAction(facts({ closingAck: true, createdAt: ago(130), retriedAt: ago(100) }))).toEqual({ action: "skip", reason: "acknowledgement" });
+    expect(decideSweepAction(facts({ closingAck: true, isHumanTakeover: true, createdAt: ago(30) }))).toEqual({ action: "skip", reason: "acknowledgement" });
+    expect(decideSweepAction(facts({ closingAck: true, createdAt: ago(121) }))).toEqual({ action: "skip", reason: "acknowledgement" });
+    expect(decideSweepAction(facts({ closingAck: false, createdAt: ago(121) }))).toEqual({ action: "alert" });
+  });
+  it("nunca cancela o retry da IA", () => {
+    expect(decideSweepAction(facts({ closingAck: true, content: "Ok", createdAt: ago(11) }))).toEqual({ action: "retry" });
+  });
+  it("fora do expediente continua outside_business_hours", () => {
+    expect(decideSweepAction(facts({ closingAck: true, isHumanTakeover: true, createdAt: ago(30), businessOpen: false }))).toEqual({ action: "skip", reason: "outside_business_hours" });
   });
 });

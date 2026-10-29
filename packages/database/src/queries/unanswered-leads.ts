@@ -12,6 +12,8 @@ export interface UnansweredCandidate {
   mediaType: string | null;
   createdAt: string;
   isHumanTakeover: boolean;
+  /** conversations.assigned_to: vendedor dono da conversa (quem recebe o aviso por push). */
+  assignedTo: string | null;
   contactId: string;
   contactName: string | null;
   contactPhone: string;
@@ -31,7 +33,7 @@ export async function listUnansweredSweepOrganizations(db: SupabaseClient): Prom
 
 const ONE = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null));
 
-const SELECT = "id, conversation_id, content, media_type, created_at, metadata, conversations!inner(id, evolution_instance_id, is_human_takeover, contact_id, wa_contacts!inner(id, name, phone, ai_disabled))";
+const SELECT = "id, conversation_id, content, media_type, created_at, metadata, conversations!inner(id, evolution_instance_id, is_human_takeover, assigned_to, contact_id, wa_contacts!inner(id, name, phone, ai_disabled))";
 
 function toCandidate(row: any, organizationId: string): UnansweredCandidate | null {
   const conv = ONE<any>(row.conversations);
@@ -40,7 +42,7 @@ function toCandidate(row: any, organizationId: string): UnansweredCandidate | nu
   return {
     messageId: row.id, conversationId: row.conversation_id, organizationId,
     evolutionInstanceId: conv.evolution_instance_id, content: row.content ?? "", mediaType: row.media_type ?? null,
-    createdAt: row.created_at, isHumanTakeover: conv.is_human_takeover === true,
+    createdAt: row.created_at, isHumanTakeover: conv.is_human_takeover === true, assignedTo: conv.assigned_to ?? null,
     contactId: contact.id, contactName: contact.name ?? null, contactPhone: contact.phone, aiDisabled: contact.ai_disabled === true,
     aiRoutedAt: row.metadata?.ai_routed_at ?? null, aiProcessedAt: row.metadata?.ai_processed_at ?? null,
   };
@@ -89,6 +91,26 @@ export async function hasOutboundMessageAfter(db: SupabaseClient, conversationId
     .eq("conversation_id", conversationId).in("role", ["agent", "human_agent", "system"]).gt("created_at", afterIso);
   if (error) throw error;
   return (count ?? 0) > 0;
+}
+
+export interface AckContext {
+  /** A mensagem imediatamente anterior da conversa também é do cliente (sem resposta nossa no meio). */
+  earlierInboundUnanswered: boolean;
+  /** A última mensagem nossa (agent/human_agent) antes dela termina em "?". */
+  lastOutboundAsksQuestion: boolean;
+}
+
+/**
+ * Contexto para decidir se um "ok"/"obrigado" é mesmo um encerramento: lê só as últimas mensagens da conversa antes de
+ * `beforeIso` (a mensagem do cliente em análise). Chamada só para mensagens que já casam com o filtro de encerramento.
+ */
+export async function getAckContext(db: SupabaseClient, conversationId: string, beforeIso: string): Promise<AckContext> {
+  const { data, error } = await db.from("messages").select("role, content")
+    .eq("conversation_id", conversationId).lt("created_at", beforeIso).order("created_at", { ascending: false }).limit(10);
+  if (error) throw error;
+  const rows = (data ?? []) as Array<{ role: string; content: string | null }>;
+  const lastOut = rows.find((r) => r.role === "agent" || r.role === "human_agent");
+  return { earlierInboundUnanswered: rows[0]?.role === "contact", lastOutboundAsksQuestion: !!lastOut && (lastOut.content ?? "").trim().endsWith("?") };
 }
 
 /** Mescla `patch` em messages.metadata. */

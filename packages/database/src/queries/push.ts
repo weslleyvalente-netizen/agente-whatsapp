@@ -73,6 +73,13 @@ export async function listCurrentMemberIds(db: SupabaseClient, organizationId: s
   return new Set(((data ?? []) as Array<{ user_id: string }>).map(m => m.user_id));
 }
 
+/** O usuário tem ao menos uma assinatura push nesta organização? (decide se o aviso pode ir por push.) */
+export async function hasPushSubscription(db: SupabaseClient, organizationId: string, userId: string): Promise<boolean> {
+  const { count, error } = await db.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("user_id", userId);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
 /** Remove as assinaturas do usuário numa organização (saiu da organização). */
 export async function deletePushSubscriptionsForUser(db: SupabaseClient, organizationId: string, userId: string) {
   const { error } = await db.from("push_subscriptions").delete().eq("organization_id", organizationId).eq("user_id", userId);
