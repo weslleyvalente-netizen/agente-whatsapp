@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { enrichSalesWorkspace } from "./sales-workspace.service.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { enrichSalesWorkspace, resetSalesWorkspaceCacheForTests } from "./sales-workspace.service.js";
+beforeEach(() => resetSalesWorkspaceCacheForTests());
 const rows = [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01" }];
 function database(tables: Record<string, unknown[]>) {
  const scopes: unknown[][] = [];
@@ -141,4 +142,119 @@ it('ignores after-hours AI replies when deriving the latest message (customer st
  const {db,scopes}=database({conversations:[contactWaiting]});
  await enrichSalesWorkspace(db as any,'org',rows as any,true);
  expect(scopes).toContainEqual(['conversations','is','messages.metadata->>after_hours_pending',null]);
+});
+
+// Banco falso que respeita .in("contact_id", ...) e conta as consultas por tabela.
+function filteringDb(tables: Record<string, any[]>) {
+ const calls: Array<{ table: string; contactIds?: string[] }> = [];
+ const db = { from: (table: string) => {
+  let ids: string[] | undefined;
+  const q: any = { select: () => q, eq: () => q, is: () => q, order: () => q, limit: () => q,
+   in: (column: string, values: string[]) => { if (column === "contact_id") ids = values; return q; },
+   range: (start: number, end: number) => {
+    if (start === 0) calls.push({ table, contactIds: ids });
+    const data = (tables[table] ?? []).filter(r => !ids || ids.includes(r.contact_id));
+    return Promise.resolve({ data: data.slice(start, end + 1), error: null });
+   } };
+  return q;
+ } };
+ return { db, calls };
+}
+const openRows = [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01" }];
+const mensagem = { role: "contact", content: "Quero a proposta agora", created_at: "2026-10-04T14:55:00.000Z" };
+const conversaDe = (contact_id: string, id = `v-${contact_id}`) => ({ id, contact_id, last_message_at: "2026-10-04T14:59:00.000Z", is_human_takeover: false, wa_contacts: { ai_disabled: false }, messages: [mensagem] });
+
+describe("conversas só dos contatos com negócio aberto", () => {
+ it("conversa de contato sem negócio aberto não altera nenhum card (estado idêntico ao de baixar tudo)", async () => {
+  const base = { opportunities: [{ id: "a", contact_id: "c" }], handoff_events: [], tasks: [] };
+  const comRuido = filteringDb({ ...base, conversations: [conversaDe("c"), conversaDe("sem-negocio-1"), conversaDe("sem-negocio-2")] });
+  const semRuido = filteringDb({ ...base, conversations: [conversaDe("c")] });
+  vi.useFakeTimers(); vi.setSystemTime(new Date(responseNow));
+  try {
+   const a = await enrichSalesWorkspace(comRuido.db as any, "org", openRows as any, true);
+   resetSalesWorkspaceCacheForTests();
+   const b = await enrichSalesWorkspace(semRuido.db as any, "org", openRows as any, true);
+   expect(a).toEqual(b);
+   expect(a[0].sales_state?.customerReplied).toBe(true);
+   expect(comRuido.calls.filter(c => c.table === "conversations").every(c => c.contactIds?.every(id => id === "c"))).toBe(true);
+  } finally { vi.useRealTimers(); }
+ });
+ it("busca em lotes de 100 ids", async () => {
+  const opportunities = Array.from({ length: 250 }, (_, i) => ({ id: `o${i}`, contact_id: `c${i}` }));
+  const { db, calls } = filteringDb({ opportunities, conversations: opportunities.map(o => conversaDe(o.contact_id)), handoff_events: [], tasks: [] });
+  await enrichSalesWorkspace(db as any, "org", opportunities.map(o => ({ ...o, status: "open", created_at: "2026-10-01" })) as any, true);
+  expect(calls.filter(c => c.table === "conversations").map(c => c.contactIds?.length).sort((x, y) => (x ?? 0) - (y ?? 0))).toEqual([50, 100, 100]);
+ });
+ it("negócio fechado fora do conjunto aberto ainda recebe a própria conversa", async () => {
+  const { db } = filteringDb({ opportunities: [], conversations: [conversaDe("fechado")], handoff_events: [], tasks: [] });
+  vi.useFakeTimers(); vi.setSystemTime(new Date(responseNow));
+  try {
+   const out = await enrichSalesWorkspace(db as any, "org", [{ id: "x", contact_id: "fechado", status: "won", created_at: "2026-10-01" }] as any, true);
+   expect(out[0].sales_state?.customerReplied).toBe(true);
+  } finally { vi.useRealTimers(); }
+ });
+});
+
+describe("cache dos insumos da organização", () => {
+ const tabelas = () => ({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [conversaDe("c")], handoff_events: [], tasks: [] });
+ const leituras = (calls: Array<{ table: string }>) => calls.length;
+ it("segunda chamada dentro de 20 s não volta ao banco e expira depois", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date(responseNow));
+  try {
+   const { db, calls } = filteringDb(tabelas());
+   await enrichSalesWorkspace(db as any, "org", openRows as any, true);
+   const primeira = leituras(calls);
+   await enrichSalesWorkspace(db as any, "org", openRows as any, true);
+   expect(leituras(calls)).toBe(primeira);
+   vi.advanceTimersByTime(20_001);
+   await enrichSalesWorkspace(db as any, "org", openRows as any, true);
+   expect(leituras(calls)).toBe(primeira * 2);
+  } finally { vi.useRealTimers(); }
+ });
+ it("chamadas simultâneas compartilham uma única leitura", async () => {
+  const { db, calls } = filteringDb(tabelas());
+  await Promise.all([1, 2, 3].map(() => enrichSalesWorkspace(db as any, "org", openRows as any, true)));
+  expect(calls.filter(c => c.table === "tasks")).toHaveLength(1);
+  expect(calls.filter(c => c.table === "handoff_events")).toHaveLength(1);
+ });
+ it("não vaza dados entre organizações", async () => {
+  const a = filteringDb(tabelas()); const b = filteringDb({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [], handoff_events: [], tasks: [{ id: "t", opportunity_id: "a", contact_id: "c" }] });
+  const ra = await enrichSalesWorkspace(a.db as any, "org-a", openRows as any, true);
+  const rb = await enrichSalesWorkspace(b.db as any, "org-b", openRows as any, true);
+  expect(ra[0].sales_state?.taskCount).toBe(0); expect(rb[0].sales_state?.taskCount).toBe(1);
+ });
+ it("erro de leitura não fica em cache", async () => {
+  const ruim: any = { from: () => { const q: any = { select: () => q, eq: () => q, in: () => q, is: () => q, order: () => q, limit: () => q, range: () => Promise.resolve({ data: null, error: new Error("queda") }) }; return q; } };
+  await expect(enrichSalesWorkspace(ruim, "org", openRows as any, true)).rejects.toThrow("queda");
+  const { db } = filteringDb(tabelas());
+  await expect(enrichSalesWorkspace(db as any, "org", openRows as any, true)).resolves.toHaveLength(1);
+ });
+ it("cada usuário recebe o resultado calculado para si com os mesmos insumos em cache", async () => {
+  const { db, calls } = filteringDb({ ...tabelas(), sales_reps: [{ id: "r1", user_id: "marina" }, { id: "r2", user_id: "marcio" }], lead_assignments: [] });
+  const linhas = [{ id: "a", contact_id: "c", status: "open", created_at: "2026-10-01", owner_id: "marcio" }];
+  const gerente = await enrichSalesWorkspace(db as any, "org", linhas as any, true, { enabled: true, viewer: { mode: "all" } });
+  const marina = await enrichSalesWorkspace(db as any, "org", linhas as any, true, { enabled: true, viewer: { mode: "own", userId: "marina" } });
+  const marcio = await enrichSalesWorkspace(db as any, "org", linhas as any, true, { enabled: true, viewer: { mode: "own", userId: "marcio" } });
+  expect([gerente.length, marina.length, marcio.length]).toEqual([1, 0, 1]);
+  expect(calls.filter(c => c.table === "sales_reps")).toHaveLength(1);
+ });
+});
+
+describe("tarefas sem negócio aberto com conversas só dos contatos das tarefas", () => {
+ it("mantém o resultado e busca só as conversas dos contatos órfãos, com cache", async () => {
+  const { getSalesTasksWithoutOpenBusiness } = await import("./sales-workspace.service.js");
+  const { db, calls } = filteringDb({
+   opportunities: [{ id: "a", contact_id: "linked" }],
+   tasks: [{ id: "one", opportunity_id: null, contact_id: "orphan", type: "other", due_date: "2026-10-02", created_at: "2026-10-01", status: "pending" }, { id: "two", opportunity_id: null, contact_id: "linked" }],
+   conversations: [conversaDe("orphan"), conversaDe("linked"), conversaDe("ruido")],
+  });
+  const first = await getSalesTasksWithoutOpenBusiness(db as any, "org");
+  expect(first.map(t => t.id)).toEqual(["one"]);
+  const buscas = calls.filter(c => c.table === "conversations").map(c => c.contactIds);
+  expect(buscas).toContainEqual(["orphan"]);
+  expect(buscas.flat()).not.toContain("ruido");
+  const n = calls.length;
+  await getSalesTasksWithoutOpenBusiness(db as any, "org");
+  expect(calls.length).toBe(n);
+ });
 });

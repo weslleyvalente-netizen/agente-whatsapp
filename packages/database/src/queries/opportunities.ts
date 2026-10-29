@@ -22,6 +22,18 @@ export async function getOpportunityById(client: SupabaseClient, id: string) {
   return data as Opportunity;
 }
 
+// Colunas que o funil (web, API e testes) realmente consome. Ficam de fora só as que nenhum consumidor da
+// lista lê: freeze_previous_pendency / freeze_previous_waiting (jsonb de restauração do congelamento, usados
+// apenas pelas funções SQL) e frozen_at. Os detalhes completos seguem em GET /opportunities/:id (select "*").
+export const OPPORTUNITY_LIST_COLUMNS = [
+  "id", "organization_id", "contact_id", "operation", "stage", "status", "product", "product_model",
+  "initial_operation", "operation_is_default", "frozen_until", "freeze_reason", "freeze_task_id",
+  "sale_amount", "credit_amount", "down_payment_amount", "bid_amount", "target_installment_amount", "term_months",
+  "usage_purpose", "urgency", "main_objection", "commercial_notes", "owner_id", "owner_assigned_at",
+  "last_commercial_activity_at", "next_action", "next_action_due_date", "waiting_on", "waiting_on_until",
+  "last_interaction_at", "last_progress_at", "lost_reason", "resume_date", "created_at", "updated_at",
+] as const;
+
 export async function getOpportunitiesByOrganization(
   client: SupabaseClient,
   organizationId: string,
@@ -32,13 +44,13 @@ export async function getOpportunitiesByOrganization(
   // since most opportunities won't have product_model set.
   let query = client
     .from("opportunities")
-    .select("*, wa_contacts(name, phone)")
+    .select(`${OPPORTUNITY_LIST_COLUMNS.join(",")}, wa_contacts(name, phone)`)
     .eq("organization_id", organizationId);
   if (filters.operation) query = query.eq("operation", filters.operation);
   if (filters.status) query = query.eq("status", filters.status);
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
-  return data as (Opportunity & { wa_contacts: { name: string | null; phone: string } | null })[];
+  return data as unknown as (Opportunity & { wa_contacts: { name: string | null; phone: string } | null })[];
 }
 
 // Used by stale-conversation-followup.ts to decide whether an automatic
