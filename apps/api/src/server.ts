@@ -1,6 +1,7 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { invalidateSalesWorkspaceCacheOnWrite } from "./services/sales-workspace.service.js";
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
 import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
 import messageSendRoutes from "./routes/messages/send.js";
@@ -40,6 +41,8 @@ if (!process.env.WEBHOOK_SECRET) {
 // response omits the method. Discovered live while testing the agent-config
 // PATCH route; affects every existing PATCH route in this file (e.g.
 // `PATCH /tasks/:taskId`), not something introduced by any one feature.
+// onSend (antes de a resposta chegar ao cliente) fecha a janela de corrida com o refetch da tela.
+server.addHook("onSend", async (request, reply, payload) => { invalidateSalesWorkspaceCacheOnWrite(request, reply.statusCode); return payload; });
 server.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"] });
 
 // Health check

@@ -1,5 +1,6 @@
 import { getAdminClient } from "@aula-agente/database";
 import { isLeadVisible, type LeadVisibility } from "../lib/lead-visibility.js";
+import { createOrgCache } from "../lib/org-cache.js";
 import { computeContactState, isSubstantiveCustomerMessage, classifySalesCard, classifySalesQueue, sortSalesQueue, type Opportunity, type SalesCardState } from "@aula-agente/shared";
 
 // Every query is organization-scoped; pagination avoids PostgREST's default row cap.
@@ -12,6 +13,49 @@ async function readAll(query: () => any): Promise<any[]> {
   if (!data || data.length < 500) return rows;
  }
 }
+const CONVERSATION_BATCH = 100;
+const CONVERSATION_SELECT = "id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)";
+// Conversas open/waiting só dos contatos informados (lotes de 100 ids para não estourar a URL), com a última mensagem.
+async function readConversationsOfContacts(db: ReturnType<typeof getAdminClient>, organizationId: string, contactIds: string[], select: string): Promise<any[]> {
+ const batches: string[][] = [];
+ for (let i = 0; i < contactIds.length; i += CONVERSATION_BATCH) batches.push(contactIds.slice(i, i + CONVERSATION_BATCH));
+ const parts: any[][] = [];
+ // No máximo 3 consultas simultâneas, para não abrir dezenas de conexões de uma vez.
+ for (let i = 0; i < batches.length; i += 3) parts.push(...await Promise.all(batches.slice(i, i + 3).map(ids => readAll(() => db.from("conversations").select(select).eq("organization_id", organizationId).in("contact_id", ids).in("status", ["open", "waiting"]).is("messages.metadata->>after_hours_pending", null).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})))));
+ return parts.flat();
+}
+
+// Insumos da organização inteira (iguais para todos os usuários): cache de 20 s, uma leitura por vez por organização.
+// O resultado por usuário (visibilidade/viewer) é sempre calculado depois, fora do cache.
+const WORKSPACE_CACHE_MS = 20_000;
+const workspaceInputs = createOrgCache<{ conversations: any[]; handoffs: any[]; tasks: any[]; openBusinesses: any[] }>(WORKSPACE_CACHE_MS);
+const distributionInputs = createOrgCache<{ reps: any[]; active: any[] }>(WORKSPACE_CACHE_MS);
+const orphanInputs = createOrgCache<{ tasks: any[]; businesses: any[]; conversations: any[] }>(WORKSPACE_CACHE_MS);
+export function invalidateSalesWorkspaceCache(organizationId: string) { workspaceInputs.invalidate(organizationId); distributionInputs.invalidate(organizationId); orphanInputs.invalidate(organizationId); }
+// Chamado pelo hook onSend do servidor: escrita autenticada não rejeitada com 401/403/404 descarta o cache da organização
+// (ou de todas as organizações do usuário quando a rota não expõe organizationId), para a tela refeita ver o dado novo.
+export function invalidateSalesWorkspaceCacheOnWrite(request: { method: string; params?: unknown; query?: unknown; user?: { memberships?: Array<{ organization_id: string }> } }, statusCode: number) {
+ // Erro parcial (400/500) pode ter gravado antes de falhar; só 401/403/404 garantem que nada mudou.
+ if ([401, 403, 404].includes(statusCode) || !["POST", "PUT", "PATCH", "DELETE"].includes(request.method.toUpperCase())) return;
+ const org = (request.params as any)?.organizationId ?? (request.query as any)?.organizationId;
+ const ids = typeof org === "string" ? [org] : (request.user?.memberships ?? []).map(m => m.organization_id);
+ for (const id of ids) invalidateSalesWorkspaceCache(id);
+}
+export function resetSalesWorkspaceCacheForTests() { workspaceInputs.clear(); distributionInputs.clear(); orphanInputs.clear(); }
+
+// Conversas só dos contatos com negócio aberto: conversa de contato sem negócio aberto não altera nenhum card.
+function loadWorkspaceInputs(db: ReturnType<typeof getAdminClient>, organizationId: string) {
+ return workspaceInputs.get(organizationId, async () => {
+  const [handoffs, tasks, openBusinesses] = await Promise.all([
+   readAll(() => db.from("handoff_events").select("conversation_id,motivo,resumo,handed_at,first_human_reply_at").eq("organization_id",organizationId).eq("trigger_type","request_human").is("first_human_reply_at",null).order("handed_at",{ascending:false}).order("id")),
+   readAll(() => db.from("tasks").select("id,opportunity_id,contact_id,type,due_date,priority,consolidated_pendencies").eq("organization_id",organizationId).in("status",["pending","in_progress","rescheduled"]).order("id")),
+   readAll(() => db.from("opportunities").select("id,contact_id").eq("organization_id",organizationId).eq("status","open").order("id")),
+  ]);
+  const conversations = await readConversationsOfContacts(db, organizationId, [...new Set<string>(openBusinesses.map(o => o.contact_id))], CONVERSATION_SELECT);
+  return { conversations, handoffs, tasks, openBusinesses };
+ });
+}
+
 export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[], enabled: boolean, leadDistribution?: { enabled: boolean; viewer: LeadVisibility }): Promise<Array<T & {sales_state?: SalesCardState; lead_assignment?: unknown}>> {
  if (!rows.length || (!enabled && !leadDistribution?.enabled)) return rows;
  const enriched = enabled ? await enrichOperational(db, organizationId, rows) : rows;
@@ -20,12 +64,17 @@ export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType
 }
 
 async function enrichOperational<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[]): Promise<Array<T & {sales_state?: SalesCardState}>> {
- const [conversations, handoffs, tasks, openBusinesses] = await Promise.all([
-  readAll(() => db.from("conversations").select("id,contact_id,last_message_at,is_human_takeover,wa_contacts(ai_disabled),messages(role,content,created_at)").eq("organization_id", organizationId).in("status", ["open", "waiting"]).is("messages.metadata->>after_hours_pending", null).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})),
-  readAll(() => db.from("handoff_events").select("conversation_id,motivo,resumo,handed_at,first_human_reply_at").eq("organization_id",organizationId).eq("trigger_type","request_human").is("first_human_reply_at",null).order("handed_at",{ascending:false}).order("id")),
-  readAll(() => db.from("tasks").select("id,opportunity_id,contact_id,type,due_date,priority,consolidated_pendencies").eq("organization_id",organizationId).in("status",["pending","in_progress","rescheduled"]).order("id")),
-  readAll(() => db.from("opportunities").select("contact_id").eq("organization_id",organizationId).eq("status","open").order("id")),
- ]);
+ const inputs = await loadWorkspaceInputs(db, organizationId);
+ const { handoffs, tasks } = inputs;
+ // Negócios abertos = cache + linhas abertas desta resposta (card recém-criado por worker ainda fora do cache);
+ // uma linha já fechada/perdida tira o negócio da contagem mesmo que o cache ainda o traga como aberto.
+ const openById = new Map<string, any>(inputs.openBusinesses.map(o => [o.id, o]));
+ for (const o of rows) { if (o.status === "open") openById.set(o.id, o); else openById.delete(o.id); }
+ const openBusinesses = [...openById.values()];
+ // Conversas em cache cobrem só os contatos do cache; contatos de outras linhas (novos, ganhos, perdidos) são buscados à parte, sem cache.
+ const covered = new Set<string>(inputs.openBusinesses.map(o => o.contact_id));
+ const extra = [...new Set<string>(rows.map(o => o.contact_id).filter(id => !covered.has(id)))];
+ const conversations = extra.length ? [...inputs.conversations, ...await readConversationsOfContacts(db, organizationId, extra, CONVERSATION_SELECT)] : inputs.conversations;
  const latest = new Map<string, any>();
  for (const c of conversations) if (!latest.has(c.contact_id) || (c.last_message_at ?? "") > (latest.get(c.contact_id).last_message_at ?? "")) latest.set(c.contact_id,c);
  const pending = new Map<string, any>();
@@ -45,10 +94,13 @@ async function enrichOperational<T extends Opportunity>(db: ReturnType<typeof ge
 }
 
 async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, enriched: T[], viewer: LeadVisibility): Promise<Array<T & {lead_assignment: unknown}>> {
- const [reps, active] = await Promise.all([
-  readAll(() => db.from("sales_reps").select("id,user_id,display_name").eq("organization_id", organizationId).order("id")),
-  readAll(() => db.from("lead_assignments").select("id,contact_id,rep_id,status,sla_due_at,sla_action,sla_breached,assigned_at,accepted_at").eq("organization_id", organizationId).in("status", ["pending", "accepted"]).order("id")),
- ]);
+ const { reps, active } = await distributionInputs.get(organizationId, async () => {
+  const [reps, active] = await Promise.all([
+   readAll(() => db.from("sales_reps").select("id,user_id,display_name").eq("organization_id", organizationId).order("id")),
+   readAll(() => db.from("lead_assignments").select("id,contact_id,rep_id,status,sla_due_at,sla_action,sla_breached,assigned_at,accepted_at").eq("organization_id", organizationId).in("status", ["pending", "accepted"]).order("id")),
+  ]);
+  return { reps, active };
+ });
  const repNames = new Map(reps.map((r: any) => [r.id, r.display_name]));
  const repUsers = new Set<string>(reps.map((r: any) => r.user_id));
  const byContact = new Map(active.map((a: any) => [a.contact_id, a]));
@@ -62,11 +114,16 @@ async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeo
 
 /** Old tasks without an open business stay accessible without historical writes. */
 export async function getSalesTasksWithoutOpenBusiness(db:ReturnType<typeof getAdminClient>,organizationId:string){
- const [tasks,businesses,conversations]=await Promise.all([
-  readAll(()=>db.from('tasks').select('*,wa_contacts(name,phone)').eq('organization_id',organizationId).in('status',['pending','in_progress','rescheduled']).order('due_date').order('id')),
-  readAll(()=>db.from('opportunities').select('id,contact_id').eq('organization_id',organizationId).eq('status','open').order('id')),
-  readAll(()=>db.from('conversations').select('contact_id,last_message_at,messages(role,content,created_at)').eq('organization_id',organizationId).in('status',['open','waiting']).is('messages.metadata->>after_hours_pending',null).order('id').order('created_at',{ascending:false,referencedTable:'messages'}).limit(1,{referencedTable:'messages'}))
- ]);
+ // Só os contatos das tarefas sem negócio aberto precisam da última mensagem (as demais conversas não mudam o resultado).
+ const {tasks,businesses,conversations}=await orphanInputs.get(organizationId,async()=>{
+  const [tasks,businesses]=await Promise.all([
+   readAll(()=>db.from('tasks').select('*,wa_contacts(name,phone)').eq('organization_id',organizationId).in('status',['pending','in_progress','rescheduled']).order('due_date').order('id')),
+   readAll(()=>db.from('opportunities').select('id,contact_id').eq('organization_id',organizationId).eq('status','open').order('id')),
+  ]);
+  const open=new Set(businesses.map(o=>o.contact_id));const openIds=new Set(businesses.map(o=>o.id));
+  const contactIds=[...new Set<string>(tasks.filter(t=>t.opportunity_id?!openIds.has(t.opportunity_id):!open.has(t.contact_id)).map(t=>t.contact_id).filter(Boolean))];
+  return {tasks,businesses,conversations:await readConversationsOfContacts(db,organizationId,contactIds,'contact_id,last_message_at,messages(role,content,created_at)')};
+ });
  const ids=new Set(businesses.map(o=>o.id));const contacts=new Set(businesses.map(o=>o.contact_id));
  const latest=new Map<string,any>();for(const c of conversations)if(!latest.has(c.contact_id)||(c.last_message_at??'')>(latest.get(c.contact_id).last_message_at??''))latest.set(c.contact_id,c);
  const now=new Date().toISOString();
