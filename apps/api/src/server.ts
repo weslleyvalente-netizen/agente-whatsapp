@@ -41,7 +41,8 @@ if (!process.env.WEBHOOK_SECRET) {
 // response omits the method. Discovered live while testing the agent-config
 // PATCH route; affects every existing PATCH route in this file (e.g.
 // `PATCH /tasks/:taskId`), not something introduced by any one feature.
-server.addHook("onResponse", async (request, reply) => invalidateSalesWorkspaceCacheOnWrite(request, reply.statusCode));
+// onSend (antes de a resposta chegar ao cliente) fecha a janela de corrida com o refetch da tela.
+server.addHook("onSend", async (request, reply, payload) => { invalidateSalesWorkspaceCacheOnWrite(request, reply.statusCode); return payload; });
 server.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"] });
 
 // Health check

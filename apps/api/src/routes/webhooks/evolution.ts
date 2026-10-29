@@ -31,6 +31,7 @@ import { samePhoneNumber } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
+import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
@@ -364,6 +365,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           mediaType: mediaType as any,
           createdAt: replayCreatedAt,
         });
+        invalidateSalesWorkspaceCache(organizationId); // o funil (realtime) não deve reler a mensagem antiga do cache
 
         if (!humanMessage) {
           return reply.status(200).send({ ok: true, skipped: "duplicate" });
@@ -483,6 +485,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       if (!message) {
         return reply.status(200).send({ ok: true, skipped: "duplicate" });
       }
+      invalidateSalesWorkspaceCache(organizationId); // o funil (realtime) não deve reler a mensagem antiga do cache
 
       // Ignored contact (retention_mode "minimal_record"): row kept, but
       // never enqueued for the AI and never synced to the CRM.

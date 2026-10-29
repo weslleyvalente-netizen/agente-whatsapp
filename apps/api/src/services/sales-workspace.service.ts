@@ -19,7 +19,9 @@ const CONVERSATION_SELECT = "id,contact_id,last_message_at,is_human_takeover,wa_
 async function readConversationsOfContacts(db: ReturnType<typeof getAdminClient>, organizationId: string, contactIds: string[], select: string): Promise<any[]> {
  const batches: string[][] = [];
  for (let i = 0; i < contactIds.length; i += CONVERSATION_BATCH) batches.push(contactIds.slice(i, i + CONVERSATION_BATCH));
- const parts = await Promise.all(batches.map(ids => readAll(() => db.from("conversations").select(select).eq("organization_id", organizationId).in("contact_id", ids).in("status", ["open", "waiting"]).is("messages.metadata->>after_hours_pending", null).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"}))));
+ const parts: any[][] = [];
+ // No máximo 3 consultas simultâneas, para não abrir dezenas de conexões de uma vez.
+ for (let i = 0; i < batches.length; i += 3) parts.push(...await Promise.all(batches.slice(i, i + 3).map(ids => readAll(() => db.from("conversations").select(select).eq("organization_id", organizationId).in("contact_id", ids).in("status", ["open", "waiting"]).is("messages.metadata->>after_hours_pending", null).order("id").order("created_at", {ascending:false, referencedTable:"messages"}).limit(1,{referencedTable:"messages"})))));
  return parts.flat();
 }
 
@@ -30,10 +32,11 @@ const workspaceInputs = createOrgCache<{ conversations: any[]; handoffs: any[]; 
 const distributionInputs = createOrgCache<{ reps: any[]; active: any[] }>(WORKSPACE_CACHE_MS);
 const orphanInputs = createOrgCache<{ tasks: any[]; businesses: any[]; conversations: any[] }>(WORKSPACE_CACHE_MS);
 export function invalidateSalesWorkspaceCache(organizationId: string) { workspaceInputs.invalidate(organizationId); distributionInputs.invalidate(organizationId); orphanInputs.invalidate(organizationId); }
-// Chamado pelo hook onResponse do servidor: escrita autenticada bem-sucedida descarta o cache da organização
+// Chamado pelo hook onSend do servidor: escrita autenticada não rejeitada com 401/403/404 descarta o cache da organização
 // (ou de todas as organizações do usuário quando a rota não expõe organizationId), para a tela refeita ver o dado novo.
 export function invalidateSalesWorkspaceCacheOnWrite(request: { method: string; params?: unknown; query?: unknown; user?: { memberships?: Array<{ organization_id: string }> } }, statusCode: number) {
- if (statusCode >= 400 || ["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) return;
+ // Erro parcial (400/500) pode ter gravado antes de falhar; só 401/403/404 garantem que nada mudou.
+ if ([401, 403, 404].includes(statusCode) || !["POST", "PUT", "PATCH", "DELETE"].includes(request.method.toUpperCase())) return;
  const org = (request.params as any)?.organizationId ?? (request.query as any)?.organizationId;
  const ids = typeof org === "string" ? [org] : (request.user?.memberships ?? []).map(m => m.organization_id);
  for (const id of ids) invalidateSalesWorkspaceCache(id);
@@ -62,10 +65,15 @@ export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType
 
 async function enrichOperational<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[]): Promise<Array<T & {sales_state?: SalesCardState}>> {
  const inputs = await loadWorkspaceInputs(db, organizationId);
- const { handoffs, tasks, openBusinesses } = inputs;
- // Linhas de negócios fechados/perdidos (outras listas) podem ter contatos fora do cache: busca só esses, sem cachear.
- const known = new Set<string>(openBusinesses.map(o => o.contact_id));
- const extra = [...new Set<string>(rows.map(o => o.contact_id).filter(id => !known.has(id)))];
+ const { handoffs, tasks } = inputs;
+ // Negócios abertos = cache + linhas abertas desta resposta (card recém-criado por worker ainda fora do cache);
+ // uma linha já fechada/perdida tira o negócio da contagem mesmo que o cache ainda o traga como aberto.
+ const openById = new Map<string, any>(inputs.openBusinesses.map(o => [o.id, o]));
+ for (const o of rows) { if (o.status === "open") openById.set(o.id, o); else openById.delete(o.id); }
+ const openBusinesses = [...openById.values()];
+ // Conversas em cache cobrem só os contatos do cache; contatos de outras linhas (novos, ganhos, perdidos) são buscados à parte, sem cache.
+ const covered = new Set<string>(inputs.openBusinesses.map(o => o.contact_id));
+ const extra = [...new Set<string>(rows.map(o => o.contact_id).filter(id => !covered.has(id)))];
  const conversations = extra.length ? [...inputs.conversations, ...await readConversationsOfContacts(db, organizationId, extra, CONVERSATION_SELECT)] : inputs.conversations;
  const latest = new Map<string, any>();
  for (const c of conversations) if (!latest.has(c.contact_id) || (c.last_message_at ?? "") > (latest.get(c.contact_id).last_message_at ?? "")) latest.set(c.contact_id,c);
@@ -108,9 +116,9 @@ async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeo
 export async function getSalesTasksWithoutOpenBusiness(db:ReturnType<typeof getAdminClient>,organizationId:string){
  // Só os contatos das tarefas sem negócio aberto precisam da última mensagem (as demais conversas não mudam o resultado).
  const {tasks,businesses,conversations}=await orphanInputs.get(organizationId,async()=>{
-  const [tasks,{openBusinesses:businesses}]=await Promise.all([
+  const [tasks,businesses]=await Promise.all([
    readAll(()=>db.from('tasks').select('*,wa_contacts(name,phone)').eq('organization_id',organizationId).in('status',['pending','in_progress','rescheduled']).order('due_date').order('id')),
-   loadWorkspaceInputs(db,organizationId),
+   readAll(()=>db.from('opportunities').select('id,contact_id').eq('organization_id',organizationId).eq('status','open').order('id')),
   ]);
   const open=new Set(businesses.map(o=>o.contact_id));const openIds=new Set(businesses.map(o=>o.id));
   const contactIds=[...new Set<string>(tasks.filter(t=>t.opportunity_id?!openIds.has(t.opportunity_id):!open.has(t.contact_id)).map(t=>t.contact_id).filter(Boolean))];

@@ -49,9 +49,25 @@
 ## Invalidação por escrita
 
 Para o vendedor não ver dado antigo por até 20 s depois de agir, `apps/api/src/server.ts` registra um hook
-`onResponse` que chama `invalidateSalesWorkspaceCacheOnWrite`: toda requisição que não seja GET/HEAD/OPTIONS e
-termine com status abaixo de 400 descarta os caches de insumos da organização (`params.organizationId` ou
-`query.organizationId`). Se a rota não expõe a organização (ex.: `/lead-assignments/:id/accept`, `/opportunities/:id/...`),
-descarta os de todas as organizações do usuário (`request.user.memberships`); o custo é só uma releitura.
-Respostas 4xx/5xx e requisições sem usuário (webhooks) não invalidam; escritas do worker/webhook podem aparecer
-até 20 s depois.
+`onSend` (antes de a resposta chegar ao cliente, o que fecha a corrida com o refetch da tela) que chama
+`invalidateSalesWorkspaceCacheOnWrite`: toda requisição POST/PUT/PATCH/DELETE descarta os caches de insumos da
+organização (`params.organizationId` ou `query.organizationId`), exceto respostas 401/403/404 (um erro parcial 400/500
+pode ter gravado antes de falhar). Se a rota não expõe a organização (ex.: `/lead-assignments/:id/accept`,
+`/opportunities/:id/...`), descarta os de todas as organizações do usuário (`request.user.memberships`); o custo é só
+uma releitura. Requisições sem usuário e sem organização não invalidam.
+
+O webhook da Evolution (`routes/webhooks/evolution.ts`) roda no processo da API e invalida a organização depois de
+gravar a mensagem do cliente (e o eco do celular), para o realtime do funil não reler o cache velho.
+
+Cards recém-criados por worker: a contagem de negócios abertos por contato usa o cache mais as linhas abertas da
+própria resposta (uma linha fechada tira o negócio da contagem), e as conversas de contatos fora do cache são buscadas
+à parte. As pendências sem negócio leem `opportunities(id,contact_id)` direto, junto com as tarefas.
+As buscas de conversas rodam em lotes de 100 ids, no máximo 3 consultas simultâneas.
+
+## Limites conhecidos
+
+- Cache e invalidação são em memória por processo: valem com 1 réplica da API. Com mais de uma, uma réplica não vê a
+  invalidação da outra e o dado pode ficar até 20 s atrasado.
+- Escritas feitas pelo worker não invalidam (até 20 s de atraso é aceito).
+- `recover-messages` (rota admin) responde antes de concluir o trabalho, então o dado recuperado pode ficar até
+  20 s velho no funil.

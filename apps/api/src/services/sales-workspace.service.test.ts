@@ -260,6 +260,14 @@ describe("tarefas sem negócio aberto com conversas só dos contatos das tarefas
 });
 
 describe("invalidação do cache em escritas", () => {
+ it.each(["POST", "PUT", "PATCH", "DELETE"])("%s invalida mesmo com erro parcial 500", async method => {
+  const { invalidateSalesWorkspaceCacheOnWrite } = await import("./sales-workspace.service.js");
+  const { db, calls } = filteringDb({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [conversaDe("c")], handoff_events: [], tasks: [] });
+  await enrichSalesWorkspace(db as any, "org", openRows as any, true); const n = calls.length;
+  invalidateSalesWorkspaceCacheOnWrite({ method, params: { organizationId: "org" } }, 500);
+  await enrichSalesWorkspace(db as any, "org", openRows as any, true);
+  expect(calls.length).toBeGreaterThan(n);
+ });
  const tabelas = () => ({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [conversaDe("c")], handoff_events: [], tasks: [] });
  async function leituras(escrita?: (m: typeof import("./sales-workspace.service.js")) => void) {
   const mod = await import("./sales-workspace.service.js");
@@ -284,10 +292,37 @@ describe("invalidação do cache em escritas", () => {
  it.each(["GET", "HEAD", "OPTIONS"])("%s não invalida", async method => {
   expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method, params: { organizationId: "org" }, user }, 200))).toBe(0);
  });
- it.each([400, 403, 500])("resposta %i não invalida", async status => {
+ it.each([401, 403, 404])("resposta %i não invalida", async status => {
   expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { organizationId: "org" }, user }, status))).toBe(0);
  });
  it("requisição sem usuário e sem organização (webhook) não invalida", async () => {
   expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: {} }, 200))).toBe(0);
+ });
+});
+
+describe("negócios abertos fora do cache e pendências sem negócio", () => {
+ it("card novo (fora do cache) conta como aberto e segundo negócio aberto dá contagem 2", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date(responseNow));
+  try {
+   const { db } = filteringDb({ opportunities: [{ id: "a", contact_id: "c" }], conversations: [conversaDe("c"), conversaDe("novo")], handoff_events: [{ conversation_id: "v-novo", motivo: "proposta_pronta", resumo: "Quer aderir", handed_at: "2026-10-04T14:58:00.000Z", first_human_reply_at: null }], tasks: [] });
+   await enrichSalesWorkspace(db as any, "org", openRows as any, true); // aquece o cache só com "c"
+   const novo = { id: "n", contact_id: "novo", status: "open", created_at: "2026-10-04" };
+   const out = await enrichSalesWorkspace(db as any, "org", [...openRows, novo, { id: "n2", contact_id: "c", status: "open", created_at: "2026-10-04" }] as any, true);
+   expect(out[1].sales_state).toMatchObject({ readyForHuman: true, customerReplied: true });
+   // "c" agora tem 2 negócios abertos (a do cache + n2): ambíguo, não vira pronto para humano
+   expect(out[0].sales_state?.readyForHuman).toBe(false);
+  } finally { vi.useRealTimers(); }
+ });
+ it("negócio fechado na resposta sai da contagem mesmo que o cache o traga como aberto", async () => {
+  const { db } = filteringDb({ opportunities: [{ id: "a", contact_id: "c" }, { id: "b", contact_id: "c" }], conversations: [conversaDe("c")], handoff_events: [{ conversation_id: "v-c", motivo: "proposta_pronta", resumo: "x", handed_at: "2026-10-04T14:58:00.000Z", first_human_reply_at: null }], tasks: [] });
+  const out = await enrichSalesWorkspace(db as any, "org", [{ id: "a", contact_id: "c", status: "open", created_at: "x" }, { id: "b", contact_id: "c", status: "won", created_at: "x" }] as any, true);
+  expect(out[0].sales_state?.readyForHuman).toBe(true);
+ });
+ it("pendências sem negócio leem os negócios abertos direto, não do cache do workspace", async () => {
+  const { getSalesTasksWithoutOpenBusiness } = await import("./sales-workspace.service.js");
+  const antigo = filteringDb({ opportunities: [], conversations: [], handoff_events: [], tasks: [] });
+  await enrichSalesWorkspace(antigo.db as any, "org", [{ id: "z", contact_id: "z", status: "open", created_at: "x" }] as any, true); // cache sem o negócio de "linked"
+  const { db } = filteringDb({ opportunities: [{ id: "a", contact_id: "linked" }], tasks: [{ id: "two", opportunity_id: null, contact_id: "linked", type: "other", due_date: "2026-10-02", created_at: "2026-10-01", status: "pending" }], conversations: [] });
+  expect(await getSalesTasksWithoutOpenBusiness(db as any, "org")).toEqual([]);
  });
 });
