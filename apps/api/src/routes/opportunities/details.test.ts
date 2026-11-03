@@ -47,6 +47,11 @@ describe("origin persistence", () => {
   const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "PATCH", url: "/opportunities/opp-1/origin", payload: { source: "instagram_organic" } });
   expect(r.statusCode).toBe(200); expect(m.update).toHaveBeenCalledWith({ metadata: { tag: "cliente", lead_origin: expect.objectContaining({ source: "instagram_organic", method: "manual", changed_by_id: "user-1" }) } }); await app.close();
  });
+ it("accepts the in-store visit origin", async () => {
+  m.getContactById.mockResolvedValue({ id: "contact-1", organization_id: "org-1", metadata: {} }); m.maybeSingle.mockResolvedValue({ data: { id: "contact-1" }, error: null });
+  const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "PATCH", url: "/opportunities/opp-1/origin", payload: { source: "store_visit" } });
+  expect(r.statusCode).toBe(200); await app.close();
+ });
  it("reports concurrent edits instead of overwriting metadata", async () => {
   m.getContactById.mockResolvedValue({ id: "contact-1", organization_id: "org-1", metadata: {} }); m.maybeSingle.mockResolvedValue({ data: null, error: null });
   const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "PATCH", url: "/opportunities/opp-1/origin", payload: { source: "site_wix" } }); expect(r.statusCode).toBe(409); await app.close();
