@@ -86,7 +86,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const db = getAdminClient();
     const opportunity = await getOpportunityById(db, request.params.opportunityId);
     if (!request.user.memberships.some(m => m.organization_id === opportunity.organization_id)) return reply.status(403).send({ error: "Access denied" });
-    const parsed = z.object({ source: z.enum(["site_wix", "facebook_ads", "instagram_ads", "meta_ads", "instagram_organic"]), evidence: z.string().trim().max(1000).optional() }).safeParse(request.body);
+    const parsed = z.object({ source: z.enum(["site_wix", "facebook_ads", "instagram_ads", "meta_ads", "instagram_organic", "store_visit"]), evidence: z.string().trim().max(1000).optional() }).safeParse(request.body);
     if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues });
     const contact = await getContactById(db, opportunity.contact_id);
     if (contact.organization_id !== opportunity.organization_id) return reply.status(403).send({ error: "Access denied" });

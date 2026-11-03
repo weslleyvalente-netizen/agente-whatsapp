@@ -1,9 +1,9 @@
-export type LeadOriginSource = "site_wix" | "facebook_ads" | "instagram_ads" | "meta_ads" | "instagram_organic";
+export type LeadOriginSource = "site_wix" | "facebook_ads" | "instagram_ads" | "meta_ads" | "instagram_organic" | "store_visit";
 export interface IdentifiedLeadOrigin { source: LeadOriginSource; evidence: string; }
 export const LEAD_ORIGIN_LABELS: Record<LeadOriginSource, string> = {
   site_wix: "Formulário do site (Wix)", facebook_ads: "Facebook — anúncio",
   instagram_ads: "Instagram — anúncio", meta_ads: "Anúncio Meta",
-  instagram_organic: "Instagram orgânico",
+  instagram_organic: "Instagram orgânico", store_visit: "Visita à loja (presencial)",
 };
 export function identifyLeadOrigin(input: { wix?: boolean; text?: string; ad?: Record<string, unknown> | null }): IdentifiedLeadOrigin | null {
   if (input.wix) return { source: "site_wix", evidence: "Webhook do formulário Wix" };
