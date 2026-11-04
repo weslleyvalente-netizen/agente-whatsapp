@@ -283,9 +283,9 @@ export async function resolveAwaitingCustomerPendency(
   return { taskCompleted: true };
 }
 
-// Alertas de "cliente parado": a premissa deles ("sem mensagem de nenhum lado") deixa de valer quando o cliente responde.
+// Alertas de "cliente parado" (e o lembrete "Cutucar cliente"): a premissa deles ("sem mensagem de nenhum lado") deixa de valer quando o cliente responde.
 // Tarefas de AÇÃO do vendedor (follow-up, cobrar documentos, retornar) NÃO entram aqui: o cliente responder não quer dizer que a ação foi feita.
-const RESOLVED_ON_CUSTOMER_REPLY: TaskType[] = ["customer_unresponsive", "stalled_negotiation"];
+const RESOLVED_ON_CUSTOMER_REPLY: TaskType[] = ["customer_unresponsive", "stalled_negotiation", "customer_nudge"];
 
 /** Resolve silence / stalled-negotiation alerts only on a persisted inbound reply, even during human takeover. */
 export async function resolveUnresponsiveTasksOnReply(
@@ -301,7 +301,9 @@ export async function resolveUnresponsiveTasksOnReply(
       await resolveAwaitingCustomerPendency(client, input.organizationId, task.id, type,
         type === "stalled_negotiation"
           ? `Cliente respondeu — negociação parada retomada. Mensagem: ${input.messageId}`
-          : `Cliente respondeu — pendência sem resposta resolvida. Mensagem: ${input.messageId}`, 0, input.createdAt);
+          : type === "customer_nudge"
+            ? `Cliente respondeu — não precisa mais cutucar. Mensagem: ${input.messageId}`
+            : `Cliente respondeu — pendência sem resposta resolvida. Mensagem: ${input.messageId}`, 0, input.createdAt);
     }
   }
 }
