@@ -1,6 +1,6 @@
 /** Papéis com acesso às telas de configuração (o banco e a API usam o mesmo critério: owner/admin). */
 export const MANAGER_ROLES = ["owner", "admin"] as const;
-export const SELLER_HOME = "/inbox";
+export const SELLER_HOME = "/opportunities";
 
 /** Telas que o vendedor (papel `agent`) não pode abrir. */
 export const MANAGER_ONLY_PREFIXES = ["/agents", "/instances", "/costs", "/team", "/settings", "/calls"] as const;

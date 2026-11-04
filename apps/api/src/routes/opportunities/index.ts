@@ -28,7 +28,7 @@ import {
   updateOpportunityFields,
 } from "../../services/opportunity.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
-import { isLeadVisible, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
+import { isLeadVisible, isManager, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
 
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
@@ -86,9 +86,18 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     if (!conversationId) return reply.status(400).send({ error: "Conversa inválida" });
     const db = getAdminClient();
     const open = await listOpenOpportunitiesForConversation(db, organizationId, conversationId);
-    const picked = pickFunnelOpportunity(open.map(o => ({ id: o.id, ownerId: o.owner_id, lastInteractionAt: o.last_interaction_at })));
+    // Filtra pelo que o vendedor pode ver ANTES de escolher: o negócio mais recente pode ser de outro vendedor.
+    let visible = open;
+    if (open.length && !isManager(membership.role)) {
+      const org = await getOrganizationById(db, organizationId);
+      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
+      if (viewer.mode === "own") {
+        const repUsers = new Set((await listSalesReps(db, organizationId)).map(r => r.user_id));
+        visible = open.filter(o => isLeadVisible(viewer, o.owner_id, repUsers));
+      }
+    }
+    const picked = pickFunnelOpportunity(visible.map(o => ({ id: o.id, ownerId: o.owner_id, lastInteractionAt: o.last_interaction_at })));
     if (!picked) return { opportunity_id: null };
-    if (!(await canViewLead(db, organizationId, membership.role, request.user.id, picked.ownerId))) return { opportunity_id: null };
     return { opportunity_id: picked.id };
   });
 

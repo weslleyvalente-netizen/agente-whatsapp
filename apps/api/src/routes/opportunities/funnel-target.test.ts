@@ -37,6 +37,10 @@ describe("funnel-target", () => {
     m.listOpenOpportunitiesForConversation.mockResolvedValue([opp("o1", "marcio-user", "2026-01-01")]);
     expect((await get(`/organizations/org-1/conversations/${CONV}/funnel-target`)).json()).toEqual({ opportunity_id: null });
   });
+  it("negócio mais recente é de outro vendedor → devolve o próprio", async () => {
+    m.listOpenOpportunitiesForConversation.mockResolvedValue([opp("do-marcio", "marcio-user", "2026-05-01"), opp("meu", "marina-user", "2026-01-01")]);
+    expect((await get(`/organizations/org-1/conversations/${CONV}/funnel-target`)).json()).toEqual({ opportunity_id: "meu" });
+  });
   it("gestor recebe o negócio de qualquer vendedor", async () => {
     m.role.value = "admin"; m.listOpenOpportunitiesForConversation.mockResolvedValue([opp("o1", "marcio-user", "2026-01-01")]);
     expect((await get(`/organizations/org-1/conversations/${CONV}/funnel-target`)).json()).toEqual({ opportunity_id: "o1" });

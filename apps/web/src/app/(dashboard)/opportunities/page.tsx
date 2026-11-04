@@ -99,8 +99,7 @@ export default function OpportunitiesPage() {
         const { opportunities: list, unidentified: pending } = listsRef.current;
         const found = opportunity_id ? list.find(o => o.id === opportunity_id) : undefined;
         if (found) setSearchSelected(found);
-        else if (opportunity_id) router.replace("/opportunities");
-        else if (pending.some(row => row.id === conversaParam)) setUnidentifiedSelected(conversaParam);
+        else if (!opportunity_id && pending.some(row => row.id === conversaParam)) setUnidentifiedSelected(conversaParam);
         else router.replace(`/inbox?id=${conversaParam}`);
       } catch {
         router.replace("/opportunities");

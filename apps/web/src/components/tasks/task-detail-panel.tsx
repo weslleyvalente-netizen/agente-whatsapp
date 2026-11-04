@@ -381,15 +381,18 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               >
                 Concluir
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!details.task.conversation_id}
-                onClick={() => details.task.conversation_id && router.push(funnelConversationHref(details.task.conversation_id))}
-                title={!details.task.conversation_id ? "Esta tarefa não tem conversa vinculada" : undefined}
-              >
-                Abrir conversa
-              </Button>
+              {/* Embutido no card do funil o chat já está ao lado: o botão abriria um segundo diálogo por cima. */}
+              {!embedded && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!details.task.conversation_id}
+                  onClick={() => details.task.conversation_id && router.push(funnelConversationHref(details.task.conversation_id))}
+                  title={!details.task.conversation_id ? "Esta tarefa não tem conversa vinculada" : undefined}
+                >
+                  Abrir conversa
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
