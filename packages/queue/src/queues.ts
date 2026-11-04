@@ -83,6 +83,12 @@ export function getUnansweredLeadSweepQueue() {
   return unansweredLeadSweepQueue;
 }
 
+let customerNudgeQueue: Queue<{}> | undefined;
+export function getCustomerNudgeQueue() {
+  if (!customerNudgeQueue) customerNudgeQueue = new Queue<{}>(QUEUE_NAMES.CUSTOMER_NUDGE, { connection: getRedisConnection() });
+  return customerNudgeQueue;
+}
+
 let pushNotificationsQueue: Queue<{}> | undefined;
 export function getPushNotificationsQueue() {
   if (!pushNotificationsQueue) pushNotificationsQueue = new Queue<{}>(QUEUE_NAMES.PUSH_NOTIFICATIONS, { connection: getRedisConnection() });

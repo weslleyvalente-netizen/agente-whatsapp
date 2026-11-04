@@ -446,6 +446,14 @@ describe("customer reply resolves unresponsive pendencies",()=>{
   expect(tables.tasks.find(t=>t.id==="outro")!.status).toBe("pending"); // outra conversa
   expect(tables.task_events.some(e=>String(e.note).includes("negociação parada retomada"))).toBe(true);
  });
+ it("a resposta do cliente conclui o lembrete Cutucar cliente (só da conversa e só o anterior à resposta)",async()=>{
+  const {client,tables}=makeFakeClient({tasks:[row({id:"nudge",type:"customer_nudge"}),row({id:"nudge-outra",type:"customer_nudge",conversation_id:"other"}),row({id:"nudge-nova",type:"customer_nudge",created_at:"2026-10-02T17:00:00Z"})]});
+  await resolveUnresponsiveTasksOnReply(client,reply);
+  expect(tables.tasks.find(t=>t.id==="nudge")!.status).toBe("completed");
+  expect(tables.tasks.find(t=>t.id==="nudge-outra")!.status).toBe("pending");
+  expect(tables.tasks.find(t=>t.id==="nudge-nova")!.status).toBe("pending");
+  expect(tables.task_events.some(e=>String(e.note).includes("não precisa mais cutucar"))).toBe(true);
+ });
  it("alerta de negociação parada criado depois da resposta não é fechado, e as outras pendências consolidadas ficam",async()=>{
   const newer=row({id:"novo",type:"stalled_negotiation",created_at:"2026-10-02T17:00:00Z"});
   const remaining={type:"proposal_followup",description:"Acompanhar proposta",priority:"normal",due_date:"2026-10-03",due_time:null,added_at:"2026-10-02T12:00:00Z",reason:null};

@@ -55,6 +55,8 @@ export interface OrganizationSettings {
   push_notifications_enabled?: boolean;
   // Varredura de cliente sem resposta: reenvia à IA a última mensagem que ficou sem resposta e avisa o responsável. Desligado por padrão.
   unanswered_lead_sweep_enabled?: boolean;
+  // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.
+  customer_nudge_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;

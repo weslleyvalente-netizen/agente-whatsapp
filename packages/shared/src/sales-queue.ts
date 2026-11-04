@@ -11,7 +11,7 @@ export function classifySalesQueue(row:SalesQueueInput,now:string){
  else if(row.sales_state?.customerReplied)group='customer_replied';
  else if(row.waiting_on==='bank_or_admin')group='waiting';
  else if(tasks.length && tasks.every(t=>t.type==='customer_unresponsive') && !['conditions_approved_negotiation','financing_rejected'].includes(row.stage))group='no_response';
- else if(tasks.some(t=>t.type==='scheduled_callback'&&t.due_date<=today) || !!row.next_action_due_date&&row.next_action_due_date<=today)group='due_today';
+ else if(tasks.some(t=>(t.type==='scheduled_callback'||t.type==='customer_nudge')&&t.due_date<=today) || !!row.next_action_due_date&&row.next_action_due_date<=today)group='due_today';
  else if(row.waiting_on==='customer')group='waiting';
  else if(tasks.some(t=>t.due_date<today))group='overdue';
  else if(tasks.some(t=>t.due_date<=today))group='action';

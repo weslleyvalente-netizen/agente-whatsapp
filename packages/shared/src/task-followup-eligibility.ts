@@ -4,6 +4,7 @@ import type { TaskType } from "./types/task.js";
 // "send follow-up from the task" feature. Left out on purpose: run_quote /
 // update_quote (internal actions, no message to the customer) and "other"
 // (too ambiguous to assume it's customer-facing).
+// customer_nudge também fica de fora: é lembrete ao vendedor (ele mesmo cutuca); a IA não manda nada ao cliente.
 export const TASK_FOLLOWUP_ELIGIBLE_TYPES: readonly TaskType[] = [
   "return_customer",
   "request_documents",

@@ -34,6 +34,7 @@ export const TASK_TYPES = [
   "customer_unresponsive",
   "stalled_negotiation",
   "libera_cred_resumption",
+  "customer_nudge",
   "other",
 ] as const;
 
@@ -53,16 +54,17 @@ export const TASK_TYPE_LABELS: Record<(typeof TASK_TYPES)[number], string> = {
   customer_unresponsive: "Cliente parou de responder",
   stalled_negotiation: "Negociação sem conclusão",
   libera_cred_resumption: "Retomada LiberaCred",
+  customer_nudge: "Cutucar cliente",
   other: "Outro",
 };
 
 // Types that represent real evidence of commercial intent — used both by
 // the stale-conversation safety net (only fires when one of these exists)
 // and by isHotLead (a task only counts as a "hot lead" when its type is in
-// this set). "other" and "customer_unresponsive" are deliberately excluded:
-// neither is proof of intent on its own.
+// this set). "other", "customer_unresponsive" and "customer_nudge" are deliberately
+// excluded: none is proof of intent on its own (nudge is only a reminder to the seller).
 export const OPPORTUNITY_SIGNAL_TASK_TYPES: Array<(typeof TASK_TYPES)[number]> = TASK_TYPES.filter(
-  (type) => type !== "other" && type !== "customer_unresponsive"
+  (type) => type !== "other" && type !== "customer_unresponsive" && type !== "customer_nudge"
 );
 
 export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
@@ -187,6 +189,7 @@ export const QUEUE_NAMES = {
   STORE_CUSTOMER_AUDIO: "store-customer-audio",
   CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",
   UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
+  CUSTOMER_NUDGE: "customer-nudge",
 } as const;
 
 export const OPERATIONS = [

@@ -6,6 +6,7 @@ import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout.js";
 import { startStaleConversationFollowupWorker } from "./workers/stale-conversation-followup.js";
 import { startLeadSlaWorker } from "./workers/lead-sla.js";
 import { startUnansweredLeadSweepWorker } from "./workers/unanswered-lead-sweep.js";
+import { startCustomerNudgeWorker } from "./workers/customer-nudge.js";
 import { startPushNotificationsWorker } from "./workers/push-notifications.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
 
@@ -23,6 +24,7 @@ async function main() {
     startLeadSlaWorker(),
     startPushNotificationsWorker(),
     startUnansweredLeadSweepWorker(),
+    startCustomerNudgeWorker(),
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
   ];

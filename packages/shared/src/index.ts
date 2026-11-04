@@ -48,3 +48,4 @@ export * from "./customer-audio.js";
 export * from "./ai-after-hours.js";
 export * from './manual-financing.js';
 export * from "./business-hours-form.js";
+export * from "./customer-nudge.js";
