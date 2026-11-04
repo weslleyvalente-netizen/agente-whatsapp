@@ -18,6 +18,7 @@ import type { LLMProvider, IgnoredContactRetentionMode, OrganizationIgnoredConta
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
 import { RecoverMessagesCard } from "@/components/settings/recover-messages-card";
 import { SystemAlertsCard } from "@/components/settings/system-alerts-card";
+import { BusinessHoursCard } from "@/components/settings/business-hours-card";
 import {
   DEFAULT_HUMAN_TAKEOVER_TIMEOUT_MINUTES,
   DEFAULT_HANDOFF_UNANSWERED_ALERT_MINUTES,
@@ -772,9 +773,11 @@ export default function SettingsPage() {
             </div>
           )}
           {leadError && <p role="alert" className="text-sm text-destructive">{leadError}</p>}
-          <p className="text-xs text-muted-foreground">O calendário comercial padrão é segunda a sexta, 08:00–18:00. Para atender aos sábados, configure <code>business_calendar</code> (janela de sábado).</p>
+          <p className="text-xs text-muted-foreground">O horário comercial e os feriados são configurados no cartão &quot;Horário comercial e feriados&quot;, logo abaixo.</p>
         </CardContent>
       </Card>
+
+      {currentOrg && <BusinessHoursCard orgId={currentOrg.id} calendar={currentOrg.settings.business_calendar} isManager={isManager} onSaved={refetch} />}
 
       <Card>
         <CardHeader><CardTitle>Operação no funil de vendas</CardTitle><CardDescription>Encaminhamentos da IA, indicadores nos leads, conversa e tarefas dentro do negócio.</CardDescription></CardHeader>
