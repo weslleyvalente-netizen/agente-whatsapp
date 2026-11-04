@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {classifySalesQueue,sortSalesQueue} from './sales-queue.js';
+import {classifySalesQueue,sortSalesQueue,countSalesQueueGroups,SALES_QUEUE_ACT_NOW_GROUPS} from './sales-queue.js';
 import {classifySalesCard} from './sales-workspace.js';
 const now='2026-10-02T11:00:00Z';
 const base={id:'a',created_at:'2026-10-01',status:'open',stage:'qualification',waiting_on:null,next_action_due_date:null,frozen_until:null,sales_state:{readyForHuman:false,customerReplied:false,humanPending:false,taskCount:1},tasks:[]};
@@ -100,5 +100,21 @@ describe('handoff card (negócio criado no encaminhamento para humano)',()=>{
   const answered=card(1,{...handoff,first_human_reply_at:'2026-10-02T10:50:00Z'});
   expect(answered.readyForHuman).toBe(false);
   expect(classifySalesQueue({...base,stage:'interest_received',sales_state:{...answered}},now).group).not.toBe('ready');
+ });
+});
+
+describe('countSalesQueueGroups',()=>{
+ it('counts every row in the group classifySalesQueue gives it',()=>{
+  const ready={...base,id:'r',sales_state:{...base.sales_state,readyForHuman:true}};
+  const replied={...base,id:'c',sales_state:{...base.sales_state,customerReplied:true}};
+  const overdue={...base,id:'o',tasks:[{type:'run_quote',priority:'normal',due_date:'2026-10-01'}]};
+  const closed={...base,id:'x',status:'won'};
+  const counts=countSalesQueueGroups([ready,replied,overdue,overdue,closed],now);
+  expect(counts).toMatchObject({ready:1,customer_replied:1,overdue:2,other:1,due_today:0});
+  expect(Object.values(counts).reduce((a,b)=>a+b,0)).toBe(5);
+ });
+ it('returns zeros for an empty list and exposes the act-now groups',()=>{
+  expect(Object.values(countSalesQueueGroups([],now)).every(n=>n===0)).toBe(true);
+  expect(SALES_QUEUE_ACT_NOW_GROUPS).toEqual(['ready','customer_replied','due_today','overdue']);
  });
 });

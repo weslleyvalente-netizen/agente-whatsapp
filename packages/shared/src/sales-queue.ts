@@ -20,6 +20,14 @@ export function classifySalesQueue(row:SalesQueueInput,now:string){
  const rank=['ready','customer_replied','due_today','overdue','action','scheduled','waiting','no_response','other'].indexOf(group);
  return {group,rank,label:SALES_QUEUE_LABELS[group]};
 }
+/** Quantos negócios caem em cada grupo da fila (mesma classificação do Kanban), para o contador "Para agir agora". */
+export function countSalesQueueGroups(rows:SalesQueueInput[],now:string):Record<SalesQueueGroup,number>{
+ const counts=Object.fromEntries(Object.keys(SALES_QUEUE_LABELS).map(k=>[k,0])) as Record<SalesQueueGroup,number>;
+ for(const r of rows)counts[classifySalesQueue(r,now).group]++;
+ return counts;
+}
+/** Grupos que pedem ação do vendedor agora, na ordem da fila. */
+export const SALES_QUEUE_ACT_NOW_GROUPS:SalesQueueGroup[]=['ready','customer_replied','due_today','overdue'];
 // How far along the sale is, across every operation's stage names. Unknown stages count as the lowest.
 const STAGE_DEPTH:Record<string,number>={qualification:1,documentation:2,compatible_letter_search:2,proposal_sent:2,simulation_sent:2,plan_term_presented:2,awaiting_simulation:3,bank_analysis:3,negotiation:3,decision_negotiation:3,decision_objections:3,conditions_approved_negotiation:4,formalization:4,membership:4,analysis_transfer:4};
 /** Interest first (hot handoff, then stage depth), so stale cold tasks never outrank a warm lead. */
