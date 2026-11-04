@@ -57,24 +57,33 @@ export async function listRecentConversationsForContacts(db: SupabaseClient, org
   return out;
 }
 
-export interface NudgeMessage { id: string; role: string; content: string; mediaType: string | null; createdAt: string }
+export interface NudgeMessage { id: string; role: string; mediaType: string | null; createdAt: string }
 
-const toMessage = (r: any): NudgeMessage => ({ id: r.id, role: r.role, content: r.content ?? "", mediaType: r.media_type ?? null, createdAt: r.created_at });
+const toMessage = (r: any): NudgeMessage => ({ id: r.id, role: r.role, mediaType: r.media_type ?? null, createdAt: r.created_at });
 
-/** Última mensagem da conversa, de qualquer papel (uma linha só). */
-export async function getLastConversationMessage(db: SupabaseClient, conversationId: string): Promise<NudgeMessage | null> {
-  const { data, error } = await db.from("messages").select("id, role, content, media_type, created_at")
-    .eq("conversation_id", conversationId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+/** Última mensagem da conversa, de qualquer papel (uma linha, só papel e data: o texto não é necessário aqui). */
+export async function getLastConversationMessage(db: SupabaseClient, organizationId: string, conversationId: string): Promise<Pick<NudgeMessage, "role" | "createdAt"> | null> {
+  const { data, error } = await db.from("messages").select("role, created_at")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? { role: (data as any).role, createdAt: (data as any).created_at } : null;
+}
+
+/** Última mensagem do cliente (role contact), sem o texto: dá o corte dos toques. O texto vem de getMessageText só quando precisa. */
+export async function getLastCustomerMessage(db: SupabaseClient, organizationId: string, conversationId: string): Promise<NudgeMessage | null> {
+  const { data, error } = await db.from("messages").select("id, role, media_type, created_at")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("role", "contact")
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   return data ? toMessage(data) : null;
 }
 
-/** Última mensagem do cliente (role contact) da conversa, com texto: dá o corte dos toques e o filtro de encerramento. */
-export async function getLastCustomerMessage(db: SupabaseClient, conversationId: string): Promise<NudgeMessage | null> {
-  const { data, error } = await db.from("messages").select("id, role, content, media_type, created_at")
-    .eq("conversation_id", conversationId).eq("role", "contact").order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
+/** Texto de uma mensagem (usado só no filtro de recusa, depois que a tarefa já sairia). */
+export async function getMessageText(db: SupabaseClient, organizationId: string, messageId: string): Promise<string> {
+  const { data, error } = await db.from("messages").select("content").eq("organization_id", organizationId).eq("id", messageId).maybeSingle();
   if (error) throw error;
-  return data ? toMessage(data) : null;
+  return ((data as { content: string | null } | null)?.content) ?? "";
 }
 
 export interface NudgeTaskRef { id: string; status: string; createdAt: string }
@@ -122,10 +131,10 @@ export async function listContactIdsWithOpenOpportunity(db: SupabaseClient, orga
   return out;
 }
 
-/** O vendedor (role human_agent) já mandou mensagem na conversa depois do instante informado? */
-export async function hasSellerMessageAfter(db: SupabaseClient, conversationId: string, afterIso: string): Promise<boolean> {
+/** O vendedor (role human_agent; mensagem da IA não conta) já mandou mensagem na conversa depois do instante informado? */
+export async function hasSellerMessageAfter(db: SupabaseClient, organizationId: string, conversationId: string, afterIso: string): Promise<boolean> {
   const { count, error } = await db.from("messages").select("id", { count: "exact", head: true })
-    .eq("conversation_id", conversationId).eq("role", "human_agent").gt("created_at", afterIso);
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("role", "human_agent").gt("created_at", afterIso);
   if (error) throw error;
   return (count ?? 0) > 0;
 }

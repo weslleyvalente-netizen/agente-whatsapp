@@ -17,7 +17,7 @@ export const CUSTOMER_NUDGE_MAX_NEW_PER_RUN = 25;
 
 export type CustomerNudgeSkipReason =
   | "no_owner" | "too_old" | "outside_business_hours" | "max_touches" | "open_task" | "frozen"
-  | "waiting_scheduled" | "waiting_on_us" | "closing_ack" | "not_due_yet";
+  | "waiting_scheduled" | "waiting_on_us" | "customer_refused" | "not_due_yet";
 
 export interface CustomerNudgeInput {
   now: Date;
@@ -35,8 +35,8 @@ export interface CustomerNudgeInput {
   opportunity: { waiting_on: string | null; waiting_on_until: string | null } | null;
   /** Data de hoje (YYYY-MM-DD) no fuso do calendário, para o gate de retorno combinado. */
   todayISODate: string;
-  /** A última mensagem do cliente antes da do vendedor é só um encerramento/agradecimento/recusa. */
-  customerClosing: boolean;
+  /** A última mensagem do cliente antes da do vendedor é uma recusa explícita (só recusa pula; "ok/obrigado" seguido de silêncio é cutucado). */
+  customerRefused: boolean;
 }
 
 export type CustomerNudgeDecision =
@@ -45,7 +45,7 @@ export type CustomerNudgeDecision =
 
 /**
  * Decide se hoje deve nascer a tarefa "Cutucar cliente" e em que toque (1 a 3).
- * Os fatos caros (congelado, encerramento) podem vir `false` numa primeira passada barata; quem chama só os consulta
+ * Os fatos caros (congelado, recusa) podem vir `false` numa primeira passada barata; quem chama só os consulta
  * quando esta função já devolveria "create" e então decide de novo com os valores reais.
  */
 export function decideCustomerNudge(i: CustomerNudgeInput): CustomerNudgeDecision {
@@ -63,7 +63,7 @@ export function decideCustomerNudge(i: CustomerNudgeInput): CustomerNudgeDecisio
   const gate = decideFollowupGate(i.opportunity, i.todayISODate);
   if (gate === "skip_scheduled_callback") return skip("waiting_scheduled");
   if (gate !== "send") return skip("waiting_on_us");
-  if (i.customerClosing) return skip("closing_ack");
+  if (i.customerRefused) return skip("customer_refused");
   return { action: "create", touch: i.priorTouches + 1, ladderDays: CUSTOMER_NUDGE_LADDER_DAYS[i.priorTouches] };
 }
 

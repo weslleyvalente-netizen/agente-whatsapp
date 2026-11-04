@@ -7,7 +7,7 @@ const SENT = new Date("2026-10-29T17:55:00Z");
 const base = (over: Partial<CustomerNudgeInput> = {}): CustomerNudgeInput => ({
   now: new Date("2026-10-30T18:00:00Z"), // sexta 15:00
   calendar: DEFAULT_BUSINESS_CALENDAR, lastSellerMessageAt: SENT, priorTouches: 0, ownerId: "u1", hasOpenTask: false, frozen: false,
-  opportunity: { waiting_on: null, waiting_on_until: null }, todayISODate: "2026-10-30", customerClosing: false, ...over,
+  opportunity: { waiting_on: null, waiting_on_until: null }, todayISODate: "2026-10-30", customerRefused: false, ...over,
 });
 const skip = (reason: string) => ({ action: "skip", reason });
 
@@ -59,7 +59,7 @@ describe("decideCustomerNudge: quando não cria", () => {
     expect(decideCustomerNudge(base({ opportunity: { waiting_on: "bank_or_admin", waiting_on_until: null } }))).toEqual(skip("waiting_on_us"));
     expect(decideCustomerNudge(base({ opportunity: { waiting_on: "customer", waiting_on_until: null } }))).toMatchObject({ action: "create" });
   });
-  it("cliente se despediu/agradeceu antes", () => expect(decideCustomerNudge(base({ customerClosing: true }))).toEqual(skip("closing_ack")));
+  it("cliente recusou explicitamente antes", () => expect(decideCustomerNudge(base({ customerRefused: true }))).toEqual(skip("customer_refused")));
 });
 
 describe("buildCustomerNudgeTask", () => {

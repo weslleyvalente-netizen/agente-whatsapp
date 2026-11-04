@@ -5,30 +5,41 @@ import {
 } from "@aula-agente/shared";
 import { getCustomerNudgeQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  claimPushDedupe, completeNudgeTask, createTaskWithDedup, getAdminClient, getLastConversationMessage, getLastCustomerMessage, hasFrozenContact,
+  claimPushDedupe, completeNudgeTask, createTaskWithDedup, getAdminClient, getLastConversationMessage, getLastCustomerMessage, getMessageText, hasFrozenContact,
   hasPushSubscription, hasSellerMessageAfter, isPushConfigured, listContactIdsWithOpenOpportunity, listCurrentMemberIds, listCustomerNudgeOrganizations,
   listNudgeTasksByConversation, listOpenNudgeTasks, listOpenOpportunitiesForNudge, listOpenOpportunityIds, listRecentConversationsForContacts,
   releasePushDedupe, sendPushToUser,
   type NudgeConversation, type NudgeMessage, type NudgeOpportunity, type NudgeOrganization, type NudgeTaskRef, type OpenNudgeTask, type PushPayload,
 } from "@aula-agente/database";
-import { isClosingAcknowledgement } from "../lib/unanswered-sweep.js";
 
 const RUN_EVERY_MS = 30 * 60_000;
 const OPEN_STATUSES = ["pending", "in_progress", "rescheduled"];
 
-/** Recusa explícita do cliente ("não tenho interesse", "desisti"): quem recusou não leva cutucada. Conservador, como o filtro de encerramento. */
-const REFUSAL = /\b(nao (tenho|tem|quero|vou|preciso)( mais)? ?(de )?(interesse|querer|comprar|fechar|mais nada)?|sem interesse|desisti|desistir|ja (comprei|fechei|resolvi))\b/;
+/**
+ * Recusa explícita do cliente: só frases fechadas, a mensagem INTEIRA. "ok/obrigado" NÃO é recusa (a cliente que agradece e some deve ser cutucada),
+ * e "não tem problema", "não tenho o RG aqui", "não vou conseguir hoje", "não quero parcela alta" também não.
+ */
+const REFUSAL = new RegExp("^(" + [
+  "sem interesse", "(eu )?nao tenho (mais )?interesse( no (consorcio|financiamento|plano|negocio))?", "(eu )?nao (tenho|tinha) mais interesse",
+  "(eu )?desisti( do (consorcio|financiamento|negocio))?", "desisti", "ja (comprei|fechei|resolvi)( (tudo|isso|em outro lugar|em outra empresa))?",
+  "(eu )?nao quero mais", "(eu )?nao vou mais (comprar|fechar)", "(eu )?nao vou (comprar|fechar)",
+  "pode (encerrar|cancelar)( o (atendimento|contato|pedido|cadastro))?",
+].join("|") + ")( obrigad[oa])?$");
 export function isCustomerRefusal(content: string): boolean {
-  const text = content.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
-  return text.length > 0 && text.length <= 80 && REFUSAL.test(text);
+  const text = content.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 0 && text.length <= 60 && REFUSAL.test(text);
 }
 
 export interface NudgeDeps {
   listOrganizations(): Promise<NudgeOrganization[]>;
   listOpenOpportunities(organizationId: string): Promise<NudgeOpportunity[]>;
   listConversations(organizationId: string, contactIds: string[], sinceIso: string): Promise<NudgeConversation[]>;
-  lastMessage(conversationId: string): Promise<NudgeMessage | null>;
-  lastCustomerMessage(conversationId: string): Promise<NudgeMessage | null>;
+  lastMessage(organizationId: string, conversationId: string): Promise<{ role: string; createdAt: string } | null>;
+  lastCustomerMessage(organizationId: string, conversationId: string): Promise<NudgeMessage | null>;
+  /** Texto de uma mensagem: só consultado quando a tarefa já sairia (filtro de recusa). */
+  messageText(organizationId: string, messageId: string): Promise<string>;
+  /** O dono ainda é membro da organização? Ex-membro = sem dono. */
+  isMember(organizationId: string, userId: string): Promise<boolean>;
   nudgeTasks(organizationId: string, conversationId: string): Promise<NudgeTaskRef[]>;
   isFrozen(organizationId: string, contactId: string): Promise<boolean>;
   createTask(input: { organizationId: string; contactId: string; conversationId: string; opportunityId: string; ownerId: string; description: string; reason: string; priority: "normal" | "high"; dueDate: string }): Promise<{ id: string; wasUpdated: boolean }>;
@@ -37,7 +48,7 @@ export interface NudgeDeps {
   listOpenNudgeTasks(organizationId: string): Promise<OpenNudgeTask[]>;
   openOpportunityIds(organizationId: string, ids: string[]): Promise<Set<string>>;
   contactsWithOpenOpportunity(organizationId: string, contactIds: string[]): Promise<Set<string>>;
-  sellerMessageAfter(conversationId: string, afterIso: string): Promise<boolean>;
+  sellerMessageAfter(organizationId: string, conversationId: string, afterIso: string): Promise<boolean>;
   completeTask(organizationId: string, taskId: string, note: string): Promise<void>;
   // Push ao vendedor
   canReceivePush(organizationId: string, userId: string): Promise<boolean>;
@@ -52,6 +63,10 @@ export interface NudgeSummary { organizations: number; created: number; resolved
 export const nudgePushDedupeKey = (taskId: string) => `nudge:${taskId}`;
 const errText = (e: unknown) => String((e as { message?: string } | null)?.message ?? e).replace(/\d{8,}/g, "***").slice(0, 200);
 
+/**
+ * Vários negócios abertos no mesmo contato: escolhe um só (dono, waiting_on e opportunity_id da tarefa vêm dele) —
+ * prefere o que tem dono e, entre eles, o de interação mais recente. Não cria uma tarefa por negócio.
+ */
 /** Dono do negócio aberto do contato: prefere negócio com dono e, entre eles, o de interação mais recente. */
 function pickOpportunity(list: NudgeOpportunity[]): NudgeOpportunity {
   return [...list].sort((a, b) => (a.ownerId ? 0 : 1) - (b.ownerId ? 0 : 1) || (b.lastInteractionAt ?? "").localeCompare(a.lastInteractionAt ?? "") || a.id.localeCompare(b.id))[0];
@@ -68,10 +83,16 @@ export async function runCustomerNudge(deps: NudgeDeps, now = new Date()): Promi
 
   for (const org of orgs) {
     summary.organizations++;
-    const settings = org.settings as { business_calendar?: unknown; push_notifications_enabled?: unknown };
+    const settings = org.settings as { business_calendar?: unknown; push_notifications_enabled?: unknown; task_consolidation_by_opportunity_enabled?: unknown };
     const calendar = resolveBusinessCalendar(settings.business_calendar);
     try { summary.resolved += await resolveNudgeTasks(deps, org.id); }
     catch (err) { summary.errors++; deps.log.error(`customer-nudge: org ${org.id} auto-resolve failed (${errText(err)})`); }
+    // Consolidação por negócio funde tarefas (o tipo principal muda): a contagem de toques e a resolução deixariam de enxergar o cutucar.
+    if (settings.task_consolidation_by_opportunity_enabled === true) {
+      skip("consolidation_enabled");
+      deps.log.error(`customer-nudge: org ${org.id} skipped — task_consolidation_by_opportunity_enabled está ligada; o cutucar não cria tarefas nessa configuração`);
+      continue;
+    }
     // Só cria/avisa dentro do expediente, para a tarefa aparecer de manhã.
     if (!isBusinessOpen(now, calendar)) { skip("outside_business_hours"); continue; }
     try { await createNudgeTasks(deps, org.id, calendar, settings.push_notifications_enabled === true, now, summary, skip); }
@@ -95,7 +116,7 @@ async function resolveNudgeTasks(deps: NudgeDeps, organizationId: string): Promi
       const stillOpen = t.opportunityId ? openOpps.has(t.opportunityId) : openContacts.has(t.contactId);
       let note: string | null = null;
       if (!stillOpen) note = "O negócio deixou de estar aberto — lembrete de cutucar encerrado.";
-      else if (t.conversationId && (await deps.sellerMessageAfter(t.conversationId, t.createdAt))) note = "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa).";
+      else if (t.conversationId && (await deps.sellerMessageAfter(organizationId, t.conversationId, t.createdAt))) note = "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa).";
       if (!note) continue;
       await deps.completeTask(organizationId, t.id, note);
       resolved++;
@@ -117,29 +138,40 @@ async function createNudgeTasks(
   convs.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || a.id.localeCompare(b.id));
   const todayISODate = toISODateInTimeZone(now, calendar.timeZone);
   let createdNow = 0;
+  // Cutucar aberto por negócio (ou por contato, se a tarefa não tem negócio): vale para qualquer conversa do mesmo negócio.
+  const openTasks = await deps.listOpenNudgeTasks(organizationId);
+  const openOppIds = new Set(openTasks.map((t) => t.opportunityId).filter((x): x is string => !!x));
+  const openContactIds = new Set(openTasks.filter((t) => !t.opportunityId).map((t) => t.contactId));
+  const memberCache = new Map<string, boolean>();
 
   for (const conv of convs) {
     if (createdNow >= CUSTOMER_NUDGE_MAX_NEW_PER_RUN) { skip("run_cap"); break; }
     try {
-      const last = await deps.lastMessage(conv.id);
+      const last = await deps.lastMessage(organizationId, conv.id);
       // Só o vendedor falando por último conta (mensagem da IA, "agent", não é vendedor).
       if (!last || last.role !== "human_agent") { skip("not_seller_last"); continue; }
       const opp = pickOpportunity(byContact.get(conv.contactId) ?? []);
-      const ownerId = opp.ownerId ?? conv.assignedTo;
-      const [tasks, lastCustomer] = await Promise.all([deps.nudgeTasks(organizationId, conv.id), deps.lastCustomerMessage(conv.id)]);
+      let ownerId = opp.ownerId ?? conv.assignedTo;
+      // Dono que saiu da organização conta como sem dono.
+      if (ownerId) {
+        if (!memberCache.has(ownerId)) memberCache.set(ownerId, await deps.isMember(organizationId, ownerId));
+        if (!memberCache.get(ownerId)) ownerId = null;
+      }
+      const [tasks, lastCustomer] = await Promise.all([deps.nudgeTasks(organizationId, conv.id), deps.lastCustomerMessage(organizationId, conv.id)]);
       const priorTouches = tasks.filter((t) => !lastCustomer || t.createdAt > lastCustomer.createdAt).length;
       const facts = {
         now, calendar, lastSellerMessageAt: new Date(last.createdAt), priorTouches, ownerId,
-        hasOpenTask: tasks.some((t) => OPEN_STATUSES.includes(t.status)), frozen: false,
-        opportunity: { waiting_on: opp.waitingOn, waiting_on_until: opp.waitingOnUntil }, todayISODate, customerClosing: false,
+        hasOpenTask: openOppIds.has(opp.id) || openContactIds.has(conv.contactId) || tasks.some((t) => OPEN_STATUSES.includes(t.status)), frozen: false,
+        opportunity: { waiting_on: opp.waitingOn, waiting_on_until: opp.waitingOnUntil }, todayISODate, customerRefused: false,
       };
       // Primeira passada barata; congelado e encerramento só são consultados quando a tarefa sairia.
       const first = decideCustomerNudge(facts);
       if (first.action === "skip") { skip(first.reason); continue; }
       const frozen = await deps.isFrozen(organizationId, conv.contactId);
-      const customerClosing = !!lastCustomer && (!lastCustomer.mediaType || lastCustomer.mediaType === "text")
-        && (isClosingAcknowledgement(lastCustomer.content) || isCustomerRefusal(lastCustomer.content));
-      const decision = decideCustomerNudge({ ...facts, frozen, customerClosing });
+      // Só recusa explícita pula; "ok/obrigado" seguido de silêncio do cliente continua sendo cutucado.
+      const customerRefused = !frozen && !!lastCustomer && (!lastCustomer.mediaType || lastCustomer.mediaType === "text")
+        && isCustomerRefusal(await deps.messageText(organizationId, lastCustomer.id));
+      const decision = decideCustomerNudge({ ...facts, frozen, customerRefused });
       if (decision.action === "skip") { skip(decision.reason); continue; }
 
       const text = buildCustomerNudgeTask(decision.touch, decision.ladderDays);
@@ -149,6 +181,7 @@ async function createNudgeTasks(
       });
       if (wasUpdated) { skip("task_already_open"); continue; }
       createdNow++; summary.created++;
+      openOppIds.add(opp.id);
       deps.log.info(`customer-nudge: task ${taskId} org ${organizationId} conv ${conv.id} touch ${decision.touch}`);
       if (pushEnabled && await pushToOwner(deps, organizationId, ownerId!, conv, taskId)) summary.pushed++;
     } catch (err) {
@@ -181,8 +214,10 @@ export function buildRealDeps(): NudgeDeps {
     listOrganizations: () => listCustomerNudgeOrganizations(db),
     listOpenOpportunities: (orgId) => listOpenOpportunitiesForNudge(db, orgId),
     listConversations: (orgId, contactIds, sinceIso) => listRecentConversationsForContacts(db, orgId, contactIds, sinceIso),
-    lastMessage: (conversationId) => getLastConversationMessage(db, conversationId),
-    lastCustomerMessage: (conversationId) => getLastCustomerMessage(db, conversationId),
+    lastMessage: (orgId, conversationId) => getLastConversationMessage(db, orgId, conversationId),
+    lastCustomerMessage: (orgId, conversationId) => getLastCustomerMessage(db, orgId, conversationId),
+    messageText: (orgId, messageId) => getMessageText(db, orgId, messageId),
+    isMember: async (orgId, userId) => (await listCurrentMemberIds(db, orgId, [userId])).has(userId),
     nudgeTasks: (orgId, conversationId) => listNudgeTasksByConversation(db, orgId, conversationId),
     isFrozen: (orgId, contactId) => hasFrozenContact(db, orgId, contactId, true),
     createTask: async (i) => {
@@ -201,7 +236,7 @@ export function buildRealDeps(): NudgeDeps {
     listOpenNudgeTasks: (orgId) => listOpenNudgeTasks(db, orgId),
     openOpportunityIds: (orgId, ids) => listOpenOpportunityIds(db, orgId, ids),
     contactsWithOpenOpportunity: (orgId, contactIds) => listContactIdsWithOpenOpportunity(db, orgId, contactIds),
-    sellerMessageAfter: (conversationId, afterIso) => hasSellerMessageAfter(db, conversationId, afterIso),
+    sellerMessageAfter: (orgId, conversationId, afterIso) => hasSellerMessageAfter(db, orgId, conversationId, afterIso),
     completeTask: (orgId, taskId, note) => completeNudgeTask(db, orgId, taskId, note),
     canReceivePush: async (orgId, userId) => {
       if (!isPushConfigured()) return false;

@@ -10,25 +10,27 @@ const NOW = new Date("2026-10-30T18:00:00Z");
 interface Conv { id?: string; contact?: string; lastRole?: string; lastAt?: string; assigned?: string | null; customerMsg?: { content: string; at: string; mediaType?: string | null } | null; tasks?: Array<{ id: string; status: string; createdAt: string }> }
 interface Opp { id?: string; contact?: string; owner?: string | null; waitingOn?: string | null; waitingOnUntil?: string | null }
 
-function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean } = {}) {
+function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean; nonMembers?: string[]; openNudges?: any[] } = {}) {
   const convs = (o.convs ?? [{}]).map((c, i) => ({ id: c.id ?? `c${i}`, contact: c.contact ?? `ct${i}`, ...c }));
   const opps = (o.opps ?? convs.map((c): Opp => ({ contact: c.contact }))).map((p, i) => ({ id: p.id ?? `op${i}`, owner: "owner" in p ? p.owner : "seller1", waitingOn: null, waitingOnUntil: null, ...p }));
-  const created: any[] = []; const completed: Array<{ id: string; note: string }> = []; const pushes: any[] = []; const claimed = new Set<string>(); const logs: string[] = [];
+  const textCalls: string[] = []; const created: any[] = []; const completed: Array<{ id: string; note: string }> = []; const pushes: any[] = []; const claimed = new Set<string>(); const logs: string[] = [];
   const settings = { customer_nudge_enabled: true, push_notifications_enabled: true, ...(o.settings ?? {}) };
   const deps: NudgeDeps = {
     listOrganizations: async () => [{ id: "org1", settings }],
     listOpenOpportunities: async () => opps.map((p) => ({ id: p.id, contactId: p.contact!, ownerId: p.owner ?? null, waitingOn: p.waitingOn ?? null, waitingOnUntil: p.waitingOnUntil ?? null, lastInteractionAt: null })),
     listConversations: async () => convs.map((c) => ({ id: c.id, contactId: c.contact, assignedTo: c.assigned ?? null, lastMessageAt: c.lastAt ?? SENT })),
-    lastMessage: async (id) => { const c = convs.find((x) => x.id === id)!; return { id: `m-${id}`, role: c.lastRole ?? "human_agent", content: "Segue a simulação", mediaType: null, createdAt: c.lastAt ?? SENT }; },
-    lastCustomerMessage: async (id) => { const m = convs.find((x) => x.id === id)!.customerMsg; return m === undefined ? { id: "cm", role: "contact", content: "Quero uma simulação de imóvel", mediaType: null, createdAt: "2026-10-29T17:00:00Z" } : m ? { id: "cm", role: "contact", content: m.content, mediaType: m.mediaType ?? null, createdAt: m.at } : null; },
+    lastMessage: async (_o, id) => { const c = convs.find((x) => x.id === id)!; return { role: c.lastRole ?? "human_agent", createdAt: c.lastAt ?? SENT }; },
+    lastCustomerMessage: async (_o, id) => { const m = convs.find((x) => x.id === id)!.customerMsg; return m === undefined ? { id: `cm-${id}`, role: "contact", mediaType: null, createdAt: "2026-10-29T17:00:00Z" } : m ? { id: `cm-${id}`, role: "contact", mediaType: m.mediaType ?? null, createdAt: m.at } : null; },
+    messageText: async (_o, mid) => { textCalls.push(mid); const id = mid.replace("cm-", ""); return convs.find((x) => x.id === id)!.customerMsg?.content ?? "Quero uma simulação de imóvel"; },
+    isMember: async (_o, u) => !(o.nonMembers ?? []).includes(u),
     nudgeTasks: async (_o, id) => convs.find((x) => x.id === id)!.tasks ?? [],
     isFrozen: async (_o, contactId) => (o.frozen ?? []).includes(contactId),
     createTask: async (i) => { created.push(i); return { id: `task-${created.length}`, wasUpdated: o.createWasUpdated ?? false }; },
     contactName: async () => "Erica",
-    listOpenNudgeTasks: async () => o.openTasks ?? [],
+    listOpenNudgeTasks: async () => [...(o.openTasks ?? []), ...(o.openNudges ?? [])],
     openOpportunityIds: async (_o, ids) => new Set((o.openOppIds ?? ids).filter((x) => ids.includes(x))),
     contactsWithOpenOpportunity: async (_o, ids) => new Set(ids),
-    sellerMessageAfter: async (id) => (o.sellerAfter ?? []).includes(id),
+    sellerMessageAfter: async (_o, id) => (o.sellerAfter ?? []).includes(id),
     completeTask: async (_o, id, note) => { completed.push({ id, note }); },
     canReceivePush: async (_o, u) => (o.pushUsers ?? ["seller1"]).includes(u),
     claimPushDedupe: async (k) => { if (claimed.has(k)) return false; claimed.add(k); return true; },
@@ -36,7 +38,7 @@ function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: O
     sendPush: async (_o, u, p) => { if (o.pushThrows) throw new Error("push down"); pushes.push({ u, p }); return o.pushSent ?? 1; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, created, completed, pushes, logs };
+  return { deps, created, completed, pushes, logs, textCalls };
 }
 
 describe("runCustomerNudge: criação", () => {
@@ -107,9 +109,31 @@ describe("runCustomerNudge: quando não cria", () => {
     await skipped({ opps: [{ contact: "ct0", waitingOn: "team" }] }, "waiting_on_us");
     await skipped({ opps: [{ contact: "ct0", waitingOn: "bank_or_admin" }] }, "waiting_on_us");
   });
-  it("cliente se despediu, agradeceu ou recusou antes", async () => {
-    await skipped({ convs: [{ customerMsg: { content: "ok, obrigado!", at: "2026-10-29T17:00:00Z" } }] }, "closing_ack");
-    await skipped({ convs: [{ customerMsg: { content: "Não tenho mais interesse", at: "2026-10-29T17:00:00Z" } }] }, "closing_ack");
+  it("cliente recusou explicitamente antes", async () => {
+    await skipped({ convs: [{ customerMsg: { content: "Não tenho mais interesse", at: "2026-10-29T17:00:00Z" } }] }, "customer_refused");
+  });
+  it("ok/obrigado do cliente seguido de mensagem do vendedor e silêncio É cutucado (caso Erica)", async () => {
+    for (const content of ["ok, obrigado!", "Obrigada", "ok", "beleza, vou ver"]) {
+      const w = world({ convs: [{ customerMsg: { content, at: "2026-10-29T17:00:00Z" } }] });
+      await runCustomerNudge(w.deps, NOW);
+      expect(w.created, content).toHaveLength(1);
+    }
+  });
+  it("o texto da última mensagem do cliente só é lido quando a tarefa sairia", async () => {
+    const w = world({ frozen: ["ct0"] }); await runCustomerNudge(w.deps, NOW);
+    expect(w.textCalls).toHaveLength(0);
+  });
+  it("organização com consolidação por negócio ligada: não cria e registra o motivo", async () => {
+    const w = world({ settings: { task_consolidation_by_opportunity_enabled: true } }); const s = await runCustomerNudge(w.deps, NOW);
+    expect(w.created).toHaveLength(0); expect(s.skipped.consolidation_enabled).toBe(1);
+    expect(w.logs.some((l) => l.includes("task_consolidation_by_opportunity_enabled"))).toBe(true);
+  });
+  it("dono que saiu da organização conta como sem dono", async () => {
+    await skipped({ nonMembers: ["seller1"] }, "no_owner");
+  });
+  it("já existe cutucar aberto no mesmo negócio (outra conversa) ou no mesmo contato sem negócio", async () => {
+    await skipped({ openNudges: [{ id: "tx", conversationId: "outra", contactId: "ctX", opportunityId: "op0", createdAt: "2026-10-30T12:00:00Z" }] }, "open_task");
+    await skipped({ openNudges: [{ id: "ty", conversationId: "outra", contactId: "ct0", opportunityId: null, createdAt: "2026-10-30T12:00:00Z" }] }, "open_task");
   });
   it("já existe tarefa de cutucar aberta", async () => {
     await skipped({ convs: [{ tasks: [{ id: "t", status: "pending", createdAt: "2026-10-30T12:00:00Z" }] }] }, "open_task");
@@ -176,10 +200,10 @@ describe("runCustomerNudge: resolução automática", () => {
 });
 
 describe("isCustomerRefusal", () => {
-  it("pega recusa curta e deixa passar pergunta/mensagem normal", () => {
-    expect(isCustomerRefusal("Não tenho interesse, obrigado")).toBe(true);
-    expect(isCustomerRefusal("desisti")).toBe(true);
-    expect(isCustomerRefusal("Quero uma simulação de imóvel")).toBe(false);
-    expect(isCustomerRefusal("Não sei qual escolher, pode me explicar a diferença entre os planos e as parcelas que vocês oferecem?")).toBe(false);
+  it("pega recusas em frases fechadas", () => {
+    for (const t of ["Sem interesse", "Não tenho interesse, obrigado", "não tenho mais interesse", "desisti", "Já comprei", "já fechei", "já resolvi", "Não quero mais", "não vou mais comprar", "Pode encerrar", "pode cancelar"]) expect(isCustomerRefusal(t), t).toBe(true);
+  });
+  it("não pega frases comuns que começam parecido", () => {
+    for (const t of ["Não tem problema", "Não tenho o RG aqui", "Não vou conseguir hoje", "não quero parcela alta", "ok", "Obrigado", "Quero uma simulação de imóvel", "Não sei qual escolher"]) expect(isCustomerRefusal(t), t).toBe(false);
   });
 });
