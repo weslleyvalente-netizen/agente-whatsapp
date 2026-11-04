@@ -126,3 +126,17 @@ export async function getOpportunityEvents(client: SupabaseClient, opportunityId
   if (error) throw error;
   return data as OpportunityEvent[];
 }
+
+export interface FunnelTargetCandidate { id: string; owner_id: string | null; last_interaction_at: string | null }
+
+/** Negócios ABERTOS do contato da conversa (sempre dentro da organização). Conversa inexistente ou de outra organização = lista vazia. */
+export async function listOpenOpportunitiesForConversation(client: SupabaseClient, organizationId: string, conversationId: string): Promise<FunnelTargetCandidate[]> {
+  const { data: conversation, error: convError } = await client.from("conversations").select("contact_id")
+    .eq("organization_id", organizationId).eq("id", conversationId).maybeSingle();
+  if (convError) throw convError;
+  if (!conversation?.contact_id) return [];
+  const { data, error } = await client.from("opportunities").select("id, owner_id, last_interaction_at")
+    .eq("organization_id", organizationId).eq("contact_id", conversation.contact_id).eq("status", "open");
+  if (error) throw error;
+  return (data ?? []).map((r: any) => ({ id: r.id, owner_id: r.owner_id ?? null, last_interaction_at: r.last_interaction_at ?? null }));
+}

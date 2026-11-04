@@ -288,7 +288,7 @@ describe("aviso ao vendedor dono (push) e segundo estágio ao dono da loja", () 
     const s = await runUnansweredLeadSweep(w.deps, T0);
     expect(s.pushed).toBe(1); expect(s.alerted).toBe(0);
     expect(w.alerts).toEqual([]);
-    expect(w.pushes).toEqual([{ userId: "seller1", payload: { title: "Cliente sem resposta: Junior (Quero um consórcio de caminhão)", body: "Toque para responder.", url: "/inbox?id=c1", tag: "c1" } }]);
+    expect(w.pushes).toEqual([{ userId: "seller1", payload: { title: "Cliente sem resposta: Junior (Quero um consórcio de caminhão)", body: "Toque para responder.", url: "/opportunities?conversa=c1", tag: "c1" } }]);
     expect(w.kv.get("unanswered-sweep:alerted:m-c1")).toBe(`push:${T0.toISOString()}`);
     expect(w.pushDedupe.has("unanswered:m-c1")).toBe(true);
     // próxima varredura (35 min): nada repetido

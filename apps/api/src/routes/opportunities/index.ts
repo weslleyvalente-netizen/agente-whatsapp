@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import {
-  isValidFreezeDate, toISODateInTimeZone,
+  isValidFreezeDate, toISODateInTimeZone, parseFunnelConversationParam, pickFunnelOpportunity,
   createOpportunitySchema,
   updateOpportunitySchema,
   changeOpportunityStageSchema,
@@ -17,6 +17,7 @@ import {
   getOpportunityById,
   getOpportunitiesByOrganization,
   addOpportunityEvent,
+  listOpenOpportunitiesForConversation,
   getContactById, getQualificationByConversationId, getOpportunityEvents, getOpenTasksByContact, decryptCpf,
 } from "@aula-agente/database";
 import {
@@ -71,6 +72,24 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const db=getAdminClient();const org=await getOrganizationById(db,orgId);
     if(org.settings.sales_auto_pipeline_enabled!==true)return [];
     return getUnidentifiedSalesContacts(db,orgId);
+  });
+
+  /**
+   * Destino de um deep link do funil (/opportunities?conversa=<id>): o negócio aberto do contato da conversa.
+   * O vendedor só recebe o id de um negócio que já pode ver (isolamento por vendedor); caso contrário, null.
+   */
+  app.get<{ Params: { organizationId: string; conversationId: string } }>("/organizations/:organizationId/conversations/:conversationId/funnel-target", async (request, reply) => {
+    const { organizationId } = request.params;
+    const membership = request.user.memberships.find(m => m.organization_id === organizationId);
+    if (!membership) return reply.status(403).send({ error: "Access denied" });
+    const conversationId = parseFunnelConversationParam(request.params.conversationId);
+    if (!conversationId) return reply.status(400).send({ error: "Conversa inválida" });
+    const db = getAdminClient();
+    const open = await listOpenOpportunitiesForConversation(db, organizationId, conversationId);
+    const picked = pickFunnelOpportunity(open.map(o => ({ id: o.id, ownerId: o.owner_id, lastInteractionAt: o.last_interaction_at })));
+    if (!picked) return { opportunity_id: null };
+    if (!(await canViewLead(db, organizationId, membership.role, request.user.id, picked.ownerId))) return { opportunity_id: null };
+    return { opportunity_id: picked.id };
   });
 
   app.post<{Params:{opportunityId:string}}>("/opportunities/:opportunityId/freeze", async(request,reply)=>{

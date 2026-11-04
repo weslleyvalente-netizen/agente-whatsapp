@@ -6,7 +6,7 @@ const base = {
   name: "Moto e Trilha — Atendimento",
   short_name: "Moto e Trilha",
   description: "Atendimento e vendas da Moto e Trilha Veículos",
-  start_url: "/inbox",
+  start_url: "/opportunities",
   scope: "/",
   display: "standalone",
   orientation: "portrait",

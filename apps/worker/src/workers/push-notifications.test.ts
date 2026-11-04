@@ -10,7 +10,7 @@ vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getPushNo
 import { runPushSweep, createPushCursor } from "./push-notifications.js";
 
 const now = new Date("2026-10-17T12:00:00Z");
-const cand = (over: Record<string, unknown> = {}) => ({ kind: "assign", organizationId: "o", userId: "u1", dedupeKeys: ["assign:a1"], title: "Novo lead: Ana", body: "b", url: "/inbox?id=c", tag: "c", ...over });
+const cand = (over: Record<string, unknown> = {}) => ({ kind: "assign", organizationId: "o", userId: "u1", dedupeKeys: ["assign:a1"], title: "Novo lead: Ana", body: "b", url: "/opportunities?conversa=c", tag: "c", ...over });
 const db = {} as any;
 const list = (candidates: unknown[], truncatedAt: Date | null = null) => ({ candidates, truncatedAt });
 
@@ -81,7 +81,7 @@ describe("runPushSweep", () => {
     m.listNewAssignmentCandidates.mockResolvedValue(list([cand()]));
     const r = await runPushSweep(db, createPushCursor(now), now);
     expect(m.claimPushDedupe).toHaveBeenCalledWith(db, "assign:a1", "u1");
-    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "u1", { title: "Novo lead: Ana", body: "b", url: "/inbox?id=c", tag: "c" }, { organizationId: "o" });
+    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "u1", { title: "Novo lead: Ana", body: "b", url: "/opportunities?conversa=c", tag: "c" }, { organizationId: "o" });
     expect(r.sent).toBe(1);
   });
 
@@ -132,7 +132,7 @@ describe("runPushSweep", () => {
     await runPushSweep(db, createPushCursor(now), now);
     expect(m.claimPushDedupe).toHaveBeenCalledTimes(8);
     expect(m.sendPushToUser).toHaveBeenCalledTimes(1);
-    expect(m.sendPushToUser.mock.calls[0][2]).toMatchObject({ title: "8 novos leads", url: "/inbox", tag: "push-summary" });
+    expect(m.sendPushToUser.mock.calls[0][2]).toMatchObject({ title: "8 novos leads", url: "/opportunities", tag: "push-summary" });
   });
 
   it("falha no envio libera as chaves para nova tentativa", async () => {

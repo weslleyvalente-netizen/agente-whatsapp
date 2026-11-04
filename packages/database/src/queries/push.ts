@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { funnelConversationHref } from "@aula-agente/shared";
 
 export interface PushCandidate {
   kind: "assign" | "message" | "sla" | "sla_breach";
@@ -100,7 +101,7 @@ type One<T> = T | T[] | null | undefined;
 const first = <T>(v: One<T>): T | null => (Array.isArray(v) ? v[0] ?? null : v ?? null);
 type ContactRef = { name?: string | null; phone?: string | null };
 const contactLabel = (c: ContactRef | null) => c?.name?.trim() || "Cliente";
-const inboxUrl = (conversationId: string) => `/inbox?id=${conversationId}`;
+const funnelUrl = (conversationId: string) => funnelConversationHref(conversationId);
 
 type AssignmentRow = {
   id: string; organization_id: string; conversation_id: string; created_at?: string; sla_due_at?: string | null;
@@ -123,7 +124,7 @@ export async function listNewAssignmentCandidates(db: SupabaseClient, since: Dat
     if (!userId) continue;
     candidates.push({
       kind: "assign", organizationId: row.organization_id, userId, dedupeKeys: [`assign:${row.id}`],
-      title: `Novo lead: ${contactLabel(first(row.wa_contacts))}`, body: "Toque para atender.", url: inboxUrl(row.conversation_id), tag: row.conversation_id,
+      title: `Novo lead: ${contactLabel(first(row.wa_contacts))}`, body: "Toque para atender.", url: funnelUrl(row.conversation_id), tag: row.conversation_id,
     });
   }
   return { candidates, truncatedAt: truncation(rows, ASSIGNMENT_LIMIT) };
@@ -149,7 +150,7 @@ export async function listSlaRiskCandidates(db: SupabaseClient, now: Date, orgId
     out.push({
       kind: "sla", organizationId: row.organization_id, userId, dedupeKeys: [`sla:${row.id}`],
       title: `Responda ${contactLabel(first(row.wa_contacts))} — faltam ${minutes} min`, body: "O prazo para assumir o lead está acabando.",
-      url: inboxUrl(row.conversation_id), tag: row.conversation_id,
+      url: funnelUrl(row.conversation_id), tag: row.conversation_id,
     });
   }
   return out;
@@ -185,7 +186,7 @@ export async function listSlaBreachCandidates(db: SupabaseClient, now: Date, org
     out.push({
       kind: "sla_breach", organizationId: row.organization_id, userId, dedupeKeys: [`sla_breach:${row.id}`],
       title: `SLA estourado: responda ${contactLabel(first(row.wa_contacts))}`, body: "O prazo para responder este cliente passou. Toque para atender.",
-      url: inboxUrl(row.conversation_id), tag: row.conversation_id,
+      url: funnelUrl(row.conversation_id), tag: row.conversation_id,
     });
   }
   return out;
@@ -232,7 +233,7 @@ export async function listCustomerMessageCandidates(db: SupabaseClient, since: D
     candidates.push({
       kind: "message", organizationId: last.organization_id, userId: conv.assigned_to!, dedupeKeys: rows.map(r => `msg:${r.id}`),
       title: contactLabel(first(conv.wa_contacts ?? null)), body: (last.content ?? "").trim().slice(0, SNIPPET_LENGTH) || "Nova mensagem",
-      url: inboxUrl(conversationId), tag: conversationId,
+      url: funnelUrl(conversationId), tag: conversationId,
     });
   }
   return { candidates, truncatedAt: truncation(all, MESSAGE_LIMIT) };
