@@ -20,7 +20,7 @@ import {
 import { Pencil, MoreVertical, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_FOLLOWUP_ELIGIBLE_TYPES } from "@aula-agente/shared";
+import { TASK_TYPE_LABELS, TASK_PRIORITY_LABELS, TASK_FOLLOWUP_ELIGIBLE_TYPES, funnelConversationHref } from "@aula-agente/shared";
 
 interface QualificationValues {
   attendance_type: string | null;
@@ -385,7 +385,7 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
                 size="sm"
                 variant="outline"
                 disabled={!details.task.conversation_id}
-                onClick={() => details.task.conversation_id && router.push(`/inbox?id=${details.task.conversation_id}`)}
+                onClick={() => details.task.conversation_id && router.push(funnelConversationHref(details.task.conversation_id))}
                 title={!details.task.conversation_id ? "Esta tarefa não tem conversa vinculada" : undefined}
               >
                 Abrir conversa
