@@ -128,6 +128,12 @@ function StageColumn({
   const visible = sorted.slice(0, visibleCount);
   // Só tem efeito abaixo de md (celular): o grupo é recolhível. No computador a coluna fica sempre visível.
   const [openMobile, setOpenMobile] = useState(defaultOpenMobile);
+  // O chip "Para agir agora" da página dispara `fila-abrir` com o grupo: expande a coluna alvo no celular.
+  useEffect(() => {
+    const onOpen = (e: Event) => { if (stage === `__queue_${(e as CustomEvent<string>).detail}`) setOpenMobile(true); };
+    window.addEventListener("fila-abrir", onOpen);
+    return () => window.removeEventListener("fila-abrir", onOpen);
+  }, [stage]);
   return (
     <section ref={setNodeRef} id={queueMode && stage.startsWith("__queue_") ? `fila-${stage.slice(8)}` : undefined} aria-label={label} className={`w-full scroll-mt-4 rounded-2xl bg-muted/45 p-3 md:w-[300px] md:shrink-0 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
       <div className={`flex min-h-9 items-center gap-2 px-1 max-md:min-h-11 max-md:cursor-pointer md:mb-4 ${openMobile ? "max-md:mb-3" : ""}`} onClick={() => setOpenMobile(v => !v)}><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span><button type="button" aria-expanded={openMobile} aria-label={openMobile ? `Recolher ${label}` : `Expandir ${label}`} className="-mr-1 shrink-0 rounded p-1.5 text-muted-foreground md:hidden"><ChevronDown className={`size-5 transition-transform ${openMobile ? "rotate-180" : ""}`}/></button></div>

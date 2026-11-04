@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type ReactElement, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { apiFetch } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -73,6 +73,8 @@ export function TaskDialog({
   const [dueDate, setDueDate] = useState(task?.due_date ?? toISODateInTimeZone(new Date()));
   const [dueTime, setDueTime] = useState(task?.due_time ?? "");
   const [assigneeValue, setAssigneeValue] = useState(initialAssigneeValue(task, null));
+  // Se o vendedor escolheu o responsável à mão, a resposta tardia de getSession não sobrescreve.
+  const assigneeTouched = useRef(false);
   const [opportunityId, setOpportunityId] = useState(task?.opportunity_id ?? presetOpportunityId ?? "");
 
   useEffect(() => {
@@ -80,13 +82,13 @@ export function TaskDialog({
     if (assignToSelf && !task) {
       createClient().auth.getSession().then(({ data }) => {
         const uid = data.session?.user.id;
-        if (uid) setAssigneeValue(initialAssigneeValue(null, uid));
+        if (uid && !assigneeTouched.current) setAssigneeValue(initialAssigneeValue(null, uid));
       }).catch(() => {});
     }
     apiFetch(`/organizations/${organizationId}/members/display`)
       .then((data) => setMembers(data))
       .catch(() => setMembers([]));
-  }, [open, organizationId, assignToSelf, task]);
+  }, [open, organizationId, assignToSelf, isEditing]);
 
   useEffect(() => {
     if (isEditing || presetContact || !contactQuery.trim() || contactQuery.trim().length < 2) {
@@ -165,6 +167,7 @@ export function TaskDialog({
         setDueDate(toISODateInTimeZone(new Date()));
         setDueTime("");
         setAssigneeValue("none");
+        assigneeTouched.current = false;
         setOpportunityId(presetOpportunityId ?? "");
       }
       setOpen(false);
@@ -285,7 +288,7 @@ export function TaskDialog({
             </div>
             <div className="space-y-2">
               <Label>Responsável</Label>
-              <Select value={assigneeValue} onValueChange={(v) => v && setAssigneeValue(v)}>
+              <Select value={assigneeValue} onValueChange={(v) => { if (v) { assigneeTouched.current = true; setAssigneeValue(v); } }}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
