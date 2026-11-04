@@ -129,7 +129,7 @@ function StageColumn({
   // Só tem efeito abaixo de md (celular): o grupo é recolhível. No computador a coluna fica sempre visível.
   const [openMobile, setOpenMobile] = useState(defaultOpenMobile);
   return (
-    <section ref={setNodeRef} aria-label={label} className={`w-full rounded-2xl bg-muted/45 p-3 md:w-[300px] md:shrink-0 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
+    <section ref={setNodeRef} id={queueMode && stage.startsWith("__queue_") ? `fila-${stage.slice(8)}` : undefined} aria-label={label} className={`w-full scroll-mt-4 rounded-2xl bg-muted/45 p-3 md:w-[300px] md:shrink-0 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
       <div className={`flex min-h-9 items-center gap-2 px-1 max-md:min-h-11 max-md:cursor-pointer md:mb-4 ${openMobile ? "max-md:mb-3" : ""}`} onClick={() => setOpenMobile(v => !v)}><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span><button type="button" aria-expanded={openMobile} aria-label={openMobile ? `Recolher ${label}` : `Expandir ${label}`} className="-mr-1 shrink-0 rounded p-1.5 text-muted-foreground md:hidden"><ChevronDown className={`size-5 transition-transform ${openMobile ? "rotate-180" : ""}`}/></button></div>
       <div className={`max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin] max-md:max-h-none max-md:min-h-0 max-md:overflow-visible ${openMobile ? "" : "max-md:hidden"}`}>
         {visible.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged} dragEnabled={dragEnabled}/>)}

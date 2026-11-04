@@ -17,6 +17,7 @@ import {
   toISODateInTimeZone,
 } from "@aula-agente/shared";
 import type { Task, TaskType, TaskPriority } from "@aula-agente/shared";
+import { initialAssigneeValue } from "@/lib/task-defaults";
 
 interface ContactOption {
   id: string;
@@ -34,6 +35,10 @@ interface TaskDialogProps {
   organizationId: string;
   presetContact?: ContactOption | null;
   presetConversationId?: string | null;
+  /** Tarefa nasce vinculada a este negócio (campo de ID some). */
+  presetOpportunityId?: string | null;
+  /** Tarefa nova começa atribuída ao usuário logado. */
+  assignToSelf?: boolean;
   task?: Task | null;
   triggerButton: ReactElement;
   triggerLabel: ReactNode;
@@ -44,6 +49,8 @@ export function TaskDialog({
   organizationId,
   presetContact = null,
   presetConversationId = null,
+  presetOpportunityId = null,
+  assignToSelf = false,
   task = null,
   triggerButton,
   triggerLabel,
@@ -65,21 +72,21 @@ export function TaskDialog({
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "normal");
   const [dueDate, setDueDate] = useState(task?.due_date ?? toISODateInTimeZone(new Date()));
   const [dueTime, setDueTime] = useState(task?.due_time ?? "");
-  const [assigneeValue, setAssigneeValue] = useState(
-    task?.assignee_type === "human"
-      ? `human:${task.assignee_id}`
-      : task?.assignee_type === "ai"
-        ? "ai"
-        : "none"
-  );
-  const [opportunityId, setOpportunityId] = useState(task?.opportunity_id ?? "");
+  const [assigneeValue, setAssigneeValue] = useState(initialAssigneeValue(task, null));
+  const [opportunityId, setOpportunityId] = useState(task?.opportunity_id ?? presetOpportunityId ?? "");
 
   useEffect(() => {
     if (!open) return;
+    if (assignToSelf && !task) {
+      createClient().auth.getSession().then(({ data }) => {
+        const uid = data.session?.user.id;
+        if (uid) setAssigneeValue(initialAssigneeValue(null, uid));
+      }).catch(() => {});
+    }
     apiFetch(`/organizations/${organizationId}/members/display`)
       .then((data) => setMembers(data))
       .catch(() => setMembers([]));
-  }, [open, organizationId]);
+  }, [open, organizationId, assignToSelf, task]);
 
   useEffect(() => {
     if (isEditing || presetContact || !contactQuery.trim() || contactQuery.trim().length < 2) {
@@ -158,7 +165,7 @@ export function TaskDialog({
         setDueDate(toISODateInTimeZone(new Date()));
         setDueTime("");
         setAssigneeValue("none");
-        setOpportunityId("");
+        setOpportunityId(presetOpportunityId ?? "");
       }
       setOpen(false);
       onSaved();
@@ -295,7 +302,7 @@ export function TaskDialog({
             </div>
           </div>
 
-          <div className="space-y-2">
+          {!presetOpportunityId && <div className="space-y-2">
             <Label htmlFor="opportunity_id">ID da oportunidade (opcional)</Label>
             <Input
               id="opportunity_id"
@@ -303,7 +310,7 @@ export function TaskDialog({
               onChange={(e) => setOpportunityId(e.target.value)}
               placeholder="Vincular esta tarefa a uma oportunidade"
             />
-          </div>
+          </div>}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button onClick={handleSubmit} disabled={saving} className="w-full">
