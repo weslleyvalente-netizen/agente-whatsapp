@@ -39,6 +39,32 @@ it('does not hide a qualified pendency behind the silent primary type',()=>{
 it('respects a due callback before the fallback action for a bank result',()=>{
  expect(classifySalesQueue({...base,stage:'financing_rejected',waiting_on:'team',tasks:[{type:'scheduled_callback',priority:'urgent',due_date:'2026-10-02'}]},now).group).toBe('due_today');
 });
+describe('Cutucar cliente em Compromissos de hoje',()=>{
+ const nudge=(due:string)=>({type:'customer_nudge',priority:'normal',due_date:due}); // now = 2026-10-02 (hoje)
+ it('cutucar de hoje cai em Compromissos de hoje',()=>{
+  expect(classifySalesQueue({...base,stage:'decision_negotiation',tasks:[nudge('2026-10-02')]},now).group).toBe('due_today');
+ });
+ it('cutucar atrasado continua em Compromissos de hoje até o vendedor agir',()=>{
+  expect(classifySalesQueue({...base,tasks:[nudge('2026-09-28')]},now).group).toBe('due_today');
+ });
+ it('cutucar futuro não entra em Compromissos de hoje',()=>{
+  expect(classifySalesQueue({...base,tasks:[nudge('2026-10-05')]},now).group).not.toBe('due_today');
+ });
+ it('cutucar consolidado com outra pendência também vale',()=>{
+  const merged={type:'return_customer',priority:'normal',due_date:'2026-10-02',consolidated_pendencies:[nudge('2026-10-02'),{type:'return_customer',priority:'normal',due_date:'2026-10-09'}]};
+  expect(classifySalesQueue({...base,tasks:[merged]},now).group).toBe('due_today');
+ });
+ it('cliente respondeu e pronto para assumir continuam antes do cutucar',()=>{
+  expect(classifySalesQueue({...base,sales_state:{...base.sales_state,customerReplied:true},tasks:[nudge('2026-10-02')]},now).group).toBe('customer_replied');
+  expect(classifySalesQueue({...base,sales_state:{...base.sales_state,readyForHuman:true},tasks:[nudge('2026-10-02')]},now).group).toBe('ready');
+  const rows=[{...base,id:'nudge',tasks:[nudge('2026-10-02')]},{...base,id:'replied',sales_state:{...base.sales_state,customerReplied:true}}];
+  expect(sortSalesQueue(rows,now).map(x=>x.id)).toEqual(['replied','nudge']);
+ });
+ it('banco pendente e retorno futuro seguem antes do cutucar (ordem dos ramos intacta)',()=>{
+  expect(classifySalesQueue({...base,waiting_on:'bank_or_admin',tasks:[nudge('2026-10-02')]},now).group).toBe('waiting');
+  expect(classifySalesQueue({...base,frozen_until:'2026-10-10',tasks:[nudge('2026-10-02')]},now).group).toBe('scheduled');
+ });
+});
 describe('ordenação por interesse',()=>{
  const overdue=(id:string,stage:string,due:string,extra:any={})=>({...base,id,stage,tasks:[{type:'run_quote',priority:'normal',due_date:due}],...extra});
  it('lead avançado vem antes do vencido há mais tempo',()=>{

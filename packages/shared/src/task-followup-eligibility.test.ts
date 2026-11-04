@@ -18,7 +18,7 @@ const ELIGIBLE = [
   "libera_cred_resumption",
 ] as const;
 
-const NOT_ELIGIBLE = ["run_quote", "update_quote", "other"] as const;
+const NOT_ELIGIBLE = ["run_quote", "update_quote", "customer_nudge", "other"] as const;
 
 describe("isTaskFollowupEligible", () => {
   it("covers every TASK_TYPES value exactly once between eligible and not-eligible", () => {

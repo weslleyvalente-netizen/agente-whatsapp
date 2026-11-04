@@ -71,9 +71,9 @@ export default function SettingsPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" | "sla_alert_escalation_enabled" | "handoff_card_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" | "customer_nudge_enabled" | "sla_alert_escalation_enabled" | "handoff_card_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled" || flag === "sla_alert_escalation_enabled" || flag === "handoff_card_enabled";
+    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled" || flag === "customer_nudge_enabled" || flag === "sla_alert_escalation_enabled" || flag === "handoff_card_enabled";
     const setErr = isLead ? setLeadError : setWorkspaceError;
     setSavingWorkspace(true); setErr(null);
     try {
@@ -733,6 +733,15 @@ export default function SettingsPage() {
               {currentOrg?.settings.unanswered_lead_sweep_enabled === true && !currentOrg?.settings.health_alert_phone?.trim() && (
                 <p className="text-xs text-amber-600" role="alert">Atenção: o telefone de alertas não está configurado, então ninguém será avisado.</p>
               )}
+            </div>
+          )}
+          {isManager && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="customer-nudge">Lembrar o vendedor de cutucar cliente que parou de responder (1, 3 e 7 dias úteis)</Label>
+                <Switch id="customer-nudge" checked={currentOrg?.settings.customer_nudge_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "customer_nudge_enabled")} />
+              </div>
+              <p className="text-xs text-muted-foreground">Quando o vendedor foi o último a falar e o cliente sumiu, cria a tarefa &quot;Cutucar cliente&quot; para o dono do negócio, no horário comercial (até 3 lembretes). A tarefa some sozinha se o vendedor mandar mensagem ou o cliente responder.</p>
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
