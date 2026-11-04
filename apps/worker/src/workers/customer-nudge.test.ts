@@ -51,7 +51,7 @@ describe("runCustomerNudge: criação", () => {
       description: "Cliente parou de responder há 1 dia útil depois da sua última mensagem. Retome a conversa (toque 1 de 3).",
     });
     expect(w.pushes).toHaveLength(1);
-    expect(w.pushes[0]).toMatchObject({ u: "seller1", p: { title: "Cutucar cliente", url: "/inbox?id=c0" } });
+    expect(w.pushes[0]).toMatchObject({ u: "seller1", p: { title: "Cutucar cliente", url: "/opportunities?conversa=c0" } });
     expect(w.pushes[0].p.body).toContain("Erica");
   });
   it("ainda não deu 1 dia útil: não cria", async () => {

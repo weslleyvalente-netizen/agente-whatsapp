@@ -88,8 +88,8 @@ describe("listNewAssignmentCandidates", () => {
     const { candidates, truncatedAt } = await listNewAssignmentCandidates(d, since, ["o"]);
     expect(truncatedAt).toBeNull();
     expect(candidates).toEqual([
-      { kind: "assign", organizationId: "o", userId: "u1", dedupeKeys: ["assign:a1"], title: "Novo lead: Ana", body: "Toque para atender.", url: "/inbox?id=c1", tag: "c1" },
-      { kind: "assign", organizationId: "o", userId: "u2", dedupeKeys: ["assign:a2"], title: "Novo lead: Cliente", body: "Toque para atender.", url: "/inbox?id=c2", tag: "c2" },
+      { kind: "assign", organizationId: "o", userId: "u1", dedupeKeys: ["assign:a1"], title: "Novo lead: Ana", body: "Toque para atender.", url: "/opportunities?conversa=c1", tag: "c1" },
+      { kind: "assign", organizationId: "o", userId: "u2", dedupeKeys: ["assign:a2"], title: "Novo lead: Cliente", body: "Toque para atender.", url: "/opportunities?conversa=c2", tag: "c2" },
     ]);
   });
   it("aplica os filtros de segurança e escopo", async () => {
@@ -138,7 +138,7 @@ describe("listCustomerMessageCandidates", () => {
     ] } });
     const { candidates } = await listCustomerMessageCandidates(d, since, ["o"]);
     expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject({ kind: "message", userId: "u1", dedupeKeys: ["msg:m1", "msg:m2"], tag: "c1", url: "/inbox?id=c1", title: "Ana" });
+    expect(candidates[0]).toMatchObject({ kind: "message", userId: "u1", dedupeKeys: ["msg:m1", "msg:m2"], tag: "c1", url: "/opportunities?conversa=c1", title: "Ana" });
     expect(candidates[0].body).toBe("x".repeat(80));
     has(calls, 0, "eq", "role", "contact"); has(calls, 0, "in", "organization_id", ["o"]);
     has(calls, 0, "not", "conversations.assigned_to", "is", null); has(calls, 0, "gte", "created_at", since.toISOString());
@@ -193,7 +193,7 @@ describe("escalada de SLA: estágio 1", () => {
     ] } });
     const r = await listSlaBreachCandidates(d, now, ["o"]);
     expect(r).toEqual([{ kind: "sla_breach", organizationId: "o", userId: "marina", dedupeKeys: ["sla_breach:a1"], title: "SLA estourado: responda Márcio",
-      body: "O prazo para responder este cliente passou. Toque para atender.", url: "/inbox?id=c1", tag: "c1" }]);
+      body: "O prazo para responder este cliente passou. Toque para atender.", url: "/opportunities?conversa=c1", tag: "c1" }]);
     has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "pending"); has(calls, 0, "eq", "sla_action", "alert");
     has(calls, 0, "not", "rep_id", "is", null); has(calls, 0, "is", "first_human_message_at", null);
     has(calls, 0, "lte", "sla_due_at", now.toISOString()); has(calls, 0, "gte", "sla_due_at", "2026-10-26T12:00:00.000Z");

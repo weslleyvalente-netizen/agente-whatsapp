@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useOrganization } from "@/providers/organization-provider";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
-import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, sortNewestSalesCards, trailingThrottle, reuseUnchanged } from "@aula-agente/shared";
+import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, parseFunnelConversationParam, sortNewestSalesCards, trailingThrottle, reuseUnchanged } from "@aula-agente/shared";
 import type { Operation, Task } from "@aula-agente/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,8 @@ import { OpportunityForm } from "@/components/opportunities/opportunity-form";
 
 export default function OpportunitiesPage() {
   const { currentOrg } = useOrganization();
+  const router = useRouter();
+  const conversaParam = parseFunnelConversationParam(useSearchParams().get("conversa"));
   const [orphanTasks,setOrphanTasks]=useState<Array<Task & {queue_group:string;wa_contacts:{name:string|null;phone:string}|null}>>([]);
   const [orphanSelected,setOrphanSelected]=useState<(typeof orphanTasks)[number]|null>(null);
   const [unidentified,setUnidentified]=useState<{id:string;contact_id:string;last_message_at:string;wa_contacts:{name:string|null;phone:string}|null}[]>([]);
@@ -79,6 +82,31 @@ export default function OpportunitiesPage() {
     fetchOpportunities(true);
   }, [fetchOpportunities]);
 
+  // Deep link /opportunities?conversa=<id> (pushes, ícone, links do Início e das tarefas): abre o card do cliente no funil.
+  // Resolve uma vez por valor do parâmetro, depois que a lista carregou; qualquer falha deixa o funil normal na tela.
+  const listsRef = useRef({ opportunities, unidentified });
+  useEffect(() => { listsRef.current = { opportunities, unidentified }; }, [opportunities, unidentified]);
+  const resolvedParamRef = useRef<string | null>(null);
+  const clearConversaParam = useCallback(() => { if (conversaParam) router.replace("/opportunities"); }, [conversaParam, router]);
+  const orgId = currentOrg?.id;
+  useEffect(() => {
+    if (!conversaParam) { resolvedParamRef.current = null; return; }
+    if (!orgId || loading || resolvedParamRef.current === conversaParam) return;
+    resolvedParamRef.current = conversaParam;
+    (async () => {
+      try {
+        const { opportunity_id } = await apiFetch(`/organizations/${orgId}/conversations/${conversaParam}/funnel-target`) as { opportunity_id: string | null };
+        const { opportunities: list, unidentified: pending } = listsRef.current;
+        const found = opportunity_id ? list.find(o => o.id === opportunity_id) : undefined;
+        if (found) setSearchSelected(found);
+        else if (!opportunity_id && pending.some(row => row.id === conversaParam)) setUnidentifiedSelected(conversaParam);
+        else router.replace(`/inbox?id=${conversaParam}`);
+      } catch {
+        router.replace("/opportunities");
+      }
+    })();
+  }, [conversaParam, orgId, loading, router]);
+
   // Background refreshes (timer and realtime) are throttled and skipped while the tab is hidden:
   // every conversation update used to trigger three full scans of the organization.
   const fetchRef = useRef(fetchOpportunities);
@@ -100,7 +128,7 @@ export default function OpportunitiesPage() {
         <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
       </div>
       {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()} onTaskClosed={id=>setOrphanTasks(prev=>prev.filter(t=>t.id!==id))}/>}
-      {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open)setUnidentifiedSelected(null)}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh] max-md:h-[70dvh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>setUnidentifiedSelected(null)} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
+      {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open){setUnidentifiedSelected(null);clearConversaParam()}}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh] max-md:h-[70dvh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>{setUnidentifiedSelected(null);clearConversaParam()}} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
       <ExceptionsPanel />
       <section aria-label="Busca e filtros do funil" className="space-y-3 rounded-2xl border bg-card p-3 md:p-4">
       <div className="flex flex-wrap items-center gap-2"><Input className="min-w-48 flex-1 rounded-full max-md:h-11" aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" className="max-md:h-11" onClick={() => setQuery("")}>Limpar busca</Button>}</div>
@@ -129,7 +157,7 @@ export default function OpportunitiesPage() {
         </div>
       )}
       {!loading && !error && searching && <section className="space-y-3" aria-label="Resultados da busca"><p className="text-sm text-muted-foreground">{searchResults.length} negócio(s) encontrado(s)</p>{searchResults.map(o => <button key={o.id} type="button" className="block w-full rounded-lg border p-4 text-left hover:bg-muted/50" onClick={() => setSearchSelected(o)}><strong>{o.wa_contacts?.name || "Sem nome"}</strong><p className="text-sm text-muted-foreground">{o.wa_contacts?.phone} · {OPERATION_LABELS[o.operation]} · {o.status === "won" ? "Ganho" : o.status === "lost" ? "Perdido" : "Em andamento"} · {FUNNEL_STAGE_LABELS[o.stage] ?? o.stage}</p><p className="mt-1 text-sm">{o.product_model ?? o.product ?? o.next_action ?? "Abrir detalhes"}</p></button>)}{!searchResults.length && <p>Nenhum negócio encontrado. Confira também se o contato já possui uma oportunidade registrada.</p>}</section>}
-      {searchSelected && <OpportunityDetailDialog opportunity={opportunities.find(o => o.id === searchSelected.id) ?? searchSelected} onClose={() => setSearchSelected(null)} onChanged={fetchOpportunities}/>}
+      {searchSelected && <OpportunityDetailDialog opportunity={opportunities.find(o => o.id === searchSelected.id) ?? searchSelected} onClose={() => { setSearchSelected(null); clearConversaParam(); }} onChanged={fetchOpportunities}/>}
       {!loading && !error && !searching && (
         <OpportunityKanban queueMode={currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open"} workspaceEnabled={(currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true) && status === "open"} operation={operation} opportunities={opportunitiesForTab} onChanged={fetchOpportunities} />
       )}

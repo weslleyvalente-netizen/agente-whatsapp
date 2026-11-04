@@ -22,9 +22,9 @@ describe("isManagerOnlyPath", () => {
 });
 
 describe("guardDecision", () => {
-  it("vendedor em rota restrita é redirecionado para /inbox", () => {
+  it("vendedor em rota restrita é redirecionado para o funil", () => {
     expect(guardDecision("/settings", "agent")).toEqual({ kind: "redirect", to: SELLER_HOME });
-    expect(SELLER_HOME).toBe("/inbox");
+    expect(SELLER_HOME).toBe("/opportunities");
   });
   it("enquanto o papel carrega, rota restrita espera (sem mostrar conteúdo)", () => {
     expect(guardDecision("/agents", null)).toEqual({ kind: "wait" });

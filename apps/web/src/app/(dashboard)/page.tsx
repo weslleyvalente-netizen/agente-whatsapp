@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { StatusLamp } from "@/components/ui/status-lamp";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { TASK_TYPE_LABELS, type TaskType, type TaskPriority } from "@aula-agente/shared";
+import { TASK_TYPE_LABELS, funnelConversationHref, type TaskType, type TaskPriority } from "@aula-agente/shared";
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import type { TaskWithRelations } from "@/components/tasks/task-card";
 
@@ -257,7 +257,7 @@ export default function HomePage() {
               {summary.pendingHandoffs.map((h) => (
                 <Link
                   key={h.conversationId}
-                  href={`/inbox?id=${h.conversationId}`}
+                  href={funnelConversationHref(h.conversationId)}
                   className="flex items-center gap-3 py-3 transition-colors hover:bg-accent/50"
                 >
                   <Avatar>
@@ -318,7 +318,7 @@ export default function HomePage() {
                     </Badge>
                     {item.conversationId && (
                       <Link
-                        href={`/inbox?id=${item.conversationId}`}
+                        href={funnelConversationHref(item.conversationId)}
                         className={buttonVariants({ size: "sm", variant: "outline" })}
                       >
                         Abrir
@@ -367,7 +367,7 @@ export default function HomePage() {
               {summary.urgentConversations.map((c) => (
                 <Link
                   key={c.conversationId}
-                  href={`/inbox?id=${c.conversationId}`}
+                  href={funnelConversationHref(c.conversationId)}
                   className="flex items-center gap-3 py-3 transition-colors hover:bg-accent/50"
                 >
                   <Avatar>

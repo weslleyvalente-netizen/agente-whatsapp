@@ -44,7 +44,7 @@ export async function updateSession(request: NextRequest) {
   // Redirect to dashboard if authenticated and on auth pages
   if (user && (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/register")) {
     const url = request.nextUrl.clone();
-    url.pathname = "/inbox";
+    url.pathname = "/opportunities";
     return NextResponse.redirect(url);
   }
 

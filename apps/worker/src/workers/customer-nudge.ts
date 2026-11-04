@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import {
   QUEUE_NAMES, buildCustomerNudgeTask, CUSTOMER_NUDGE_MAX_AGE_MS, CUSTOMER_NUDGE_MAX_NEW_PER_RUN, decideCustomerNudge, isBusinessOpen,
-  resolveBusinessCalendar, toISODateInTimeZone, type BusinessCalendar,
+  pickFunnelOpportunity, funnelConversationHref, resolveBusinessCalendar, toISODateInTimeZone, type BusinessCalendar,
 } from "@aula-agente/shared";
 import { getCustomerNudgeQueue, getRedisConnection } from "@aula-agente/queue";
 import {
@@ -69,7 +69,7 @@ const errText = (e: unknown) => String((e as { message?: string } | null)?.messa
  */
 /** Dono do negócio aberto do contato: prefere negócio com dono e, entre eles, o de interação mais recente. */
 function pickOpportunity(list: NudgeOpportunity[]): NudgeOpportunity {
-  return [...list].sort((a, b) => (a.ownerId ? 0 : 1) - (b.ownerId ? 0 : 1) || (b.lastInteractionAt ?? "").localeCompare(a.lastInteractionAt ?? "") || a.id.localeCompare(b.id))[0];
+  return pickFunnelOpportunity(list)!;
 }
 
 export async function runCustomerNudge(deps: NudgeDeps, now = new Date()): Promise<NudgeSummary> {
@@ -198,7 +198,7 @@ async function pushToOwner(deps: NudgeDeps, organizationId: string, userId: stri
     if (!(await deps.canReceivePush(organizationId, userId))) return false;
     if (!(await deps.claimPushDedupe(key, userId))) return false;
     const name = (await deps.contactName(organizationId, conv.contactId))?.trim() || "Sem nome";
-    const sent = await deps.sendPush(organizationId, userId, { title: "Cutucar cliente", body: `${name} parou de responder. Toque para retomar a conversa.`, url: `/inbox?id=${conv.id}`, tag: conv.id });
+    const sent = await deps.sendPush(organizationId, userId, { title: "Cutucar cliente", body: `${name} parou de responder. Toque para retomar a conversa.`, url: funnelConversationHref(conv.id), tag: conv.id });
     if (sent <= 0) { await deps.releasePushDedupe([key]).catch(() => {}); return false; }
     return true;
   } catch (err) {

@@ -84,7 +84,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
      <div role="group" aria-label="Atendimento" className="space-y-1">
       <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Atendimento</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap">
-       {details?.conversation && <Link className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={`/inbox?id=${details.conversation.id}`}><MessageSquare aria-hidden />Abrir conversa</Link>}
+       {details?.conversation && !workspaceEnabled && <Link className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={`/inbox?id=${details.conversation.id}`}><MessageSquare aria-hidden />Abrir conversa</Link>}
        {whatsappUrl && <a className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={whatsappUrl} target="_blank" rel="noopener noreferrer"><MessageCircle aria-hidden />Abrir no WhatsApp</a>}
        <Button className="max-md:h-11" onClick={() => setCallOpen(true)}><Phone aria-hidden />Registrar ligação</Button>
       </div>

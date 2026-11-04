@@ -91,7 +91,7 @@ export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now =
       : [{
           payload: {
             title: items.every(i => i.c.kind === "assign") ? `${items.length} novos leads` : `${items.length} novas notificações`,
-            body: "Toque para abrir.", url: "/inbox", tag: "push-summary",
+            body: "Toque para abrir.", url: "/opportunities", tag: "push-summary",
           },
           keys: items.flatMap(i => i.keys),
         }];

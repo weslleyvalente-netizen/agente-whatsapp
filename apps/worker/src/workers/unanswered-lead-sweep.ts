@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { QUEUE_NAMES, isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
+import { QUEUE_NAMES, funnelConversationHref, isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
 import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue, type ProcessMessageJobData } from "@aula-agente/queue";
 import {
   claimPushDedupe, getAckContext, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
@@ -231,7 +231,7 @@ async function pushToSeller(deps: SweepDeps, organizationId: string, c: Unanswer
     const excerpt = c.content.replace(/\s+/g, " ").trim().slice(0, 40) || "mídia";
     const sent = await deps.sendPush(organizationId, userId, {
       title: `Cliente sem resposta: ${c.contactName?.trim() || "Sem nome"} (${excerpt})`, body: "Toque para responder.",
-      url: `/inbox?id=${c.conversationId}`, tag: c.conversationId,
+      url: funnelConversationHref(c.conversationId), tag: c.conversationId,
     });
     if (sent <= 0) { await undo(); return "fallback"; }
   } catch (err) {
