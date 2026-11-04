@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useOrganization } from "@/providers/organization-provider";
 import { useRealtime } from "@/lib/realtime";
 import { apiFetch } from "@/lib/api";
-import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, parseFunnelConversationParam, sortNewestSalesCards, trailingThrottle, reuseUnchanged } from "@aula-agente/shared";
+import { OPERATIONS, OPERATION_LABELS, FUNNEL_STAGE_LABELS, matchesOpportunitySearch, countSalesQueueGroups, SALES_QUEUE_ACT_NOW_GROUPS, SALES_QUEUE_LABELS, parseFunnelConversationParam, sortNewestSalesCards, trailingThrottle, reuseUnchanged } from "@aula-agente/shared";
 import type { Operation, Task } from "@aula-agente/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,16 @@ export default function OpportunitiesPage() {
   );
 
   const orphanTasksForSearch=useMemo(()=>orphanTasks.filter(t=>matchesOpportunitySearch({wa_contacts:t.wa_contacts,commercial_notes:t.description,next_action:t.title},query)),[orphanTasks,query]);
+  const orphanActionable=orphanTasksForSearch.filter(t=>t.queue_group!=="no_response").length;
+  const queueActive=currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open" && !searching;
+  // Contador "Para agir agora": mesma lista e mesma classificação do Kanban, sem consulta nova.
+  const actNowCounts=useMemo(()=>queueActive?countSalesQueueGroups(opportunitiesForTab.map(o=>({...o,tasks:o.sales_state?.tasks})),new Date().toISOString()):null,[queueActive,opportunitiesForTab]);
+  const actNowTotal=actNowCounts?SALES_QUEUE_ACT_NOW_GROUPS.reduce((n,g)=>n+actNowCounts[g],0)+orphanActionable:0;
+  const [orphanOpen,setOrphanOpen]=useState(false);
+  // Abre sozinho quando surge pendência que exige ação (uma vez); depois respeita o que o vendedor fizer.
+  const orphanAutoOpened=useRef(false);
+  useEffect(()=>{if(orphanActionable>0&&!orphanAutoOpened.current){orphanAutoOpened.current=true;setOrphanOpen(true)}},[orphanActionable]);
+  const scrollToId=(id:string)=>document.getElementById(id)?.scrollIntoView({behavior:"smooth",block:"start"});
   const searchResults = useMemo(() => sortNewestSalesCards(opportunities.filter(o => matchesOpportunitySearch(o, query))), [opportunities, query]);
 
   useEffect(() => {
@@ -130,6 +140,7 @@ export default function OpportunitiesPage() {
       {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()} onTaskClosed={id=>setOrphanTasks(prev=>prev.filter(t=>t.id!==id))}/>}
       {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open){setUnidentifiedSelected(null);clearConversaParam()}}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh] max-md:h-[70dvh]"><ChatPanel compact conversationId={unidentifiedSelected} onClose={()=>{setUnidentifiedSelected(null);clearConversaParam()}} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
       <ExceptionsPanel />
+      {actNowCounts && !loading && !error && <section aria-label="Para agir agora" className="flex flex-wrap items-center gap-2 rounded-2xl border bg-card px-3 py-2"><strong className="text-sm">Para agir agora: {actNowTotal}</strong>{SALES_QUEUE_ACT_NOW_GROUPS.map(g=><Button key={g} size="sm" variant="outline" className="max-md:h-11" disabled={!actNowCounts[g]} onClick={()=>{window.dispatchEvent(new CustomEvent("fila-abrir",{detail:g}));setTimeout(()=>scrollToId(`fila-${g}`),0)}}>{SALES_QUEUE_LABELS[g]}<Badge variant={actNowCounts[g]?"default":"secondary"}>{actNowCounts[g]}</Badge></Button>)}{orphanActionable>0&&<Button size="sm" variant="outline" className="max-md:h-11" onClick={()=>{setOrphanOpen(true);setTimeout(()=>scrollToId("pendencias-sem-negocio"),0)}}>Pendências sem negócio<Badge>{orphanActionable}</Badge></Button>}</section>}
       <section aria-label="Busca e filtros do funil" className="space-y-3 rounded-2xl border bg-card p-3 md:p-4">
       <div className="flex flex-wrap items-center gap-2"><Input className="min-w-48 flex-1 rounded-full max-md:h-11" aria-label="Buscar no funil" placeholder="Buscar nome, telefone, modelo, observações..." value={query} onChange={e => setQuery(e.target.value)} />{searching && <Button variant="outline" className="max-md:h-11" onClick={() => setQuery("")}>Limpar busca</Button>}</div>
       {searching && <p className="text-sm text-muted-foreground">Busca em todos os funis e situações, incluindo ganhos e perdidos.</p>}
@@ -162,7 +173,7 @@ export default function OpportunitiesPage() {
         <OpportunityKanban queueMode={currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open"} workspaceEnabled={(currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true) && status === "open"} operation={operation} opportunities={opportunitiesForTab} onChanged={fetchOpportunities} />
       )}
       <section aria-label="Outros atendimentos" className="space-y-3">
-      {currentOrg?.settings.sales_action_queue_enabled===true && <details className="rounded-xl border bg-muted/20 p-4"><summary className="cursor-pointer font-medium">Pendências antigas sem negócio aberto ({orphanTasksForSearch.filter(t=>t.queue_group!=="no_response").length})</summary><p className="mt-2 text-sm text-muted-foreground">Tarefas preservadas. Revise aqui para vincular ao negócio correto; nenhuma foi excluída ou marcada como perdida.</p><div className="mt-3 flex flex-wrap gap-2">{orphanTasksForSearch.filter(t=>t.queue_group!=="no_response").map(t=><Button key={t.id} variant="outline" onClick={()=>setOrphanSelected(t)}>{t.wa_contacts?.name||t.wa_contacts?.phone} · {t.due_date}{t.type==="customer_unresponsive"?" · Sem resposta":""}</Button>)}</div></details>}
+      {currentOrg?.settings.sales_action_queue_enabled===true && <details id="pendencias-sem-negocio" open={orphanOpen} onToggle={e=>setOrphanOpen(e.currentTarget.open)} className="scroll-mt-4 rounded-xl border bg-muted/20 p-4"><summary className="cursor-pointer font-medium">Pendências antigas sem negócio aberto ({orphanActionable})</summary><p className="mt-2 text-sm text-muted-foreground">Tarefas preservadas. Revise aqui para vincular ao negócio correto; nenhuma foi excluída ou marcada como perdida.</p><div className="mt-3 flex flex-wrap gap-2">{orphanTasksForSearch.filter(t=>t.queue_group!=="no_response").map(t=><Button key={t.id} variant="outline" onClick={()=>setOrphanSelected(t)}>{t.wa_contacts?.name||t.wa_contacts?.phone} · {t.due_date}{t.type==="customer_unresponsive"?" · Sem resposta":""}</Button>)}</div></details>}
       {currentOrg?.settings.sales_action_queue_enabled===true && <details className="rounded-xl border bg-muted/20 p-4"><summary className="cursor-pointer text-muted-foreground">Sem resposta · tarefas antigas ({orphanTasksForSearch.filter(t=>t.queue_group==="no_response").length})</summary><p className="mt-2 text-sm text-muted-foreground">Fora da fila principal. Mantidas para revisão, sem envio ou encerramento automático.</p><div className="mt-3 flex flex-wrap gap-2">{orphanTasksForSearch.filter(t=>t.queue_group==="no_response").map(t=><Button key={t.id} variant="outline" onClick={()=>setOrphanSelected(t)}>{t.wa_contacts?.name||t.wa_contacts?.phone} · {t.due_date}</Button>)}</div></details>}
       {currentOrg?.settings.sales_auto_pipeline_enabled===true && <details className="rounded-xl border bg-muted/20 p-4"><summary className="cursor-pointer font-medium">A identificar ({unidentified.length})</summary><p className="text-sm text-muted-foreground">Contatos em atendimento sem negócio. A operação precisa ser identificada antes de criar o card.</p><div className="mt-3 flex flex-wrap gap-2">{unidentified.filter(row=>!searching || `${row.wa_contacts?.name??""} ${row.wa_contacts?.phone??""}`.toLowerCase().includes(query.toLowerCase())).map(row=><Button variant="outline" key={row.id} onClick={()=>setUnidentifiedSelected(row.id)}>{row.wa_contacts?.name||row.wa_contacts?.phone||"Contato"}</Button>)}</div></details>}
       </section>

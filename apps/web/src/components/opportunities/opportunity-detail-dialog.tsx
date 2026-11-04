@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, MessageSquare, MessageCircle, Phone, Snowflake, X } from "lucide-react";
+import { Check, MessageSquare, MessageCircle, Phone, Plus, Snowflake, X } from "lucide-react";
 import { displayText, distinctDisplayTexts } from "@/lib/display-text";
 import { formatPhone } from "@/lib/utils";
 import { useOrganization } from "@/providers/organization-provider";
 import { ChatPanel } from "@/components/inbox/chat-panel";
+import { TaskDialog } from "@/components/tasks/task-dialog";
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import { apiFetch } from "@/lib/api";
 import { resolveOpportunityEditValues, CALL_OUTCOME_LABELS, CALL_STRATEGY_LABELS, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATIONS, buildWhatsAppUrl, OPERATION_LABELS, LEAD_ORIGIN_LABELS, TASK_TYPE_LABELS } from "@aula-agente/shared";
@@ -87,6 +88,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
        {details?.conversation && !workspaceEnabled && <Link className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={`/inbox?id=${details.conversation.id}`}><MessageSquare aria-hidden />Abrir conversa</Link>}
        {whatsappUrl && <a className={buttonVariants({ variant: "default", className: "max-md:h-11" })} href={whatsappUrl} target="_blank" rel="noopener noreferrer"><MessageCircle aria-hidden />Abrir no WhatsApp</a>}
        <Button className="max-md:h-11" onClick={() => setCallOpen(true)}><Phone aria-hidden />Registrar ligação</Button>
+       {o.status === "open" && details && <TaskDialog organizationId={o.organization_id} presetContact={{ id: o.contact_id, name: details.customer.name, phone: details.customer.phone }} presetConversationId={details.conversation?.id ?? null} presetOpportunityId={o.id} assignToSelf triggerButton={<Button variant="outline" className="max-md:h-11" />} triggerLabel={<><Plus aria-hidden />Nova tarefa</>} onSaved={() => { load(); onChanged(); }} />}
       </div>
      </div>
      {o.status === "open" && <div role="group" aria-label="Avançar negócio" className="space-y-1 rounded-lg border p-2">
