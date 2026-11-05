@@ -1,5 +1,5 @@
 import { isHumanOriginMessage } from "@aula-agente/shared";
-import { recordHumanMessage, type SupabaseClient } from "@aula-agente/database";
+import { recordHumanMessage, completeNudgeTasksOnSellerMessage, type SupabaseClient } from "@aula-agente/database";
 
 interface Input {
   organizationId: string;
@@ -16,6 +16,9 @@ interface Input {
 /** Marca a primeira resposta humana (e assume o lead quando cabe). Só origem humana comprovada conta. Nunca lança. */
 export async function trackFirstHumanMessage(db: SupabaseClient, input: Input): Promise<string | null> {
   if (!isHumanOriginMessage(input)) return null;
+  // O vendedor falou com o cliente: o lembrete "Cutucar cliente" já cumpriu o papel (best-effort; o worker confere de novo a cada 30 min).
+  try { await completeNudgeTasksOnSellerMessage(db, input.organizationId, input.conversationId, (input.at ?? new Date()).toISOString()); }
+  catch (err) { console.error("Failed to complete customer_nudge tasks after seller message:", err); }
   try {
     return await recordHumanMessage(db, {
       organizationId: input.organizationId,
