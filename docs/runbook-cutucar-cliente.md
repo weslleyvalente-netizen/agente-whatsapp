@@ -13,6 +13,7 @@ No funil, a tarefa aparece em **Compromissos de hoje** (vencida ou de hoje) até
 | 3 | 7 dias úteis | alta (sugere encerrar ou marcar como perdido) |
 
 - O número do toque = 1 + tarefas `customer_nudge` já criadas na conversa depois da última mensagem do cliente. Máximo 3; depois para.
+- **Intervalo entre toques:** além do silêncio acima, o toque 2 só nasce com **2 dias úteis** e o toque 3 com **4 dias úteis** (as diferenças da escada, 3-1 e 7-3) desde o momento do toque anterior = o maior entre `created_at` e `completed_at` da tarefa `customer_nudge` mais recente do ciclo atual. Evita que concluir o toque 1 faça o toque 2 nascer 30 min depois num cliente já parado há muitos dias (caso do backlog inicial). As duas condições precisam valer; sem toque anterior nada muda. Motivo no resumo do worker: `skipped.nudge_interval`.
 - Se o vendedor mandar nova mensagem, o relógio recomeça dela, mas o número do toque continua (só zera quando o cliente responde).
 - Só cria dentro do horário comercial (`business_calendar`), com `due_date` = hoje. Roda a cada 30 min.
 
