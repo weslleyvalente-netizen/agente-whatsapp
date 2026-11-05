@@ -18,7 +18,7 @@ vi.mock("@aula-agente/agent-runtime", () => ({ resolveApiKey: m.resolveApiKey, g
 vi.mock("../../lib/lead-access.js", () => ({ canViewLead: m.canViewLead }));
 vi.mock("../../services/followup-audio-context.service.js", () => ({ prepareFollowupAudioContext: m.prepare }));
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async (req: any) => { req.user = { id: "user-1", memberships: [{ organization_id: m.memberOrg.value, role: m.role.value }] }; } }));
-import routes, { resetSuggestionLimitForTests, SUGGESTION_LIMIT_PER_HOUR, firstNameOf } from "./message-suggestion.js";
+import routes, { resetSuggestionLimitForTests, SUGGESTION_LIMIT_PER_HOUR, firstNameOf, countCurrentCycleNudges } from "./message-suggestion.js";
 
 const opportunity = { id: "opp-1", organization_id: "org-1", contact_id: "contact-1", owner_id: "user-1", status: "open", stage: "qualified", operation: "consorcio_moto", product_model: "Factor 150", credit_amount: 15000, target_installment_amount: 700 };
 const URL = "/opportunities/opp-1/message-suggestion";
@@ -115,6 +115,22 @@ describe("POST /opportunities/:id/message-suggestion", () => {
     expect(r.statusCode).toBe(503); expect(r.json()).toMatchObject({ reason: "generation_failed", error: "Não foi possível gerar. Tente de novo." });
     m.resolveApiKey.mockRejectedValue(new Error("sem chave")); vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await post({})).statusCode).toBe(503);
+  });
+});
+
+describe("limite e ciclo", () => {
+  it("422 e 503 devolvem a vaga", async () => {
+    m.prepare.mockRejectedValue(new Error("x"));
+    for (let i = 0; i < SUGGESTION_LIMIT_PER_HOUR + 2; i++) expect((await post({})).statusCode).toBe(422);
+    m.prepare.mockImplementation(async (_d: unknown, _c: unknown, messages: unknown[]) => ({ messages, changed: false }));
+    m.generate.mockResolvedValue({ ok: false });
+    for (let i = 0; i < SUGGESTION_LIMIT_PER_HOUR + 2; i++) expect((await post({})).statusCode).toBe(503);
+  });
+  it("conta só cutucadas depois da última mensagem do cliente", async () => {
+    m.listNudgeTasksByConversation.mockResolvedValue([{ createdAt: "2026-09-01T00:00:00Z" }, { createdAt: "2026-10-02T00:00:00Z" }]);
+    await post({});
+    expect(m.generate.mock.calls[0][0].context.nudgeCount).toBe(1);
+    expect(countCurrentCycleNudges([{ createdAt: "2026-09-01T00:00:00Z" }], null)).toBe(1);
   });
 });
 

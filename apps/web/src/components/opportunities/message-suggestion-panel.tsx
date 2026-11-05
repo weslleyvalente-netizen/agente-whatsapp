@@ -31,7 +31,8 @@ export function MessageSuggestionPanel({ opportunityId, initialMode, onUseInChat
     }
   }, [opportunityId]);
 
-  useEffect(() => { generate(initialMode); return () => { seq.current++; }; }, [generate, initialMode]);
+  // Gera uma vez ao abrir: o modo inicial não entra nas dependências (recarregar a lista não pode refazer a sugestão nem gastar o limite).
+  useEffect(() => { generate(initialMode); return () => { seq.current++; }; }, [generate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function changeMode(next: MessageSuggestionMode) { if (next === mode || loading) return; setMode(next); setText(""); generate(next); }
   async function copy() { try { await navigator.clipboard.writeText(text); setCopied(true); } catch { setError("Não foi possível copiar. Selecione o texto e copie manualmente."); } }

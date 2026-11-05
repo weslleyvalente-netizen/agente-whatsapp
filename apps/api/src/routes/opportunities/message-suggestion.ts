@@ -22,8 +22,15 @@ export function takeSuggestionSlot(userId: string, now = Date.now()): boolean {
   recent.push(now); usage.set(userId, recent);
   return true;
 }
+/** Devolve a vaga de uma tentativa que não gerou nada (422/503). */
+export function releaseSuggestionSlot(key: string) { const l = usage.get(key); if (l?.length) l.pop(); }
 export function resetSuggestionLimitForTests() { usage.clear(); }
 
+/** Cutucadas do ciclo atual: só as criadas depois da última mensagem do cliente (como o worker do cutucar). */
+export function countCurrentCycleNudges(tasks: Array<{ createdAt: string }>, lastCustomerAt?: string | null): number {
+  const since = lastCustomerAt ? Date.parse(lastCustomerAt) : NaN;
+  return Number.isFinite(since) ? tasks.filter(t => Date.parse(t.createdAt) > since).length : tasks.length;
+}
 const MAX_MESSAGE_CHARS = 700;
 /** Primeiro nome só quando o contato tem nome de verdade (nada de telefone ou símbolo). */
 export function firstNameOf(name: string | null | undefined): string | null {
@@ -61,12 +68,14 @@ export default async function messageSuggestionRoutes(app: FastifyInstance) {
     if (conversationError) throw conversationError;
     if (!conversation) return reply.status(409).send({ error: "Ainda não existe conversa com este cliente", reason: "no_conversation" });
 
-    if (!takeSuggestionSlot(request.user.id)) return reply.status(429).send({ error: "Limite de sugestões por hora atingido. Tente novamente mais tarde.", reason: "rate_limited" });
+    const slotKey = `${orgId}:${request.user.id}`;
+    if (!takeSuggestionSlot(slotKey)) return reply.status(429).send({ error: "Limite de sugestões por hora atingido. Tente novamente mais tarde.", reason: "rate_limited" });
 
     let prepared;
     try {
       prepared = await prepareFollowupAudioContext(db, conversation as never, await getRecentMessages(db, conversation.id, 20));
     } catch (error) {
+      releaseSuggestionSlot(slotKey);
       return reply.status(422).send({ error: (error as Error).message, reason: "incomplete_audio_context" });
     }
     const messages = prepared.messages;
@@ -80,6 +89,7 @@ export default async function messageSuggestionRoutes(app: FastifyInstance) {
     const q = qualification && qualification.organization_id === orgId ? qualification : null;
 
     const lastHuman = [...messages].reverse().find(m => m.role === "human_agent");
+    const lastCustomer = [...messages].reverse().find(m => m.role === "contact");
     const mode = body.data.mode ?? defaultSuggestionMode({ lastHumanMessageAt: lastHuman?.created_at, since: latestInstant((opportunity as { owner_assigned_at?: string | null }).owner_assigned_at, handoff?.handed_at) });
 
     let apiKey: string; let agent;
@@ -88,6 +98,7 @@ export default async function messageSuggestionRoutes(app: FastifyInstance) {
       apiKey = await resolveApiKey(orgId, agent.provider);
     } catch (error) {
       console.error("Message suggestion: agent/key resolution failed:", error);
+      releaseSuggestionSlot(slotKey);
       return reply.status(503).send({ error: "Não foi possível gerar. Tente de novo.", reason: "generation_failed" });
     }
 
@@ -109,11 +120,11 @@ export default async function messageSuggestionRoutes(app: FastifyInstance) {
           downPaymentAmount: opportunity.down_payment_amount ?? q?.down_payment_amount ?? null,
           bidAmount: opportunity.bid_amount ?? null,
         },
-        nudgeCount: nudgeTasks ? nudgeTasks.length : null,
+        nudgeCount: nudgeTasks ? countCurrentCycleNudges(nudgeTasks, lastCustomer?.created_at) : null,
         recentMessages: messages.map(m => ({ role: m.role, content: m.content.slice(0, MAX_MESSAGE_CHARS) })),
       },
     });
-    if (!result.ok) return reply.status(503).send({ error: "Não foi possível gerar. Tente de novo.", reason: "generation_failed" });
+    if (!result.ok) { releaseSuggestionSlot(slotKey); return reply.status(503).send({ error: "Não foi possível gerar. Tente de novo.", reason: "generation_failed" }); }
     return reply.status(200).send({ message: result.message, mode });
   });
 }
