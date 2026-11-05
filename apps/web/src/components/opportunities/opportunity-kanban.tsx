@@ -21,7 +21,7 @@ export type OpportunityWithContact = Opportunity & {
   sales_state?: SalesCardState;
   contact_state?: ContactState;
   lead_assignment?: CardAssignment | null;
-  wa_contacts: { name: string | null; phone: string } | null;
+  wa_contacts: { name: string | null; phone: string; lead_origin_source?: string | null } | null;
 };
 
 const OpportunityCard = memo(function OpportunityCard({

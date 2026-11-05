@@ -34,7 +34,9 @@ const orphanInputs = createOrgCache<{ tasks: any[]; businesses: any[]; conversat
 export function invalidateSalesWorkspaceCache(organizationId: string) { workspaceInputs.invalidate(organizationId); distributionInputs.invalidate(organizationId); orphanInputs.invalidate(organizationId); }
 // Chamado pelo hook onSend do servidor: escrita autenticada não rejeitada com 401/403/404 descarta o cache da organização
 // (ou de todas as organizações do usuário quando a rota não expõe organizationId), para a tela refeita ver o dado novo.
-export function invalidateSalesWorkspaceCacheOnWrite(request: { method: string; params?: unknown; query?: unknown; user?: { memberships?: Array<{ organization_id: string }> } }, statusCode: number) {
+export function invalidateSalesWorkspaceCacheOnWrite(request: { method: string; routeOptions?: { url?: string }; params?: unknown; query?: unknown; user?: { memberships?: Array<{ organization_id: string }> } }, statusCode: number) {
+ // POST que só lê (sugestão de mensagem gera texto e não grava nada): não derruba o cache.
+ if (request.routeOptions?.url?.endsWith("/message-suggestion")) return;
  // Erro parcial (400/500) pode ter gravado antes de falhar; só 401/403/404 garantem que nada mudou.
  if ([401, 403, 404].includes(statusCode) || !["POST", "PUT", "PATCH", "DELETE"].includes(request.method.toUpperCase())) return;
  const org = (request.params as any)?.organizationId ?? (request.query as any)?.organizationId;
