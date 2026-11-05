@@ -35,7 +35,7 @@ beforeEach(() => {
   m.getRecentMessages.mockResolvedValue([{ role: "contact", content: "Oi", created_at: "2026-10-01T09:00:00Z" }]);
   m.prepare.mockImplementation(async (_db: unknown, _c: unknown, messages: unknown[]) => ({ messages, changed: false }));
   m.getQualificationByConversationId.mockResolvedValue({ organization_id: "org-1", summary: "Primeira moto" });
-  m.listNudgeTasksByConversation.mockResolvedValue([{}, {}]);
+  m.listNudgeTasksByConversation.mockResolvedValue([{ createdAt: "2026-10-02T00:00:00Z" }, { createdAt: "2026-10-03T00:00:00Z" }]);
   m.getAgentById.mockResolvedValue({ id: "agent-1", provider: "anthropic", model: "claude-sonnet-5" });
   m.resolveApiKey.mockResolvedValue("key");
   m.generate.mockResolvedValue({ ok: true, message: "Oi Ana! Qual parcela cabe por mês?" });
