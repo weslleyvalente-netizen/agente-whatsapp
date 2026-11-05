@@ -143,3 +143,20 @@ export async function hasSellerMessageAfter(db: SupabaseClient, organizationId: 
 export async function completeNudgeTask(db: SupabaseClient, organizationId: string, taskId: string, note: string): Promise<void> {
   await resolveAwaitingCustomerPendency(db, organizationId, taskId, "customer_nudge", note);
 }
+
+/**
+ * O vendedor acabou de falar com o cliente: conclui na hora os lembretes "Cutucar cliente" abertos desta conversa
+ * (o worker faz o mesmo a cada 30 min, como rede de segurança). Devolve quantos concluiu.
+ */
+export async function completeNudgeTasksOnSellerMessage(db: SupabaseClient, organizationId: string, conversationId: string, atIso: string): Promise<number> {
+  const { data, error } = await db.from("tasks").select("id")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("type", "customer_nudge")
+    .in("status", ["pending", "in_progress", "rescheduled"]).lt("created_at", atIso);
+  if (error) throw error;
+  let done = 0;
+  for (const t of (data ?? []) as Array<{ id: string }>) {
+    try { await completeNudgeTask(db, organizationId, t.id, "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa)."); done++; }
+    catch (err) { console.error(`completeNudgeTasksOnSellerMessage: task ${t.id} failed:`, err); }
+  }
+  return done;
+}

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ recordHumanMessage: vi.fn() }));
+const m = vi.hoisted(() => ({ recordHumanMessage: vi.fn(), completeNudgeTasksOnSellerMessage: vi.fn() }));
 vi.mock("@aula-agente/database", () => m);
 import { trackFirstHumanMessage } from "./lead-human-message.js";
 
 const base = { organizationId: "o", conversationId: "c" };
 const at = new Date("2026-10-05T12:00:00Z");
-beforeEach(() => { vi.clearAllMocks(); m.recordHumanMessage.mockResolvedValue("a1"); });
+beforeEach(() => { vi.clearAllMocks(); m.recordHumanMessage.mockResolvedValue("a1"); m.completeNudgeTasksOnSellerMessage.mockResolvedValue(1); });
 
 describe("trackFirstHumanMessage (regra 6.1.1)", () => {
   it("mensagem do painel pelo vendedor registra com o autor", async () => {
@@ -33,5 +33,18 @@ describe("trackFirstHumanMessage (regra 6.1.1)", () => {
     m.recordHumanMessage.mockRejectedValue(new Error("db"));
     expect(await trackFirstHumanMessage({} as any, { ...base, role: "human_agent", source: "panel", actorUserId: "u1", metadata: null })).toBeNull();
     log.mockRestore();
+  });
+  it("mensagem humana comprovada conclui o cutucar da conversa na hora", async () => {
+    await trackFirstHumanMessage({} as any, { ...base, role: "human_agent", source: "panel", actorUserId: "u1", metadata: null, at });
+    expect(m.completeNudgeTasksOnSellerMessage).toHaveBeenCalledWith({}, "o", "c", at.toISOString());
+  });
+  it("mensagem da IA ou automática não conclui o cutucar", async () => {
+    await trackFirstHumanMessage({} as any, { ...base, role: "agent", source: "panel", actorUserId: "u1", metadata: null });
+    await trackFirstHumanMessage({} as any, { ...base, role: "human_agent", source: "panel", actorUserId: "u1", metadata: { system_generated: true } });
+    expect(m.completeNudgeTasksOnSellerMessage).not.toHaveBeenCalled();
+  });
+  it("falha ao concluir o cutucar não impede o registro da primeira resposta", async () => {
+    m.completeNudgeTasksOnSellerMessage.mockRejectedValue(new Error("db"));
+    await expect(trackFirstHumanMessage({} as any, { ...base, role: "human_agent", source: "panel", actorUserId: "u1", metadata: null, at })).resolves.toBe("a1");
   });
 });
