@@ -57,6 +57,8 @@ export interface OrganizationSettings {
   unanswered_lead_sweep_enabled?: boolean;
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.
   customer_nudge_enabled?: boolean;
+  // Botão "Sugerir mensagem" no card do funil (primeiro atendimento e follow-up, texto gerado por IA e editado pelo vendedor). Desligado por padrão: só === true liga.
+  seller_message_suggestion_enabled?: boolean;
   max_documents: number;
   max_agents: number;
   max_instances: number;
