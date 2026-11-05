@@ -1,15 +1,23 @@
 import { getInstanceById, updateMessageContent, type getAdminClient } from "@aula-agente/database";
 import { transcribeAudioMessage } from "@aula-agente/agent-runtime";
 import type {Conversation,Message} from "@aula-agente/shared";
-export async function prepareFollowupAudioContext(db:ReturnType<typeof getAdminClient>,c:Conversation,messages:Message[]):Promise<{messages:Message[];changed:boolean}> {
- const missing=messages.filter(m=>["human_agent","contact"].includes(m.role) && m.media_type==="audio" && m.content.trim()==="[audio]");
- if(!missing.length) return {messages,changed:false};
+/** Áudio mais velho que isso sem transcrição vira lacuna declarada no contexto, em vez de travar a sugestão. */
+export const OLD_AUDIO_DAYS=3;
+export const OLD_AUDIO_PLACEHOLDER="[áudio antigo sem transcrição — não sabemos o que foi dito]";
+export async function prepareFollowupAudioContext(db:ReturnType<typeof getAdminClient>,c:Conversation,messages:Message[],now:number=Date.now()):Promise<{messages:Message[];changed:boolean}> {
+ const untranscribed=messages.filter(m=>["human_agent","contact"].includes(m.role) && m.media_type==="audio" && m.content.trim()==="[audio]");
+ if(!untranscribed.length) return {messages,changed:false};
+ // Áudio antigo (provavelmente já expirado no WhatsApp) não muda o que dizer agora: declara a lacuna e segue.
+ const isOld=(m:Message)=>{const t=Date.parse(m.created_at);return Number.isFinite(t) && now-t>OLD_AUDIO_DAYS*86_400_000;};
+ const missing=untranscribed.filter(m=>!isOld(m));
+ const withGaps=messages.map(m=>untranscribed.includes(m)&&isOld(m)?{...m,content:OLD_AUDIO_PLACEHOLDER}:m);
+ if(!missing.length) return {messages:withGaps,changed:false};
  // Bound one request's paid work; older/unrecoverable media is an explicit
  // context gap, never an invitation to invent what the attendant said.
  if(missing.length>3 || missing.some(m=> !m.evolution_message_id || (m.metadata?.duration_seconds ?? 0)>300)) throw new Error("Há áudio sem transcrição no atendimento. Confira a conversa e escreva a mensagem manualmente.");
  const instance=await getInstanceById(db,c.evolution_instance_id);
  if(instance.organization_id!==c.organization_id) throw new Error("Instância não pertence à organização.");
- const prepared=messages.map(m=>({...m}));
+ const prepared=withGaps.map(m=>({...m}));
  for(const audio of missing) {
   const transcription=await transcribeAudioMessage({instanceName:instance.instance_name,evolutionMessageId:audio.evolution_message_id!,organizationId:c.organization_id});
   if(!transcription.ok) throw new Error("Não foi possível transcrever um áudio deste atendimento. Confira o áudio no WhatsApp e escreva a mensagem manualmente; a sugestão foi bloqueada para não ignorar o que foi dito.");
