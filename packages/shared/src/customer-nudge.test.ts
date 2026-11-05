@@ -38,6 +38,45 @@ describe("decideCustomerNudge: escada", () => {
   });
 });
 
+describe("decideCustomerNudge: intervalo desde o toque anterior", () => {
+  // Cliente parado há muito: vendedor falou seg 26/10 08:00; toque 1 concluído ter 03/11 08:20 (BRT).
+  const sentLong = new Date("2026-10-26T11:00:00Z");
+  const t1 = "2026-11-03T11:20:00Z";
+  const at = (iso: string, over: Partial<CustomerNudgeInput> = {}) =>
+    decideCustomerNudge(base({ lastSellerMessageAt: sentLong, now: new Date(iso), priorTouches: 1, lastNudgeAt: t1, todayISODate: iso.slice(0, 10), ...over }));
+  it("toque 2 NÃO nasce logo depois de concluir o toque 1, mesmo com silêncio > 3 dias úteis", () => {
+    expect(at("2026-11-03T11:50:00Z")).toEqual(skip("nudge_interval"));
+    expect(at("2026-11-04T20:00:00Z")).toEqual(skip("nudge_interval")); // qua 17:00: 1 dia útil
+  });
+  it("toque 2 nasce 2 dias úteis depois do toque 1", () => {
+    expect(at("2026-11-05T11:19:00Z")).toEqual(skip("nudge_interval")); // qui 08:19
+    expect(at("2026-11-05T11:20:00Z")).toMatchObject({ action: "create", touch: 2, ladderDays: 3 });
+  });
+  it("toque 3 só depois de 4 dias úteis do toque 2", () => {
+    const t2 = "2026-11-05T11:30:00Z"; // qui 08:30
+    const c = (iso: string) => decideCustomerNudge(base({ lastSellerMessageAt: new Date("2026-10-28T14:00:00Z"), now: new Date(iso), priorTouches: 2, lastNudgeAt: t2, todayISODate: iso.slice(0, 10) }));
+    expect(c("2026-11-09T14:00:00Z")).toEqual(skip("nudge_interval"));
+    expect(c("2026-11-11T11:29:00Z")).toEqual(skip("nudge_interval")); // ter 08:29 = 3 dias úteis + 599 min
+    expect(c("2026-11-11T11:30:00Z")).toMatchObject({ action: "create", touch: 3, ladderDays: 7 });
+  });
+  it("fim de semana e feriado não contam como úteis", () => {
+    const cal: BusinessCalendar = { ...DEFAULT_BUSINESS_CALENDAR, closedDates: ["2026-11-05"] };
+    expect(at("2026-11-06T11:19:00Z", { calendar: cal })).toEqual(skip("nudge_interval")); // quinta fechada não conta
+    expect(at("2026-11-06T11:20:00Z", { calendar: cal })).toMatchObject({ action: "create", touch: 2 });
+    // toque na sexta 15:00: sábado e domingo não contam => 2 dias úteis só na terça 15:00 (segunda é útil no calendário padrão)
+    const fri = "2026-10-30T18:00:00Z";
+    expect(at("2026-11-03T17:59:00Z", { lastNudgeAt: fri })).toEqual(skip("nudge_interval"));
+    expect(at("2026-11-03T18:00:00Z", { lastNudgeAt: fri })).toMatchObject({ action: "create", touch: 2 });
+  });
+  it("sem toque anterior o comportamento não muda (lastNudgeAt ausente ou null)", () => {
+    expect(decideCustomerNudge(base())).toMatchObject({ action: "create", touch: 1 });
+    expect(decideCustomerNudge(base({ lastNudgeAt: null }))).toMatchObject({ action: "create", touch: 1 });
+  });
+  it("cliente que respondeu zera o ciclo (priorTouches 0, sem intervalo)", () => {
+    expect(decideCustomerNudge(base({ priorTouches: 0, lastNudgeAt: null }))).toMatchObject({ action: "create", touch: 1 });
+  });
+});
+
 describe("decideCustomerNudge: quando não cria", () => {
   it("sem dono", () => expect(decideCustomerNudge(base({ ownerId: null }))).toEqual(skip("no_owner")));
   it("mensagem do vendedor com mais de 14 dias", () => {

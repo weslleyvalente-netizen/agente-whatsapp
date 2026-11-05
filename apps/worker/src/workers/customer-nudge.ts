@@ -158,9 +158,13 @@ async function createNudgeTasks(
         if (!memberCache.get(ownerId)) ownerId = null;
       }
       const [tasks, lastCustomer] = await Promise.all([deps.nudgeTasks(organizationId, conv.id), deps.lastCustomerMessage(organizationId, conv.id)]);
-      const priorTouches = tasks.filter((t) => !lastCustomer || t.createdAt > lastCustomer.createdAt).length;
+      const cycleTasks = tasks.filter((t) => !lastCustomer || t.createdAt > lastCustomer.createdAt);
+      const priorTouches = cycleTasks.length;
+      // Momento do toque anterior: o mais tardio entre criação e conclusão da tarefa mais recente do ciclo.
+      const lastNudgeMs = Math.max(0, ...cycleTasks.flatMap((t) => [Date.parse(t.createdAt), t.completedAt ? Date.parse(t.completedAt) : 0]).filter((n) => Number.isFinite(n)));
+      const lastNudgeAt = cycleTasks.length && lastNudgeMs > 0 ? new Date(lastNudgeMs).toISOString() : null;
       const facts = {
-        now, calendar, lastSellerMessageAt: new Date(last.createdAt), priorTouches, ownerId,
+        now, calendar, lastSellerMessageAt: new Date(last.createdAt), priorTouches, lastNudgeAt, ownerId,
         hasOpenTask: openOppIds.has(opp.id) || openContactIds.has(conv.contactId) || tasks.some((t) => OPEN_STATUSES.includes(t.status)), frozen: false,
         opportunity: { waiting_on: opp.waitingOn, waiting_on_until: opp.waitingOnUntil }, todayISODate, customerRefused: false,
       };

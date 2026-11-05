@@ -86,14 +86,14 @@ export async function getMessageText(db: SupabaseClient, organizationId: string,
   return ((data as { content: string | null } | null)?.content) ?? "";
 }
 
-export interface NudgeTaskRef { id: string; status: string; createdAt: string }
+export interface NudgeTaskRef { id: string; status: string; createdAt: string; completedAt: string | null }
 
 /** Todas as tarefas customer_nudge da conversa (abertas ou não): conta os toques e acha a aberta. */
 export async function listNudgeTasksByConversation(db: SupabaseClient, organizationId: string, conversationId: string): Promise<NudgeTaskRef[]> {
-  const { data, error } = await db.from("tasks").select("id, status, created_at")
+  const { data, error } = await db.from("tasks").select("id, status, created_at, completed_at")
     .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("type", "customer_nudge");
   if (error) throw error;
-  return ((data ?? []) as any[]).map((r) => ({ id: r.id, status: r.status, createdAt: r.created_at }));
+  return ((data ?? []) as any[]).map((r) => ({ id: r.id, status: r.status, createdAt: r.created_at, completedAt: r.completed_at ?? null }));
 }
 
 export interface OpenNudgeTask { id: string; conversationId: string | null; contactId: string; opportunityId: string | null; createdAt: string }

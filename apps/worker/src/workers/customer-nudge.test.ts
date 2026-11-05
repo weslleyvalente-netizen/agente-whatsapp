@@ -7,7 +7,7 @@ import { isCustomerRefusal, nudgePushDedupeKey, runCustomerNudge, type NudgeDeps
 const SENT = "2026-10-29T17:55:00Z";
 const NOW = new Date("2026-10-30T18:00:00Z");
 
-interface Conv { id?: string; contact?: string; lastRole?: string; lastAt?: string; assigned?: string | null; customerMsg?: { content: string; at: string; mediaType?: string | null } | null; tasks?: Array<{ id: string; status: string; createdAt: string }> }
+interface Conv { id?: string; contact?: string; lastRole?: string; lastAt?: string; assigned?: string | null; customerMsg?: { content: string; at: string; mediaType?: string | null } | null; tasks?: Array<{ id: string; status: string; createdAt: string; completedAt?: string | null }> }
 interface Opp { id?: string; contact?: string; owner?: string | null; waitingOn?: string | null; waitingOnUntil?: string | null }
 
 function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean; nonMembers?: string[]; openNudges?: any[] } = {}) {
@@ -23,7 +23,7 @@ function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: O
     lastCustomerMessage: async (_o, id) => { const m = convs.find((x) => x.id === id)!.customerMsg; return m === undefined ? { id: `cm-${id}`, role: "contact", mediaType: null, createdAt: "2026-10-29T17:00:00Z" } : m ? { id: `cm-${id}`, role: "contact", mediaType: m.mediaType ?? null, createdAt: m.at } : null; },
     messageText: async (_o, mid) => { textCalls.push(mid); const id = mid.replace("cm-", ""); return convs.find((x) => x.id === id)!.customerMsg?.content ?? "Quero uma simulação de imóvel"; },
     isMember: async (_o, u) => !(o.nonMembers ?? []).includes(u),
-    nudgeTasks: async (_o, id) => convs.find((x) => x.id === id)!.tasks ?? [],
+    nudgeTasks: async (_o, id) => (convs.find((x) => x.id === id)!.tasks ?? []).map((t) => ({ completedAt: null, ...t })),
     isFrozen: async (_o, contactId) => (o.frozen ?? []).includes(contactId),
     createTask: async (i) => { created.push(i); return { id: `task-${created.length}`, wasUpdated: o.createWasUpdated ?? false }; },
     contactName: async () => "Erica",
@@ -60,7 +60,7 @@ describe("runCustomerNudge: criação", () => {
     expect(s.created).toBe(0); expect(s.skipped.not_due_yet).toBe(1);
   });
   it("toque 2 conta só as tarefas depois da última mensagem do cliente; tarefas antigas (cliente falou depois) não contam", async () => {
-    const at = new Date("2026-11-03T17:55:00Z"); // ter 14:55 = 3 dias úteis
+    const at = new Date("2026-11-05T18:00:00Z"); // qui 15:00: passou o silêncio de 3 dias úteis e o intervalo de 2 dias úteis desde o toque 1
     const old = { id: "t0", status: "completed", createdAt: "2026-10-20T12:00:00Z" };
     const mine = { id: "t1", status: "completed", createdAt: "2026-10-30T18:00:00Z" };
     const w2 = world({ convs: [{ tasks: [old, mine] }] });
@@ -69,6 +69,19 @@ describe("runCustomerNudge: criação", () => {
     const w3 = world({ convs: [{ tasks: [old] }] }); // a antiga é de antes da fala do cliente => toque 1
     await runCustomerNudge(w3.deps, at);
     expect(w3.created[0].description).toContain("toque 1 de 3");
+  });
+  it("toque 2 NÃO nasce logo depois de o vendedor concluir o toque 1, mesmo com silêncio > 3 dias úteis; nasce 2 dias úteis depois", async () => {
+    const tasks = [{ id: "t1", status: "completed", createdAt: "2026-11-03T11:09:00Z", completedAt: "2026-11-03T11:20:00Z" }]; // ter 08:09 criada, 08:20 concluída
+    const conv = { tasks, lastAt: "2026-10-27T12:00:00Z", customerMsg: { content: "oi", at: "2026-10-27T11:00:00Z" } };
+    const w = world({ convs: [conv] });
+    const s = await runCustomerNudge(w.deps, new Date("2026-11-03T11:40:00Z")); // 30 min depois
+    expect(w.created).toHaveLength(0); expect(s.skipped.nudge_interval).toBe(1);
+    const w2 = world({ convs: [conv] });
+    await runCustomerNudge(w2.deps, new Date("2026-11-04T20:00:00Z")); // quarta 17:00: só 1 dia útil desde a conclusão
+    expect(w2.created).toHaveLength(0);
+    const w3 = world({ convs: [conv] });
+    await runCustomerNudge(w3.deps, new Date("2026-11-05T11:30:00Z")); // quinta 08:30: 2 dias úteis completos desde ter 08:20
+    expect(w3.created[0].description).toContain("toque 2 de 3");
   });
   it("toque 3 tem prioridade alta; depois dele para", async () => {
     const t = (n: number) => ({ id: `t${n}`, status: "completed", createdAt: `2026-10-3${n}T18:00:00Z` });
