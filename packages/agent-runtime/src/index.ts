@@ -16,4 +16,13 @@ export {
   type TaskFollowupOpportunityContext,
 } from "./task-followup-suggestion.js";
 
+export {
+  generateSellerMessageSuggestion,
+  buildSellerMessageSystemPrompt,
+  buildSellerMessageUserPrompt,
+  type GenerateSellerMessageSuggestionParams,
+  type SellerMessageSuggestionResult,
+  type SellerMessageContext,
+} from "./seller-message-suggestion.js";
+
 export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, type EvolutionMediaResponse, type TranscriptionResult } from "./audio-transcription.js";
