@@ -6,7 +6,8 @@ export type AiUsageSource =
   | "trainer"
   | "image_description"
   | "import_suggestion"
-  | "task_followup_suggestion";
+  | "task_followup_suggestion"
+  | "seller_message_suggestion";
 
 export interface AiUsageEvent {
   id: string;

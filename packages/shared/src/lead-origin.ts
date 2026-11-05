@@ -21,3 +21,10 @@ export function identifyLeadOrigin(input: { wix?: boolean; text?: string; ad?: R
   if (/\bvim\s+(?:do|pelo)\s+instagram\b/.test(text)) return { source: "instagram_organic", evidence: (input.text ?? "").slice(0, 1000) };
   return null;
 }
+
+export type OriginBadgeTone = "known" | "unknown";
+/** Selo de origem do card: texto sempre presente (não depende só de cor); origem ausente ou desconhecida vira "não identificada". */
+export function originBadge(source: string | null | undefined): { label: string; tone: OriginBadgeTone } {
+  const label = source && Object.hasOwn(LEAD_ORIGIN_LABELS, source) ? (LEAD_ORIGIN_LABELS as Record<string, string>)[source] : undefined;
+  return label ? { label, tone: "known" } : { label: "Origem não identificada", tone: "unknown" };
+}

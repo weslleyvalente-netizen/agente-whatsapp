@@ -41,16 +41,17 @@ export async function getOpportunitiesByOrganization(
 ) {
   // Embeds the contact's name/phone so the Kanban card can identify the
   // deal without a second round-trip — the board is unusable without it,
-  // since most opportunities won't have product_model set.
+  // since most opportunities won't have product_model set. lead_origin_source traz só o caminho JSON
+  // metadata->lead_origin->>source (texto curto), nunca o metadata inteiro, para o selo de origem do card.
   let query = client
     .from("opportunities")
-    .select(`${OPPORTUNITY_LIST_COLUMNS.join(",")}, wa_contacts(name, phone)`)
+    .select(`${OPPORTUNITY_LIST_COLUMNS.join(",")}, wa_contacts(name, phone, lead_origin_source:metadata->lead_origin->>source)`)
     .eq("organization_id", organizationId);
   if (filters.operation) query = query.eq("operation", filters.operation);
   if (filters.status) query = query.eq("status", filters.status);
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw error;
-  return data as unknown as (Opportunity & { wa_contacts: { name: string | null; phone: string } | null })[];
+  return data as unknown as (Opportunity & { wa_contacts: { name: string | null; phone: string; lead_origin_source?: string | null } | null })[];
 }
 
 // Used by stale-conversation-followup.ts to decide whether an automatic

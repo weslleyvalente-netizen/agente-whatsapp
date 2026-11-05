@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
-import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, type SalesQueueGroup } from "@aula-agente/shared";
+import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, originBadge, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState, ContactState } from "@aula-agente/shared";
 import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3 } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
@@ -21,7 +21,7 @@ export type OpportunityWithContact = Opportunity & {
   sales_state?: SalesCardState;
   contact_state?: ContactState;
   lead_assignment?: CardAssignment | null;
-  wa_contacts: { name: string | null; phone: string } | null;
+  wa_contacts: { name: string | null; phone: string; lead_origin_source?: string | null } | null;
 };
 
 const OpportunityCard = memo(function OpportunityCard({
@@ -58,6 +58,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
 }) {
   const contactLabel = opportunity.wa_contacts?.name || opportunity.wa_contacts?.phone || "Contato desconhecido";
 
+  const originChip = originBadge(opportunity.wa_contacts?.lead_origin_source);
   const amount = opportunity.sale_amount ?? opportunity.credit_amount;
   const date = opportunity.frozen_until ?? opportunity.next_action_due_date;
   const responseOverdue = opportunity.status === "open" && !opportunity.frozen_until && opportunity.sales_state?.responseOverdue;
@@ -80,6 +81,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
       <div className="mt-3 flex items-center gap-2 text-muted-foreground">{opportunity.frozen_until ? <Snowflake className="size-4"/> : <CalendarDays className="size-4"/>}<span>{date ? `${opportunity.frozen_until ? "Retorno: " : ""}${new Date(`${date}T12:00:00`).toLocaleDateString("pt-BR")}` : "Data a definir"}</span></div>
       {opportunity.next_action && <p className="mt-3 line-clamp-2 text-xs leading-relaxed" title={displayText(opportunity.next_action)}>Próxima ação: {displayText(opportunity.next_action)}</p>}
       <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+        {originChip.tone === "known" && <span title="Origem do lead" className="inline-flex max-w-full items-center rounded-full bg-sky-50 px-2 py-1 text-sky-800 dark:bg-sky-950 dark:text-sky-200"><span className="min-w-0 break-words">{originChip.label}</span></span>}
         {opportunity.operation_is_default && <span title="Este card foi criado quando o cliente foi encaminhado e o produto ainda não foi identificado. Confirme o produto com o cliente e ajuste o funil." className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950 dark:text-amber-200"><Clock3 className="size-3.5"/>Operação a confirmar</span>}
         {opportunity.sales_state?.humanPending && <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-primary"><UserCheck className="size-3.5"/>Atendimento pendente</span>}
         {responseOverdue && <span title="Confira a conversa antes de responder para evitar duplicidade" className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-amber-800 dark:bg-amber-950 dark:text-amber-200"><Clock3 className="size-3.5"/>Resposta da IA pendente</span>}

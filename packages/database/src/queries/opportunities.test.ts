@@ -34,7 +34,8 @@ it("lista do funil seleciona colunas explícitas, mantém as usadas e deixa de f
   const query: any = { select(value: string) { selected = value; return query; }, eq() { return query; }, order() { return Promise.resolve({ data: [], error: null }); } };
   await getOpportunitiesByOrganization({ from: () => query } as unknown as SupabaseClient, "org", { status: "open" });
   expect(selected).not.toContain("*");
-  expect(selected).toContain("wa_contacts(name, phone)");
+  expect(selected).toContain("wa_contacts(name, phone, lead_origin_source:metadata->lead_origin->>source)");
+  expect(selected).not.toMatch(/metadata[,)]/); // nunca o metadata inteiro
   const columns = selected.split(",").map(c => c.trim());
   for (const used of ["id", "contact_id", "status", "stage", "operation", "owner_id", "owner_assigned_at", "frozen_until", "freeze_reason", "operation_is_default", "commercial_notes", "next_action_due_date", "waiting_on_until", "last_interaction_at", "created_at", "sale_amount", "credit_amount", "lost_reason"]) expect(columns).toContain(used);
   for (const unused of ["freeze_previous_pendency", "freeze_previous_waiting", "frozen_at"]) expect(columns).not.toContain(unused);

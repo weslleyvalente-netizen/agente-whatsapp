@@ -295,6 +295,12 @@ describe("invalidação do cache em escritas", () => {
  it.each([401, 403, 404])("resposta %i não invalida", async status => {
   expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: { organizationId: "org" }, user }, status))).toBe(0);
  });
+ it("POST de sugestão de mensagem (só lê) não invalida o cache", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", routeOptions: { url: "/opportunities/:opportunityId/message-suggestion" }, params: { opportunityId: "x" }, user }, 200))).toBe(0);
+ });
+ it("PATCH da origem invalida (a lista refeita vê a origem nova)", async () => {
+  expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "PATCH", routeOptions: { url: "/opportunities/:opportunityId/origin" }, params: { opportunityId: "x" }, user }, 200))).toBeGreaterThan(0);
+ });
  it("requisição sem usuário e sem organização (webhook) não invalida", async () => {
   expect(await leituras(m => m.invalidateSalesWorkspaceCacheOnWrite({ method: "POST", params: {} }, 200))).toBe(0);
  });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { identifyLeadOrigin } from "./lead-origin.js";
+import { identifyLeadOrigin, originBadge } from "./lead-origin.js";
 describe("lead origin evidence", () => {
   it("records Wix form", () => expect(identifyLeadOrigin({ wix: true })?.source).toBe("site_wix"));
   it("recognizes organic Instagram", () => expect(identifyLeadOrigin({ text: "Olá, vim do Instagram!" })?.source).toBe("instagram_organic"));
@@ -8,4 +8,11 @@ describe("lead origin evidence", () => {
   it("identifies Facebook ads", () => expect(identifyLeadOrigin({ ad: { sourceUrl: "https://www.facebook.com/ads/123" } })?.source).toBe("facebook_ads"));
   it("keeps unknown Meta ads unspecific", () => expect(identifyLeadOrigin({ ad: { title: "Factor" } })?.source).toBe("meta_ads"));
   it("rejects deceptive domains", () => expect(identifyLeadOrigin({ ad: { sourceUrl: "https://facebook.com.evil.test/ad" } })?.source).toBe("meta_ads"));
+});
+describe("originBadge", () => {
+  it("usa o rótulo da origem conhecida", () => expect(originBadge("instagram_ads")).toEqual({ label: "Instagram — anúncio", tone: "known" }));
+  it("origem ausente ou desconhecida é discreta", () => {
+    for (const v of [null, undefined, "", "outra"]) expect(originBadge(v)).toEqual({ label: "Origem não identificada", tone: "unknown" });
+  });
+  it("não confunde chaves herdadas do objeto", () => expect(originBadge("constructor").tone).toBe("unknown"));
 });

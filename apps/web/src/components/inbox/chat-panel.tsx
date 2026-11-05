@@ -20,12 +20,16 @@ interface ChatPanelProps {
   compact?: boolean;
   onClose?: () => void;
   onConversationChanged?: () => void;
+  // Rascunho vindo de fora (ex.: "Sugerir mensagem" no card): só preenche o campo, nunca envia. `id` novo = rascunho novo.
+  draft?: { id: number; text: string } | null;
 }
 
-export function ChatPanel({ conversationId, onClose, onConversationChanged, compact = false }: ChatPanelProps) {
+export function ChatPanel({ conversationId, onClose, onConversationChanged, compact = false, draft = null }: ChatPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  // O campo é de uma linha só: quebras viram espaço para o texto não colar.
+  useEffect(() => { if (draft) setInput(draft.text.replace(/\s*\n+\s*/g, " ").trim()); }, [draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [sending, setSending] = useState(false);
   const [conversation, setConversation] = useState<any>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
