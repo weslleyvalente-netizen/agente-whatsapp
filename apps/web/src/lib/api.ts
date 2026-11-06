@@ -29,7 +29,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
       ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
       ...options.headers,
     },
