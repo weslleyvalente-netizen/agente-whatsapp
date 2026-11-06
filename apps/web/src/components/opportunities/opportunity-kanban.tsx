@@ -72,7 +72,7 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
   return (
     <>
       {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
-      {sellerChip && <span title={sellerChip.kind === "none" ? "Negócio sem vendedor responsável" : "Vendedor responsável"} className={`mb-3 mr-1 inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${sellerChip.kind === "none" ? "border-amber-200 bg-amber-50 text-amber-700" : "bg-muted/30 text-muted-foreground"}`}><User className="size-3 shrink-0"/><span className="truncate">{sellerChip.label}</span></span>}
+      {sellerChip && <span title={sellerChip.kind === "none" ? "Negócio sem vendedor responsável" : "Vendedor responsável"} className={`mb-3 mr-1 inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${sellerChip.kind === "none" ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" : "bg-muted/30 text-muted-foreground"}`}><User className="size-3 shrink-0"/><span className="truncate">{sellerChip.label}</span></span>}
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>

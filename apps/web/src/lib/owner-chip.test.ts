@@ -7,7 +7,10 @@ describe("ownerChip", () => {
   });
   it("sem dono em negócio aberto: Sem vendedor", () => {
     expect(ownerChip({ status: "open", owner_id: null, owner_name: null, hasAssignment: false })).toEqual({ kind: "none", label: "Sem vendedor" });
-    expect(ownerChip({ status: "open", hasAssignment: false })).toEqual({ kind: "none", label: "Sem vendedor" });
+  });
+  it("owner_name ausente (linha não enriquecida): nada, mesmo sem dono", () => {
+    expect(ownerChip({ status: "open", hasAssignment: false })).toBeNull();
+    expect(ownerChip({ status: "open", owner_id: null, hasAssignment: false })).toBeNull();
   });
   it("dono que não é vendedor: nada", () => {
     expect(ownerChip({ status: "open", owner_id: "u", owner_name: null, hasAssignment: false })).toBeNull();
