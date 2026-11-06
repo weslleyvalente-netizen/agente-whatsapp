@@ -1,12 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   PAGE_SIZE,
   tabFilter,
   searchTerms,
   buildSearchOr,
-  pageRange,
+  loadMoreRange,
+  windowRange,
+  appendPage,
+  createGeneration,
+  createThrottle,
   hasMore,
   mergeFirstPage,
+  mergeAttention,
+  ATTENTION_CAP,
 } from "./inbox-query";
 
 describe("tabFilter", () => {
@@ -42,9 +48,13 @@ describe("searchTerms / buildSearchOr", () => {
     expect(searchTerms("   ")).toBeNull();
     expect(buildSearchOr("")).toBeNull();
   });
-  it("escapes PostgREST specials and like wildcards", () => {
-    const t = searchTerms("a,b(c)%d_e")!;
-    expect(t.text).not.toMatch(/[,()%]/);
+  it("strips PostgREST specials and like wildcards", () => {
+    const t = searchTerms("a,b(c)%d*e")!;
+    expect(t.text).toBe("abcde");
+  });
+  it("escapes underscore so it is not a one-char LIKE wildcard", () => {
+    expect(searchTerms("a_b")!.text).toBe("a\\_b");
+    expect(buildSearchOr("a_b")).toBe("name.ilike.%a\\_b%");
   });
   it("normalizes masked phone to digits", () => {
     const t = searchTerms("(62) 99461-447")!;
@@ -62,14 +72,80 @@ describe("searchTerms / buildSearchOr", () => {
 });
 
 describe("paging", () => {
-  it("pageRange", () => {
-    expect(pageRange(0)).toEqual({ from: 0, to: PAGE_SIZE - 1 });
-    expect(pageRange(2)).toEqual({ from: 2 * PAGE_SIZE, to: 3 * PAGE_SIZE - 1 });
+  it("loadMoreRange starts exactly at the loaded count", () => {
+    expect(loadMoreRange(0)).toEqual({ from: 0, to: PAGE_SIZE - 1 });
+    expect(loadMoreRange(95)).toEqual({ from: 95, to: 95 + PAGE_SIZE - 1 });
   });
-  it("hasMore when page came full", () => {
+  it("windowRange covers everything loaded, at least one page", () => {
+    expect(windowRange(0)).toEqual({ from: 0, to: PAGE_SIZE - 1, size: PAGE_SIZE });
+    expect(windowRange(120)).toEqual({ from: 0, to: 119, size: 120 });
+  });
+  it("hasMore compares with what was requested", () => {
     expect(hasMore(PAGE_SIZE)).toBe(true);
     expect(hasMore(PAGE_SIZE - 1)).toBe(false);
     expect(hasMore(0)).toBe(false);
+    expect(hasMore(120, 120)).toBe(true);
+    expect(hasMore(119, 120)).toBe(false);
+  });
+  it("load more after rows disappeared skips nothing", () => {
+    // servidor: 200 linhas em ordem; cliente carregou 100 e 5 saíram do filtro
+    const server = Array.from({ length: 200 }, (_, i) => ({ id: `r${String(i).padStart(3, "0")}` }));
+    const gone = new Set(["r003", "r010", "r020", "r030", "r040"]);
+    const serverNow = server.filter((r) => !gone.has(r.id));
+    // refresh por janela substitui a lista pelo que o servidor devolve para 0..99
+    const w = windowRange(100);
+    const loaded = serverNow.slice(w.from, w.to + 1);
+    expect(loaded).toHaveLength(100);
+    const r = loadMoreRange(loaded.length);
+    const next = serverNow.slice(r.from, r.to + 1);
+    const all = appendPage(loaded, next);
+    expect(all.map((x) => x.id)).toEqual(serverNow.slice(0, 150).map((x) => x.id));
+  });
+  it("appendPage drops duplicate ids", () => {
+    expect(appendPage([{ id: "a" }], [{ id: "a" }, { id: "b" }]).map((x) => x.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("createGeneration", () => {
+  it("discards a response computed against an older generation", () => {
+    const g = createGeneration();
+    const loadMore = g.begin();
+    const refresh = g.begin();
+    expect(g.commit(refresh)).toBe(true); // refresh aplicado, geração avança
+    expect(g.commit(loadMore)).toBe(false); // load-more em voo é descartado
+  });
+  it("reset invalidates in-flight work", () => {
+    const g = createGeneration();
+    const t = g.begin();
+    g.reset();
+    expect(g.commit(t)).toBe(false);
+    expect(g.commit(g.begin())).toBe(true);
+  });
+});
+
+describe("createThrottle", () => {
+  it("fires within the wait even with continuous events", () => {
+    vi.useFakeTimers();
+    const fn = vi.fn();
+    const t = createThrottle(fn, 2000);
+    for (let i = 0; i < 10; i++) {
+      t.trigger();
+      vi.advanceTimersByTime(500);
+    }
+    expect(fn.mock.calls.length).toBeGreaterThanOrEqual(2);
+    vi.useRealTimers();
+  });
+  it("collapses a burst into one call and can be cancelled", () => {
+    vi.useFakeTimers();
+    const fn = vi.fn();
+    const t = createThrottle(fn, 2000);
+    t.trigger(); t.trigger(); t.trigger();
+    vi.advanceTimersByTime(2000);
+    expect(fn).toHaveBeenCalledTimes(1);
+    t.trigger(); t.cancel();
+    vi.advanceTimersByTime(5000);
+    expect(fn).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });
 
@@ -91,8 +167,6 @@ describe("mergeFirstPage", () => {
     expect(loaded).toHaveLength(1);
   });
 });
-
-import { mergeAttention, ATTENTION_CAP } from "./inbox-query";
 
 describe("mergeAttention", () => {
   const c = (id: string, at: string) => ({ id, last_message_at: at });

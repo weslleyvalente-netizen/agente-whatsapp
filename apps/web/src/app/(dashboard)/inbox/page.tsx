@@ -16,9 +16,12 @@ import {
   ATTENTION_CAP,
   tabFilter,
   buildSearchOr,
-  pageRange,
+  loadMoreRange,
+  windowRange,
   hasMore,
-  mergeFirstPage,
+  appendPage,
+  createGeneration,
+  createThrottle,
   mergeAttention,
   type TabFilter,
   type InboxTab,
@@ -93,19 +96,23 @@ export default function InboxPage() {
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [moreError, setMoreError] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
   const [moreAvailable, setMoreAvailable] = useState(false);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [userLoaded, setUserLoaded] = useState(false);
   const [readMap, setReadMap] = useState<Map<string, string>>(new Map());
 
   const selectedId = searchParams.get("id");
 
   // Fase 1: filtro de tela; isolamento forte é a fase 2 (RLS)
   // Com a distribuição ligada, o vendedor (papel agent) abre a caixa já em "Minhas".
-  const { role: myRole } = useMyRole();
+  const { role: myRole, status: roleStatus } = useMyRole();
   const distributionOn = currentOrg?.settings.lead_distribution_enabled === true;
   const [defaultedToMine, setDefaultedToMine] = useState(false);
   useEffect(() => {
@@ -116,7 +123,10 @@ export default function InboxPage() {
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+    supabase.auth.getUser().then(({ data }) => {
+      setUserId(data.user?.id ?? null);
+      setUserLoaded(true);
+    });
   }, []);
 
   // Debounce da busca (300 ms): o texto digitado só vira consulta depois da pausa.
@@ -126,20 +136,29 @@ export default function InboxPage() {
   }, [search]);
 
   const orgId = currentOrg?.id ?? null;
+  // M3: só busca quando usuário, papel e aba padrão estão definidos — sem
+  // buscar "Todas" para trocar em seguida para "Minhas".
+  const ready =
+    !!orgId &&
+    userLoaded &&
+    roleStatus !== "loading" &&
+    (!(distributionOn && myRole === "agent") || defaultedToMine);
   // Chave estável: só refaz a consulta quando o filtro realmente muda.
   const filterKey = JSON.stringify(tabFilter(filterTab, { userId, distributionOn, role: myRole }));
   const filter = useMemo(() => JSON.parse(filterKey) as TabFilter, [filterKey]);
   const filterRef = useRef(filter);
   const searchRef = useRef(debouncedSearch);
+  const conversationsRef = useRef<ConversationRow[]>([]);
   filterRef.current = filter;
   searchRef.current = debouncedSearch;
-  const requestId = useRef(0);
+  conversationsRef.current = conversations;
+  // Toda escrita na lista passa por esta geração (aba/busca, refresh, carregar mais).
+  const generation = useRef(createGeneration());
 
-  const loadPage = useCallback(
-    async (f: TabFilter, q: string, page: number): Promise<ConversationRow[]> => {
+  const loadRange = useCallback(
+    async (f: TabFilter, q: string, from: number, to: number): Promise<ConversationRow[]> => {
       if (!orgId) return [];
       const supabase = createClient();
-      const { from, to } = pageRange(page);
       return runQuery(supabase, orgId, f, q, (query) => query.range(from, to));
     },
     [orgId],
@@ -163,9 +182,14 @@ export default function InboxPage() {
 
   // Primeira página: roda ao trocar de aba, busca, usuário ou organização.
   useEffect(() => {
-    if (!orgId) return;
-    const id = ++requestId.current;
+    if (!ready) return;
+    const gen = generation.current;
+    gen.reset();
+    const token = gen.begin();
     setLoading(true);
+    setLoadError(false);
+    setMoreError(false);
+    setLoadingMore(false);
     setConversations([]);
     setMoreAvailable(false);
     listRef.current?.scrollTo({ top: 0 });
@@ -173,61 +197,78 @@ export default function InboxPage() {
       try {
         if (filter.kind === "attention") {
           const rows = await loadAttention(debouncedSearch);
-          if (id !== requestId.current) return;
+          if (!gen.commit(token)) return;
           setConversations(rows);
           setMoreAvailable(false);
         } else {
-          const rows = await loadPage(filter, debouncedSearch, 0);
-          if (id !== requestId.current) return;
+          const rows = await loadRange(filter, debouncedSearch, 0, PAGE_SIZE - 1);
+          if (!gen.commit(token)) return;
           setConversations(rows);
           setMoreAvailable(hasMore(rows.length));
         }
       } catch {
-        if (id !== requestId.current) return;
+        if (!gen.commit(token)) return;
+        setLoadError(true);
       }
       setLoading(false);
     })();
-  }, [orgId, filter, debouncedSearch, loadPage, loadAttention]);
+  }, [ready, filter, debouncedSearch, loadRange, loadAttention, reloadTick]);
 
   const loadMore = async () => {
     if (loadingMore || !moreAvailable) return;
-    const id = requestId.current;
+    const gen = generation.current;
+    const token = gen.begin();
     setLoadingMore(true);
+    setMoreError(false);
     try {
-      const rows = await loadPage(filter, debouncedSearch, Math.floor(conversations.length / PAGE_SIZE));
-      if (id !== requestId.current) return;
-      setConversations((prev) => mergeFirstPage(prev, rows));
+      // Offset exato = quantas linhas já estão na tela.
+      const { from, to } = loadMoreRange(conversationsRef.current.length);
+      const rows = await loadRange(filter, debouncedSearch, from, to);
+      if (!gen.commit(token)) return; // a janela foi substituída enquanto buscava
+      setConversations((prev) => appendPage(prev, rows));
       setMoreAvailable(hasMore(rows.length));
+    } catch {
+      if (gen.commit(token)) setMoreError(true);
     } finally {
       setLoadingMore(false);
     }
   };
 
-  // Tempo real: UM refresh com debounce (~2 s) da primeira página, mesclada
-  // com o que já foi carregado (nunca refaz a busca inteira).
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleRefresh = useCallback(() => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(async () => {
-      refreshTimer.current = null;
-      const id = requestId.current;
-      const f = filterRef.current;
-      try {
-        if (f.kind === "attention") {
-          const rows = await loadAttention(searchRef.current);
-          if (id === requestId.current) setConversations(rows);
+  // Tempo real: no máximo um refresh a cada ~2 s (o relógio não reinicia a cada
+  // evento). Rebusca TODA a janela já carregada com os filtros atuais e
+  // SUBSTITUI a lista: linhas que saíram do filtro somem e as posições
+  // continuam verdadeiras (padrão: 50 linhas, ~24 KB).
+  const refreshNow = useCallback(async () => {
+    if (!ready) return;
+    const gen = generation.current;
+    const token = gen.begin();
+    const f = filterRef.current;
+    const q = searchRef.current;
+    try {
+      if (f.kind === "attention") {
+        const rows = await loadAttention(q);
+        if (gen.commit(token)) setConversations(rows);
+        else throttleRef.current?.trigger();
+      } else {
+        const w = windowRange(conversationsRef.current.length);
+        const rows = await loadRange(f, q, w.from, w.to);
+        if (gen.commit(token)) {
+          setConversations(appendPage([], rows));
+          setMoreAvailable(hasMore(rows.length, w.size));
         } else {
-          const rows = await loadPage(f, searchRef.current, 0);
-          if (id === requestId.current) setConversations((prev) => mergeFirstPage(prev, rows));
+          throttleRef.current?.trigger();
         }
-      } catch {
-        /* mantém a lista atual */
       }
-    }, 2000);
-  }, [loadPage, loadAttention]);
-  useEffect(() => () => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
-  }, []);
+    } catch {
+      /* mantém a lista atual */
+    }
+  }, [ready, loadRange, loadAttention]);
+  const refreshRef = useRef(refreshNow);
+  refreshRef.current = refreshNow;
+  const throttleRef = useRef<ReturnType<typeof createThrottle> | null>(null);
+  if (!throttleRef.current) throttleRef.current = createThrottle(() => refreshRef.current(), 2000);
+  useEffect(() => () => throttleRef.current?.cancel(), []);
+  const scheduleRefresh = useCallback(() => throttleRef.current?.trigger(), []);
 
   useRealtime({
     table: "conversations",
@@ -243,12 +284,13 @@ export default function InboxPage() {
     // Pagina em blocos de 1000 para o PostgREST não cortar leituras em silêncio.
     const all: Array<{ conversation_id: string; last_read_at: string }> = [];
     for (let from = 0; ; from += 1000) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("conversation_reads")
         .select("conversation_id, last_read_at")
         .eq("user_id", userId)
         .order("conversation_id")
         .range(from, from + 999);
+      if (error) return; // mantém o mapa anterior em vez de um parcial
       const rows = data || [];
       all.push(...rows);
       if (rows.length < 1000) break;
@@ -344,6 +386,9 @@ export default function InboxPage() {
             selectedId={selectedId}
             onSelect={handleSelect}
             loading={loading}
+            error={loadError}
+            onRetry={() => setReloadTick((n) => n + 1)}
+            moreError={moreError}
             hasMore={moreAvailable}
             loadingMore={loadingMore}
             onLoadMore={loadMore}

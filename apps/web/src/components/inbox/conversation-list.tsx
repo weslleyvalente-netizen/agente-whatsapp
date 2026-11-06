@@ -30,6 +30,9 @@ interface ConversationListProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+  moreError?: boolean;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -65,6 +68,9 @@ export function ConversationList({
   selectedId,
   onSelect,
   loading = false,
+  error = false,
+  onRetry,
+  moreError = false,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
@@ -78,6 +84,16 @@ export function ConversationList({
 
   if (loading) {
     return <div className="p-4 text-sm text-muted-foreground">Carregando...</div>;
+  }
+  if (error) {
+    return (
+      <div className="flex flex-col items-start gap-2 p-4 text-sm text-muted-foreground">
+        <span>Não foi possível carregar as conversas.</span>
+        <button onClick={onRetry} className="rounded-full border px-4 py-2 font-medium text-foreground hover:bg-accent">
+          Tentar de novo
+        </button>
+      </div>
+    );
   }
   if (conversations.length === 0) {
     return <div className="p-4 text-sm text-muted-foreground">Nenhuma conversa</div>;
@@ -153,7 +169,7 @@ export function ConversationList({
           disabled={loadingMore}
           className="m-3 rounded-full border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60"
         >
-          {loadingMore ? "Carregando..." : "Carregar mais"}
+          {loadingMore ? "Carregando..." : moreError ? "Erro ao carregar. Tentar de novo" : "Carregar mais"}
         </button>
       )}
     </div>

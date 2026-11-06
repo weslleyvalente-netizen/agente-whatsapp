@@ -37,9 +37,12 @@ export function tabFilter(
   }
 }
 
-/** Remove o que quebraria o filtro `or(...)` do PostgREST. */
+/**
+ * Remove o que quebraria o filtro `or(...)` do PostgREST e escapa `_`
+ * (curinga de um caractere no LIKE) com barra invertida.
+ */
 function escapeLike(raw: string): string {
-  return raw.replace(/[%,()"\\*]/g, "").trim();
+  return raw.replace(/[%,()"\\*]/g, "").trim().replace(/_/g, "\\_");
 }
 
 export function searchTerms(raw: string): { text: string; digits: string | null } | null {
@@ -60,12 +63,74 @@ export function buildSearchOr(raw: string): string | null {
   return parts.join(",");
 }
 
-export function pageRange(page: number): { from: number; to: number } {
-  return { from: page * PAGE_SIZE, to: (page + 1) * PAGE_SIZE - 1 };
+/** Faixa para "Carregar mais": começa exatamente em quantas linhas já estão na tela. */
+export function loadMoreRange(loadedCount: number): { from: number; to: number } {
+  return { from: loadedCount, to: loadedCount + PAGE_SIZE - 1 };
 }
 
-export function hasMore(receivedCount: number): boolean {
-  return receivedCount >= PAGE_SIZE;
+/** Janela do refresh em tempo real: tudo que já foi carregado (mínimo 1 página). */
+export function windowRange(loadedCount: number): { from: number; to: number; size: number } {
+  const size = Math.max(PAGE_SIZE, loadedCount);
+  return { from: 0, to: size - 1, size };
+}
+
+/** Há mais páginas se a resposta veio cheia em relação ao que foi pedido. */
+export function hasMore(receivedCount: number, requested: number = PAGE_SIZE): boolean {
+  return receivedCount >= requested;
+}
+
+/** Acrescenta uma página ao fim, sem duplicar ids (a ordem do servidor é mantida). */
+export function appendPage<T extends { id: string }>(loaded: T[], page: T[]): T[] {
+  const seen = new Set(loaded.map((c) => c.id));
+  return [...loaded, ...page.filter((c) => !seen.has(c.id))];
+}
+
+/**
+ * Geração: toda escrita na lista (troca de aba/busca, refresh, carregar mais)
+ * só vale se foi calculada na geração atual; ao valer, a geração avança e
+ * descarta qualquer outra resposta que estava em voo.
+ */
+export function createGeneration() {
+  let current = 0;
+  return {
+    begin: () => current,
+    /** Invalida tudo que está em voo (ex.: trocou de aba). */
+    reset: () => ++current,
+    /** true (e avança) se `token` ainda é a geração atual. */
+    commit: (token: number) => {
+      if (token !== current) return false;
+      current++;
+      return true;
+    },
+  };
+}
+
+/**
+ * Limita a frequência: o primeiro evento agenda a execução em `wait` ms e os
+ * seguintes NÃO reiniciam o relógio, então eventos contínuos ainda disparam.
+ */
+export function createThrottle(
+  fn: () => void,
+  wait: number,
+  timers: {
+    set: (cb: () => void, ms: number) => unknown;
+    clear: (id: unknown) => void;
+  } = { set: (cb, ms) => setTimeout(cb, ms), clear: (id) => clearTimeout(id as ReturnType<typeof setTimeout>) },
+) {
+  let pending: unknown = null;
+  return {
+    trigger() {
+      if (pending !== null) return;
+      pending = timers.set(() => {
+        pending = null;
+        fn();
+      }, wait);
+    },
+    cancel() {
+      if (pending !== null) timers.clear(pending);
+      pending = null;
+    },
+  };
 }
 
 type Mergeable = { id: string; last_message_at: string };
