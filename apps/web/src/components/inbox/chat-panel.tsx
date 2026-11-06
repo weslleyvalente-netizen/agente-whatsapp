@@ -45,6 +45,8 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const recorderBusy = audioEnabled && recorder.phase !== "idle";
   const discardRef = useRef(recorder.discard);
   discardRef.current = recorder.discard;
+  // Conversa dona da gravação atual, fixada no início da gravação.
+  const recordingOwnerRef = useRef<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -196,6 +198,12 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
   const handleSendAudio = async () => {
     setAudioError(null);
+    if (recordingOwnerRef.current !== conversationId) {
+      recordingOwnerRef.current = null;
+      recorder.discard();
+      setAudioError("Esta gravação é de outra conversa. Descarte e grave de novo.");
+      return;
+    }
     try {
       await recorder.send(async (blob, seconds) => {
         const formData = new FormData();
@@ -296,7 +304,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
                 canSend={recorder.canSend}
                 previewUrl={recorder.previewUrl}
                 uploadError={audioError}
-                onStart={() => { setAudioError(null); recorder.start(); }}
+                onStart={() => { setAudioError(null); recordingOwnerRef.current = conversationId; recorder.start(); }}
                 onStop={recorder.stop}
                 onDiscard={() => { setAudioError(null); recorder.discard(); }}
                 onSend={handleSendAudio}

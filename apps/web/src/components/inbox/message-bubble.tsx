@@ -27,7 +27,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   const isPlaceholderAudio = message.media_type === "audio" && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER;
   const showUntranscribedNotice = isContact && isPlaceholderAudio;
-  const hideHumanAudioPlaceholder = isHuman && isPlaceholderAudio;
+  const hideHumanAudioPlaceholder =
+    isHuman && isPlaceholderAudio && (hasStoredAudio(message) || Boolean(message.metadata?.send_failed_at));
+  const showHumanAudioLabel = isHuman && isPlaceholderAudio && !hideHumanAudioPlaceholder;
 
   if (isSystem) {
     return (
@@ -71,7 +73,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio sem transcrição — conteúdo não verificado
           </p>
-        ) : hideHumanAudioPlaceholder ? null : (
+        ) : hideHumanAudioPlaceholder ? null : showHumanAudioLabel ? (
+          <p className="flex items-center gap-1.5 text-sm italic opacity-70">
+            <Mic className="h-3.5 w-3.5 shrink-0" />
+            Áudio
+          </p>
+        ) : (
           <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
         )}
         {isHuman && message.media_type === "audio" && message.metadata?.send_failed_at && (
