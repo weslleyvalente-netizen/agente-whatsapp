@@ -120,7 +120,9 @@ export async function findPendingOutboundMessages(
     .is("metadata->scheduled_ad_closure->>cancelled_at", null)
     .gte("created_at", sinceISO);
   if (error) throw error;
-  return data as Message[];
+  // Um envio de áudio que falhou (send_failed_at) nunca chegou ao WhatsApp: não pode
+  // ser par de um eco (um áudio gravado no celular seria engolido). Filtro no JS.
+  return (data as Message[]).filter((m) => !(m.metadata as Record<string, unknown> | null)?.send_failed_at);
 }
 
 export async function messageExistsByEvolutionId(

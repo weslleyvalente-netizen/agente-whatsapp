@@ -10,7 +10,17 @@ const {
   handleConversationTakeover,
   enqueueSendMessage,
   recordHumanMessage,
-} = vi.hoisted(() => ({
+  setMessageMediaUrlIfEmpty,
+  updateMessageContent,
+  upload,
+  fakeDb,
+} = vi.hoisted(() => {
+  const upload = vi.fn().mockResolvedValue({ error: null });
+  return {
+  fakeDb: { storage: { from: vi.fn(() => ({ upload })) } },
+  setMessageMediaUrlIfEmpty: vi.fn().mockResolvedValue(true),
+  updateMessageContent: vi.fn().mockResolvedValue(undefined),
+  upload,
   recordHumanMessage: vi.fn().mockResolvedValue("assign-1"),
   saveMessage: vi.fn(),
   updateConversation: vi.fn().mockResolvedValue(undefined),
@@ -20,11 +30,14 @@ const {
   markFirstHumanReply: vi.fn().mockResolvedValue(undefined),
   handleConversationTakeover: vi.fn().mockResolvedValue(undefined),
   enqueueSendMessage: vi.fn().mockResolvedValue(undefined),
-}));
+  };
+});
 
 vi.mock("./message.service.js", () => ({ saveMessage }));
 vi.mock("@aula-agente/database", () => ({
-  getAdminClient: () => ({}),
+  getAdminClient: () => fakeDb,
+  setMessageMediaUrlIfEmpty,
+  updateMessageContent,
   updateConversation,
   getInstanceById,
   createHandoffEvent,
@@ -41,7 +54,7 @@ import { trackFirstHumanMessage } from "./lead-human-message.js";
 vi.mock("./task.service.js", () => ({ handleConversationTakeover }));
 vi.mock("../lib/queue.js", () => ({ enqueueSendMessage }));
 
-import { sendPanelMessage } from "./message-send.service.js";
+import { sendPanelMessage, SellerAudioSendError } from "./message-send.service.js";
 
 const baseConversation = {
   id: "conv-1",
@@ -68,12 +81,12 @@ describe("sendPanelMessage", () => {
 
     expect(result.message.id).toBe("msg-1");
     expect(updateConversation).toHaveBeenCalledWith(
-      {},
+      fakeDb,
       "conv-1",
       expect.objectContaining({ is_human_takeover: true, assigned_to: "user-1" })
     );
-    expect(handleConversationTakeover).toHaveBeenCalledWith({}, "org-1", "conv-1", "user-1");
-    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ trigger_type: "painel_manual" }));
+    expect(handleConversationTakeover).toHaveBeenCalledWith(fakeDb, "org-1", "conv-1", "user-1");
+    expect(createHandoffEvent).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ trigger_type: "painel_manual" }));
     expect(enqueueSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: "conv-1", messageId: "msg-1", instanceId: "instance-1" }),
       undefined
@@ -88,7 +101,7 @@ describe("sendPanelMessage", () => {
     });
 
     expect(updateConversation).toHaveBeenCalledWith(
-      {},
+      fakeDb,
       "conv-1",
       expect.not.objectContaining({ assigned_to: expect.anything() })
     );
@@ -120,7 +133,7 @@ describe("sendPanelMessage", () => {
       activateTakeover: false,
     });
 
-    expect(markFirstHumanReply).toHaveBeenCalledWith({}, "open-handoff-1", expect.any(String));
+    expect(markFirstHumanReply).toHaveBeenCalledWith(fakeDb, "open-handoff-1", expect.any(String));
   });
 
   it("passes metadata through to saveMessage", async () => {
@@ -176,16 +189,79 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
 
   it("chama trackFirstHumanMessage com papel, autor e metadata, e o aceite vai como 'panel' do autor", async () => {
     await sendPanelMessage({ conversation: baseConversation, content: "Oi, sou a Marina", actorUserId: "user-1" });
-    expect(trackFirstHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({
+    expect(trackFirstHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({
       organizationId: "org-1", conversationId: "conv-1", role: "human_agent", source: "panel", actorUserId: "user-1", metadata: null,
     }));
-    expect(recordHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ organizationId: "org-1", conversationId: "conv-1", authorUserId: "user-1", via: "panel" }));
+    expect(recordHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ organizationId: "org-1", conversationId: "conv-1", authorUserId: "user-1", via: "panel" }));
   });
 
   it("mensagem de follow-up de tarefa (metadata source=task_followup) ainda conta como humana", async () => {
     await sendPanelMessage({ conversation: baseConversation, content: "Passando para lembrar", actorUserId: "user-1", metadata: { source: "task_followup" } });
-    expect(trackFirstHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ metadata: { source: "task_followup" }, actorUserId: "user-1" }));
-    expect(recordHumanMessage).toHaveBeenCalledWith({}, expect.objectContaining({ authorUserId: "user-1", via: "panel" }));
+    expect(trackFirstHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ metadata: { source: "task_followup" }, actorUserId: "user-1" }));
+    expect(recordHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ authorUserId: "user-1", via: "panel" }));
+  });
+
+  describe("com áudio do vendedor", () => {
+    const audio = { buffer: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2]), extension: "webm" as const, durationSeconds: 7 };
+    const REF = "storage:customer-audio/org-1/conv-1/msg-1.webm";
+
+    it("salva, sobe, grava media_url e enfileira com storedAudioRef e attempts 1", async () => {
+      await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio });
+      expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+        content: "[audio]", mediaType: "audio", role: "human_agent",
+        metadata: { source: "seller_audio", duration_seconds: 7 },
+      }));
+      expect(fakeDb.storage.from).toHaveBeenCalledWith("customer-audio");
+      expect(upload).toHaveBeenCalledWith("org-1/conv-1/msg-1.webm", audio.buffer, { contentType: "audio/webm", upsert: false });
+      expect(setMessageMediaUrlIfEmpty).toHaveBeenCalledWith(fakeDb, "msg-1", REF);
+      expect(enqueueSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ messageId: "msg-1", storedAudioRef: REF }),
+        { attempts: 1 }
+      );
+      expect(upload.mock.invocationCallOrder[0]).toBeLessThan(enqueueSendMessage.mock.invocationCallOrder[0]);
+    });
+
+    it("upload falhando marca send_failed_at, lança e não enfileira", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      upload.mockResolvedValueOnce({ error: new Error("storage down") });
+      await expect(sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio })).rejects.toThrow();
+      expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[audio]", expect.objectContaining({ source: "seller_audio", send_failed_at: expect.any(String) }));
+      expect(enqueueSendMessage).not.toHaveBeenCalled();
+      expect(updateConversation).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
+
+    it.each([
+      ["enqueue", () => enqueueSendMessage.mockRejectedValueOnce(new Error("redis"))],
+      ["getInstanceById", () => getInstanceById.mockRejectedValueOnce(new Error("db"))],
+      ["updateConversation", () => updateConversation.mockRejectedValueOnce(new Error("db"))],
+    ])("falha em %s após o upload marca send_failed_at e propaga com uploaded=true", async (_n, arm) => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      arm();
+      const err = await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio }).catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAudioSendError);
+      expect(err.uploaded).toBe(true);
+      expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[audio]", expect.objectContaining({ send_failed_at: expect.any(String) }));
+      log.mockRestore();
+    });
+
+    it("falha de upload propaga com uploaded=false", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      upload.mockResolvedValueOnce({ error: new Error("x") });
+      const err = await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio }).catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAudioSendError);
+      expect(err.uploaded).toBe(false);
+      log.mockRestore();
+    });
+
+    it("media_url não gravado também falha sem enfileirar", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      setMessageMediaUrlIfEmpty.mockResolvedValueOnce(false);
+      await expect(sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio })).rejects.toThrow();
+      expect(updateMessageContent).toHaveBeenCalled();
+      expect(enqueueSendMessage).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
   });
 
   it("falha ao registrar não derruba o envio", async () => {

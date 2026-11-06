@@ -75,9 +75,25 @@ describe("GET /messages/:messageId/audio-url", () => {
     expect(m.createSignedUrl).not.toHaveBeenCalled();
   });
 
-  it("só áudio de cliente: mensagem de agente ou não-áudio -> 404", async () => {
-    m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "agent", media_type: "audio", media_url: REF });
+  it("áudio enviado pelo vendedor (human_agent) com o próprio caminho -> 200 com URL assinada", async () => {
+    m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "human_agent", media_type: "audio", media_url: REF });
+    const r = await get();
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ url: "https://signed.example/a.mp4?token=1", expiresIn: 300 });
+    expect(m.createSignedUrl).toHaveBeenCalledWith(`org-1/conv-1/${MSG}.mp4`, 300);
+  });
+
+  it("human_agent com media_url de outro caminho -> 404 sem assinar", async () => {
+    m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "human_agent", media_type: "audio", media_url: "storage:customer-audio/org-1/conv-1/outra-msg.mp4" });
     expect((await get()).statusCode).toBe(404);
+    expect(m.createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("só áudio de contato ou vendedor: role agent/system ou não-áudio -> 404", async () => {
+    for (const role of ["agent", "system"]) {
+      m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role, media_type: "audio", media_url: REF });
+      expect((await get()).statusCode).toBe(404);
+    }
     m.getMessageById.mockResolvedValue({ id: MSG, conversation_id: "conv-1", organization_id: "org-1", role: "contact", media_type: "image", media_url: REF });
     expect((await get()).statusCode).toBe(404);
     expect(m.createSignedUrl).not.toHaveBeenCalled();

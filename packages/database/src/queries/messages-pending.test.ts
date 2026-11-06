@@ -89,6 +89,15 @@ describe("findPendingOutboundMessages", () => {
     expect(result).toEqual([]);
   });
 
+  it("excludes a failed seller-audio row (send_failed_at set)", async () => {
+    const client = makeFakeClient([
+      { id: "m1", role: "human_agent", content: "[audio]", media_type: "audio", ...base, metadata: { send_failed_at: "2026-09-29T12:00:01.000Z" } },
+      { id: "m2", role: "human_agent", content: "[audio]", media_type: "audio", ...base, metadata: {} },
+    ]);
+    const result = await findPendingOutboundMessages(client, "conv-1", "2026-09-29T11:00:00.000Z");
+    expect(result.map((r: any) => r.id)).toEqual(["m2"]);
+  });
+
   it("excludes a different conversation", async () => {
     const client = makeFakeClient([
       { id: "m1", role: "agent", content: "oi", media_type: null, ...base, conversation_id: "conv-2" },

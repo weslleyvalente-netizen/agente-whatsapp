@@ -17,6 +17,8 @@ export interface Organization {
 }
 
 export interface OrganizationSettings {
+  // Só === true liga o envio de áudio do vendedor no chat do CRM.
+  seller_audio_enabled?: boolean;
   sales_workspace_enabled?: boolean;
   sales_action_queue_enabled?: boolean;
   sales_qualified_handoff_task_enabled?: boolean;

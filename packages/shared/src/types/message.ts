@@ -16,7 +16,9 @@ export interface Message {
 }
 
 export interface MessageMetadata {
-  source?: "task_followup" | "automatic_followup";
+  source?: "task_followup" | "automatic_followup" | "seller_audio";
+  // Envio do áudio do vendedor falhou (ISO).
+  send_failed_at?: string;
   task_id?: string;
   audio_transcribed_at?: string;
   low_intent_followup?: { anchor: string; stage: 1 | 2 | 3; confirmed_at?: string };
