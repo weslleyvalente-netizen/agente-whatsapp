@@ -12,8 +12,8 @@ export const SILENCE_WINDOW_MS = 45 * 60 * 1000;
 export const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 export const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 // Média diária mínima de mensagens de clientes na mesma faixa (45 min) para o silêncio contar como anormal.
-// Proporcional à janela: era 2 por 2 h, agora 1 por 45 min.
-export const MIN_HISTORICAL_AVG = 1;
+// Mantido em 2 por decisão: com a janela de 45 min dá ~13,5% de falso alarme, igual ao limite antigo.
+export const MIN_HISTORICAL_AVG = 2;
 // Destino do push (página de Configurações, onde fica o cartão "Recuperar mensagens perdidas") e tag que agrupa os avisos.
 export const HEALTH_PUSH_URL = "/settings";
 export const HEALTH_PUSH_TAG = "health-alert";
@@ -159,18 +159,15 @@ export async function evaluateOrganization(
         ? `Alerta do CRM (${at}): ${body}. Veja Configurações > Recuperar mensagens perdidas.`
         : `CRM normalizado (${at}): as mensagens de clientes voltaram a chegar.`;
       // Canais independentes: a falha de um nunca derruba o monitor nem impede o outro.
-      if (phone) {
-        try {
-          await deps.sendWhatsApp(ctx.organizationId, phone, whatsText);
-        } catch (err) {
-          deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, "health-monitor: failed to send WhatsApp notice");
-        }
-      }
-      try {
-        await deps.sendPush(ctx.organizationId, pushText);
-      } catch (err) {
-        deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, "health-monitor: failed to send push notice");
-      }
+      // Em paralelo: o push não espera a chamada HTTP do WhatsApp (que pode demorar ou travar).
+      const errLog = (msg: string) => (err: unknown) =>
+        deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, msg);
+      await Promise.allSettled([
+        phone
+          ? deps.sendWhatsApp(ctx.organizationId, phone, whatsText).catch(errLog("health-monitor: failed to send WhatsApp notice"))
+          : Promise.resolve(),
+        deps.sendPush(ctx.organizationId, pushText).catch(errLog("health-monitor: failed to send push notice")),
+      ]);
     }
   }
   return snapshot;
@@ -237,12 +234,14 @@ export const defaultDeps: HealthDeps = {
     const db = getAdminClient();
     const { data, error } = await db.from("organization_members").select("user_id")
       .eq("organization_id", organizationId).in("role", ["owner", "admin"]);
-    if (error) throw error;
+    if (error) throw Object.assign(new Error("db_error"), { name: (error as { code?: string }).code ?? "db_error" });
     const userIds = ((data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
     // Sem assinatura (sent 0) ou sem chaves VAPID não é erro: sendPushToUser é inerte.
     const results = await Promise.allSettled(userIds.map((userId) =>
       sendPushToUser(db, userId, { ...text, url: HEALTH_PUSH_URL, tag: HEALTH_PUSH_TAG }, { organizationId })));
-    if (results.length && results.every((r) => r.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed) console.error({ organizationId, failed, total: results.length }, "health-monitor: push failed for some admins");
+    if (results.length && failed === results.length) throw (results[0] as PromiseRejectedResult).reason;
   },
   log: console,
 };

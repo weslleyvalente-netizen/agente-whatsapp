@@ -196,6 +196,12 @@ describe("evaluateOrganization", () => {
     expect(deps.sent).toHaveLength(1);
     expect(deps.log.error).toHaveBeenCalledWith({ organizationId: "org", errName: "Error" }, expect.stringContaining("push"));
   });
+  it("WhatsApp que nunca resolve não impede o push", async () => {
+    const deps = mkDeps({ pingRedis: async () => "down", sendWhatsApp: () => new Promise<void>(() => {}) });
+    void evaluateOrganization(deps, ctx, { now: WED, notify: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deps.pushed).toHaveLength(1);
+  });
   it("sendWhatsApp lança: push ainda enviado", async () => {
     const deps = mkDeps({ pingRedis: async () => "down", sendWhatsApp: async () => { throw new Error("evo"); } });
     await evaluateOrganization(deps, ctx, { now: WED, notify: true });
@@ -247,6 +253,14 @@ describe("defaultDeps.sendPush", () => {
     expect(members.roles).toEqual(["owner", "admin"]);
     expect(pushMock).toHaveBeenCalledTimes(2);
     expect(pushMock).toHaveBeenCalledWith(expect.anything(), "u1", { title: "T", body: "B", url: "/settings", tag: "health-alert" }, { organizationId: "org" });
+  });
+  it("falha parcial registra uma linha de log com a contagem", async () => {
+    members.data = [{ user_id: "u1" }, { user_id: "u2" }];
+    pushMock.mockRejectedValueOnce(new Error("x")).mockResolvedValueOnce({ sent: 1, removed: 0, failed: 0 });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await defaultDeps.sendPush("org", { title: "T", body: "B" });
+    expect(log).toHaveBeenCalledWith({ organizationId: "org", failed: 1, total: 2 }, expect.stringContaining("push"));
+    log.mockRestore();
   });
   it("sem assinatura (sent 0) não é erro", async () => {
     members.data = [{ user_id: "u1" }];
