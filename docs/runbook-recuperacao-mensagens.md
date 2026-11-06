@@ -7,7 +7,7 @@ Contexto: em 16-17/10/2026 o Redis ficou parado por ~9 h. A API seguiu no ar, ma
 O sistema avisa de quatro formas quando, em horário comercial, algo está errado:
 - faixa vermelha no topo do painel (somente owner/admin), consultando `GET /organizations/:id/health` a cada 60 s;
 - push no celular/navegador para todos os owner/admin da organização que ativaram notificações (título "Alerta do CRM"; toque abre Configurações). Funciona mesmo sem `health_alert_phone` e é independente do WhatsApp (se um canal falhar, o outro ainda sai);
-- WhatsApp para o número configurado em Configurações > "Alertas do sistema" (campo `health_alert_phone`, com DDI, ex.: 5562999998888; no máximo 1 aviso a cada 30 min por motivo, o mesmo vale para o push, e 1 mensagem "normalizado" ao voltar durante o expediente). Esse número é separado do telefone de notificação de handoff, que não é usado aqui. Vazio: só a faixa no painel;
+- WhatsApp para o número configurado em Configurações > "Alertas do sistema" (campo `health_alert_phone`, com DDI, ex.: 5562999998888; no máximo 1 aviso a cada 30 min por motivo, o mesmo vale para o push, e 1 mensagem "normalizado" ao voltar durante o expediente). Esse número é separado do telefone de notificação de handoff, que não é usado aqui. Vazio: sem WhatsApp, mas o push e a faixa no painel continuam;
 - consulta direta: `GET /organizations/:id/health` (campos `status`, `reasons`, `redis`, `evolution`, `lastCustomerMessageAt`).
 
 Motivos possíveis:
