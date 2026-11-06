@@ -43,7 +43,8 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioEnabled = currentOrg?.settings.seller_audio_enabled === true && recorder.supported;
   const recorderBusy = audioEnabled && recorder.phase !== "idle";
-  const { discard: discardRecording } = recorder;
+  const discardRef = useRef(recorder.discard);
+  discardRef.current = recorder.discard;
 
   useEffect(() => {
     const supabase = createClient();
@@ -190,8 +191,8 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   // Troca de conversa: descarta qualquer gravação em andamento.
   useEffect(() => {
     setAudioError(null);
-    return () => discardRecording();
-  }, [conversationId, discardRecording]);
+    return () => discardRef.current();
+  }, [conversationId]);
 
   const handleSendAudio = async () => {
     setAudioError(null);
@@ -200,8 +201,9 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         const formData = new FormData();
         formData.append("conversation_id", conversationId);
         const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
-        formData.append("audio", blob, `audio.${ext}`);
+        // A API para de ler campos no primeiro arquivo: duration_seconds precisa vir ANTES de "audio".
         formData.append("duration_seconds", String(seconds));
+        formData.append("audio", blob, `audio.${ext}`);
         await apiFetch("/messages/send-audio", { method: "POST", body: formData });
       });
       fetchConversation();

@@ -25,6 +25,8 @@ export function useAudioRecorder() {
   const startingRef = useRef(false);
   const sendingRef = useRef(false);
   const unmountedRef = useRef(false);
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
 
   useEffect(() => {
     mimeRef.current = detectMimeType();
@@ -136,11 +138,11 @@ export function useAudioRecorder() {
   const stop = useCallback(() => dispatch({ type: "stop" }), []);
 
   const discard = useCallback(() => {
-    if (sendingRef.current || state.phase === "sending") return;
+    if (sendingRef.current || phaseRef.current === "sending") return;
     abort();
     clearPreview();
     dispatch({ type: "discard" });
-  }, [abort, clearPreview, state.phase]);
+  }, [abort, clearPreview]);
 
   const send = useCallback(async (upload: (blob: Blob, seconds: number) => Promise<void>) => {
     if (sendingRef.current || state.phase !== "review") return;

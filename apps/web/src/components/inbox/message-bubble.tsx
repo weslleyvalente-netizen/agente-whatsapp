@@ -25,6 +25,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const isHuman = message.role === "human_agent";
   const isSystem = message.role === "system";
 
+  const isPlaceholderAudio = message.media_type === "audio" && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER;
+  const showUntranscribedNotice = isContact && isPlaceholderAudio;
+  const hideHumanAudioPlaceholder = isHuman && isPlaceholderAudio;
+
   if (isSystem) {
     return (
       <div className="flex justify-center py-2">
@@ -62,12 +66,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             <CustomerAudioPlayer messageId={message.id} durationSeconds={message.metadata?.duration_seconds} />
           </div>
         )}
-        {message.media_type === "audio" && isHuman && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? null : message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (
+        {showUntranscribedNotice ? (
           <p className="flex items-center gap-1.5 text-sm italic text-muted-foreground">
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio sem transcrição — conteúdo não verificado
           </p>
-        ) : (
+        ) : hideHumanAudioPlaceholder ? null : (
           <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
         )}
         {isHuman && message.media_type === "audio" && message.metadata?.send_failed_at && (
