@@ -8,6 +8,9 @@ import {
   windowRange,
   appendPage,
   createGeneration,
+  createLoadTracker,
+  applyRefresh,
+  REFRESH_WINDOW_CAP,
   createThrottle,
   hasMore,
   mergeFirstPage,
@@ -75,6 +78,10 @@ describe("paging", () => {
   it("loadMoreRange starts exactly at the loaded count", () => {
     expect(loadMoreRange(0)).toEqual({ from: 0, to: PAGE_SIZE - 1 });
     expect(loadMoreRange(95)).toEqual({ from: 95, to: 95 + PAGE_SIZE - 1 });
+  });
+  it("windowRange is capped", () => {
+    expect(REFRESH_WINDOW_CAP).toBe(300);
+    expect(windowRange(1200)).toEqual({ from: 0, to: 299, size: 300 });
   });
   it("windowRange covers everything loaded, at least one page", () => {
     expect(windowRange(0)).toEqual({ from: 0, to: PAGE_SIZE - 1, size: PAGE_SIZE });
@@ -178,5 +185,57 @@ describe("mergeAttention", () => {
     const many = Array.from({ length: 5 }, (_, i) => c(`x${i}`, `2026-01-0${i + 1}`));
     expect(mergeAttention(many, [], 3)).toHaveLength(3);
     expect(ATTENTION_CAP).toBe(300);
+  });
+});
+
+describe("applyRefresh", () => {
+  const rows = (a: number, b: number) => Array.from({ length: b - a }, (_, i) => ({ id: `r${String(a + i).padStart(4, "0")}` }));
+  it("replaces the whole list when the window covers it", () => {
+    const r = applyRefresh(rows(0, 100), rows(1, 101), true);
+    expect(r.list).toHaveLength(100);
+    expect(r.more).toBe(true);
+    expect(applyRefresh(rows(0, 100), rows(1, 100), true).more).toBe(false);
+  });
+  it("beyond the cap: replaces head, keeps tail, no duplicates, keeps hasMore and offset", () => {
+    const loaded = rows(0, 1200);
+    // 5 linhas da cabeça saíram; o servidor devolve as 300 primeiras atuais
+    const fresh = rows(5, 305);
+    const r = applyRefresh(loaded, fresh, true);
+    expect(r.more).toBe(true);
+    expect(new Set(r.list.map((x) => x.id)).size).toBe(r.list.length);
+    expect(r.list.slice(0, 300).map((x) => x.id)).toEqual(fresh.map((x) => x.id));
+    expect(r.list.slice(300).map((x) => x.id)).toEqual(rows(300, 1200).filter((x) => !fresh.some((f) => f.id === x.id)).map((x) => x.id));
+    expect(loadMoreRange(r.list.length).from).toBe(r.list.length);
+  });
+  it("keeps more=false beyond the cap when there was no more", () => {
+    expect(applyRefresh(rows(0, 400), rows(0, 300), false).more).toBe(false);
+  });
+});
+
+describe("first load vs refresh", () => {
+  it("first load starts, refresh commits, first load finishes: loading resolves and refresh data stays", () => {
+    const g = createGeneration();
+    const tracker = createLoadTracker();
+    let loading = true;
+    let list: string[] = [];
+    g.reset();
+    const firstToken = g.begin();
+    const loadId = tracker.start();
+    const refreshToken = g.begin();
+    // refresh pousa primeiro
+    if (g.commit(refreshToken)) list = ["fresh"];
+    // primeira carga termina: commit falha, mas o loading é resolvido pelo tracker
+    const committed = g.commit(firstToken);
+    if (tracker.isLatest(loadId)) loading = false;
+    expect(committed).toBe(false);
+    expect(loading).toBe(false);
+    expect(list).toEqual(["fresh"]);
+  });
+  it("a superseded load does not resolve loading", () => {
+    const tracker = createLoadTracker();
+    const a = tracker.start();
+    const b = tracker.start();
+    expect(tracker.isLatest(a)).toBe(false);
+    expect(tracker.isLatest(b)).toBe(true);
   });
 });

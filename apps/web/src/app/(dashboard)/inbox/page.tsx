@@ -21,6 +21,8 @@ import {
   hasMore,
   appendPage,
   createGeneration,
+  createLoadTracker,
+  applyRefresh,
   createThrottle,
   mergeAttention,
   type TabFilter,
@@ -149,11 +151,19 @@ export default function InboxPage() {
   const filterRef = useRef(filter);
   const searchRef = useRef(debouncedSearch);
   const conversationsRef = useRef<ConversationRow[]>([]);
+  const moreRef = useRef(false);
   filterRef.current = filter;
   searchRef.current = debouncedSearch;
   conversationsRef.current = conversations;
+  moreRef.current = moreAvailable;
   // Toda escrita na lista passa por esta geração (aba/busca, refresh, carregar mais).
   const generation = useRef(createGeneration());
+  // Quem resolve `loading`: a carga inicial mais recente, não importa quem commitou.
+  const loadTracker = useRef(createLoadTracker());
+  const loadingRef = useRef(true);
+  const unmountedRef = useRef(false);
+  const skippedRefreshRef = useRef(false);
+  loadingRef.current = loading;
 
   const loadRange = useCallback(
     async (f: TabFilter, q: string, from: number, to: number): Promise<ConversationRow[]> => {
@@ -186,6 +196,7 @@ export default function InboxPage() {
     const gen = generation.current;
     gen.reset();
     const token = gen.begin();
+    const loadId = loadTracker.current.start();
     setLoading(true);
     setLoadError(false);
     setMoreError(false);
@@ -197,20 +208,31 @@ export default function InboxPage() {
       try {
         if (filter.kind === "attention") {
           const rows = await loadAttention(debouncedSearch);
-          if (!gen.commit(token)) return;
-          setConversations(rows);
-          setMoreAvailable(false);
+          if (gen.commit(token)) {
+            setConversations(rows);
+            setMoreAvailable(false);
+          }
         } else {
           const rows = await loadRange(filter, debouncedSearch, 0, PAGE_SIZE - 1);
-          if (!gen.commit(token)) return;
-          setConversations(rows);
-          setMoreAvailable(hasMore(rows.length));
+          if (gen.commit(token)) {
+            setConversations(rows);
+            setMoreAvailable(hasMore(rows.length));
+          }
         }
       } catch {
-        if (!gen.commit(token)) return;
-        setLoadError(true);
+        if (gen.commit(token)) setLoadError(true);
+      } finally {
+        // Resolve o loading pela carga mais recente, mesmo que um refresh
+        // tenha commitado antes (ou que esta resposta tenha sido descartada).
+        if (loadTracker.current.isLatest(loadId)) {
+          setLoading(false);
+          // eventos de tempo real ignorados durante a carga inicial
+          if (skippedRefreshRef.current && !unmountedRef.current) {
+            skippedRefreshRef.current = false;
+            throttleRef.current?.trigger();
+          }
+        }
       }
-      setLoading(false);
     })();
   }, [ready, filter, debouncedSearch, loadRange, loadAttention, reloadTick]);
 
@@ -239,7 +261,12 @@ export default function InboxPage() {
   // SUBSTITUI a lista: linhas que saíram do filtro somem e as posições
   // continuam verdadeiras (padrão: 50 linhas, ~24 KB).
   const refreshNow = useCallback(async () => {
+    // Durante a carga inicial o refresh não faz nada; ela mesma reagenda ao terminar.
     if (!ready) return;
+    if (loadingRef.current) {
+      skippedRefreshRef.current = true;
+      return;
+    }
     const gen = generation.current;
     const token = gen.begin();
     const f = filterRef.current;
@@ -248,14 +275,15 @@ export default function InboxPage() {
       if (f.kind === "attention") {
         const rows = await loadAttention(q);
         if (gen.commit(token)) setConversations(rows);
-        else throttleRef.current?.trigger();
+        else if (!unmountedRef.current) throttleRef.current?.trigger();
       } else {
         const w = windowRange(conversationsRef.current.length);
         const rows = await loadRange(f, q, w.from, w.to);
         if (gen.commit(token)) {
-          setConversations(appendPage([], rows));
-          setMoreAvailable(hasMore(rows.length, w.size));
-        } else {
+          const r = applyRefresh(conversationsRef.current, rows, moreRef.current);
+          setConversations(r.list);
+          setMoreAvailable(r.more);
+        } else if (!unmountedRef.current) {
           throttleRef.current?.trigger();
         }
       }
@@ -267,7 +295,13 @@ export default function InboxPage() {
   refreshRef.current = refreshNow;
   const throttleRef = useRef<ReturnType<typeof createThrottle> | null>(null);
   if (!throttleRef.current) throttleRef.current = createThrottle(() => refreshRef.current(), 2000);
-  useEffect(() => () => throttleRef.current?.cancel(), []);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      throttleRef.current?.cancel();
+    };
+  }, []);
   const scheduleRefresh = useCallback(() => throttleRef.current?.trigger(), []);
 
   useRealtime({

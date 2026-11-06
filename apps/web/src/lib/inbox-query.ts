@@ -68,9 +68,12 @@ export function loadMoreRange(loadedCount: number): { from: number; to: number }
   return { from: loadedCount, to: loadedCount + PAGE_SIZE - 1 };
 }
 
-/** Janela do refresh em tempo real: tudo que já foi carregado (mínimo 1 página). */
+/** Máximo de linhas que o refresh em tempo real rebusca (custo limitado). */
+export const REFRESH_WINDOW_CAP = 300;
+
+/** Janela do refresh em tempo real: o que já foi carregado (1 página a 300 linhas). */
 export function windowRange(loadedCount: number): { from: number; to: number; size: number } {
-  const size = Math.max(PAGE_SIZE, loadedCount);
+  const size = Math.min(Math.max(PAGE_SIZE, loadedCount), REFRESH_WINDOW_CAP);
   return { from: 0, to: size - 1, size };
 }
 
@@ -83,6 +86,31 @@ export function hasMore(receivedCount: number, requested: number = PAGE_SIZE): b
 export function appendPage<T extends { id: string }>(loaded: T[], page: T[]): T[] {
   const seen = new Set(loaded.map((c) => c.id));
   return [...loaded, ...page.filter((c) => !seen.has(c.id))];
+}
+
+/**
+ * Aplica o resultado do refresh: substitui a janela (cabeça) pelo que o
+ * servidor devolveu e MANTÉM as linhas já carregadas além da janela (podem
+ * ficar um pouco desatualizadas), sem duplicar ids. `more` só é recalculado
+ * quando a janela cobre tudo o que estava carregado; senão preserva o anterior.
+ */
+export function applyRefresh<T extends { id: string }>(
+  loaded: T[],
+  fresh: T[],
+  prevHasMore: boolean,
+): { list: T[]; more: boolean } {
+  const { size } = windowRange(loaded.length);
+  if (loaded.length <= size) return { list: appendPage([], fresh), more: hasMore(fresh.length, size) };
+  return { list: appendPage(fresh, loaded.slice(size)), more: prevHasMore };
+}
+
+/** Marca qual carga inicial é a mais recente (quem resolve o `loading`). */
+export function createLoadTracker() {
+  let latest = 0;
+  return {
+    start: () => ++latest,
+    isLatest: (id: number) => id === latest,
+  };
 }
 
 /**
