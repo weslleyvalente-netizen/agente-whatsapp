@@ -7,10 +7,11 @@ import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useS
 import { apiFetch } from "@/lib/api";
 import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, originBadge, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState, ContactState } from "@aula-agente/shared";
-import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3 } from "lucide-react";
+import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3, User } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
+import { ownerChip } from "@/lib/owner-chip";
 import { AssignmentBadge, type CardAssignment } from "../lead-distribution/assignment-badge";
 
 // Contact name/phone is embedded server-side (getOpportunitiesByOrganization
@@ -21,6 +22,7 @@ export type OpportunityWithContact = Opportunity & {
   sales_state?: SalesCardState;
   contact_state?: ContactState;
   lead_assignment?: CardAssignment | null;
+  owner_name?: string | null;
   wa_contacts: { name: string | null; phone: string; lead_origin_source?: string | null } | null;
 };
 
@@ -65,10 +67,12 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
   const interaction = opportunity.last_interaction_at && new Date(opportunity.last_interaction_at).getTime();
   const minutes = interaction && Number.isFinite(interaction) ? Math.max(0, Math.floor((Date.now() - interaction) / 60000)) : null;
   const elapsed = minutes === null ? null : minutes < 1 ? "agora" : minutes < 60 ? `há ${minutes} min` : minutes < 1440 ? `há ${Math.floor(minutes / 60)} h` : `há ${Math.floor(minutes / 1440)} dias`;
+  const sellerChip = ownerChip({ status: opportunity.status, owner_id: opportunity.owner_id, owner_name: opportunity.owner_name, hasAssignment: !!opportunity.lead_assignment });
   const initials = contactLabel.split(/\s+/).slice(0, 2).map(word => Array.from(word)[0]).join("").toUpperCase();
   return (
     <>
       {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
+      {sellerChip && <span title={sellerChip.kind === "none" ? "Negócio sem vendedor responsável" : "Vendedor responsável"} className={`mb-3 mr-1 inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${sellerChip.kind === "none" ? "border-amber-200 bg-amber-50 text-amber-700" : "bg-muted/30 text-muted-foreground"}`}><User className="size-3 shrink-0"/><span className="truncate">{sellerChip.label}</span></span>}
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>

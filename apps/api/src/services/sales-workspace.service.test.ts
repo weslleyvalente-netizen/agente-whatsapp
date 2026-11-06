@@ -120,6 +120,37 @@ describe("lead distribution on cards", () => {
   });
 });
 
+describe("nome do vendedor responsável no card", () => {
+  const reps = [{ id: "r1", user_id: "marina-user", display_name: "Marina" }, { id: "r2", user_id: "marcio-user", display_name: "Márcio" }];
+  const base = { status: "open", created_at: "2026-10-01" };
+  it("owner_name = display_name do sales_rep dono; null sem rep ou sem dono; lead_assignment inalterado", async () => {
+    const { db } = database({
+      sales_reps: reps,
+      lead_assignments: [{ id: "x", contact_id: "c1", rep_id: "r2", status: "accepted", sla_due_at: null, assigned_at: "2026-10-05T12:00:00Z", accepted_at: "2026-10-05T12:01:00Z" }],
+    });
+    const r = [
+      { ...base, id: "a", contact_id: "c1", owner_id: "marcio-user" },
+      { ...base, id: "b", contact_id: "c2", owner_id: "marina-user" },
+      { ...base, id: "c", contact_id: "c3", owner_id: "legado" },
+      { ...base, id: "d", contact_id: "c4", owner_id: null },
+    ];
+    const out: any[] = await enrichSalesWorkspace(db as any, "org", r as any, false, { enabled: true, viewer: { mode: "all" } });
+    expect(out.map(o => o.owner_name)).toEqual(["Márcio", "Marina", null, null]);
+    expect(out[0].lead_assignment).toMatchObject({ id: "x", rep_name: "Márcio", status: "accepted" });
+    expect(out[1].lead_assignment).toBeNull();
+  });
+  it("visibilidade inalterada: vendedor não vê lead de outro, mas vê o seu com nome", async () => {
+    const { db } = database({ sales_reps: reps, lead_assignments: [] });
+    const r = [
+      { ...base, id: "a", contact_id: "c1", owner_id: "marcio-user" },
+      { ...base, id: "b", contact_id: "c2", owner_id: "marina-user" },
+    ];
+    const out: any[] = await enrichSalesWorkspace(db as any, "org", r as any, false, { enabled: true, viewer: { mode: "own", userId: "marina-user" } });
+    expect(out.map(o => o.id)).toEqual(["b"]);
+    expect(out[0].owner_name).toBe("Marina");
+  });
+});
+
 describe("lead distribution with the workspace flags off", () => {
   it("ainda esconde o lead de outro vendedor e mantém legado/sem dono", async () => {
     const { db } = database({

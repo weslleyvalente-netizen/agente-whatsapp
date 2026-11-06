@@ -58,7 +58,7 @@ function loadWorkspaceInputs(db: ReturnType<typeof getAdminClient>, organization
  });
 }
 
-export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[], enabled: boolean, leadDistribution?: { enabled: boolean; viewer: LeadVisibility }): Promise<Array<T & {sales_state?: SalesCardState; lead_assignment?: unknown}>> {
+export async function enrichSalesWorkspace<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, rows: T[], enabled: boolean, leadDistribution?: { enabled: boolean; viewer: LeadVisibility }): Promise<Array<T & {sales_state?: SalesCardState; lead_assignment?: unknown; owner_name?: string | null}>> {
  if (!rows.length || (!enabled && !leadDistribution?.enabled)) return rows;
  const enriched = enabled ? await enrichOperational(db, organizationId, rows) : rows;
  if (!leadDistribution?.enabled) return enriched;
@@ -95,7 +95,7 @@ async function enrichOperational<T extends Opportunity>(db: ReturnType<typeof ge
  });
 }
 
-async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, enriched: T[], viewer: LeadVisibility): Promise<Array<T & {lead_assignment: unknown}>> {
+async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeof getAdminClient>, organizationId: string, enriched: T[], viewer: LeadVisibility): Promise<Array<T & {lead_assignment: unknown; owner_name: string | null}>> {
  const { reps, active } = await distributionInputs.get(organizationId, async () => {
   const [reps, active] = await Promise.all([
    readAll(() => db.from("sales_reps").select("id,user_id,display_name").eq("organization_id", organizationId).order("id")),
@@ -105,12 +105,14 @@ async function applyLeadDistribution<T extends Opportunity>(db: ReturnType<typeo
  });
  const repNames = new Map(reps.map((r: any) => [r.id, r.display_name]));
  const repUsers = new Set<string>(reps.map((r: any) => r.user_id));
+ // Nome do vendedor responsável pelo negócio (dono), independente de haver atribuição ativa no rodízio.
+ const ownerNames = new Map<string, string | null>(reps.map((r: any) => [r.user_id, r.display_name ?? null]));
  const byContact = new Map(active.map((a: any) => [a.contact_id, a]));
  return enriched
   .filter((o: any) => isLeadVisible(viewer, o.owner_id, repUsers))
   .map((o: any) => {
    const a: any = byContact.get(o.contact_id);
-   return { ...o, lead_assignment: a ? { id: a.id, rep_id: a.rep_id, rep_name: repNames.get(a.rep_id) ?? null, status: a.status, sla_due_at: a.sla_due_at, sla_action: a.sla_action, sla_breached: a.sla_breached, assigned_at: a.assigned_at, accepted_at: a.accepted_at } : null };
+   return { ...o, owner_name: o.owner_id ? ownerNames.get(o.owner_id) ?? null : null, lead_assignment: a ? { id: a.id, rep_id: a.rep_id, rep_name: repNames.get(a.rep_id) ?? null, status: a.status, sla_due_at: a.sla_due_at, sla_action: a.sla_action, sla_breached: a.sla_breached, assigned_at: a.assigned_at, accepted_at: a.accepted_at } : null };
   });
 }
 
