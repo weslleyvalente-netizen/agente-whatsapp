@@ -50,3 +50,18 @@ describe("recorderReducer", () => {
     expect(recorderReducer({ phase: "review", seconds: 5 }, { type: "discard" })).toEqual(idle);
   });
 });
+
+import { micErrorMessage } from "./audio-recorder";
+describe("micErrorMessage", () => {
+  it("mapeia permissão negada", () => {
+    expect(micErrorMessage({ name: "NotAllowedError" })).toBe("Permita o uso do microfone para gravar áudio.");
+    expect(micErrorMessage({ name: "SecurityError" })).toBe("Permita o uso do microfone para gravar áudio.");
+  });
+  it("mapeia microfone ausente", () => {
+    expect(micErrorMessage({ name: "NotFoundError" })).toBe("Nenhum microfone encontrado neste aparelho.");
+  });
+  it("demais erros", () => {
+    expect(micErrorMessage(new Error("x"))).toBe("Não foi possível iniciar a gravação.");
+    expect(micErrorMessage(null)).toBe("Não foi possível iniciar a gravação.");
+  });
+});

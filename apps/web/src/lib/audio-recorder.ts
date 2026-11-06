@@ -47,3 +47,10 @@ export function recorderReducer(state: RecState, action: RecAction): RecState {
       return state.phase === "sending" ? { phase: "review", seconds: state.seconds } : state;
   }
 }
+
+export function micErrorMessage(err: unknown): string {
+  const name = err && typeof err === "object" && "name" in err ? String((err as { name: unknown }).name) : "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "Permita o uso do microfone para gravar áudio.";
+  if (name === "NotFoundError") return "Nenhum microfone encontrado neste aparelho.";
+  return "Não foi possível iniciar a gravação.";
+}

@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { pickRecorderMimeType, recorderReducer, type RecState } from "@/lib/audio-recorder";
-
-const PERMISSION_ERROR = "Permita o uso do microfone para gravar áudio.";
+import { SELLER_AUDIO_MAX_SECONDS, micErrorMessage, pickRecorderMimeType, recorderReducer, type RecState } from "@/lib/audio-recorder";
 
 function detectMimeType(): string | null {
   if (typeof window === "undefined" || typeof MediaRecorder === "undefined") return null;
@@ -25,6 +23,8 @@ export function useAudioRecorder() {
   const cancelledRef = useRef(false);
   const mimeRef = useRef<string | null>(null);
   const startingRef = useRef(false);
+  const sendingRef = useRef(false);
+  const unmountedRef = useRef(false);
 
   useEffect(() => {
     mimeRef.current = detectMimeType();
@@ -71,11 +71,20 @@ export function useAudioRecorder() {
     rec.stop();
   }, [state.phase]);
 
-  useEffect(() => () => {
-    abort();
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    urlRef.current = null;
+  useEffect(() => {
+    unmountedRef.current = false; // strict mode re-monta o efeito
+    return () => {
+      unmountedRef.current = true;
+      abort();
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      urlRef.current = null;
+    };
   }, [abort]);
+
+  // Limite: para exatamente em 300 s (gravação <= 300 s).
+  useEffect(() => {
+    if (state.phase === "recording" && state.seconds >= SELLER_AUDIO_MAX_SECONDS) dispatch({ type: "stop" });
+  }, [state.phase, state.seconds]);
 
   const start = useCallback(async () => {
     if (startingRef.current || state.phase !== "idle") return;
@@ -86,11 +95,21 @@ export function useAudioRecorder() {
     clearPreview();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (unmountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
       cancelledRef.current = false;
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onerror = () => {
+        abort();
+        clearPreview();
+        setError("Não foi possível iniciar a gravação.");
+        dispatch({ type: "discard" });
+      };
       recorder.onstop = () => {
         const cancelled = cancelledRef.current;
         const chunks = chunksRef.current;
@@ -106,26 +125,28 @@ export function useAudioRecorder() {
       recorderRef.current = recorder;
       recorder.start();
       dispatch({ type: "start" });
-    } catch {
+    } catch (e) {
       releaseStream();
-      setError(PERMISSION_ERROR);
+      if (!unmountedRef.current) setError(micErrorMessage(e));
     } finally {
       startingRef.current = false;
     }
-  }, [state.phase, clearPreview, releaseStream]);
+  }, [state.phase, abort, clearPreview, releaseStream]);
 
   const stop = useCallback(() => dispatch({ type: "stop" }), []);
 
   const discard = useCallback(() => {
+    if (sendingRef.current || state.phase === "sending") return;
     abort();
     clearPreview();
     dispatch({ type: "discard" });
-  }, [abort, clearPreview]);
+  }, [abort, clearPreview, state.phase]);
 
   const send = useCallback(async (upload: (blob: Blob, seconds: number) => Promise<void>) => {
-    if (state.phase !== "review") return; // também bloqueia duplo clique em "sending"
+    if (sendingRef.current || state.phase !== "review") return;
     const blob = blobRef.current;
     if (!blob) return;
+    sendingRef.current = true;
     dispatch({ type: "send" });
     try {
       await upload(blob, state.seconds);
@@ -134,8 +155,12 @@ export function useAudioRecorder() {
     } catch (e) {
       dispatch({ type: "failed" }); // mantém a gravação para nova tentativa
       throw e;
+    } finally {
+      sendingRef.current = false;
     }
   }, [state.phase, state.seconds, clearPreview]);
 
-  return { supported, phase: state.phase, seconds: state.seconds, error, start, stop, discard, send, previewUrl };
+  const canSend = state.phase === "review" && previewUrl !== null;
+
+  return { supported, canSend, phase: state.phase, seconds: state.seconds, error, start, stop, discard, send, previewUrl };
 }
