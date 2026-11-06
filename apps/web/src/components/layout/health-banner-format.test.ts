@@ -25,3 +25,17 @@ describe("W1: título conforme o motivo", () => {
     expect(extraReasons(h, bannerTitle(h, NOW))).toEqual(["Redis fora do ar"]);
   });
 });
+
+describe("causa provável do silêncio", () => {
+  const cause = "o WhatsApp consta conectado mas pode não estar recebendo (reconectar pelo QR Code)";
+  const h = { status: "warning" as const, reasons: [`Sem mensagens de clientes há 50 min; ${cause}`], lastCustomerMessageAt: "2026-10-17T11:10:00Z" };
+  it("título em minutos e a causa aparece como motivo extra", () => {
+    const title = bannerTitle(h, NOW);
+    expect(title).toBe("Possível falha: sem mensagens de clientes há 50 min");
+    expect(extraReasons(h, title)).toEqual([`O ${cause.slice(2)}`]);
+  });
+  it("silêncio simples não gera extra", () => {
+    const simple = { ...h, reasons: ["Sem mensagens de clientes há 50 min"] };
+    expect(extraReasons(simple, bannerTitle(simple, NOW))).toEqual([]);
+  });
+});

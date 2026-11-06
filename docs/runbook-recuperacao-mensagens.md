@@ -4,15 +4,16 @@ Contexto: em 16-17/10/2026 o Redis ficou parado por ~9 h. A API seguiu no ar, ma
 
 ## 1. O aviso apareceu. O que fazer?
 
-O sistema avisa de três formas quando, em horário comercial, algo está errado:
+O sistema avisa de quatro formas quando, em horário comercial, algo está errado:
 - faixa vermelha no topo do painel (somente owner/admin), consultando `GET /organizations/:id/health` a cada 60 s;
-- WhatsApp para o número configurado em Configurações > "Alertas do sistema" (campo `health_alert_phone`, com DDI, ex.: 5562999998888; no máximo 1 aviso a cada 2 h por motivo, e 1 mensagem "normalizado" ao voltar durante o expediente). Esse número é separado do telefone de notificação de handoff, que não é usado aqui. Vazio: só a faixa no painel;
+- push no celular/navegador para todos os owner/admin da organização que ativaram notificações (título "Alerta do CRM"; toque abre Configurações). Funciona mesmo sem `health_alert_phone` e é independente do WhatsApp (se um canal falhar, o outro ainda sai);
+- WhatsApp para o número configurado em Configurações > "Alertas do sistema" (campo `health_alert_phone`, com DDI, ex.: 5562999998888; no máximo 1 aviso a cada 30 min por motivo, o mesmo vale para o push, e 1 mensagem "normalizado" ao voltar durante o expediente). Esse número é separado do telefone de notificação de handoff, que não é usado aqui. Vazio: sem WhatsApp, mas o push e a faixa no painel continuam;
 - consulta direta: `GET /organizations/:id/health` (campos `status`, `reasons`, `redis`, `evolution`, `lastCustomerMessageAt`).
 
 Motivos possíveis:
 | Motivo | Significado | Ação |
 |---|---|---|
-| Sem mensagens de clientes há X h | Nenhuma mensagem de cliente entrou, e nos 7 dias anteriores essa faixa de horário costumava ter | Verifique os outros dois motivos; confira o WhatsApp do número conectado (chegam mensagens lá?) |
+| Sem mensagens de clientes há X min/h (a partir de 45 min) | Nenhuma mensagem de cliente entrou, e nos 7 dias anteriores essa faixa de horário costumava ter | Verifique os outros dois motivos; confira o WhatsApp do número conectado (chegam mensagens lá?). Se o texto trouxer "o WhatsApp consta conectado mas pode não estar recebendo", siga a seção 7 |
 | Redis fora do ar ou lento | `ping` falhou ou passou de 3 s | Passo 3 (reiniciar Redis e worker) |
 | WhatsApp (Evolution) desconectado / sem resposta | Instância não está `open`, ou a consulta falhou | EasyPanel > Evolution: veja logs; Instâncias no painel > reconectar (QR code) se preciso |
 
@@ -68,7 +69,18 @@ O repositório não altera isso; faça no painel:
 
 - Código: `apps/api/src/services/health-monitor.ts` (decisão pura `decideHealth`), rota `apps/api/src/routes/health/index.ts`, recuperação `apps/api/src/routes/admin/recover-messages.ts`.
 - Roda em `setInterval` no processo da API a cada 5 min (primeira checagem 30 s após o boot), com estado só em memória. Não usa fila nem Redis para decidir; o `ping` do Redis é apenas uma sonda com timeout de 3 s.
-- O aviso por WhatsApp sai direto pela Evolution (não pela fila `send-message`), porque a fila depende do Redis, que pode ser justamente o problema.
-- O aviso de silêncio exige média histórica de pelo menos 2 mensagens de clientes na mesma faixa de 2 h (evita alarme em dia fraco). Ao fechar o expediente com um alerta ativo não é enviado "normalizado"; isso só ocorre se normalizar durante o expediente.
+- O push usa `sendPushToUser` para cada owner/admin (sem assinatura ou sem chaves VAPID é inerte, não é erro) e compartilha o mesmo plano anti-spam do WhatsApp. O aviso por WhatsApp sai direto pela Evolution (não pela fila `send-message`), porque a fila depende do Redis, que pode ser justamente o problema.
+- O aviso de silêncio exige média histórica de pelo menos 2 mensagens de clientes na mesma faixa de 45 min (evita alarme em dia fraco). Ao fechar o expediente com um alerta ativo não é enviado "normalizado"; isso só ocorre se normalizar durante o expediente.
 - Reiniciar a API zera o anti-spam em memória (um novo aviso pode sair logo após o boot se o problema persistir).
 - Migração opcional de desempenho: `supabase/migrations/20261017120000_messages_org_role_created_idx.sql` (`CREATE INDEX CONCURRENTLY`). Rodar manualmente, fora de transação, e não durante uma recuperação de mensagens.
+
+## 7. Evolution "open" mas sem receber
+
+**Sintoma:** alerta "Sem mensagens de clientes há X min; o WhatsApp consta conectado mas pode não estar recebendo". A Evolution responde `open` e o Redis está ok, mas nenhuma mensagem recebida chega ao CRM (incidente de 06/11).
+
+**Causa:** sessão do WhatsApp travada na Evolution. O estado continua `open`, mas a instância parou de entregar as mensagens recebidas.
+
+**Conserto:**
+1. No painel, em Aparelhos conectados, desconecte e reconecte o aparelho lendo o QR Code de novo.
+2. Se não resolver, faça o logout da instância pelo console da API (Evolution) e reconecte pelo QR Code.
+3. Depois de voltar a receber (envie uma mensagem de teste), use Configurações > "Recuperar mensagens perdidas" (seção 2) cobrindo o período em que ficou sem receber.
