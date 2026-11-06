@@ -187,6 +187,34 @@ describe("processSendMessageJob", () => {
       );
     });
 
+    it("instance lookup failure marks send_failed_at, rethrows and sends nothing", async () => {
+      getInstanceById.mockRejectedValueOnce(new Error("instance gone"));
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(sellerJob)).rejects.toThrow("instance gone");
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-seller", "[audio]",
+        expect.objectContaining({ source: "seller_audio", send_failed_at: expect.any(String) }),
+      );
+    });
+
+    it("getMessageById failure still marks send_failed_at and rethrows", async () => {
+      vi.mocked(database.getMessageById).mockRejectedValueOnce(new Error("db read failed"));
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(sellerJob)).rejects.toThrow("db read failed");
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-seller", "[audio]",
+        expect.objectContaining({ send_failed_at: expect.any(String) }),
+      );
+    });
+
     it("invalid ref counts as failure", async () => {
       const fetchMock = vi.fn();
       global.fetch = fetchMock as never;

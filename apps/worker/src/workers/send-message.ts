@@ -86,12 +86,30 @@ async function sendEvolutionAudio(instanceName: string, phone: string, audioBase
   return response.json();
 }
 
+async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, messageId: string, content: string, metadata?: Record<string, unknown> | null) {
+  try {
+    await updateMessageContent(db, messageId, content, {
+      ...(metadata ?? {}),
+      send_failed_at: new Date().toISOString(),
+    } as never);
+  } catch (markError) {
+    console.error(`Failed to mark send_failed_at for message ${messageId}:`, markError);
+  }
+}
+
 export async function processSendMessageJob(job: Job<SendMessageJobData> | { data: SendMessageJobData }) {
   const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption, storedAudioRef } = job.data;
 
   const db = getAdminClient();
   const internalNotification=messageId.startsWith("handoff-notify-");
-  const recorded=internalNotification?null:await getMessageById(db,messageId);
+  let recorded: Awaited<ReturnType<typeof getMessageById>> | null = null;
+  if(!internalNotification){
+    try{ recorded=await getMessageById(db,messageId); }
+    catch(error){
+      if(storedAudioRef) await markSellerAudioFailed(db,messageId,content);
+      throw error;
+    }
+  }
   const metadata=recorded?.metadata;
   if(recorded && metadata?.scheduled_ad_closure){
     await processScheduledAdClosure(db,job.data,recorded,async(text,signal)=>{
@@ -113,13 +131,13 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
       return;
     }
   }
-  const instance = await getInstanceById(db, instanceId);
-
   let response: unknown;
+  let instance: Awaited<ReturnType<typeof getInstanceById>>;
 
   if (storedAudioRef) {
     // Seller audio: no text fallback and no retry. Any failure marks the message and fails the job.
     try {
+      instance = await getInstanceById(db, instanceId);
       const ref = parseCustomerAudioRef(storedAudioRef);
       if (!ref) throw new Error(`Invalid stored audio ref: ${storedAudioRef}`);
       const { data, error } = await db.storage.from(ref.bucket).download(ref.path);
@@ -127,17 +145,11 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
       const base64 = Buffer.from(await data.arrayBuffer()).toString("base64");
       response = await sendEvolutionAudio(instance.instance_name, phone, base64);
     } catch (error) {
-      try {
-        await updateMessageContent(db, messageId, recorded?.content ?? content, {
-          ...(recorded?.metadata ?? {}),
-          send_failed_at: new Date().toISOString(),
-        });
-      } catch (markError) {
-        console.error(`Failed to mark send_failed_at for message ${messageId}:`, markError);
-      }
+      await markSellerAudioFailed(db, messageId, recorded?.content ?? content, recorded?.metadata);
       throw error;
     }
   } else if (audioBase64) {
+    instance = await getInstanceById(db, instanceId);
     try {
       response = await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
     } catch (error) {
@@ -150,8 +162,10 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
       response = await sendEvolutionText(instance.instance_name, phone, content);
     }
   } else if (mediaUrl) {
+    instance = await getInstanceById(db, instanceId);
     response = await sendEvolutionMedia(instance.instance_name, phone, mediaUrl, caption || content);
   } else {
+    instance = await getInstanceById(db, instanceId);
     response = await sendEvolutionText(instance.instance_name, phone, content);
   }
 
