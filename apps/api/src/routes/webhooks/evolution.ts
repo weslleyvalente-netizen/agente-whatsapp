@@ -27,7 +27,7 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
 } from "@aula-agente/database";
-import { samePhoneNumber } from "@aula-agente/shared";
+import { samePhoneNumber, resolveEvolutionPhone } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -228,7 +228,8 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       const instanceId = payload.instance;
       const evolutionMessageId = payload.data.key.id;
-      const phone = payload.data.key.remoteJid.replace("@s.whatsapp.net", "");
+      // Contatos @lid: usa o número real de remoteJidAlt (ver resolveEvolutionPhone).
+      const phone = resolveEvolutionPhone(payload.data.key);
       // For a fromMe delivery (human replying directly from the connected
       // phone), pushName is the connected WhatsApp account's own profile
       // name, not the customer's — passing it through here overwrote the

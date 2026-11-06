@@ -14,6 +14,9 @@ export const evolutionWebhookPayloadSchema = z.object({
   data: z.object({
     key: z.object({
       remoteJid: z.string(),
+      // Após reconexão o Evolution pode mandar remoteJid "<n>@lid" e o número real aqui.
+      remoteJidAlt: z.string().nullable().optional(),
+      addressingMode: z.string().nullable().optional(),
       fromMe: z.boolean(),
       id: z.string(),
     }),
