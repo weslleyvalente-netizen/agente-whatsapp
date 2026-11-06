@@ -189,26 +189,52 @@ describe("mergeAttention", () => {
 });
 
 describe("applyRefresh", () => {
-  const rows = (a: number, b: number) => Array.from({ length: b - a }, (_, i) => ({ id: `r${String(a + i).padStart(4, "0")}` }));
+  // linhas ordenadas da mais nova (índice menor) para a mais antiga
+  const stamp = (n: number) => new Date(Date.UTC(2026, 0, 1) + (100000 - n) * 60000).toISOString();
+  const row = (n: number, at: number = n) => ({ id: `r${String(n).padStart(4, "0")}`, last_message_at: stamp(at) });
+  const rows = (a: number, b: number) => Array.from({ length: b - a }, (_, i) => row(a + i));
+  const ids = (l: { id: string }[]) => l.map((x) => x.id);
+
   it("replaces the whole list when the window covers it", () => {
     const r = applyRefresh(rows(0, 100), rows(1, 101), true);
     expect(r.list).toHaveLength(100);
     expect(r.more).toBe(true);
     expect(applyRefresh(rows(0, 100), rows(1, 100), true).more).toBe(false);
   });
-  it("beyond the cap: replaces head, keeps tail, no duplicates, keeps hasMore and offset", () => {
-    const loaded = rows(0, 1200);
-    // 5 linhas da cabeça saíram; o servidor devolve as 300 primeiras atuais
+  it("(1) new rows on top: no old row is lost, order kept, no duplicates", () => {
+    const loaded = rows(0, 400).map((c) => ({ ...c, last_message_at: stamp(Number(c.id.slice(1)) + 3) }));
+    const news = [row(9001, 0), row(9002, 1), row(9003, 2)];
+    const fresh = [...news, ...loaded.slice(0, 297)]; // 300 linhas
+    const r = applyRefresh(loaded, fresh, true);
+    expect(r.list).toHaveLength(403);
+    expect(new Set(ids(r.list)).size).toBe(403);
+    expect(ids(r.list)).toEqual([...ids(news), ...ids(loaded)]);
+    expect(r.more).toBe(true);
+    // offset = total carregado: só sobrepõe, nunca pula
+    expect(loadMoreRange(r.list.length).from).toBe(403);
+  });
+  it("(2) head rows leaving the filter disappear; tail kept in order", () => {
+    const loaded = rows(0, 400);
     const fresh = rows(5, 305);
     const r = applyRefresh(loaded, fresh, true);
-    expect(r.more).toBe(true);
-    expect(new Set(r.list.map((x) => x.id)).size).toBe(r.list.length);
-    expect(r.list.slice(0, 300).map((x) => x.id)).toEqual(fresh.map((x) => x.id));
-    expect(r.list.slice(300).map((x) => x.id)).toEqual(rows(300, 1200).filter((x) => !fresh.some((f) => f.id === x.id)).map((x) => x.id));
-    expect(loadMoreRange(r.list.length).from).toBe(r.list.length);
+    expect(ids(r.list)).toEqual(ids(rows(5, 400)));
+    expect(new Set(ids(r.list)).size).toBe(r.list.length);
   });
-  it("keeps more=false beyond the cap when there was no more", () => {
+  it("(3) a tail row that got a new message appears once, in the head", () => {
+    const loaded = rows(0, 400);
+    const moved = row(350, -1); // 350 agora é a mais nova
+    const fresh = [moved, ...rows(0, 299)];
+    const r = applyRefresh(loaded, fresh, true);
+    expect(ids(r.list).filter((x) => x === moved.id)).toHaveLength(1);
+    expect(r.list[0].id).toBe(moved.id);
+    expect(ids(r.list)).toEqual([moved.id, ...ids(rows(0, 350)), ...ids(rows(351, 400))]);
+  });
+  it("(4) hasMore is preserved beyond the cap, and false when the server has fewer than the window", () => {
+    expect(applyRefresh(rows(0, 400), rows(0, 300), true).more).toBe(true);
     expect(applyRefresh(rows(0, 400), rows(0, 300), false).more).toBe(false);
+    const r = applyRefresh(rows(0, 400), rows(0, 120), true);
+    expect(r.more).toBe(false);
+    expect(r.list).toHaveLength(120);
   });
 });
 

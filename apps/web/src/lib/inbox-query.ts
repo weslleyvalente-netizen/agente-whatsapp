@@ -94,14 +94,24 @@ export function appendPage<T extends { id: string }>(loaded: T[], page: T[]): T[
  * ficar um pouco desatualizadas), sem duplicar ids. `more` só é recalculado
  * quando a janela cobre tudo o que estava carregado; senão preserva o anterior.
  */
-export function applyRefresh<T extends { id: string }>(
+export function applyRefresh<T extends Mergeable>(
   loaded: T[],
   fresh: T[],
   prevHasMore: boolean,
 ): { list: T[]; more: boolean } {
   const { size } = windowRange(loaded.length);
   if (loaded.length <= size) return { list: appendPage([], fresh), more: hasMore(fresh.length, size) };
-  return { list: appendPage(fresh, loaded.slice(size)), more: prevHasMore };
+  // Janela menor que o pedido: o servidor não tem mais nada além dela.
+  if (fresh.length < size) return { list: appendPage([], fresh), more: false };
+  // Cauda = toda linha antiga que NÃO está em `fresh` e vem DEPOIS da última de
+  // `fresh` na ordem da consulta. Assim, linhas empurradas para fora da janela
+  // por conversas novas no topo não se perdem, e as que subiram para a cabeça
+  // aparecem uma vez só. Offset do "carregar mais" = total: o servidor deslocou
+  // para baixo pelas novas, então só há sobreposição (deduplicada), nunca salto.
+  const last = fresh[fresh.length - 1];
+  const inFresh = new Set(fresh.map((c) => c.id));
+  const tail = loaded.filter((c) => !inFresh.has(c.id) && compareRows(c, last) > 0);
+  return { list: [...fresh, ...tail], more: prevHasMore };
 }
 
 /** Marca qual carga inicial é a mais recente (quem resolve o `loading`). */
@@ -163,6 +173,12 @@ export function createThrottle(
 
 type Mergeable = { id: string; last_message_at: string };
 
+/** Ordem da consulta: last_message_at desc, id desc. Negativo = `a` vem antes de `b`. */
+function compareRows(a: Mergeable, b: Mergeable): number {
+  if (a.last_message_at !== b.last_message_at) return a.last_message_at < b.last_message_at ? 1 : -1;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
 /**
  * Mescla a primeira página recém-buscada com as páginas já carregadas:
  * substitui pelo id, mantém as mais antigas e reordena por last_message_at desc
@@ -172,10 +188,7 @@ export function mergeFirstPage<T extends Mergeable>(loaded: T[], fresh: T[]): T[
   const byId = new Map<string, T>();
   for (const c of loaded) byId.set(c.id, c);
   for (const c of fresh) byId.set(c.id, c);
-  return [...byId.values()].sort((a, b) => {
-    if (a.last_message_at !== b.last_message_at) return a.last_message_at < b.last_message_at ? 1 : -1;
-    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-  });
+  return [...byId.values()].sort(compareRows);
 }
 
 /**

@@ -274,8 +274,10 @@ export default function InboxPage() {
     try {
       if (f.kind === "attention") {
         const rows = await loadAttention(q);
-        if (gen.commit(token)) setConversations(rows);
-        else if (!unmountedRef.current) throttleRef.current?.trigger();
+        if (gen.commit(token)) {
+          setConversations(rows);
+          setLoadError(false);
+        } else if (!unmountedRef.current) throttleRef.current?.trigger();
       } else {
         const w = windowRange(conversationsRef.current.length);
         const rows = await loadRange(f, q, w.from, w.to);
@@ -283,6 +285,7 @@ export default function InboxPage() {
           const r = applyRefresh(conversationsRef.current, rows, moreRef.current);
           setConversations(r.list);
           setMoreAvailable(r.more);
+          setLoadError(false);
         } else if (!unmountedRef.current) {
           throttleRef.current?.trigger();
         }
