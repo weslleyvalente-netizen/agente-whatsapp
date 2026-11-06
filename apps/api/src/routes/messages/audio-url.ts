@@ -11,7 +11,7 @@ import { canViewLead } from "../../lib/lead-access.js";
 
 const paramsSchema = z.object({ messageId: z.string().uuid() });
 
-// Link temporário (signed URL) para tocar o áudio de um cliente guardado no
+// Link temporário (signed URL) para tocar o áudio (do cliente ou enviado pelo vendedor) guardado no
 // bucket privado. A permissão é a mesma das demais rotas de conversa: membro da
 // organização e, com o isolamento por vendedor ligado, dono da conversa.
 export default async function messageAudioUrlRoutes(app: FastifyInstance) {
