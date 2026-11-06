@@ -5,6 +5,7 @@ import { invalidateSalesWorkspaceCacheOnWrite } from "./services/sales-workspace
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
 import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
 import messageSendRoutes from "./routes/messages/send.js";
+import messageSendAudioRoutes from "./routes/messages/send-audio.js";
 import messageAudioUrlRoutes from "./routes/messages/audio-url.js";
 import instanceRoutes from "./routes/instances/index.js";
 import knowledgeDocumentRoutes from "./routes/knowledge/documents.js";
@@ -57,6 +58,7 @@ server.register(manualFinancingRoutes);
 server.register(evolutionWebhookRoutes);
 server.register(wixLeadWebhookRoutes);
 server.register(messageSendRoutes);
+server.register(messageSendAudioRoutes);
 server.register(messageAudioUrlRoutes);
 server.register(instanceRoutes);
 server.register(knowledgeDocumentRoutes);

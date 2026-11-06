@@ -5,7 +5,10 @@ import {
   createHandoffEvent,
   getOpenHandoffEvent,
   markFirstHumanReply,
+  setMessageMediaUrlIfEmpty,
+  updateMessageContent,
 } from "@aula-agente/database";
+import { CUSTOMER_AUDIO_BUCKET, buildCustomerAudioRef, parseCustomerAudioRef } from "@aula-agente/shared";
 import type { Conversation, Message } from "@aula-agente/shared";
 import { saveMessage } from "./message.service.js";
 import { handleConversationTakeover } from "./task.service.js";
@@ -26,6 +29,8 @@ export interface SendPanelMessageParams {
   // send, since a job whose HTTP response to us got lost after Evolution
   // already delivered the message would otherwise resend it for real.
   noAutoRetry?: boolean;
+  // Áudio gravado pelo vendedor: sobe para o Storage antes de enfileirar o envio.
+  audio?: { buffer: Buffer; extension: "webm" | "mp4" | "ogg"; durationSeconds?: number };
 }
 
 export interface SendPanelMessageResult {
@@ -37,7 +42,11 @@ export interface SendPanelMessageResult {
 // orchestration is shared by the manual inbox send and the
 // follow-up-from-task flow (task-followup.service.ts) instead of duplicated.
 export async function sendPanelMessage(params: SendPanelMessageParams): Promise<SendPanelMessageResult> {
-  const { conversation, content, actorUserId, metadata } = params;
+  const { conversation, actorUserId, audio } = params;
+  const content = audio ? "[audio]" : params.content;
+  const metadata = audio
+    ? { source: "seller_audio", ...(audio.durationSeconds != null ? { duration_seconds: audio.durationSeconds } : {}) }
+    : params.metadata;
   const activateTakeover = params.activateTakeover ?? true;
   const db = getAdminClient();
 
@@ -47,11 +56,45 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
     evolutionMessageId: null,
     role: "human_agent",
     content,
+    ...(audio ? { mediaType: "audio" as const } : {}),
     metadata: metadata ?? null,
   });
 
   if (!message) {
     throw new Error(`Failed to save message for conversation ${conversation.id}`);
+  }
+
+  let storedAudioRef: string | undefined;
+  if (audio) {
+    try {
+      storedAudioRef = buildCustomerAudioRef({
+        organizationId: conversation.organization_id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        extension: audio.extension,
+      });
+      const parsed = parseCustomerAudioRef(storedAudioRef);
+      if (!parsed) throw new Error("Referência de áudio inválida");
+      const { error } = await db.storage.from(CUSTOMER_AUDIO_BUCKET).upload(parsed.path, audio.buffer, {
+        contentType: `audio/${audio.extension}`,
+        upsert: false,
+      });
+      if (error) throw error;
+      if (!(await setMessageMediaUrlIfEmpty(db, message.id, storedAudioRef))) {
+        throw new Error("Não foi possível gravar a referência do áudio");
+      }
+    } catch (err) {
+      console.error(`Failed to store seller audio for conversation ${conversation.id}:`, err);
+      try {
+        await updateMessageContent(db, message.id, content, {
+          ...(metadata ?? {}),
+          send_failed_at: new Date().toISOString(),
+        } as Message["metadata"]);
+      } catch (markErr) {
+        console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
+      }
+      throw new Error("Falha ao armazenar o áudio");
+    }
   }
 
   const isFirstTakeover = !conversation.is_human_takeover;
@@ -115,8 +158,9 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
       phone: contact.phone,
       content,
       organizationId: conversation.organization_id,
+      ...(storedAudioRef ? { storedAudioRef } : {}),
     },
-    params.noAutoRetry ? { attempts: 1 } : undefined
+    params.noAutoRetry || audio ? { attempts: 1 } : undefined
   );
 
   return { message, instanceId: instance.id };
