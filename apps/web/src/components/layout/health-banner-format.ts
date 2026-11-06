@@ -21,5 +21,12 @@ export function bannerTitle(health: HealthState, now: number = Date.now()): stri
 
 /** Motivos que ainda não aparecem no título. */
 export function extraReasons(health: HealthState, title: string): string[] {
-  return health.reasons.filter((r) => !title.includes(r) && !r.startsWith(SILENCE_PREFIX));
+  return health.reasons.flatMap((r) => {
+    if (!r.startsWith(SILENCE_PREFIX)) return title.includes(r) ? [] : [r];
+    // Causa provável vem depois de "; " na mensagem de silêncio: o painel mostra a mesma orientação do aviso.
+    const i = r.indexOf("; ");
+    if (i < 0) return [];
+    const hint = r.slice(i + 2);
+    return [hint.charAt(0).toUpperCase() + hint.slice(1)];
+  });
 }
