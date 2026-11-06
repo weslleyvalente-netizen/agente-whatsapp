@@ -12,6 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Send } from "lucide-react";
+import { useOrganization } from "@/providers/organization-provider";
+import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { AudioRecorderBar } from "./audio-recorder-bar";
 import { chatDayKey, chatDayLabel } from "@aula-agente/shared";
 import type { Message } from "@aula-agente/shared";
 
@@ -35,6 +38,12 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const { currentOrg } = useOrganization();
+  const recorder = useAudioRecorder();
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const audioEnabled = currentOrg?.settings.seller_audio_enabled === true && recorder.supported;
+  const recorderBusy = audioEnabled && recorder.phase !== "idle";
+  const { discard: discardRecording } = recorder;
 
   useEffect(() => {
     const supabase = createClient();
@@ -178,6 +187,30 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
     }
   };
 
+  // Troca de conversa: descarta qualquer gravação em andamento.
+  useEffect(() => {
+    setAudioError(null);
+    return () => discardRecording();
+  }, [conversationId, discardRecording]);
+
+  const handleSendAudio = async () => {
+    setAudioError(null);
+    try {
+      await recorder.send(async (blob, seconds) => {
+        const formData = new FormData();
+        formData.append("conversation_id", conversationId);
+        const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+        formData.append("audio", blob, `audio.${ext}`);
+        formData.append("duration_seconds", String(seconds));
+        await apiFetch("/messages/send-audio", { method: "POST", body: formData });
+      });
+      fetchConversation();
+      onConversationChanged?.();
+    } catch (err) {
+      setAudioError(err instanceof Error ? err.message : "Erro ao enviar áudio");
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -232,23 +265,41 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
               O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.
             </div>
           )}
-          <div className="flex items-center gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:p-4">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Digite uma mensagem..."
-              disabled={sending}
-              className="h-11 rounded-full md:h-8"
-            />
-            <Button
-              onClick={handleSend}
-              disabled={sending || !input.trim()}
-              size="icon"
-              className="size-11 shrink-0 rounded-full md:size-8"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
+          <div className="relative flex items-center gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:p-4">
+            {!recorderBusy && (
+              <>
+                <Input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Digite uma mensagem..."
+                  disabled={sending}
+                  className="h-11 rounded-full md:h-8"
+                />
+                <Button
+                  onClick={handleSend}
+                  disabled={sending || !input.trim()}
+                  size="icon"
+                  className="size-11 shrink-0 rounded-full md:size-8"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+            {audioEnabled && (
+              <AudioRecorderBar
+                phase={recorder.phase}
+                seconds={recorder.seconds}
+                error={recorder.error}
+                canSend={recorder.canSend}
+                previewUrl={recorder.previewUrl}
+                uploadError={audioError}
+                onStart={() => { setAudioError(null); recorder.start(); }}
+                onStop={recorder.stop}
+                onDiscard={() => { setAudioError(null); recorder.discard(); }}
+                onSend={handleSendAudio}
+              />
+            )}
           </div>
         </div>
       </div>

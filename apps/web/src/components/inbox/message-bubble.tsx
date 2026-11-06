@@ -57,18 +57,21 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             className="mb-1 h-auto max-w-full rounded-md"
           />
         )}
-        {isContact && hasStoredAudio(message) && (
+        {(isContact || isHuman) && hasStoredAudio(message) && (
           <div className="mb-1">
             <CustomerAudioPlayer messageId={message.id} durationSeconds={message.metadata?.duration_seconds} />
           </div>
         )}
-        {message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (
+        {message.media_type === "audio" && isHuman && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? null : message.media_type === "audio" && isContact && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER ? (
           <p className="flex items-center gap-1.5 text-sm italic text-muted-foreground">
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio sem transcrição — conteúdo não verificado
           </p>
         ) : (
           <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+        )}
+        {isHuman && message.media_type === "audio" && message.metadata?.send_failed_at && (
+          <p className="mt-1 text-xs font-semibold text-destructive">Áudio não enviado</p>
         )}
         <p
           title={new Date(message.created_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "full", timeStyle: "medium" })}
