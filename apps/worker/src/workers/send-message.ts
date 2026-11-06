@@ -86,7 +86,7 @@ async function sendEvolutionAudio(instanceName: string, phone: string, audioBase
   return response.json();
 }
 
-async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, messageId: string, content: string, metadata?: Record<string, unknown> | null) {
+async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, messageId: string, content: string, metadata?: object | null) {
   try {
     await updateMessageContent(db, messageId, content, {
       ...(metadata ?? {}),
