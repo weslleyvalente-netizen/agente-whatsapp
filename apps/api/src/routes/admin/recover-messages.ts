@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { evolutionWebhookPayloadSchema } from "@aula-agente/shared";
+import { evolutionWebhookPayloadSchema, resolveEvolutionPhone } from "@aula-agente/shared";
 import {
   getAdminClient, getInstancesByOrganization, findExistingEvolutionMessageIds, getLastOutboundAtForPhone,
 } from "@aula-agente/database";
@@ -99,8 +99,9 @@ async function analyze(opts: {
     const received = await findStoredMessages(instance.instance_name, window, false);
     const sent = await findStoredMessages(instance.instance_name, sentWindow, true);
     for (const rec of sent) {
-      const jid = rec?.key?.remoteJid;
-      if (typeof jid !== "string" || !rec.key.fromMe || jid.endsWith("@g.us")) continue;
+      const rawJid = rec?.key?.remoteJid;
+      if (typeof rawJid !== "string" || !rec.key.fromMe || rawJid.endsWith("@g.us")) continue;
+      const jid = resolveEvolutionPhone(rec.key); // @lid -> número real via remoteJidAlt
       const t = tsOf(rec);
       if (Number.isFinite(t)) lastSentByJid.set(jid, Math.max(lastSentByJid.get(jid) ?? 0, t));
     }
@@ -121,8 +122,9 @@ async function analyze(opts: {
 
   const byJid = new Map<string, Candidate[]>();
   for (const c of candidates) {
-    const list = byJid.get(c.rec.key.remoteJid);
-    if (list) list.push(c); else byJid.set(c.rec.key.remoteJid, [c]);
+    const phoneKey = resolveEvolutionPhone(c.rec.key);
+    const list = byJid.get(phoneKey);
+    if (list) list.push(c); else byJid.set(phoneKey, [c]);
   }
   const all: CustomerGroup[] = [...byJid.entries()].map(([jid, items]) => {
     const lastLost = tsOf(items[items.length - 1].rec);
@@ -270,7 +272,12 @@ async function replayOne(
     event: "messages.upsert",
     instance: instanceId,
     data: {
-      key: { remoteJid: rec.key.remoteJid, fromMe: false, id: rec.key.id },
+      key: {
+        remoteJid: rec.key.remoteJid,
+        ...(rec.key.remoteJidAlt ? { remoteJidAlt: rec.key.remoteJidAlt } : {}),
+        fromMe: false,
+        id: rec.key.id,
+      },
       pushName: rec.pushName ?? null,
       message: rec.message ?? null,
       messageType: rec.messageType,

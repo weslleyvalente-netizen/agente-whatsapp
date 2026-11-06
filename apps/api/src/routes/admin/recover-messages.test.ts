@@ -90,6 +90,31 @@ beforeEach(async () => {
   m.findStoredMessages.mockImplementation(async (_i: string, _w: unknown, fromMe: boolean) => (fromMe ? sent : received));
 });
 
+describe("contatos @lid", () => {
+  const LID = "85801266339926@lid";
+  const ALT = "556296818769@s.whatsapp.net";
+  const lidRec = (id: string, ts: number) => rec(id, ts, LID, { key: { remoteJid: LID, remoteJidAlt: ALT, fromMe: false, id } });
+
+  it("agrupa pelo número real quando há remoteJidAlt, junto com mensagens @s.whatsapp.net do mesmo número", async () => {
+    received = [lidRec("A", T0 + 1), rec("B", T0 + 2, ALT), lidRec("C", T0 + 3)];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, sample: [{ phoneLast4: "8769", count: 3 }] });
+  });
+
+  it("resposta enviada ao número real conta como respondido mesmo com recebidas em @lid", async () => {
+    received = [lidRec("A", T0 + 1)];
+    sent = [sentRec("S", T0 + 50, ALT)];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, answeredCustomers: 1 });
+  });
+
+  it("o reenvio repassa remoteJid E remoteJidAlt originais", async () => {
+    received = [lidRec("A", T0 + 1)];
+    await runAndWait(await app("owner"));
+    expect(delivered[0].body.data.key).toEqual({ remoteJid: LID, remoteJidAlt: ALT, fromMe: false, id: "A" });
+  });
+});
+
 describe("permissão e validação", () => {
   it("agent recebe 403 em POST e GET status", async () => {
     const a = await app("agent");
