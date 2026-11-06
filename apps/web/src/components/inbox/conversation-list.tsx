@@ -29,6 +29,10 @@ interface ConversationListProps {
   conversations: ConversationItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  loading?: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 // Derived purely from fields already on the conversation — no schema change.
@@ -56,13 +60,28 @@ function getConversationTags(
   return tags;
 }
 
-export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
+export function ConversationList({
+  conversations,
+  selectedId,
+  onSelect,
+  loading = false,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
+}: ConversationListProps) {
   const statusLamp: Record<string, LampTone> = {
     open: "green",
     waiting: "amber",
     resolved: "off",
     closed: "off",
   };
+
+  if (loading) {
+    return <div className="p-4 text-sm text-muted-foreground">Carregando...</div>;
+  }
+  if (conversations.length === 0) {
+    return <div className="p-4 text-sm text-muted-foreground">Nenhuma conversa</div>;
+  }
 
   return (
     <div className="flex flex-col">
@@ -128,6 +147,15 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
           </div>
         </button>
       ))}
+      {hasMore && (
+        <button
+          onClick={onLoadMore}
+          disabled={loadingMore}
+          className="m-3 rounded-full border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60"
+        >
+          {loadingMore ? "Carregando..." : "Carregar mais"}
+        </button>
+      )}
     </div>
   );
 }

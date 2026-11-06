@@ -84,3 +84,15 @@ export function mergeFirstPage<T extends Mergeable>(loaded: T[], fresh: T[]): T[
     return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
   });
 }
+
+/**
+ * Aba "Atenção": o PostgREST não faz OR entre coluna da conversa e coluna do
+ * contato, então a página roda duas consultas (cada uma limitada a
+ * ATENCAO_CAP linhas) e mescla aqui. Sem paginação nessa aba. Se o conjunto
+ * crescer além do limite, o futuro é uma view/RPC no banco.
+ */
+export const ATTENTION_CAP = 300;
+
+export function mergeAttention<T extends Mergeable>(a: T[], b: T[], cap: number = ATTENTION_CAP): T[] {
+  return mergeFirstPage(a, b).slice(0, cap);
+}

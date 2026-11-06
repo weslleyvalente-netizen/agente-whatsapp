@@ -91,3 +91,18 @@ describe("mergeFirstPage", () => {
     expect(loaded).toHaveLength(1);
   });
 });
+
+import { mergeAttention, ATTENTION_CAP } from "./inbox-query";
+
+describe("mergeAttention", () => {
+  const c = (id: string, at: string) => ({ id, last_message_at: at });
+  it("dedupes by id and sorts desc", () => {
+    const out = mergeAttention([c("a", "2026-01-01"), c("b", "2026-01-03")], [c("b", "2026-01-03"), c("c", "2026-01-02")]);
+    expect(out.map((x) => x.id)).toEqual(["b", "c", "a"]);
+  });
+  it("caps the merged list", () => {
+    const many = Array.from({ length: 5 }, (_, i) => c(`x${i}`, `2026-01-0${i + 1}`));
+    expect(mergeAttention(many, [], 3)).toHaveLength(3);
+    expect(ATTENTION_CAP).toBe(300);
+  });
+});
