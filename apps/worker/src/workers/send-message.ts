@@ -1,10 +1,10 @@
 import {processScheduledAdClosure,shouldSuppressScheduledAdLegacySend} from "./scheduled-ad-closure.js";
 import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
-import { QUEUE_NAMES } from "@aula-agente/shared";
+import { QUEUE_NAMES, parseCustomerAudioRef } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -87,7 +87,7 @@ async function sendEvolutionAudio(instanceName: string, phone: string, audioBase
 }
 
 export async function processSendMessageJob(job: Job<SendMessageJobData> | { data: SendMessageJobData }) {
-  const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption } = job.data;
+  const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption, storedAudioRef } = job.data;
 
   const db = getAdminClient();
   const internalNotification=messageId.startsWith("handoff-notify-");
@@ -117,7 +117,27 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
 
   let response: unknown;
 
-  if (audioBase64) {
+  if (storedAudioRef) {
+    // Seller audio: no text fallback and no retry. Any failure marks the message and fails the job.
+    try {
+      const ref = parseCustomerAudioRef(storedAudioRef);
+      if (!ref) throw new Error(`Invalid stored audio ref: ${storedAudioRef}`);
+      const { data, error } = await db.storage.from(ref.bucket).download(ref.path);
+      if (error || !data) throw new Error(`Seller audio download failed: ${error?.message ?? "no data"}`);
+      const base64 = Buffer.from(await data.arrayBuffer()).toString("base64");
+      response = await sendEvolutionAudio(instance.instance_name, phone, base64);
+    } catch (error) {
+      try {
+        await updateMessageContent(db, messageId, recorded?.content ?? content, {
+          ...(recorded?.metadata ?? {}),
+          send_failed_at: new Date().toISOString(),
+        });
+      } catch (markError) {
+        console.error(`Failed to mark send_failed_at for message ${messageId}:`, markError);
+      }
+      throw error;
+    }
+  } else if (audioBase64) {
     try {
       response = await sendEvolutionAudio(instance.instance_name, phone, audioBase64);
     } catch (error) {
