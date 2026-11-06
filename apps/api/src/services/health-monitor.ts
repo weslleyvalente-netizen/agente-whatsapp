@@ -1,18 +1,22 @@
 import { probeRedis } from "../lib/redis-probe.js";
 import { isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
 import type { BusinessCalendar } from "@aula-agente/shared";
-import { getAdminClient, getAllOrganizations, getInstancesByOrganization } from "@aula-agente/database";
+import { getAdminClient, getAllOrganizations, getInstancesByOrganization, sendPushToUser } from "@aula-agente/database";
 import { getInstanceStatus, sendText } from "./evolution.service.js";
 
 // Alerta de silêncio. Roda no processo da API (setInterval) e guarda o estado em memória:
 // se o Redis cair, o worker cai junto, então nada aqui pode depender de fila nem de Redis
 // (o ping do Redis é só uma sonda, com timeout; os avisos vão direto pela Evolution).
 
-export const SILENCE_WINDOW_MS = 2 * 60 * 60 * 1000;
+export const SILENCE_WINDOW_MS = 45 * 60 * 1000;
 export const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-export const NOTIFY_COOLDOWN_MS = 2 * 60 * 60 * 1000;
-// Média diária mínima de mensagens de clientes na mesma faixa para o silêncio contar como anormal.
-export const MIN_HISTORICAL_AVG = 2;
+export const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+// Média diária mínima de mensagens de clientes na mesma faixa (45 min) para o silêncio contar como anormal.
+// Proporcional à janela: era 2 por 2 h, agora 1 por 45 min.
+export const MIN_HISTORICAL_AVG = 1;
+// Destino do push (página de Configurações, onde fica o cartão "Recuperar mensagens perdidas") e tag que agrupa os avisos.
+export const HEALTH_PUSH_URL = "/settings";
+export const HEALTH_PUSH_TAG = "health-alert";
 
 export type RedisState = "ok" | "down";
 export type EvolutionState = "connected" | "disconnected" | "unknown";
@@ -20,7 +24,7 @@ export type AlertCode = "silence" | "redis" | "evolution";
 
 export interface HealthInputs {
   now: Date;
-  // Expediente aberto agora E durante toda a janela de 2 h (evita falso alarme logo após a abertura).
+  // Expediente aberto agora E durante toda a janela de silêncio (45 min) (evita falso alarme logo após a abertura).
   businessOpenThroughout: boolean;
   lastCustomerMessageAt: Date | null;
   // Média diária de mensagens de clientes na mesma faixa de horário nos 7 dias anteriores.
@@ -37,8 +41,12 @@ export function decideHealth(i: HealthInputs): HealthDecision {
   if (i.businessOpenThroughout) {
     const silentMs = i.lastCustomerMessageAt ? i.now.getTime() - i.lastCustomerMessageAt.getTime() : Infinity;
     if (silentMs >= SILENCE_WINDOW_MS && i.historicalAvgInWindow >= MIN_HISTORICAL_AVG) {
-      const hours = Number.isFinite(silentMs) ? `há ${Math.floor(silentMs / 3_600_000)} h` : "há mais de 2 h";
-      alerts.push({ code: "silence", message: `Sem mensagens de clientes ${hours}` });
+      const ago = !Number.isFinite(silentMs) ? `há mais de ${SILENCE_WINDOW_MS / 60_000} min`
+        : silentMs < 3_600_000 ? `há ${Math.floor(silentMs / 60_000)} min` : `há ${Math.floor(silentMs / 3_600_000)} h`;
+      // Evolution "open" e Redis ok mas silêncio: a sessão pode estar travada (incidente de 06/11).
+      const hint = i.evolution === "connected" && i.redis === "ok"
+        ? "; o WhatsApp consta conectado mas pode não estar recebendo (reconectar pelo QR Code)" : "";
+      alerts.push({ code: "silence", message: `Sem mensagens de clientes ${ago}${hint}` });
     }
     if (i.redis === "down") alerts.push({ code: "redis", message: "Redis fora do ar ou lento (a fila de mensagens pode estar parada)" });
     if (i.evolution === "disconnected") alerts.push({ code: "evolution", message: "WhatsApp (Evolution) desconectado" });
@@ -50,7 +58,7 @@ export function decideHealth(i: HealthInputs): HealthDecision {
 export interface NotifyState { lastNotified: Partial<Record<AlertCode, number>>; wasWarning: boolean }
 export const newNotifyState = (): NotifyState => ({ lastNotified: {}, wasWarning: false });
 
-// Anti-spam: no máximo 1 aviso a cada 2 h por motivo; 1 mensagem de "normalizado" ao voltar.
+// Anti-spam: no máximo 1 aviso a cada 30 min por motivo; 1 mensagem de "normalizado" ao voltar.
 // Fora do expediente (businessOpenThroughout=false) o estado "warning" anterior é mantido: sumir o alerta
 // porque fechou o expediente não é normalização e não deve gerar o aviso de "normalizado".
 export function planNotifications(state: NotifyState, decision: HealthDecision, nowMs: number, businessOpenThroughout = true): {
@@ -87,11 +95,13 @@ export interface HealthDeps {
   pingRedis(): Promise<RedisState>;
   evolutionState(organizationId: string): Promise<EvolutionState>;
   sendWhatsApp(organizationId: string, phone: string, text: string): Promise<void>;
+  // Push para owners/admins da organização. Canal independente do WhatsApp.
+  sendPush(organizationId: string, text: { title: string; body: string }): Promise<void>;
   log: { error(obj: unknown, msg: string): void };
 }
 
 export function isOpenThroughout(now: Date, calendar: BusinessCalendar): boolean {
-  for (let m = 0; m <= SILENCE_WINDOW_MS / 60_000; m += 30) {
+  for (let m = 0; m <= SILENCE_WINDOW_MS / 60_000; m += 15) {
     if (!isBusinessOpen(new Date(now.getTime() - m * 60_000), calendar)) return false;
   }
   return true;
@@ -136,21 +146,30 @@ export async function evaluateOrganization(
 
   if (opts.notify) {
     const plan = planNotifications(notifyStates.get(ctx.organizationId) ?? newNotifyState(), decision, now.getTime(), openThroughout);
-    // Só health_alert_phone (nunca handoff_notification_phone). Vazio: só a faixa no painel.
+    // Só health_alert_phone (nunca handoff_notification_phone). Vazio: sem WhatsApp, mas o push segue.
     const phone = ctx.settings.health_alert_phone?.trim();
-    // Sem telefone configurado não há aviso, mas o estado (e o anti-spam) segue valendo.
+    // O estado (e o anti-spam) segue valendo mesmo sem canal configurado.
     notifyStates.set(ctx.organizationId, plan.next);
-    if (phone) {
+    const body = plan.send.length ? plan.send.map((a) => a.message).join("; ") : null;
+    const pushText = body !== null ? { title: "Alerta do CRM", body }
+      : plan.recovered ? { title: "CRM normalizado", body: "As mensagens de clientes voltaram a chegar." } : null;
+    if (pushText) {
       const at = clock(now, calendar.timeZone);
-      try {
-        if (plan.send.length) {
-          await deps.sendWhatsApp(ctx.organizationId, phone, `Alerta do CRM (${at}): ${plan.send.map((a) => a.message).join("; ")}. Veja Configurações > Recuperar mensagens perdidas.`);
-        } else if (plan.recovered) {
-          await deps.sendWhatsApp(ctx.organizationId, phone, `CRM normalizado (${at}): as mensagens de clientes voltaram a chegar.`);
+      const whatsText = body !== null
+        ? `Alerta do CRM (${at}): ${body}. Veja Configurações > Recuperar mensagens perdidas.`
+        : `CRM normalizado (${at}): as mensagens de clientes voltaram a chegar.`;
+      // Canais independentes: a falha de um nunca derruba o monitor nem impede o outro.
+      if (phone) {
+        try {
+          await deps.sendWhatsApp(ctx.organizationId, phone, whatsText);
+        } catch (err) {
+          deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, "health-monitor: failed to send WhatsApp notice");
         }
+      }
+      try {
+        await deps.sendPush(ctx.organizationId, pushText);
       } catch (err) {
-        // Nunca derruba o monitor por falha no aviso (a Evolution pode ser justamente o problema).
-        deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, "health-monitor: failed to send WhatsApp notice");
+        deps.log.error({ organizationId: ctx.organizationId, errName: (err as Error)?.name }, "health-monitor: failed to send push notice");
       }
     }
   }
@@ -213,6 +232,17 @@ export const defaultDeps: HealthDeps = {
     const [instance] = await activeInstances(organizationId);
     if (!instance) throw new Error("no active instance");
     await sendText(instance.instance_name, { number: phone, text });
+  },
+  async sendPush(organizationId, text) {
+    const db = getAdminClient();
+    const { data, error } = await db.from("organization_members").select("user_id")
+      .eq("organization_id", organizationId).in("role", ["owner", "admin"]);
+    if (error) throw error;
+    const userIds = ((data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+    // Sem assinatura (sent 0) ou sem chaves VAPID não é erro: sendPushToUser é inerte.
+    const results = await Promise.allSettled(userIds.map((userId) =>
+      sendPushToUser(db, userId, { ...text, url: HEALTH_PUSH_URL, tag: HEALTH_PUSH_TAG }, { organizationId })));
+    if (results.length && results.every((r) => r.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
   },
   log: console,
 };
