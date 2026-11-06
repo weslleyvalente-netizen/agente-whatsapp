@@ -33,6 +33,14 @@ export interface SendPanelMessageParams {
   audio?: { buffer: Buffer; extension: "webm" | "mp4" | "ogg"; durationSeconds?: number };
 }
 
+/** Falha no envio de áudio; `uploaded` indica se o arquivo já foi armazenado (conta no limite por hora). */
+export class SellerAudioSendError extends Error {
+  constructor(message: string, public readonly uploaded: boolean) {
+    super(message);
+    this.name = "SellerAudioSendError";
+  }
+}
+
 export interface SendPanelMessageResult {
   message: Message;
   instanceId: string;
@@ -65,8 +73,12 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
   }
 
   let storedAudioRef: string | undefined;
-  if (audio) {
-    try {
+  let uploaded = false;
+
+  // Para áudio, qualquer falha depois de salvar a linha marca send_failed_at (o painel não pode mostrar
+  // como enviado um áudio que não saiu) e relança com a informação de que o arquivo já foi armazenado.
+  try {
+    if (audio) {
       storedAudioRef = buildCustomerAudioRef({
         organizationId: conversation.organization_id,
         conversationId: conversation.id,
@@ -80,88 +92,90 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
         upsert: false,
       });
       if (error) throw error;
+      uploaded = true;
       if (!(await setMessageMediaUrlIfEmpty(db, message.id, storedAudioRef))) {
         throw new Error("Não foi possível gravar a referência do áudio");
       }
-    } catch (err) {
-      console.error(`Failed to store seller audio for conversation ${conversation.id}:`, err);
-      try {
-        await updateMessageContent(db, message.id, content, {
-          ...(metadata ?? {}),
-          send_failed_at: new Date().toISOString(),
-        } as Message["metadata"]);
-      } catch (markErr) {
-        console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
-      }
-      throw new Error("Falha ao armazenar o áudio");
     }
-  }
 
-  const isFirstTakeover = !conversation.is_human_takeover;
+    const isFirstTakeover = !conversation.is_human_takeover;
 
-  if (activateTakeover) {
-    await updateConversation(db, conversation.id, {
-      is_human_takeover: true,
-      human_takeover_at: new Date().toISOString(),
-      ...(isFirstTakeover ? { assigned_to: actorUserId } : {}),
+    if (activateTakeover) {
+      await updateConversation(db, conversation.id, {
+        is_human_takeover: true,
+        human_takeover_at: new Date().toISOString(),
+        ...(isFirstTakeover ? { assigned_to: actorUserId } : {}),
+      });
+
+      if (isFirstTakeover) {
+        try {
+          await handleConversationTakeover(db, conversation.organization_id, conversation.id, actorUserId);
+        } catch (err) {
+          console.error(`Failed to reassign task on takeover for conversation ${conversation.id}:`, err);
+        }
+        try {
+          await createHandoffEvent(db, {
+            organization_id: conversation.organization_id,
+            conversation_id: conversation.id,
+            trigger_type: "painel_manual",
+            criado_por: "humano",
+          });
+        } catch (err) {
+          console.error(`Failed to record painel_manual handoff event for conversation ${conversation.id}:`, err);
+        }
+      }
+    }
+
+    // Closes an existing requestHuman handoff loop's "tempo até a primeira
+    // resposta" metric regardless of activateTakeover — this reply answers a
+    // pending handoff either way. Best-effort, never blocks the send.
+    try {
+      const openHandoff = await getOpenHandoffEvent(db, conversation.id);
+      if (openHandoff) {
+        await markFirstHumanReply(db, openHandoff.id, new Date().toISOString());
+      }
+    } catch (err) {
+      console.error(`Failed to mark first human reply for conversation ${conversation.id}:`, err);
+    }
+
+    // Rodízio: a primeira mensagem humana do vendedor atribuído assume o lead e marca a primeira resposta.
+    await trackFirstHumanMessage(db, {
+      organizationId: conversation.organization_id,
+      conversationId: conversation.id,
+      role: message.role,
+      source: "panel",
+      actorUserId,
+      metadata: metadata ?? null,
     });
 
-    if (isFirstTakeover) {
-      try {
-        await handleConversationTakeover(db, conversation.organization_id, conversation.id, actorUserId);
-      } catch (err) {
-        console.error(`Failed to reassign task on takeover for conversation ${conversation.id}:`, err);
-      }
-      try {
-        await createHandoffEvent(db, {
-          organization_id: conversation.organization_id,
-          conversation_id: conversation.id,
-          trigger_type: "painel_manual",
-          criado_por: "humano",
-        });
-      } catch (err) {
-        console.error(`Failed to record painel_manual handoff event for conversation ${conversation.id}:`, err);
-      }
-    }
-  }
+    const instance = await getInstanceById(db, conversation.evolution_instance_id);
+    const contact = (conversation as unknown as { wa_contacts: { phone: string } }).wa_contacts;
 
-  // Closes an existing requestHuman handoff loop's "tempo até a primeira
-  // resposta" metric regardless of activateTakeover — this reply answers a
-  // pending handoff either way. Best-effort, never blocks the send.
-  try {
-    const openHandoff = await getOpenHandoffEvent(db, conversation.id);
-    if (openHandoff) {
-      await markFirstHumanReply(db, openHandoff.id, new Date().toISOString());
-    }
+    await enqueueSendMessage(
+      {
+        conversationId: conversation.id,
+        messageId: message.id,
+        instanceId: instance.id,
+        phone: contact.phone,
+        content,
+        organizationId: conversation.organization_id,
+        ...(storedAudioRef ? { storedAudioRef } : {}),
+      },
+      params.noAutoRetry || audio ? { attempts: 1 } : undefined
+    );
+
+    return { message, instanceId: instance.id };
   } catch (err) {
-    console.error(`Failed to mark first human reply for conversation ${conversation.id}:`, err);
+    if (!audio) throw err;
+    console.error(`Failed to send seller audio for conversation ${conversation.id}:`, err);
+    try {
+      await updateMessageContent(db, message.id, content, {
+        ...(metadata ?? {}),
+        send_failed_at: new Date().toISOString(),
+      } as Message["metadata"]);
+    } catch (markErr) {
+      console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
+    }
+    throw new SellerAudioSendError("Falha ao enviar o áudio", uploaded);
   }
-
-  // Rodízio: a primeira mensagem humana do vendedor atribuído assume o lead e marca a primeira resposta.
-  await trackFirstHumanMessage(db, {
-    organizationId: conversation.organization_id,
-    conversationId: conversation.id,
-    role: message.role,
-    source: "panel",
-    actorUserId,
-    metadata: metadata ?? null,
-  });
-
-  const instance = await getInstanceById(db, conversation.evolution_instance_id);
-  const contact = (conversation as unknown as { wa_contacts: { phone: string } }).wa_contacts;
-
-  await enqueueSendMessage(
-    {
-      conversationId: conversation.id,
-      messageId: message.id,
-      instanceId: instance.id,
-      phone: contact.phone,
-      content,
-      organizationId: conversation.organization_id,
-      ...(storedAudioRef ? { storedAudioRef } : {}),
-    },
-    params.noAutoRetry || audio ? { attempts: 1 } : undefined
-  );
-
-  return { message, instanceId: instance.id };
 }

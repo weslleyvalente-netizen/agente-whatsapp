@@ -54,7 +54,7 @@ import { trackFirstHumanMessage } from "./lead-human-message.js";
 vi.mock("./task.service.js", () => ({ handleConversationTakeover }));
 vi.mock("../lib/queue.js", () => ({ enqueueSendMessage }));
 
-import { sendPanelMessage } from "./message-send.service.js";
+import { sendPanelMessage, SellerAudioSendError } from "./message-send.service.js";
 
 const baseConversation = {
   id: "conv-1",
@@ -228,6 +228,29 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
       expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[audio]", expect.objectContaining({ source: "seller_audio", send_failed_at: expect.any(String) }));
       expect(enqueueSendMessage).not.toHaveBeenCalled();
       expect(updateConversation).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
+
+    it.each([
+      ["enqueue", () => enqueueSendMessage.mockRejectedValueOnce(new Error("redis"))],
+      ["getInstanceById", () => getInstanceById.mockRejectedValueOnce(new Error("db"))],
+      ["updateConversation", () => updateConversation.mockRejectedValueOnce(new Error("db"))],
+    ])("falha em %s após o upload marca send_failed_at e propaga com uploaded=true", async (_n, arm) => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      arm();
+      const err = await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio }).catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAudioSendError);
+      expect(err.uploaded).toBe(true);
+      expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[audio]", expect.objectContaining({ send_failed_at: expect.any(String) }));
+      log.mockRestore();
+    });
+
+    it("falha de upload propaga com uploaded=false", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      upload.mockResolvedValueOnce({ error: new Error("x") });
+      const err = await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio }).catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAudioSendError);
+      expect(err.uploaded).toBe(false);
       log.mockRestore();
     });
 

@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import multipart from "@fastify/multipart";
+import multipart, { type MultipartFile } from "@fastify/multipart";
 import { z } from "zod";
 import { SELLER_AUDIO_MAX_BYTES, SELLER_AUDIO_MAX_SECONDS, detectSellerAudioFormat } from "@aula-agente/shared";
 import { getAdminClient, getConversationById, getOrganizationById } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { canViewLead } from "../../lib/lead-access.js";
-import { sendPanelMessage } from "../../services/message-send.service.js";
+import { SellerAudioSendError, sendPanelMessage } from "../../services/message-send.service.js";
 import { releaseSellerAudioSlot, takeSellerAudioSlot } from "./send-audio-limit.js";
 
 const ALLOWED_MIME = new Set(["audio/webm", "audio/mp4", "audio/ogg"]);
@@ -23,7 +23,16 @@ export default async function messageSendAudioRoutes(app: FastifyInstance) {
   app.post("/messages/send-audio", {
     preHandler: [authMiddleware],
     handler: async (request, reply) => {
-      const data = await request.file();
+      // Lê as partes em ordem: só valem os campos que chegam ANTES do arquivo (determinístico, sem depender de buffering).
+      const fields: Record<string, { value: unknown }> = {};
+      let data: MultipartFile | undefined;
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          data = part;
+          break;
+        }
+        fields[part.fieldname] = { value: part.value };
+      }
       if (!data) return reply.status(400).send({ error: "Nenhum arquivo de áudio enviado." });
 
       // Libera o stream sempre que respondemos sem ler o arquivo.
@@ -32,7 +41,7 @@ export default async function messageSendAudioRoutes(app: FastifyInstance) {
         return reply.status(status).send({ error });
       };
 
-      const conversationId = conversationIdSchema.safeParse(fieldValue(data.fields, "conversation_id"));
+      const conversationId = conversationIdSchema.safeParse(fieldValue(fields, "conversation_id"));
       if (!conversationId.success) return reject(400, "Conversa inválida.");
 
       const db = getAdminClient();
@@ -43,7 +52,7 @@ export default async function messageSendAudioRoutes(app: FastifyInstance) {
       if (!membership) return reject(403, "Access denied");
 
       const org = await getOrganizationById(db, conversation.organization_id);
-      if (org.settings?.seller_audio_enabled !== true) return reject(404, "Envio de áudio não está habilitado");
+      if (org?.settings?.seller_audio_enabled !== true) return reject(404, "Envio de áudio não está habilitado");
 
       if (!(await canViewLead(db, conversation.organization_id, membership.role, request.user.id, conversation.assigned_to))) {
         return reject(403, "Este lead pertence a outro vendedor");
@@ -53,7 +62,7 @@ export default async function messageSendAudioRoutes(app: FastifyInstance) {
         return reject(400, "Formato de áudio não suportado.");
       }
 
-      const durationRaw = fieldValue(data.fields, "duration_seconds");
+      const durationRaw = fieldValue(fields, "duration_seconds");
       let durationSeconds: number | undefined;
       if (durationRaw !== undefined) {
         const n = Number(durationRaw);
@@ -98,7 +107,8 @@ export default async function messageSendAudioRoutes(app: FastifyInstance) {
           audio: { buffer, extension: format.extension, durationSeconds },
         });
       } catch (err) {
-        releaseSellerAudioSlot(slotKey);
+        // Só devolve a vaga quando nada foi armazenado; falha depois do upload conta no limite.
+        if (!(err instanceof SellerAudioSendError && err.uploaded)) releaseSellerAudioSlot(slotKey);
         console.error(`Failed to send seller audio for conversation ${conversation.id}:`, err);
         return reply.status(500).send({ error: "Não foi possível enviar o áudio." });
       }

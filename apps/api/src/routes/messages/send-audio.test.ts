@@ -11,7 +11,12 @@ const { getAdminClient, getConversationById, getOrganizationById, canViewLead, s
 
 vi.mock("@aula-agente/database", () => ({ getAdminClient, getConversationById, getOrganizationById }));
 vi.mock("../../lib/lead-access.js", () => ({ canViewLead }));
-vi.mock("../../services/message-send.service.js", () => ({ sendPanelMessage }));
+vi.mock("../../services/message-send.service.js", () => {
+  class SellerAudioSendError extends Error {
+    constructor(m: string, public readonly uploaded: boolean) { super(m); }
+  }
+  return { sendPanelMessage, SellerAudioSendError };
+});
 
 let memberships = [{ organization_id: "org-1", role: "agent" }];
 vi.mock("../../middleware/auth.js", () => ({
@@ -20,6 +25,7 @@ vi.mock("../../middleware/auth.js", () => ({
   },
 }));
 
+import { SellerAudioSendError } from "../../services/message-send.service.js";
 import messageSendAudioRoutes from "./send-audio.js";
 import { resetSellerAudioLimitForTests } from "./send-audio-limit.js";
 
@@ -139,11 +145,48 @@ describe("POST /messages/send-audio", () => {
     expect(sendPanelMessage).toHaveBeenCalledTimes(30);
   });
 
-  it("falha no envio devolve a vaga e responde 500", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    sendPanelMessage.mockRejectedValueOnce(new Error("x"));
+  it("429 traz mensagem em português", async () => {
     const app = await buildApp();
+    for (let i = 0; i < 30; i++) await post(app, { file: WEBM });
+    const res = await post(app, { file: WEBM });
+    expect(res.json().error).toMatch(/Limite de áudios por hora/);
+  });
+
+  it("arquivo antes do conversation_id -> 400", async () => {
+    const b = "----testboundary";
+    const payload = Buffer.concat([
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file"; filename="a.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
+      WEBM,
+      Buffer.from(`\r\n--${b}\r\nContent-Disposition: form-data; name="conversation_id"\r\n\r\n${CONV}\r\n--${b}--\r\n`),
+    ]);
+    const res = await (await buildApp()).inject({ method: "POST", url: "/messages/send-audio", payload, headers: { "content-type": `multipart/form-data; boundary=${b}` } });
+    expect(res.statusCode).toBe(400);
+    expect(sendPanelMessage).not.toHaveBeenCalled();
+  });
+
+  it("organização inexistente -> 404 sem TypeError", async () => {
+    getOrganizationById.mockResolvedValue(null);
+    const res = await post(await buildApp(), { file: WEBM });
+    expect(res.statusCode).toBe(404);
+  });
+
+  async function fillThenFail(err: Error) {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = await buildApp();
+    // 29 sucessos + 1 falha; depois disso, o 31º só passa se a vaga da falha foi devolvida
+    for (let i = 0; i < 29; i++) await post(app, { file: WEBM });
+    sendPanelMessage.mockRejectedValueOnce(err);
     expect((await post(app, { file: WEBM })).statusCode).toBe(500);
+    const next = await post(app, { file: WEBM });
     log.mockRestore();
+    return next.statusCode;
+  }
+
+  it("falha ANTES do upload devolve a vaga", async () => {
+    expect(await fillThenFail(new SellerAudioSendError("x", false))).toBe(200);
+  });
+
+  it("falha DEPOIS do upload não devolve a vaga", async () => {
+    expect(await fillThenFail(new SellerAudioSendError("x", true))).toBe(429);
   });
 });
