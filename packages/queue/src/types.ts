@@ -18,6 +18,8 @@ export interface SendMessageJobData {
   mediaType?: "image";
   caption?: string;
   audioBase64?: string;
+  // Referência "storage:<bucket>/<caminho>" do áudio do vendedor a enviar.
+  storedAudioRef?: string;
 }
 
 export interface ProcessDocumentJobData {
