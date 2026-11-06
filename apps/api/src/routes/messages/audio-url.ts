@@ -28,7 +28,7 @@ export default async function messageAudioUrlRoutes(app: FastifyInstance) {
       const membership = request.user.memberships.find((m) => m.organization_id === message.organization_id);
       if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-      if (message.role !== "contact" || message.media_type !== "audio") {
+      if (!["contact", "human_agent"].includes(message.role) || message.media_type !== "audio") {
         return reply.status(404).send({ error: "Audio not stored" });
       }
 
