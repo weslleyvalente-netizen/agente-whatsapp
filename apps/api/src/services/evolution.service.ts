@@ -73,7 +73,7 @@ export async function logoutInstance(instanceName: string) {
 }
 
 export interface EvolutionStoredMessage {
-  key: { remoteJid: string; fromMe: boolean; id: string };
+  key: { remoteJid: string; remoteJidAlt?: string | null; fromMe: boolean; id: string };
   pushName?: string | null;
   message?: Record<string, unknown> | null;
   messageType: string;
