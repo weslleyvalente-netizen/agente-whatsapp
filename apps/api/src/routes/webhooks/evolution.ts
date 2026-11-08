@@ -27,7 +27,7 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
 } from "@aula-agente/database";
-import { samePhoneNumber, resolveEvolutionPhone } from "@aula-agente/shared";
+import { samePhoneNumber } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -37,6 +37,7 @@ import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queu
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
+import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
 // A placeholder saved instead of real content for an ignored contact's
@@ -201,6 +202,8 @@ export function extractMessageContent(data: Record<string, unknown>): { content:
   return adPrefix ? { ...extracted, content: `${adPrefix}${extracted.content}` } : extracted;
 }
 
+export const isSystemJid = (jid: string) => jid === "0@s.whatsapp.net";
+
 const AFTER_HOURS_ECHO_WINDOW_MS = 15 * 60 * 1000;
 
 export default async function evolutionWebhookRoutes(app: FastifyInstance) {
@@ -222,14 +225,17 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         return reply.status(200).send({ ok: true, skipped: "group_message" });
       }
 
+      // Notificação de sistema do WhatsApp Business ("0@s.whatsapp.net"): não é um cliente.
+      if (isSystemJid(payload.data.key.remoteJid)) {
+        return reply.status(200).send({ ok: true, skipped: "system_message" });
+      }
+
       if (isNonContentMessageType(payload.data.messageType)) {
         return reply.status(200).send({ ok: true, skipped: "non_content_message_type" });
       }
 
       const instanceId = payload.instance;
       const evolutionMessageId = payload.data.key.id;
-      // Contatos @lid: usa o número real de remoteJidAlt (ver resolveEvolutionPhone).
-      const phone = resolveEvolutionPhone(payload.data.key);
       // For a fromMe delivery (human replying directly from the connected
       // phone), pushName is the connected WhatsApp account's own profile
       // name, not the customer's — passing it through here overwrote the
@@ -255,6 +261,10 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       const organizationId = instance.organization_id;
       const agentId = instance.active_agent_id;
+
+      // Contatos @lid: usa o número real de remoteJidAlt; sem alt, o mapa lid -> telefone (cache + Evolution).
+      // Nunca lança: na falha segue com o remoteJid (ver resolveEvolutionPhone).
+      const phone = await lidPhoneResolver.resolve(payload.data.key, instance.instance_name, instance.phone_number);
 
       // Contatos ignorados (Fase 1): a number the organization explicitly
       // told the system to ignore — e.g. a third party's own WhatsApp bot

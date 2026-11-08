@@ -153,3 +153,18 @@ export async function findStoredMessages(
   );
   return inWindow;
 }
+
+// Poucas mensagens de um único chat (remoteJid exato), qualquer direção; usado para descobrir o telefone de um @lid.
+export async function findMessagesByRemoteJid(
+  instanceName: string,
+  remoteJid: string,
+  limit: number,
+  signal?: AbortSignal
+): Promise<EvolutionStoredMessage[]> {
+  const result = await evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+    method: "POST",
+    signal,
+    body: JSON.stringify({ where: { key: { remoteJid } }, page: 1, offset: limit }),
+  });
+  return extractRecords(result);
+}
