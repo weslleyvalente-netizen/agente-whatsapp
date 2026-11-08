@@ -10,7 +10,8 @@ import { isManager } from "../../lib/lead-visibility.js";
 import { probeRedis } from "../../lib/redis-probe.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 import { findStoredMessages, type EvolutionStoredMessage } from "../../services/evolution.service.js";
-import { isNonContentMessageType, REPLAY_TIMESTAMP_HEADER } from "../webhooks/evolution.js";
+import { buildLidPhoneMap, applyLidMap } from "../../services/lid-phone-map.js";
+import { isNonContentMessageType, isSystemJid, REPLAY_TIMESTAMP_HEADER } from "../webhooks/evolution.js";
 
 // Tempos do reenvio. Mutável para os testes.
 //  - intraMs: entre mensagens do MESMO cliente (a fila agrupa em ~6 s e a IA responde uma vez só);
@@ -42,7 +43,7 @@ interface Analysis {
   instance: string;
   fetched: number;
   alreadyInCrm: number;
-  skipped: { groups: number; nonContent: number };
+  skipped: { groups: number; nonContent: number; system: number };
   customersTotal: number;
   answeredCustomers: number;
   skippedAnswered: number;
@@ -90,29 +91,38 @@ async function analyze(opts: {
   const sentWindow = { gteSec: window.gteSec, lteSec: Math.max(window.lteSec, Math.ceil(Date.now() / 1000)) };
 
   let fetched = 0;
-  const skipped = { groups: 0, nonContent: 0 };
+  const skipped = { groups: 0, nonContent: 0, system: 0 };
   const seen = new Set<string>();
   const eligible: Candidate[] = [];
   const lastSentByJid = new Map<string, number>();
 
+  // 1) Busca tudo, 2) monta o mapa lid -> telefone com TODOS os registros (recebidos e enviados), 3) processa.
+  const fetchedByInstance: Array<{ instance: any; received: EvolutionStoredMessage[]; sent: EvolutionStoredMessage[] }> = [];
   for (const instance of opts.instances) {
     const received = await findStoredMessages(instance.instance_name, window, false);
     const sent = await findStoredMessages(instance.instance_name, sentWindow, true);
-    for (const rec of sent) {
-      const rawJid = rec?.key?.remoteJid;
-      if (typeof rawJid !== "string" || !rec.key.fromMe || rawJid.endsWith("@g.us")) continue;
-      const jid = resolveEvolutionPhone(rec.key); // @lid -> número real via remoteJidAlt
+    fetchedByInstance.push({ instance, received, sent });
+  }
+  const lidMap = buildLidPhoneMap(fetchedByInstance.flatMap((f) => [...f.received, ...f.sent]).filter((r) => typeof r?.key?.remoteJid === "string"));
+
+  for (const { instance, received, sent } of fetchedByInstance) {
+    for (const raw of sent) {
+      const rawJid = raw?.key?.remoteJid;
+      if (typeof rawJid !== "string" || !raw.key.fromMe || rawJid.endsWith("@g.us") || isSystemJid(rawJid)) continue;
+      const rec = applyLidMap(raw, lidMap);
+      const jid = resolveEvolutionPhone(rec.key); // @lid -> número real via remoteJidAlt (ou mapa)
       const t = tsOf(rec);
       if (Number.isFinite(t)) lastSentByJid.set(jid, Math.max(lastSentByJid.get(jid) ?? 0, t));
     }
-    for (const rec of received) {
+    for (const raw of received) {
       fetched++;
-      if (!rec?.key?.id || typeof rec.key.remoteJid !== "string" || rec.key.fromMe) continue;
-      if (seen.has(rec.key.id)) continue;
-      seen.add(rec.key.id);
-      if (rec.key.remoteJid.endsWith("@g.us")) { skipped.groups++; continue; }
-      if (isNonContentMessageType(String(rec.messageType))) { skipped.nonContent++; continue; }
-      eligible.push({ rec, instanceId: instance.instance_id });
+      if (!raw?.key?.id || typeof raw.key.remoteJid !== "string" || raw.key.fromMe) continue;
+      if (seen.has(raw.key.id)) continue;
+      seen.add(raw.key.id);
+      if (raw.key.remoteJid.endsWith("@g.us")) { skipped.groups++; continue; }
+      if (isSystemJid(raw.key.remoteJid)) { skipped.system++; continue; }
+      if (isNonContentMessageType(String(raw.messageType))) { skipped.nonContent++; continue; }
+      eligible.push({ rec: applyLidMap(raw, lidMap), instanceId: instance.instance_id });
     }
   }
 

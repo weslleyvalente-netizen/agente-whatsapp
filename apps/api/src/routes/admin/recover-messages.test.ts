@@ -115,6 +115,55 @@ describe("contatos @lid", () => {
   });
 });
 
+describe("mapa lid -> telefone na recuperação", () => {
+  const LID = "85801266339926@lid";
+  const LID2 = "22222222222222@lid";
+  const ALT = "556296818769@s.whatsapp.net";
+  const ALT2 = "5511977776666@s.whatsapp.net";
+  const lidRec = (id: string, ts: number, lid = LID, alt?: string) =>
+    rec(id, ts, lid, { key: { remoteJid: lid, ...(alt ? { remoteJidAlt: alt } : {}), fromMe: false, id } });
+
+  it("mensagem sem alt do mesmo lid usa o telefone do mapa e agrupa junto", async () => {
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID, ALT)];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, sample: [{ phoneLast4: "8769", count: 2 }] });
+  });
+
+  it("o reenvio injeta remoteJidAlt sintético na mensagem sem alt", async () => {
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID, ALT)];
+    await runAndWait(await app("owner"));
+    const a = delivered.find((d) => d.id === "A")!;
+    expect(a.body.data.key).toEqual({ remoteJid: LID, remoteJidAlt: ALT, fromMe: false, id: "A" });
+  });
+
+  it("resposta enviada ao número real conta como respondido para a mensagem sem alt", async () => {
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID, ALT)];
+    sent = [sentRec("S", T0 + 50, ALT)];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, answeredCustomers: 1 });
+  });
+
+  it("o alt vindo de uma mensagem enviada (fromMe) também alimenta o mapa", async () => {
+    received = [lidRec("A", T0 + 1)];
+    sent = [{ ...sentRec("S", T0 + 5, LID), key: { remoteJid: LID, remoteJidAlt: ALT, fromMe: true, id: "S" } }];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, answeredCustomers: 1 });
+  });
+
+  it("lid sem nenhum alt segue como hoje (não mistura com outro lid)", async () => {
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID2, ALT2), lidRec("C", T0 + 3, LID2)];
+    await runAndWait(await app("owner"));
+    expect(delivered.find((d) => d.id === "A")!.body.data.key).toEqual({ remoteJid: LID, fromMe: false, id: "A" });
+    expect(delivered.find((d) => d.id === "C")!.body.data.key.remoteJidAlt).toBe(ALT2);
+  });
+
+  it("remoteJid 0@s.whatsapp.net é ignorado e contado em skipped.system", async () => {
+    received = [rec("A", T0 + 1, "0@s.whatsapp.net"), rec("B", T0 + 2)];
+    const res = await post(await app("owner"), { since: SINCE, until: UNTIL });
+    expect(res.json()).toMatchObject({ customersTotal: 1, skipped: { groups: 0, nonContent: 0, system: 1 } });
+  });
+});
+
 describe("permissão e validação", () => {
   it("agent recebe 403 em POST e GET status", async () => {
     const a = await app("agent");
