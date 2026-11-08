@@ -5,6 +5,7 @@ const m = vi.hoisted(() => ({
   findExistingEvolutionMessageIds: vi.fn(),
   getLastOutboundAtForPhone: vi.fn(),
   findStoredMessages: vi.fn(),
+  findMessagesByRemoteJid: vi.fn(),
   probeRedis: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => ({
@@ -13,12 +14,13 @@ vi.mock("@aula-agente/database", () => ({
   findExistingEvolutionMessageIds: m.findExistingEvolutionMessageIds,
   getLastOutboundAtForPhone: m.getLastOutboundAtForPhone,
 }));
-vi.mock("../../services/evolution.service.js", () => ({ findStoredMessages: m.findStoredMessages }));
+vi.mock("../../services/evolution.service.js", () => ({ findStoredMessages: m.findStoredMessages, findMessagesByRemoteJid: m.findMessagesByRemoteJid }));
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
 vi.mock("../../lib/redis-probe.js", () => ({ probeRedis: m.probeRedis }));
 
 import Fastify from "fastify";
 import routes, { recoveryConfig, resetRecoveryState, waitForRecoveryIdle } from "./recover-messages.js";
+import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -77,6 +79,8 @@ async function runAndWait(a: any, payload: any = {}) {
 beforeEach(async () => {
   await waitForRecoveryIdle();
   vi.clearAllMocks();
+  lidPhoneResolver.reset();
+  m.findMessagesByRemoteJid.mockResolvedValue([]);
   resetRecoveryState();
   delivered.length = 0;
   received = []; sent = [];
@@ -155,6 +159,20 @@ describe("mapa lid -> telefone na recuperação", () => {
     await runAndWait(await app("owner"));
     expect(delivered.find((d) => d.id === "A")!.body.data.key).toEqual({ remoteJid: LID, fromMe: false, id: "A" });
     expect(delivered.find((d) => d.id === "C")!.body.data.key.remoteJidAlt).toBe(ALT2);
+  });
+
+  it("mesmo lid com dois telefones: não mapeia a mensagem sem alt", async () => {
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID, ALT), lidRec("C", T0 + 3, LID, ALT2)];
+    await runAndWait(await app("owner"));
+    expect(delivered.find((d) => d.id === "A")!.body.data.key.remoteJidAlt).toBeUndefined();
+  });
+
+  it("alt igual ao número da instância não vira mapa", async () => {
+    m.getInstancesByOrganization.mockResolvedValue([{ id: "i1", instance_name: "inst-a", instance_id: "inst-a", phone_number: "556296818769", active_agent_id: "ag" }]);
+    received = [lidRec("A", T0 + 1), lidRec("B", T0 + 2, LID, ALT)];
+    await runAndWait(await app("owner"));
+    expect(delivered.find((d) => d.id === "A")!.body.data.key.remoteJidAlt).toBeUndefined();
+    expect(delivered.find((d) => d.id === "B")!.body.data.key.remoteJidAlt).toBeUndefined();
   });
 
   it("remoteJid 0@s.whatsapp.net é ignorado e contado em skipped.system", async () => {

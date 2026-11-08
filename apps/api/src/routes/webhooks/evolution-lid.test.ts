@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
 import evolutionWebhookRoutes from "./evolution.js";
+import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 
 // Após reconexão o Evolution entrega remoteJid "<n>@lid" e o número real em remoteJidAlt.
 delete process.env.WEBHOOK_SECRET;
@@ -41,6 +42,7 @@ async function post(p: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lidPhoneResolver.reset();
   m.findMessagesByRemoteJid.mockResolvedValue([]);
   m.getInstanceByInstanceId.mockResolvedValue({ id: "i1", instance_name: "inst-name", organization_id: "org-1", active_agent_id: "agent-1" });
   m.getIgnoredContact.mockResolvedValue(null);
@@ -76,7 +78,7 @@ describe("webhook: contato entregue como @lid", () => {
 
   it("@lid sem alt e sem nada no Evolution mantém o remoteJid (comportamento atual)", async () => {
     await post(payload({ remoteJid: "90000000000001@lid" }));
-    expect(m.findMessagesByRemoteJid).toHaveBeenCalledWith("inst-name", "90000000000001@lid", expect.any(Number));
+    expect(m.findMessagesByRemoteJid).toHaveBeenCalledWith("inst-name", "90000000000001@lid", expect.any(Number), expect.any(AbortSignal));
     expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "90000000000001@lid" }));
   });
 
@@ -101,6 +103,26 @@ describe("webhook: contato entregue como @lid", () => {
     const r = await post(payload({ remoteJid: "90000000000004@lid" }));
     expect(r.statusCode).toBe(200);
     expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "90000000000004@lid" }));
+  });
+
+  it("timeout do Evolution no webhook: responde 200 e segue com o remoteJid", async () => {
+    m.findMessagesByRemoteJid.mockImplementation(() => new Promise(() => {}));
+    const r = await post(payload({ remoteJid: "90000000000005@lid" }));
+    expect(r.statusCode).toBe(200);
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "90000000000005@lid" }));
+  }, 10_000);
+
+  it("alt igual ao número da instância é ignorado", async () => {
+    m.getInstanceByInstanceId.mockResolvedValue({ id: "i1", instance_name: "inst-name", phone_number: "+55 62 9681-8769", organization_id: "org-1", active_agent_id: "agent-1" });
+    await post(payload({ remoteJid: "90000000000006@lid", remoteJidAlt: "556296818769@s.whatsapp.net" }));
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "90000000000006@lid" }));
+  });
+
+  it("eco fromMe com remoteJid 0@s.whatsapp.net é ignorado", async () => {
+    const r = await post(payload({ remoteJid: "0@s.whatsapp.net", fromMe: true }));
+    expect(r.json()).toMatchObject({ skipped: "system_message" });
+    expect(m.ensureConversation).not.toHaveBeenCalled();
+    expect(m.saveMessage).not.toHaveBeenCalled();
   });
 
   it("notificação de sistema 0@s.whatsapp.net é ignorada como grupo: nada gravado", async () => {

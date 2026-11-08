@@ -12,7 +12,7 @@ describe("resolveEvolutionPhone", () => {
     ).toBe("556296818769");
   });
 
-  it.each([undefined, null, "", "123@lid", "abc"])("@lid com alt inválido (%s) devolve o remoteJid", (alt) => {
+  it.each([undefined, null, "", "123@lid", "abc", "0@s.whatsapp.net", "abc@s.whatsapp.net", "1234567@s.whatsapp.net", "1234567890123456@s.whatsapp.net", "+5511999990000@s.whatsapp.net"])("@lid com alt inválido (%s) devolve o remoteJid", (alt) => {
     expect(resolveEvolutionPhone({ remoteJid: "85801266339926@lid", remoteJidAlt: alt })).toBe("85801266339926@lid");
   });
 

@@ -18,7 +18,7 @@ interface Summary {
   answeredCustomers: number;
   skippedAnswered: number;
   savedNoAiReply: number;
-  skipped: { groups: number; nonContent: number };
+  skipped: { groups: number; nonContent: number; system?: number };
   note: string;
 }
 interface DryRunResult extends Summary {
@@ -166,7 +166,7 @@ export function RecoverMessagesCard() {
                 : `${checked.toRecover} mensagens de ${checked.customers} clientes não chegaram ao CRM.`}
             </p>
             <p className="text-muted-foreground">
-              Encontradas na Evolution: {checked.fetched} · já no CRM: {checked.alreadyInCrm} · grupos/reações ignorados: {checked.skipped.groups + checked.skipped.nonContent}
+              Encontradas na Evolution: {checked.fetched} · já no CRM: {checked.alreadyInCrm} · grupos/reações ignorados: {checked.skipped.groups + checked.skipped.nonContent + (checked.skipped.system ?? 0)}
             </p>
             {checked.answeredCustomers > 0 && (
               <p className="text-amber-600">

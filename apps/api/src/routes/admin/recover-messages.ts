@@ -103,13 +103,17 @@ async function analyze(opts: {
     const sent = await findStoredMessages(instance.instance_name, sentWindow, true);
     fetchedByInstance.push({ instance, received, sent });
   }
-  const lidMap = buildLidPhoneMap(fetchedByInstance.flatMap((f) => [...f.received, ...f.sent]).filter((r) => typeof r?.key?.remoteJid === "string"));
+  const ownPhones = new Set(opts.instances.map((i) => String(i.phone_number ?? "").replace(/\D/g, "")).filter((p) => p.length > 0));
+  const lidMap = buildLidPhoneMap(
+    fetchedByInstance.flatMap((f) => [...f.received, ...f.sent]).filter((r) => typeof r?.key?.remoteJid === "string"),
+    { ownPhones }
+  );
 
   for (const { instance, received, sent } of fetchedByInstance) {
     for (const raw of sent) {
       const rawJid = raw?.key?.remoteJid;
       if (typeof rawJid !== "string" || !raw.key.fromMe || rawJid.endsWith("@g.us") || isSystemJid(rawJid)) continue;
-      const rec = applyLidMap(raw, lidMap);
+      const rec = applyLidMap(raw, lidMap, ownPhones);
       const jid = resolveEvolutionPhone(rec.key); // @lid -> número real via remoteJidAlt (ou mapa)
       const t = tsOf(rec);
       if (Number.isFinite(t)) lastSentByJid.set(jid, Math.max(lastSentByJid.get(jid) ?? 0, t));
@@ -122,7 +126,7 @@ async function analyze(opts: {
       if (raw.key.remoteJid.endsWith("@g.us")) { skipped.groups++; continue; }
       if (isSystemJid(raw.key.remoteJid)) { skipped.system++; continue; }
       if (isNonContentMessageType(String(raw.messageType))) { skipped.nonContent++; continue; }
-      eligible.push({ rec: applyLidMap(raw, lidMap), instanceId: instance.instance_id });
+      eligible.push({ rec: applyLidMap(raw, lidMap, ownPhones), instanceId: instance.instance_id });
     }
   }
 

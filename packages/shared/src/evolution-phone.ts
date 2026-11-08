@@ -10,7 +10,8 @@ export function resolveEvolutionPhone(key: { remoteJid: string; remoteJidAlt?: s
   const { remoteJid, remoteJidAlt } = key;
   if (remoteJid.endsWith("@lid") && typeof remoteJidAlt === "string" && remoteJidAlt.endsWith(PHONE_SUFFIX)) {
     const phone = remoteJidAlt.slice(0, -PHONE_SUFFIX.length);
-    if (phone.length > 0) return phone;
+    // Só dígitos, 8 a 15 (E.164): "0@s.whatsapp.net" e textos não numéricos não são telefone.
+    if (/^\d{8,15}$/.test(phone)) return phone;
   }
   return remoteJid.replace(PHONE_SUFFIX, "");
 }

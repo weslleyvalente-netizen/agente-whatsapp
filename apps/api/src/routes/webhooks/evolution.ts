@@ -264,7 +264,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       // Contatos @lid: usa o número real de remoteJidAlt; sem alt, o mapa lid -> telefone (cache + Evolution).
       // Nunca lança: na falha segue com o remoteJid (ver resolveEvolutionPhone).
-      const phone = await lidPhoneResolver.resolve(payload.data.key, instance.instance_name);
+      const phone = await lidPhoneResolver.resolve(payload.data.key, instance.instance_name, instance.phone_number);
 
       // Contatos ignorados (Fase 1): a number the organization explicitly
       // told the system to ignore — e.g. a third party's own WhatsApp bot

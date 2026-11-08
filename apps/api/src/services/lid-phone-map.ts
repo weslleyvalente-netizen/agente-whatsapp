@@ -1,50 +1,77 @@
 import { resolveEvolutionPhone } from "@aula-agente/shared";
-import { findMessagesByRemoteJid, type EvolutionStoredMessage } from "./evolution.service.js";
+import { findMessagesByRemoteJid } from "./evolution.service.js";
 
 const PHONE_SUFFIX = "@s.whatsapp.net";
 
 type LidKey = { remoteJid: string; remoteJidAlt?: string | null };
+type Warn = (msg: string, ctx?: Record<string, unknown>) => void;
 
-/** Telefone real de uma key @lid com remoteJidAlt válido; null caso contrário. */
-function realPhoneOf(key: LidKey): string | null {
+const digitsOf = (v: string | null | undefined) => (v ?? "").replace(/\D/g, "");
+
+/** Telefone real de uma key @lid com remoteJidAlt válido (e que não seja o da própria instância); null caso contrário. */
+function realPhoneOf(key: LidKey, ownPhones?: ReadonlySet<string>): string | null {
   if (!key.remoteJid.endsWith("@lid")) return null;
   const phone = resolveEvolutionPhone(key);
-  return phone === key.remoteJid.replace(PHONE_SUFFIX, "") ? null : phone;
+  if (phone === key.remoteJid.replace(PHONE_SUFFIX, "")) return null;
+  if (ownPhones?.has(phone)) return null;
+  return phone;
 }
 
-/** lid -> telefone a partir de TODOS os registros que trazem remoteJidAlt válido. */
-export function buildLidPhoneMap(records: Array<{ key: LidKey }>): Map<string, string> {
+/**
+ * lid -> telefone a partir de TODOS os registros que trazem remoteJidAlt válido.
+ * Se o mesmo lid aparecer com dois telefones diferentes, não é mapeado (aviso).
+ */
+export function buildLidPhoneMap(
+  records: Array<{ key: LidKey }>,
+  opts: { ownPhones?: ReadonlySet<string>; warn?: Warn } = {}
+): Map<string, string> {
   const map = new Map<string, string>();
+  const conflicted = new Set<string>();
   for (const r of records) {
     const key = r?.key;
     if (!key || typeof key.remoteJid !== "string") continue;
-    const phone = realPhoneOf(key);
-    if (phone) map.set(key.remoteJid, phone);
+    const phone = realPhoneOf(key, opts.ownPhones);
+    if (!phone || conflicted.has(key.remoteJid)) continue;
+    const prev = map.get(key.remoteJid);
+    if (prev && prev !== phone) {
+      map.delete(key.remoteJid);
+      conflicted.add(key.remoteJid);
+      (opts.warn ?? defaultWarn)("lid com telefones divergentes; não mapeado", { lidLast4: key.remoteJid.slice(-9, -4) });
+      continue;
+    }
+    map.set(key.remoteJid, phone);
   }
   return map;
 }
 
-/** Para registros @lid sem alt válido cujo lid está no mapa, devolve cópia com remoteJidAlt sintético. */
-export function applyLidMap<T extends { key: LidKey }>(rec: T, map: Map<string, string>): T {
+/**
+ * Para registros @lid sem alt válido, devolve cópia com remoteJidAlt sintético do mapa.
+ * Um alt igual ao número da própria instância é removido (nunca usado).
+ */
+export function applyLidMap<T extends { key: LidKey }>(rec: T, map: Map<string, string>, ownPhones?: ReadonlySet<string>): T {
   const key = rec.key;
-  if (!key.remoteJid.endsWith("@lid") || realPhoneOf(key)) return rec;
+  if (!key.remoteJid.endsWith("@lid") || realPhoneOf(key, ownPhones)) return rec;
   const phone = map.get(key.remoteJid);
-  if (!phone) return rec;
-  return { ...rec, key: { ...key, remoteJidAlt: `${phone}${PHONE_SUFFIX}` } };
+  const { remoteJidAlt: oldAlt, ...rest } = key;
+  if (phone) return { ...rec, key: { ...rest, remoteJidAlt: `${phone}${PHONE_SUFFIX}` } };
+  if (oldAlt && ownPhones?.has(resolveEvolutionPhone(key))) return { ...rec, key: rest };
+  return rec;
 }
 
+const defaultWarn: Warn = (msg, ctx) => console.warn(`[lid-map] ${msg}`, ctx ?? {});
+
 export interface LidResolverOptions {
-  fetchRecords: (instanceName: string, lid: string) => Promise<Array<{ key: LidKey }>>;
+  fetchRecords: (instanceName: string, lid: string, signal?: AbortSignal) => Promise<Array<{ key: LidKey }>>;
   ttlMs?: number;
   negativeTtlMs?: number;
   maxSize?: number;
   timeoutMs?: number;
   now?: () => number;
-  warn?: (msg: string, ctx?: Record<string, unknown>) => void;
+  warn?: Warn;
 }
 
 /**
- * Cache em memória lid -> telefone com consulta ao Evolution quando a mensagem chega sem remoteJidAlt.
+ * Cache em memória (instância + lid) -> telefone, com consulta ao Evolution quando a mensagem chega sem remoteJidAlt.
  * Nunca lança: qualquer falha/timeout resulta no comportamento antigo (remoteJid inalterado).
  */
 export function createLidPhoneResolver(opts: LidResolverOptions) {
@@ -53,40 +80,59 @@ export function createLidPhoneResolver(opts: LidResolverOptions) {
   const maxSize = opts.maxSize ?? 5000;
   const timeoutMs = opts.timeoutMs ?? 3000;
   const now = opts.now ?? Date.now;
-  const warn = opts.warn ?? ((msg, ctx) => console.warn(`[lid-map] ${msg}`, ctx ?? {}));
+  const warn = opts.warn ?? defaultWarn;
 
   const cache = new Map<string, { phone: string; expires: number }>();
-  const misses = new Map<string, number>(); // lid -> até quando não consultar de novo
+  const misses = new Map<string, number>(); // chave -> até quando não consultar de novo
+  const conflicts = new Map<string, number>(); // chave -> até quando não mapear (telefones divergentes)
+  const inflight = new Map<string, Promise<string | undefined>>();
+  const keyOf = (instanceName: string, lid: string) => `${instanceName}|${lid}`;
 
-  function set(lid: string, phone: string) {
-    cache.delete(lid); // reinsere para manter a ordem de inserção (mais antigo primeiro)
-    cache.set(lid, { phone, expires: now() + ttlMs });
-    misses.delete(lid);
-    while (cache.size > maxSize) {
-      const oldest = cache.keys().next().value;
+  function trim<V>(m: Map<string, V>) {
+    while (m.size > maxSize) {
+      const oldest = m.keys().next().value;
       if (oldest === undefined) break;
-      cache.delete(oldest);
+      m.delete(oldest);
     }
   }
 
-  function get(lid: string): string | undefined {
-    const hit = cache.get(lid);
+  function get(instanceName: string, lid: string): string | undefined {
+    const k = keyOf(instanceName, lid);
+    const hit = cache.get(k);
     if (!hit) return undefined;
-    if (hit.expires <= now()) { cache.delete(lid); return undefined; }
+    if (hit.expires <= now()) { cache.delete(k); return undefined; }
     return hit.phone;
   }
 
-  function remember(key: LidKey) {
-    const phone = realPhoneOf(key);
-    if (phone) set(key.remoteJid, phone);
+  function set(k: string, phone: string): void {
+    if ((conflicts.get(k) ?? 0) > now()) return;
+    const prev = cache.get(k);
+    if (prev && prev.expires > now() && prev.phone !== phone) {
+      cache.delete(k);
+      conflicts.set(k, now() + ttlMs);
+      trim(conflicts);
+      warn("lid com telefones divergentes; removido do cache", { lidLast4: k.slice(-9, -4) });
+      return;
+    }
+    cache.delete(k); // reinsere: mais antigo primeiro
+    cache.set(k, { phone, expires: now() + ttlMs });
+    misses.delete(k);
+    trim(cache);
   }
 
-  async function lookup(instanceName: string, lid: string): Promise<string | undefined> {
+  function remember(key: LidKey, instanceName: string, ownPhone?: string | null) {
+    const own = digitsOf(ownPhone);
+    const phone = realPhoneOf(key, own ? new Set([own]) : undefined);
+    if (phone) set(keyOf(instanceName, key.remoteJid), phone);
+  }
+
+  async function lookup(instanceName: string, lid: string, own: ReadonlySet<string> | undefined): Promise<string | undefined> {
     let timer: NodeJS.Timeout | undefined;
     try {
+      const signal = AbortSignal.timeout(timeoutMs);
       const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), timeoutMs); });
-      const records = await Promise.race([opts.fetchRecords(instanceName, lid), timeout]);
-      return buildLidPhoneMap(records).get(lid);
+      const records = await Promise.race([opts.fetchRecords(instanceName, lid, signal), timeout]);
+      return buildLidPhoneMap(records, { ownPhones: own, warn }).get(lid);
     } catch (err) {
       warn("falha ao consultar o Evolution; seguindo sem mapa", { errName: (err as Error)?.name, message: (err as Error)?.message });
       return undefined;
@@ -95,31 +141,41 @@ export function createLidPhoneResolver(opts: LidResolverOptions) {
     }
   }
 
-  async function resolve(key: LidKey, instanceName: string): Promise<string> {
+  async function resolve(key: LidKey, instanceName: string, ownPhone?: string | null): Promise<string> {
     const direct = resolveEvolutionPhone(key);
     if (!key.remoteJid.endsWith("@lid")) return direct;
-    if (realPhoneOf(key)) { remember(key); return direct; }
-
+    const ownDigits = digitsOf(ownPhone);
+    const own = ownDigits ? new Set([ownDigits]) : undefined;
     const lid = key.remoteJid;
-    const cached = get(lid);
-    if (cached) return cached;
-    if ((misses.get(lid) ?? 0) > now()) return direct;
+    const fallback = realPhoneOf(key, own) ? direct : lid; // alt da própria instância não vale
+    if (realPhoneOf(key, own)) { remember(key, instanceName, ownPhone); return direct; }
 
-    const phone = await lookup(instanceName, lid);
-    if (phone) { set(lid, phone); return phone; }
-    misses.set(lid, now() + negativeTtlMs);
-    if (misses.size > maxSize) {
-      const oldest = misses.keys().next().value;
-      if (oldest !== undefined) misses.delete(oldest);
+    const k = keyOf(instanceName, lid);
+    const cached = get(instanceName, lid);
+    if (cached) return cached;
+    if ((conflicts.get(k) ?? 0) > now()) return fallback;
+    if ((misses.get(k) ?? 0) > now()) return fallback;
+
+    let pending = inflight.get(k);
+    if (!pending) {
+      pending = lookup(instanceName, lid, own).finally(() => { inflight.delete(k); });
+      inflight.set(k, pending);
     }
-    return direct;
+    const phone = await pending;
+    if (phone) { set(k, phone); return get(instanceName, lid) ?? fallback; }
+    // Uma mensagem com alt pode ter alimentado o cache enquanto a consulta corria.
+    const late = get(instanceName, lid);
+    if (late) return late;
+    misses.set(k, now() + negativeTtlMs);
+    trim(misses);
+    return fallback;
   }
 
-  return { resolve, remember, get, size: () => cache.size };
+  function reset() { cache.clear(); misses.clear(); conflicts.clear(); inflight.clear(); }
+
+  return { resolve, remember, get, size: () => cache.size, reset };
 }
 
 export const lidPhoneResolver = createLidPhoneResolver({
-  fetchRecords: (instanceName, lid) => findMessagesByRemoteJid(instanceName, lid, 20),
+  fetchRecords: (instanceName, lid, signal) => findMessagesByRemoteJid(instanceName, lid, 20, signal),
 });
-
-export type { EvolutionStoredMessage };
