@@ -29,6 +29,8 @@ import {
   type InboxTab,
 } from "@/lib/inbox-query";
 import { useMyRole } from "@/components/lead-distribution/use-my-role";
+import { useWhatsappLayout } from "@/hooks/use-whatsapp-layout";
+import { WA_THEME } from "@/lib/whatsapp-layout";
 
 type FilterTab = InboxTab;
 
@@ -37,7 +39,7 @@ type ConversationRow = any;
 type QueryFilter = TabFilter | { kind: "attention_takeover" } | { kind: "attention_ai_disabled" };
 
 const SELECT_COLUMNS =
-  "id, status, is_human_takeover, assigned_to, tags, last_message_at, wa_contacts!inner(phone, name, ai_disabled), agents(name), messages(content, created_at)";
+  "id, status, is_human_takeover, assigned_to, tags, last_message_at, wa_contacts!inner(id, profile_picture_path, phone, name, ai_disabled), agents(name), messages(content, created_at)";
 
 async function runQuery(
   supabase: ReturnType<typeof createClient>,
@@ -93,6 +95,7 @@ const FILTER_TABS: Array<{ id: FilterTab; label: string }> = [
 
 export default function InboxPage() {
   const { currentOrg } = useOrganization();
+  const waLayout = useWhatsappLayout();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
@@ -368,16 +371,16 @@ export default function InboxPage() {
   return (
     <div className="flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] gap-0 -m-3 md:h-[calc(100vh-8rem)] md:-m-6">
       {/* Sidebar: Conversation List */}
-      <div className={cn("w-full flex-col border-r md:flex md:w-80", selectedId ? "hidden" : "flex")}>
-        <div className="space-y-3 border-b p-3">
+      <div className={waLayout ? cn("w-full flex-col border-r md:flex md:w-[340px] lg:w-[380px] xl:w-[420px] md:shrink-0", WA_THEME.panel, WA_THEME.divider, selectedId ? "hidden" : "flex") : cn("w-full flex-col border-r md:flex md:w-80", selectedId ? "hidden" : "flex")}>
+        <div className={waLayout ? cn("space-y-3 border-b p-3", WA_THEME.divider) : "space-y-3 border-b p-3"}>
           <h1 className="px-1 text-lg font-heading font-semibold">Conversas</h1>
           <div className="relative">
-            <Search className="absolute left-2 top-3.5 h-4 md:top-2.5 w-4 text-muted-foreground" />
+            <Search className={waLayout ? "absolute left-2.5 top-3.5 h-4 w-4 text-muted-foreground md:top-2.5" : "absolute left-2 top-3.5 h-4 md:top-2.5 w-4 text-muted-foreground"} />
             <Input
               placeholder="Buscar..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-11 rounded-full pl-8 md:h-8"
+              className={waLayout ? cn("h-11 rounded-lg border-transparent pl-8 md:h-9", WA_THEME.search) : "h-11 rounded-full pl-8 md:h-8"}
             />
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -404,7 +407,12 @@ export default function InboxPage() {
                 <button
                   key={tab.id}
                   onClick={() => setFilterTab(tab.id)}
-                  className={cn(
+                  className={waLayout ? cn(
+                    "rounded-full border border-transparent px-3 py-2 text-xs font-medium transition-colors md:py-1",
+                    isActive
+                      ? "bg-[#d9fdd3] text-[#008069] dark:bg-[#0a332c] dark:text-[#00a884]"
+                      : "bg-[#f0f2f5] text-[#54656f] hover:bg-[#e9edef] dark:bg-[#202c33] dark:text-[#8696a0] dark:hover:bg-[#2a3942]"
+                  ) : cn(
                     "rounded-full border px-3 py-2 text-xs font-medium transition-colors md:py-1",
                     isActive
                       ? "border-transparent bg-primary text-primary-foreground"
@@ -429,14 +437,20 @@ export default function InboxPage() {
             hasMore={moreAvailable}
             loadingMore={loadingMore}
             onLoadMore={loadMore}
+            waLayout={waLayout}
           />
         </div>
       </div>
 
       {/* Main: Chat Panel */}
-      <div className={cn("min-w-0 flex-1 items-center justify-center text-muted-foreground md:flex", selectedId ? "flex" : "hidden")}>
+      <div className={waLayout ? cn("min-w-0 flex-1 items-center justify-center text-muted-foreground md:flex", !selectedId && WA_THEME.header, selectedId ? "flex" : "hidden") : cn("min-w-0 flex-1 items-center justify-center text-muted-foreground md:flex", selectedId ? "flex" : "hidden")}>
         {selectedId ? (
           <ChatPanel key={selectedId} conversationId={selectedId} />
+        ) : waLayout ? (
+          <div className="flex max-w-sm flex-col items-center gap-2 px-6 text-center">
+            <p className={cn("text-2xl font-light", WA_THEME.title)}>Conversas</p>
+            <p className={cn("text-sm", WA_THEME.meta)}>Selecione uma conversa na lista para ver as mensagens e responder.</p>
+          </div>
         ) : (
           <p>Selecione uma conversa</p>
         )}

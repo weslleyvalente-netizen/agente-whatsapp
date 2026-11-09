@@ -10,6 +10,7 @@ export {
   getUnansweredLeadSweepQueue,
   getCustomerNudgeQueue,
   getStoreCustomerAudioQueue,
+  getFetchProfilePictureQueue,
   getCustomerAudioRetentionQueue,
 } from "./queues.js";
 export type {
@@ -19,5 +20,6 @@ export type {
   TakeoverTimeoutJobData,
   StaleConversationFollowupJobData,
   StoreCustomerAudioJobData,
+  FetchProfilePictureJobData,
   CustomerAudioRetentionJobData,
 } from "./types.js";

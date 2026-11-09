@@ -19,6 +19,10 @@ export interface Organization {
 export interface OrganizationSettings {
   // Só === true liga o envio de áudio do vendedor no chat do CRM.
   seller_audio_enabled?: boolean;
+  // Só === true liga o novo layout de conversas estilo WhatsApp na caixa de entrada.
+  inbox_whatsapp_layout_enabled?: boolean;
+  // Só === true permite ao vendedor enviar anexos (imagem/documento) no chat do CRM.
+  seller_attachments_enabled?: boolean;
   sales_workspace_enabled?: boolean;
   sales_action_queue_enabled?: boolean;
   sales_qualified_handoff_task_enabled?: boolean;

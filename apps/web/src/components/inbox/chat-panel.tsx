@@ -15,6 +15,10 @@ import { Send } from "lucide-react";
 import { useOrganization } from "@/providers/organization-provider";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { AudioRecorderBar } from "./audio-recorder-bar";
+import { MessageComposer } from "./message-composer";
+import { useWhatsappLayout } from "@/hooks/use-whatsapp-layout";
+import { WA_THEME, startsBubbleGroup } from "@/lib/whatsapp-layout";
+import { cn } from "@/lib/utils";
 import { chatDayKey, chatDayLabel } from "@aula-agente/shared";
 import type { Message } from "@aula-agente/shared";
 
@@ -39,6 +43,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const [userId, setUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { currentOrg } = useOrganization();
+  const waLayout = useWhatsappLayout();
   const recorder = useAudioRecorder();
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioEnabled = currentOrg?.settings.seller_audio_enabled === true && recorder.supported;
@@ -67,7 +72,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
     const supabase = createClient();
     const { data } = await supabase
       .from("conversations")
-      .select("*, wa_contacts(id, phone, name, ai_disabled), agents(name)")
+      .select("*, wa_contacts(id, phone, name, ai_disabled, profile_picture_path), agents(name)")
       .eq("id", conversationId)
       .single();
     setConversation(data);
@@ -221,6 +226,23 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
     }
   };
 
+  // Layout WhatsApp: a barra de áudio vai no slot extraActions do composer (ocioso)
+  // ou ocupa a linha inteira (gravando/revisando/enviando).
+  const recorderBar = waLayout && audioEnabled ? (
+    <AudioRecorderBar
+      phase={recorder.phase}
+      seconds={recorder.seconds}
+      error={recorder.error}
+      canSend={recorder.canSend}
+      previewUrl={recorder.previewUrl}
+      uploadError={audioError}
+      onStart={() => { setAudioError(null); recordingOwnerRef.current = conversationId; recorder.start(); }}
+      onStop={recorder.stop}
+      onDiscard={() => { setAudioError(null); recorder.discard(); }}
+      onSend={handleSendAudio}
+    />
+  ) : null;
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -234,6 +256,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         {conversation && (
           <ChatHeader
             compact={compact}
+            waLayout={waLayout}
             conversation={conversation}
             onStatusChange={handleStatusChange}
             onTakeoverToggle={handleTakeoverToggle}
@@ -250,10 +273,23 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         )}
 
         {/* Messages */}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4">
+        <div className={waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4"}>
           {messages.map((msg, i) => {
             // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
             const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);
+            if (waLayout) {
+              const tail = startsBubbleGroup(messages[i - 1], msg);
+              return (
+                <div key={msg.id} className={cn("space-y-2", tail ? "pt-2" : "pt-0.5")}>
+                  {newDay && (
+                    <div className="sticky top-0 z-10 flex justify-center py-1">
+                      <span className={cn("rounded-lg px-3 py-1.5 text-xs font-medium shadow-sm", WA_THEME.dayPill)}>{chatDayLabel(msg.created_at, new Date().toISOString())}</span>
+                    </div>
+                  )}
+                  <MessageBubble message={msg} waLayout tail={tail} />
+                </div>
+              );
+            }
             return (
               <div key={msg.id} className="space-y-3">
                 {newDay && (
@@ -269,12 +305,26 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         </div>
 
         {/* Notice + Input */}
-        <div className="shrink-0 border-t">
+        <div className={waLayout ? cn("shrink-0 border-t", WA_THEME.header, WA_THEME.divider) : "shrink-0 border-t"}>
           {conversation && !conversation.is_human_takeover && !conversation.wa_contacts?.ai_disabled && (
             <div className="border-b bg-destructive/10 px-3 py-2 md:px-4 text-xs text-destructive">
               O agente está atendendo. Enviar uma mensagem atribui a conversa a você e pausa o agente e as automações.
             </div>
           )}
+          {waLayout ? (
+          <div className="relative flex items-end gap-2 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-4">
+            {recorderBusy ? recorderBar : (
+              <MessageComposer
+                value={input}
+                onChange={setInput}
+                onSend={handleSend}
+                sending={sending}
+                placeholder="Digite uma mensagem"
+                extraActions={recorderBar ?? undefined}
+              />
+            )}
+          </div>
+          ) : (
           <div className="relative flex items-center gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:p-4">
             {!recorderBusy && (
               <>
@@ -311,6 +361,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
               />
             )}
           </div>
+          )}
         </div>
       </div>
 
