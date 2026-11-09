@@ -62,9 +62,9 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <div className={waLayout
-      ? cn(compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex shrink-0 flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4", WA_THEME.header, WA_THEME.divider)
+      ? cn(compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-3 py-2 md:px-4", WA_THEME.header, WA_THEME.divider)
       : compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4 md:py-3"}>
-      <div className={waLayout && !compact ? "flex min-w-0 items-center gap-1 md:gap-3" : compact ? "flex min-w-0 items-baseline gap-2" : "flex min-w-0 items-center gap-1 md:block"}>
+      <div className={waLayout && !compact ? "flex min-w-0 grow basis-44 items-center gap-1 md:gap-3" : compact ? "flex min-w-0 items-baseline gap-2" : "flex min-w-0 items-center gap-1 md:block"}>
         {!compact && (
           <Button variant="ghost" size="icon" className="-ml-1 size-11 shrink-0 md:hidden" onClick={onClose} aria-label="Voltar para as conversas">
             <ArrowLeft className="h-5 w-5" />
@@ -90,7 +90,7 @@ export function ChatHeader({
         </div>
       </div>
 
-      <div className={compact ? "flex min-w-0 flex-wrap items-center gap-1" : "flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap"}>
+      <div className={compact ? "flex min-w-0 flex-wrap items-center gap-1" : waLayout ? "flex flex-wrap items-center justify-end gap-2" : "flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap"}>
         <Select value={conversation.status} onValueChange={(v) => v && onStatusChange(v)}>
           <SelectTrigger className={PILL_TRIGGER_CLASS}>
             <SelectValue>{(value: ConversationStatus) => STATUS_LABELS[value] ?? value}</SelectValue>

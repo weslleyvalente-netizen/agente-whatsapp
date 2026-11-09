@@ -67,11 +67,15 @@ export const WA_THEME = {
   panel: "bg-white dark:bg-[#111b21]",
   bubbleIn: "bg-white text-[#111b21] dark:bg-[#202c33] dark:text-[#e9edef]",
   bubbleOut: "bg-[#d9fdd3] text-[#111b21] dark:bg-[#005c4b] dark:text-[#e9edef]",
+  // Mensagens da IA: azul claro, para não se confundir com as do vendedor (verde).
+  bubbleAi: "bg-[#dbeafe] text-[#111b21] dark:bg-[#1e3a5f] dark:text-[#e9edef]",
   // Cor do "rabinho" (mesma do balão, aplicada como text-* no SVG com fill=currentColor).
   tailIn: "text-white dark:text-[#202c33]",
   tailOut: "text-[#d9fdd3] dark:text-[#005c4b]",
+  tailAi: "text-[#dbeafe] dark:text-[#1e3a5f]",
   accentBg: "bg-[#00a884] text-white hover:bg-[#008f72] dark:bg-[#00a884] dark:hover:bg-[#06cf9c]",
   accentText: "text-[#00a884] dark:text-[#00a884]",
+  aiText: "text-[#2563eb] dark:text-[#7db3ff]",
   unreadDot: "bg-[#25d366] dark:bg-[#00a884]",
   meta: "text-[#667781] dark:text-[#8696a0]",
   title: "text-[#111b21] dark:text-[#e9edef]",
