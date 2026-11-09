@@ -43,7 +43,7 @@ Sucesso: a atendente atende pelo CRM sem sentir falta do WhatsApp Web para o dia
 ## Etapa 3 — Enviar anexos
 
 - Botão de clipe no composer (imagem, documento, vídeo) e arrastar-e-soltar; pré-visualização com legenda opcional antes de enviar.
-- O navegador sobe o arquivo direto ao bucket `chat-media` por URL assinada de upload; a API valida tipo/tamanho (imagem ≤ 16 MB, vídeo ≤ 16 MB, documento ≤ 25 MB, lista de MIME permitidos) e cria a mensagem de saída; o worker (`send-message.ts`) envia pelo Evolution (`sendEvolutionMedia` estendido para vídeo e documento).
+- O navegador envia o arquivo à API (multipart, como o áudio do vendedor); a API valida os bytes, o tipo e o tamanho (imagem ≤ 16 MB, vídeo ≤ 16 MB, documento ≤ 25 MB), guarda em `chat-media` e cria a mensagem de saída; o worker (`send-message.ts`) envia pelo Evolution (`sendEvolutionMedia` estendido para vídeo e documento). O envio fica atrás de uma flag própria `seller_attachments_enabled`, limitada a 60 envios por hora por usuário.
 - Mesmas regras de autorização do envio de texto/áudio (vendedor só no seu lead; limites existentes).
 - Falha no envio: erro visível na bolha e opção de reenviar.
 
