@@ -12,6 +12,9 @@ export interface Message {
   media_url: string | null;
   media_type: MediaType | null;
   metadata: MessageMetadata | null;
+  // Entrega/leitura de mensagens enviadas (✓✓). Ausente em mensagens antigas.
+  delivered_at?: string | null;
+  read_at?: string | null;
   created_at: string;
 }
 

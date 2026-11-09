@@ -26,8 +26,9 @@ import {
   findRecentAfterHoursAgentMessages,
   setMessageEvolutionId,
   stampMessageMetadata,
+  applyMessageDeliveryStatus,
 } from "@aula-agente/database";
-import { samePhoneNumber, shouldRefreshProfilePicture } from "@aula-agente/shared";
+import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -210,6 +211,24 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
   app.post("/webhooks/evolution", {
     preHandler: [webhookVerifyMiddleware],
     handler: async (request, reply) => {
+      // Status de entrega/leitura de mensagens nossas (✓✓). Best-effort: nunca devolve erro
+      // ao Evolution nem passa pelo fluxo de mensagem recebida.
+      if (isEvolutionStatusEvent(request.body)) {
+        const update = parseEvolutionStatusUpdate(request.body);
+        if (!update) return reply.status(200).send({ ok: true, skipped: "status_not_applicable" });
+        try {
+          const instance = await getInstanceByInstanceId(getAdminClient(), update.instance);
+          await applyMessageDeliveryStatus(getAdminClient(), {
+            organizationId: instance.organization_id,
+            evolutionMessageId: update.messageId,
+            status: update.status,
+          });
+        } catch (err) {
+          request.log.warn({ err, instance: update.instance }, "Failed to record message delivery status");
+        }
+        return reply.status(200).send({ ok: true, status: update.status });
+      }
+
       const parseResult = evolutionWebhookPayloadSchema.safeParse(request.body);
 
       if (!parseResult.success) {

@@ -1,4 +1,4 @@
-import { Check, Mic } from "lucide-react";
+import { Check, CheckCheck, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WA_THEME, messageTick } from "@/lib/whatsapp-layout";
 import type { Message } from "@aula-agente/shared";
@@ -201,6 +201,8 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
             })}
           </span>
           {tick === "sent" && <Check className="h-3.5 w-3.5" role="img" aria-label="Enviada" />}
+          {tick === "delivered" && <CheckCheck className="h-3.5 w-3.5" role="img" aria-label="Entregue" />}
+          {tick === "read" && <CheckCheck className={cn("h-3.5 w-3.5", WA_THEME.tickRead)} role="img" aria-label="Lida" />}
           {tick === "failed" && !audioFailed && <span className="font-semibold text-destructive">não enviado</span>}
         </div>
       </div>

@@ -35,7 +35,7 @@ export async function createInstance(instanceName: string, webhookUrl: string) {
         url: webhookUrl,
         webhookByEvents: false,
         webhookBase64: false,
-        events: ["MESSAGES_UPSERT"],
+        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
         ...(webhookSecret ? { headers: { apikey: webhookSecret } } : {}),
       },
     }),
