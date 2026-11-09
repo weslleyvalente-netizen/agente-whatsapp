@@ -49,3 +49,20 @@ export async function getContactById(client: SupabaseClient, id: string) {
   if (error) throw error;
   return data as Contact;
 }
+
+/**
+ * Marca a tentativa de buscar a foto (profile_picture_checked_at = agora), mesmo sem foto, para o
+ * webhook não reenfileirar a cada mensagem. Só troca profile_picture_path quando há caminho novo.
+ */
+export async function setContactProfilePicture(
+  client: SupabaseClient,
+  contactId: string,
+  path: string | null
+): Promise<void> {
+  const update: { profile_picture_checked_at: string; profile_picture_path?: string } = {
+    profile_picture_checked_at: new Date().toISOString(),
+  };
+  if (path !== null) update.profile_picture_path = path;
+  const { error } = await client.from("wa_contacts").update(update).eq("id", contactId);
+  if (error) throw error;
+}

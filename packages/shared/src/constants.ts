@@ -190,6 +190,7 @@ export const QUEUE_NAMES = {
   CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",
   UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
   CUSTOMER_NUDGE: "customer-nudge",
+  FETCH_PROFILE_PICTURE: "fetch-profile-picture",
 } as const;
 
 export const OPERATIONS = [

@@ -1,4 +1,10 @@
-import { getProcessMessageQueue, getSendMessageQueue, getStoreCustomerAudioQueue } from "@aula-agente/queue";
+import {
+  getFetchProfilePictureQueue,
+  getProcessMessageQueue,
+  getSendMessageQueue,
+  getStoreCustomerAudioQueue,
+  type FetchProfilePictureJobData,
+} from "@aula-agente/queue";
 
 // How long to wait after a customer's message before actually processing
 // it. Rapid consecutive bubbles (someone typing "oi" / "tudo bem?" / "quero
@@ -62,4 +68,9 @@ export function enqueueStoreCustomerAudio(data: {
   organizationId: string;
 }) {
   return getStoreCustomerAudioQueue().add("store-customer-audio", data, { jobId: data.messageId });
+}
+
+// Busca a foto de perfil do contato na Evolution. jobId = contactId: no máximo um job por contato na fila.
+export function enqueueFetchProfilePicture(data: FetchProfilePictureJobData) {
+  return getFetchProfilePictureQueue().add("fetch-profile-picture", data, { jobId: data.contactId });
 }

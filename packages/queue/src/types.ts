@@ -42,6 +42,13 @@ export interface StoreCustomerAudioJobData {
   organizationId: string;
 }
 
+export interface FetchProfilePictureJobData {
+  contactId: string;
+  organizationId: string;
+  instanceId: string;
+  phone: string;
+}
+
 export interface CustomerAudioRetentionJobData {
   // no data needed — scans every organization's expired audio
 }

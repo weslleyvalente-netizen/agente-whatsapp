@@ -8,6 +8,7 @@ import type {
   TakeoverTimeoutJobData,
   StaleConversationFollowupJobData,
   StoreCustomerAudioJobData,
+  FetchProfilePictureJobData,
   CustomerAudioRetentionJobData,
 } from "./types.js";
 
@@ -119,6 +120,23 @@ export function getStoreCustomerAudioQueue() {
     });
   }
   return storeCustomerAudioQueue;
+}
+
+let fetchProfilePictureQueue: Queue<FetchProfilePictureJobData> | null = null;
+export function getFetchProfilePictureQueue() {
+  if (!fetchProfilePictureQueue) {
+    fetchProfilePictureQueue = new Queue<FetchProfilePictureJobData>(QUEUE_NAMES.FETCH_PROFILE_PICTURE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: "exponential", delay: 5000 },
+        // Remove ao terminar (ok ou falha final) para liberar o jobId (= contactId) na próxima tentativa.
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    });
+  }
+  return fetchProfilePictureQueue;
 }
 
 let customerAudioRetentionQueue: Queue<CustomerAudioRetentionJobData> | null = null;

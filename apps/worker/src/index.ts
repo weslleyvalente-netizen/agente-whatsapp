@@ -9,6 +9,7 @@ import { startUnansweredLeadSweepWorker } from "./workers/unanswered-lead-sweep.
 import { startCustomerNudgeWorker } from "./workers/customer-nudge.js";
 import { startPushNotificationsWorker } from "./workers/push-notifications.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
+import { startFetchProfilePictureWorker } from "./workers/fetch-profile-picture.js";
 
 import { startFinancingWorker } from './workers/financing.js';
 
@@ -27,6 +28,7 @@ async function main() {
     startCustomerNudgeWorker(),
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
+    startFetchProfilePictureWorker(),
   ];
 
   if (process.env.FINANCING_MODE === 'mock') workers.push(await startFinancingWorker());
