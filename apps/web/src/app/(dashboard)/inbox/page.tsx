@@ -37,7 +37,7 @@ type ConversationRow = any;
 type QueryFilter = TabFilter | { kind: "attention_takeover" } | { kind: "attention_ai_disabled" };
 
 const SELECT_COLUMNS =
-  "id, status, is_human_takeover, assigned_to, tags, last_message_at, wa_contacts!inner(phone, name, ai_disabled), agents(name), messages(content, created_at)";
+  "id, status, is_human_takeover, assigned_to, tags, last_message_at, wa_contacts!inner(id, profile_picture_path, phone, name, ai_disabled), agents(name), messages(content, created_at)";
 
 async function runQuery(
   supabase: ReturnType<typeof createClient>,

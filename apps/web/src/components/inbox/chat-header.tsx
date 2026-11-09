@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { ConversationStatus } from "@aula-agente/shared";
 import { formatPhone } from "@/lib/utils";
+import { ContactAvatar } from "./contact-avatar";
 
 const STATUS_LABELS: Record<ConversationStatus, string> = {
   open: "Aberto",
@@ -32,7 +33,7 @@ interface ChatHeaderProps {
     assigned_to: string | null;
     status: ConversationStatus;
     is_human_takeover: boolean;
-    wa_contacts: { id: string; phone: string; name: string | null; ai_disabled: boolean } | null;
+    wa_contacts: { id: string; phone: string; name: string | null; ai_disabled: boolean; profile_picture_path?: string | null } | null;
     agents?: { name: string } | null;
   };
   onStatusChange: (status: string) => void;
@@ -62,6 +63,15 @@ export function ChatHeader({
           <Button variant="ghost" size="icon" className="-ml-1 size-11 shrink-0 md:hidden" onClick={onClose} aria-label="Voltar para as conversas">
             <ArrowLeft className="h-5 w-5" />
           </Button>
+        )}
+        {!compact && conversation.wa_contacts && (
+          <ContactAvatar
+            contactId={conversation.wa_contacts.id}
+            name={conversation.wa_contacts.name}
+            phone={conversation.wa_contacts.phone}
+            picturePath={conversation.wa_contacts.profile_picture_path}
+            className="mr-2 shrink-0"
+          />
         )}
         <div className={compact ? "contents" : "min-w-0"}>
         <p className={compact ? "min-w-0 truncate text-sm font-medium" : "truncate font-medium"}>

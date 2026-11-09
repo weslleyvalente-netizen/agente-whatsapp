@@ -1,10 +1,9 @@
 "use client";
 
 import { cn, formatPhone } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ContactAvatar } from "./contact-avatar";
 import { Badge } from "@/components/ui/badge";
 import { StatusLamp, type LampTone } from "@/components/ui/status-lamp";
-import { User } from "lucide-react";
 
 interface ConversationItem {
   id: string;
@@ -15,6 +14,8 @@ interface ConversationItem {
   assigned_to: string | null;
   unread: boolean;
   wa_contacts: {
+    id: string;
+    profile_picture_path?: string | null;
     phone: string;
     name: string | null;
     ai_disabled: boolean;
@@ -111,11 +112,12 @@ export function ConversationList({
           )}
         >
           <div className="relative shrink-0">
-            <Avatar className="h-10 w-10 bg-primary/10 text-primary">
-              <AvatarFallback className="bg-primary/10 font-medium text-primary">
-                {conv.wa_contacts.name?.[0]?.toUpperCase() || <User className="h-4 w-4" />}
-              </AvatarFallback>
-            </Avatar>
+            <ContactAvatar
+              contactId={conv.wa_contacts.id}
+              name={conv.wa_contacts.name}
+              phone={conv.wa_contacts.phone}
+              picturePath={conv.wa_contacts.profile_picture_path}
+            />
             <span className="absolute -bottom-0.5 -right-0.5 rounded-full bg-background p-[3px]">
               <StatusLamp tone={statusLamp[conv.status] || "off"} pulse={conv.status === "waiting"} />
             </span>
