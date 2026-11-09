@@ -27,13 +27,13 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
 } from "@aula-agente/database";
-import { samePhoneNumber } from "@aula-agente/shared";
+import { samePhoneNumber, shouldRefreshProfilePicture } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
-import { enqueueProcessMessage, enqueueStoreCustomerAudio } from "../../lib/queue.js";
+import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
@@ -517,6 +517,30 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           });
         } catch (err) {
           request.log.error({ err, messageId: message.id }, "Failed to enqueue customer audio capture");
+        }
+      }
+
+      // Foto de perfil do cliente (avatar das conversas). Best-effort: só para
+      // mensagens do cliente, e shouldRefreshProfilePicture barra telefones
+      // @lid/não numéricos e buscas recentes. Colunas ausentes (migration ainda
+      // não rodada) contam como "nunca buscado".
+      if (message.role === "contact") {
+        try {
+          const pictureContact = {
+            phone: contact.phone,
+            profile_picture_path: contact.profile_picture_path ?? null,
+            profile_picture_checked_at: contact.profile_picture_checked_at ?? null,
+          };
+          if (shouldRefreshProfilePicture(pictureContact)) {
+            await enqueueFetchProfilePicture({
+              contactId: contact.id,
+              organizationId,
+              instanceId: instance.id,
+              phone: contact.phone,
+            });
+          }
+        } catch (err) {
+          request.log.error({ err, contactId: contact.id }, "Failed to enqueue profile picture fetch");
         }
       }
 
