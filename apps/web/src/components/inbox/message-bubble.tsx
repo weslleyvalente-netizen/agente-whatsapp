@@ -150,7 +150,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
       <div
         className={cn(
           "relative min-w-0 max-w-[85%] rounded-lg px-2.5 pb-1 pt-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] md:max-w-[65%]",
-          out ? WA_THEME.bubbleOut : WA_THEME.bubbleIn,
+          isAgent ? WA_THEME.bubbleAi : out ? WA_THEME.bubbleOut : WA_THEME.bubbleIn,
           tail && (out ? "rounded-tr-none" : "rounded-tl-none")
         )}
       >
@@ -158,14 +158,14 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
           <svg
             viewBox="0 0 8 13"
             aria-hidden
-            className={cn("absolute top-0 h-[13px] w-2", out ? cn("-right-2", WA_THEME.tailOut) : cn("-left-2", WA_THEME.tailIn))}
+            className={cn("absolute top-0 h-[13px] w-2", out ? cn("-right-2", isAgent ? WA_THEME.tailAi : WA_THEME.tailOut) : cn("-left-2", WA_THEME.tailIn))}
           >
             <path fill="currentColor" d={out ? "M0 0h8L0 11z" : "M8 0H0l8 11z"} />
           </svg>
         )}
         {(isAgent || isHuman) && (
-          <p className={cn("mb-0.5 text-[11px] font-semibold", isAgent ? WA_THEME.accentText : WA_THEME.meta)}>
-            {isAgent ? "Agente" : "Atendente"}
+          <p className={cn("mb-0.5 text-[11px] font-semibold", isAgent ? WA_THEME.aiText : WA_THEME.meta)}>
+            {isAgent ? "IA" : "Atendente"}
           </p>
         )}
         {message.media_type === "image" && message.media_url && (

@@ -41,7 +41,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const [conversation, setConversation] = useState<any>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { currentOrg } = useOrganization();
   const waLayout = useWhatsappLayout();
   const recorder = useAudioRecorder();
@@ -100,7 +100,10 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
   // Scroll to bottom on new messages
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Rola só a lista de mensagens. scrollIntoView também rolava as áreas
+    // "overflow: hidden" acima e empurrava o menu e o topo da página para fora da tela.
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
   // Realtime messages
@@ -273,7 +276,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         )}
 
         {/* Messages */}
-        <div className={waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4"}>
+        <div ref={scrollRef} className={waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4"}>
           {messages.map((msg, i) => {
             // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
             const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);
@@ -301,7 +304,6 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
               </div>
             );
           })}
-          <div ref={bottomRef} />
         </div>
 
         {/* Notice + Input */}
