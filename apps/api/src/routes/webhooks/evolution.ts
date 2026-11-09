@@ -522,9 +522,9 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       // Foto de perfil do cliente (avatar das conversas). Best-effort: só para
       // mensagens do cliente, e shouldRefreshProfilePicture barra telefones
-      // @lid/não numéricos e buscas recentes. Colunas ausentes (migration ainda
-      // não rodada) contam como "nunca buscado".
-      if (message.role === "contact") {
+      // @lid/não numéricos e buscas recentes. Sem a chave profile_picture_checked_at
+      // no contato (migration ainda não rodada) não enfileira: evita chamadas inúteis.
+      if (message.role === "contact" && "profile_picture_checked_at" in contact) {
         try {
           const pictureContact = {
             phone: contact.phone,

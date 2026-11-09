@@ -38,7 +38,7 @@ async function post(p: unknown) {
   const app = Fastify(); await app.register(evolutionWebhookRoutes);
   const r = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: p as any }); await app.close(); return r;
 }
-const contactRow = (over: Record<string, unknown> = {}) => ({ id: "c1", phone: "5511999990000", ai_disabled: false, ...over });
+const contactRow = (over: Record<string, unknown> = {}) => ({ id: "c1", phone: "5511999990000", ai_disabled: false, profile_picture_path: null, profile_picture_checked_at: null, ...over });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,7 +61,20 @@ describe("webhook: busca da foto de perfil", () => {
     });
   });
 
-  it("colunas ausentes (migration nao rodada) contam como nunca buscado", async () => {
+  it("contato sem a chave profile_picture_checked_at (migration nao rodada): nao enfileira", async () => {
+    const { profile_picture_checked_at: _omit, ...withoutKey } = contactRow({});
+    m.ensureConversation.mockResolvedValue({
+      conversation: { id: "conv-1", is_human_takeover: false }, contact: withoutKey, isNew: false,
+    });
+    await post(payload(key));
+    expect(m.enqueueFetchProfilePicture).not.toHaveBeenCalled();
+  });
+
+  it("chave presente com null (nunca buscado): enfileira", async () => {
+    m.ensureConversation.mockResolvedValue({
+      conversation: { id: "conv-1", is_human_takeover: false },
+      contact: contactRow({ profile_picture_path: null, profile_picture_checked_at: null }), isNew: false,
+    });
     await post(payload(key));
     expect(m.enqueueFetchProfilePicture).toHaveBeenCalledTimes(1);
   });
