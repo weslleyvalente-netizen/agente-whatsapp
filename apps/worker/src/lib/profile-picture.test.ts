@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({ getInstanceById: vi.fn(), setContactProfilePicture: vi.fn() }));
 vi.mock("@aula-agente/database", () => m);
 import { fetchContactProfilePicture } from "./profile-picture.js";
@@ -84,5 +84,80 @@ describe("fetchContactProfilePicture", () => {
     expect(r).toEqual({ ok: false, reason: "storage down" });
     expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
     expect(m.setContactProfilePicture).not.toHaveBeenCalledWith(db, "ct", "org/ct.jpg");
+  });
+});
+
+describe("fetchContactProfilePicture com fetch global (defaults)", () => {
+  const fetchMock = vi.fn();
+  const evolutionResponse = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+  const imageResponse = (body: BodyInit | null, headers: Record<string, string> = { "content-type": "image/jpeg" }, status = 200) =>
+    new Response(body, { status, headers });
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("URL http:// nao e baixada", async () => {
+    fetchMock.mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "http://pps.whatsapp.net/x.jpg" }));
+    const { db, upload } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(upload).not.toHaveBeenCalled();
+    expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
+  });
+
+  it("baixa com redirect:error; redirecionamento (fetch lanca) vira foto oculta", async () => {
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
+      .mockRejectedValueOnce(new TypeError("fetch failed"));
+    const { db, upload } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
+    expect(fetchMock.mock.calls[1]![1]).toMatchObject({ redirect: "error" });
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("corpo em chunks acima de 2 MB (sem content-length) e abortado", async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 5) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
+      .mockResolvedValueOnce(imageResponse(body));
+    const { db, upload } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
+    expect(sent).toBeLessThan(5);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it.each(["profilePicUrl", "url"])("fallback do campo %s na resposta da Evolution", async (field) => {
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ [field]: "https://pps.whatsapp.net/y.jpg" }))
+      .mockResolvedValueOnce(imageResponse("img"));
+    const { db, upload } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: true });
+    expect(fetchMock.mock.calls[1]![0].toString()).toBe("https://pps.whatsapp.net/y.jpg");
+    expect(upload).toHaveBeenCalled();
+  });
+
+  it("5xx no download: ok:false e tentativa marcada; 4xx continua foto oculta", async () => {
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
+      .mockResolvedValueOnce(imageResponse(null, {}, 503));
+    const { db } = makeDb();
+    const r = await fetchContactProfilePicture(db, job);
+    expect(r.ok).toBe(false);
+    expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
+
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
+      .mockResolvedValueOnce(imageResponse(null, {}, 404));
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
   });
 });

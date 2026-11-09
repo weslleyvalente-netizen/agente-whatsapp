@@ -36,14 +36,49 @@ const defaultFetchPictureUrl = async (instanceName: string, phone: string): Prom
   return pickUrl(await response.json().catch(() => null));
 };
 
+async function readBodyCapped(response: Response, maxBytes: number): Promise<Buffer | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 const defaultDownloadImage = async (url: string): Promise<{ buffer: Buffer; contentType: string } | null> => {
-  const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+
+  let response: Response;
+  try {
+    // redirect:"error": nao segue redirecionamentos (evita sair para http/hosts internos).
+    response = await fetch(parsed, { redirect: "error", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch {
+    return null;
+  }
+  // 5xx: erro transitorio do servidor da imagem; lanca para marcar a tentativa e o BullMQ repetir.
+  if (response.status >= 500) throw new Error(`Profile picture download error ${response.status}`);
   if (!response.ok) return null;
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > PROFILE_PICTURE_MAX_BYTES) return null;
   const contentType = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   if (!(contentType in EXTENSION_BY_CONTENT_TYPE)) return null;
-  return { buffer: Buffer.from(await response.arrayBuffer()), contentType };
+  const buffer = await readBodyCapped(response, PROFILE_PICTURE_MAX_BYTES);
+  return buffer ? { buffer, contentType } : null;
 };
 
 /**
