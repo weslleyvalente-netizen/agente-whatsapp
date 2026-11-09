@@ -31,7 +31,7 @@ export function ContactAvatar({ contactId, name, phone, picturePath, className }
   const color = PALETTE[avatarColorIndex(contactId, PALETTE.length)];
   return (
     <Avatar className={cn("h-10 w-10", className)}>
-      {url && <AvatarImage src={url} alt="" />}
+      {url && <AvatarImage src={url} alt="" referrerPolicy="no-referrer" />}
       <AvatarFallback className={cn("font-medium text-white", color)}>{contactInitials(name, phone)}</AvatarFallback>
     </Avatar>
   );

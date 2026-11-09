@@ -53,4 +53,36 @@ describe("createProfilePictureResolver", () => {
     expect(await r.request("a")).toBe("url-a");
     expect(fetchBatch).toHaveBeenCalledTimes(2);
   });
+
+  it("compartilha a promessa de id em voo (depois do flush, antes de resolver)", async () => {
+    let release!: (v: Record<string, string>) => void;
+    const { r, fetchBatch } = setup(() => new Promise((res) => { release = res; }));
+    const first = r.request("a");
+    await new Promise((res) => setTimeout(res, 20));
+    expect(fetchBatch).toHaveBeenCalledTimes(1);
+    const second = r.request("a");
+    release({ a: "url-a" });
+    expect(await Promise.all([first, second])).toEqual(["url-a", "url-a"]);
+    expect(fetchBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("divide mais de 100 ids em lotes de até 100", async () => {
+    const { r, fetchBatch } = setup();
+    const ids = Array.from({ length: 101 }, (_, i) => `c${i}`);
+    const res = await Promise.all(ids.map((i) => r.request(i)));
+    expect(res[100]).toBe("url-c100");
+    expect(fetchBatch).toHaveBeenCalledTimes(2);
+    expect(fetchBatch.mock.calls.map((c) => c[0].length).sort((a, b) => a - b)).toEqual([1, 100]);
+  });
+
+  it("lote que falha não afeta o outro", async () => {
+    const { r } = setup(async (ids) => {
+      if (ids.length === 1) throw new Error("boom");
+      return Object.fromEntries(ids.map((i) => [i, `url-${i}`]));
+    });
+    const ids = Array.from({ length: 101 }, (_, i) => `c${i}`);
+    const res = await Promise.all(ids.map((i) => r.request(i)));
+    expect(res.filter((x) => x === null)).toHaveLength(1);
+    expect(res.filter((x) => x !== null)).toHaveLength(100);
+  });
 });
