@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
-import evolutionWebhookRoutes from "./evolution.js";
+import evolutionWebhookRoutes, { STATUS_RETRY_DELAYS_MS } from "./evolution.js";
 
 delete process.env.WEBHOOK_SECRET;
 
@@ -29,24 +29,37 @@ const update = (data: Record<string, unknown>) => ({ event: "messages.update", i
 beforeEach(() => {
   vi.clearAllMocks();
   m.getInstanceByInstanceId.mockResolvedValue({ id: "i1", organization_id: "org-1" });
-  m.applyMessageDeliveryStatus.mockResolvedValue(undefined);
+  m.applyMessageDeliveryStatus.mockResolvedValue(true);
+  STATUS_RETRY_DELAYS_MS.splice(0, STATUS_RETRY_DELAYS_MS.length, 5, 5, 5);
 });
 
 describe("webhook: status de entrega/leitura", () => {
   it("READ grava leitura na organização da instância e não cria mensagem", async () => {
     const r = await post(update({ keyId: "WA1", status: "READ", fromMe: true }));
     expect(r.statusCode).toBe(200);
-    expect(m.applyMessageDeliveryStatus).toHaveBeenCalledWith({}, { organizationId: "org-1", evolutionMessageId: "WA1", status: "read" });
+    await vi.waitFor(() => expect(m.applyMessageDeliveryStatus).toHaveBeenCalledWith({}, { organizationId: "org-1", evolutionMessageId: "WA1", status: "read" }));
     expect(m.saveMessage).not.toHaveBeenCalled();
   });
   it("DELIVERY_ACK grava entrega", async () => {
     await post(update({ keyId: "WA1", status: "DELIVERY_ACK" }));
-    expect(m.applyMessageDeliveryStatus).toHaveBeenCalledWith({}, expect.objectContaining({ status: "delivered" }));
+    await vi.waitFor(() => expect(m.applyMessageDeliveryStatus).toHaveBeenCalledWith({}, expect.objectContaining({ status: "delivered" })));
   });
   it("SERVER_ACK e formato inesperado respondem 200 sem gravar", async () => {
     expect((await post(update({ keyId: "WA1", status: "SERVER_ACK" }))).statusCode).toBe(200);
     expect((await post(update({}))).statusCode).toBe(200);
     expect(m.applyMessageDeliveryStatus).not.toHaveBeenCalled();
+  });
+  it("aviso antes do id da mensagem ser gravado: tenta de novo até achar", async () => {
+    m.applyMessageDeliveryStatus.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    expect((await post(update({ keyId: "WA1", status: "READ" }))).statusCode).toBe(200);
+    await vi.waitFor(() => expect(m.applyMessageDeliveryStatus).toHaveBeenCalledTimes(3));
+  });
+  it("mensagem que nunca aparece: para depois das tentativas", async () => {
+    m.applyMessageDeliveryStatus.mockResolvedValue(false);
+    await post(update({ keyId: "WA1", status: "READ" }));
+    await vi.waitFor(() => expect(m.applyMessageDeliveryStatus).toHaveBeenCalledTimes(1 + STATUS_RETRY_DELAYS_MS.length));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(m.applyMessageDeliveryStatus).toHaveBeenCalledTimes(1 + STATUS_RETRY_DELAYS_MS.length);
   });
   it("falha do banco ou instância desconhecida nunca vira erro para o Evolution", async () => {
     m.applyMessageDeliveryStatus.mockRejectedValue(new Error("db"));

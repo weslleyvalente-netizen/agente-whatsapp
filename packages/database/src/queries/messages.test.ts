@@ -103,12 +103,14 @@ describe("findExistingEvolutionMessageIds (lote)", () => {
 });
 
 describe("applyMessageDeliveryStatus", () => {
-  function recorder() {
+  function recorder(existing = true) {
     const calls: Array<{ payload: Record<string, unknown>; filters: Array<[string, ...unknown[]]> }> = [];
     const client = {
       from: () => {
         const call: { payload: Record<string, unknown>; filters: Array<[string, ...unknown[]]> } = { payload: {}, filters: [] };
         const b: any = {
+          select: () => { b.mode = "select"; return b; },
+          limit: () => Promise.resolve({ data: existing ? [{ id: "m" }] : [], error: null }),
           update: (p: Record<string, unknown>) => { call.payload = p; calls.push(call); return b; },
           eq: (...a: unknown[]) => { call.filters.push(["eq", ...a]); return b; },
           in: (...a: unknown[]) => { call.filters.push(["in", ...a]); return b; },
@@ -122,7 +124,8 @@ describe("applyMessageDeliveryStatus", () => {
 
   it("entregue preenche só delivered_at, só se vazio, só para mensagens nossas da organização", async () => {
     const { client, calls } = recorder();
-    await applyMessageDeliveryStatus(client as never, { organizationId: "org", evolutionMessageId: "E1", status: "delivered", at: "T" });
+    const found = await applyMessageDeliveryStatus(client as never, { organizationId: "org", evolutionMessageId: "E1", status: "delivered", at: "T" });
+    expect(found).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0].payload).toEqual({ delivered_at: "T" });
     expect(calls[0].filters).toEqual(expect.arrayContaining([["eq", "organization_id", "org"], ["eq", "evolution_message_id", "E1"], ["in", "role", ["agent", "human_agent"]], ["is", "delivered_at", null]]));
@@ -132,5 +135,11 @@ describe("applyMessageDeliveryStatus", () => {
     const { client, calls } = recorder();
     await applyMessageDeliveryStatus(client as never, { organizationId: "org", evolutionMessageId: "E1", status: "read", at: "T" });
     expect(calls.map((c) => c.payload)).toEqual([{ read_at: "T" }, { delivered_at: "T" }]);
+  });
+
+  it("mensagem ainda sem esse id: devolve false e não atualiza nada", async () => {
+    const { client, calls } = recorder(false);
+    expect(await applyMessageDeliveryStatus(client as never, { organizationId: "org", evolutionMessageId: "E1", status: "read" })).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
