@@ -320,3 +320,37 @@ export async function findRecentAfterHoursAgentMessages(
   if (error) throw error;
   return data as Message[];
 }
+
+// Marca entrega/leitura de uma mensagem NOSSA (agent ou human_agent) pelo id do WhatsApp.
+// Só preenche campos vazios: o status nunca volta atrás (um "entregue" atrasado não
+// apaga o "lida"). Lida também implica entregue.
+// Devolve false quando a mensagem ainda não existe com esse id (o aviso do Evolution pode
+// chegar antes de o evolution_message_id ser gravado): quem chama pode tentar de novo.
+export async function applyMessageDeliveryStatus(
+  client: SupabaseClient,
+  params: { organizationId: string; evolutionMessageId: string; status: "delivered" | "read"; at?: string }
+): Promise<boolean> {
+  const at = params.at ?? new Date().toISOString();
+  const { data: found, error: findError } = await client
+    .from("messages")
+    .select("id")
+    .eq("organization_id", params.organizationId)
+    .eq("evolution_message_id", params.evolutionMessageId)
+    .in("role", ["agent", "human_agent"])
+    .limit(1);
+  if (findError) throw findError;
+  if (!found || found.length === 0) return false;
+  const fill = async (column: "delivered_at" | "read_at") => {
+    const { error } = await client
+      .from("messages")
+      .update({ [column]: at })
+      .eq("organization_id", params.organizationId)
+      .eq("evolution_message_id", params.evolutionMessageId)
+      .in("role", ["agent", "human_agent"])
+      .is(column, null);
+    if (error) throw error;
+  };
+  if (params.status === "read") await fill("read_at");
+  await fill("delivered_at");
+  return true;
+}

@@ -115,7 +115,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
       markAsRead();
     },
     onUpdate: (updatedMsg) => {
-      setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)));
+      setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m)));
     },
   });
 

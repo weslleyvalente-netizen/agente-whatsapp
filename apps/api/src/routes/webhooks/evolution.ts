@@ -26,8 +26,9 @@ import {
   findRecentAfterHoursAgentMessages,
   setMessageEvolutionId,
   stampMessageMetadata,
+  applyMessageDeliveryStatus,
 } from "@aula-agente/database";
-import { samePhoneNumber, shouldRefreshProfilePicture } from "@aula-agente/shared";
+import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
@@ -204,12 +205,42 @@ export function extractMessageContent(data: Record<string, unknown>): { content:
 
 export const isSystemJid = (jid: string) => jid === "0@s.whatsapp.net";
 
+// Esperas entre tentativas quando o aviso de entrega/leitura chega antes do id da mensagem.
+export const STATUS_RETRY_DELAYS_MS = [1500, 4000, 10000];
+
 const AFTER_HOURS_ECHO_WINDOW_MS = 15 * 60 * 1000;
 
 export default async function evolutionWebhookRoutes(app: FastifyInstance) {
   app.post("/webhooks/evolution", {
     preHandler: [webhookVerifyMiddleware],
     handler: async (request, reply) => {
+      // Status de entrega/leitura de mensagens nossas (✓✓). Best-effort: nunca devolve erro
+      // ao Evolution nem passa pelo fluxo de mensagem recebida.
+      if (isEvolutionStatusEvent(request.body)) {
+        const update = parseEvolutionStatusUpdate(request.body);
+        if (!update) return reply.status(200).send({ ok: true, skipped: "status_not_applicable" });
+        // O aviso pode chegar antes de o evolution_message_id ser gravado (o worker/eco grava
+        // depois do envio): se a mensagem ainda não existe, tenta de novo em segundo plano.
+        const log = request.log;
+        void (async () => {
+          try {
+            const instance = await getInstanceByInstanceId(getAdminClient(), update.instance);
+            for (let attempt = 0; attempt <= STATUS_RETRY_DELAYS_MS.length; attempt++) {
+              const found = await applyMessageDeliveryStatus(getAdminClient(), {
+                organizationId: instance.organization_id,
+                evolutionMessageId: update.messageId,
+                status: update.status,
+              });
+              if (found || attempt === STATUS_RETRY_DELAYS_MS.length) return;
+              await new Promise((r) => setTimeout(r, STATUS_RETRY_DELAYS_MS[attempt]));
+            }
+          } catch (err) {
+            log.warn({ err, instance: update.instance }, "Failed to record message delivery status");
+          }
+        })();
+        return reply.status(200).send({ ok: true, status: update.status });
+      }
+
       const parseResult = evolutionWebhookPayloadSchema.safeParse(request.body);
 
       if (!parseResult.success) {

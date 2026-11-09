@@ -4,22 +4,25 @@ import { chatDayKey } from "@aula-agente/shared";
 // inbox_whatsapp_layout_enabled). Só helpers puros e strings de classe —
 // os componentes decidem quando usá-los.
 
-export type MessageTick = "sent" | "failed";
+export type MessageTick = "sent" | "delivered" | "read" | "failed";
 
 interface TickInput {
   role: string;
   evolution_message_id: string | null;
   metadata: { send_failed_at?: string } | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
 }
 
 const OUTBOUND_ROLES = new Set(["agent", "human_agent"]);
 
-// Não há dado de entrega/leitura: o máximo que sabemos é que o WhatsApp
-// aceitou a mensagem (tem evolution_message_id) ou que o envio falhou.
-// Por isso só um ✓, nunca o duplo.
+// ✓ aceita pelo WhatsApp (tem evolution_message_id), ✓✓ entregue, ✓✓ azul lida,
+// ou falha de envio. Mensagens antigas (sem delivered_at/read_at) ficam em ✓.
 export function messageTick(m: TickInput): MessageTick | null {
   if (!OUTBOUND_ROLES.has(m.role)) return null;
   if (m.metadata?.send_failed_at) return "failed";
+  if (m.read_at) return "read";
+  if (m.delivered_at) return "delivered";
   if (m.evolution_message_id) return "sent";
   return null;
 }
@@ -78,6 +81,7 @@ export const WA_THEME = {
   aiText: "text-[#2563eb] dark:text-[#7db3ff]",
   unreadDot: "bg-[#25d366] dark:bg-[#00a884]",
   meta: "text-[#667781] dark:text-[#8696a0]",
+  tickRead: "text-[#53bdeb]",
   title: "text-[#111b21] dark:text-[#e9edef]",
   listItem: "hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]",
   listItemSelected: "bg-[#f0f2f5] dark:bg-[#2a3942]",

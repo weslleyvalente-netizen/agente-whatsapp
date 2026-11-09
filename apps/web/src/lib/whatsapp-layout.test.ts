@@ -16,10 +16,19 @@ describe("messageTick", () => {
     expect(messageTick({ role: "human_agent", evolution_message_id: null, metadata: { send_failed_at: "2026-11-08T10:00:00Z" } })).toBe("failed");
     expect(messageTick({ role: "agent", evolution_message_id: "ABC", metadata: { send_failed_at: "2026-11-08T10:00:00Z" } })).toBe("failed");
   });
+  it("entregue e lida: ✓✓ (lida vence entregue; falha vence tudo)", () => {
+    const base = { role: "human_agent", evolution_message_id: "ABC", metadata: null };
+    expect(messageTick({ ...base, delivered_at: "2026-11-09T10:00:00Z" })).toBe("delivered");
+    expect(messageTick({ ...base, delivered_at: "2026-11-09T10:00:00Z", read_at: "2026-11-09T10:05:00Z" })).toBe("read");
+    expect(messageTick({ ...base, read_at: "2026-11-09T10:05:00Z" })).toBe("read");
+    expect(messageTick({ ...base, delivered_at: "x", metadata: { send_failed_at: "y" } })).toBe("failed");
+    expect(messageTick({ ...base, delivered_at: null, read_at: null })).toBe("sent");
+  });
   it("contato e sistema: nada", () => {
     expect(messageTick({ role: "contact", evolution_message_id: "ABC", metadata: null })).toBeNull();
     expect(messageTick({ role: "contact", evolution_message_id: null, metadata: { send_failed_at: "x" } })).toBeNull();
     expect(messageTick({ role: "system", evolution_message_id: "ABC", metadata: null })).toBeNull();
+    expect(messageTick({ role: "contact", evolution_message_id: "ABC", metadata: null, read_at: "x" })).toBeNull();
   });
 });
 
