@@ -94,6 +94,9 @@ describe("fetchContactProfilePicture com fetch global (defaults)", () => {
     new Response(body, { status, headers });
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    m.getInstanceById.mockResolvedValue({ instance_name: "minha-instancia" });
+    m.setContactProfilePicture.mockResolvedValue(undefined);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -108,14 +111,24 @@ describe("fetchContactProfilePicture com fetch global (defaults)", () => {
     expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
   });
 
-  it("baixa com redirect:error; redirecionamento (fetch lanca) vira foto oculta", async () => {
+  it("redirecionamento 302 vira foto oculta e nao e seguido", async () => {
+    fetchMock
+      .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
+      .mockResolvedValueOnce(imageResponse(null, { location: "http://interno/x" }, 302));
+    const { db, upload } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
+    expect(fetchMock.mock.calls[1]![1]).toMatchObject({ redirect: "manual" });
+    expect(upload).not.toHaveBeenCalled();
+    expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
+  });
+
+  it("erro de rede no download: ok:false e tentativa marcada (BullMQ repete)", async () => {
     fetchMock
       .mockResolvedValueOnce(evolutionResponse({ profilePictureUrl: "https://pps.whatsapp.net/x.jpg" }))
       .mockRejectedValueOnce(new TypeError("fetch failed"));
-    const { db, upload } = makeDb();
-    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: true, stored: false });
-    expect(fetchMock.mock.calls[1]![1]).toMatchObject({ redirect: "error" });
-    expect(upload).not.toHaveBeenCalled();
+    const { db } = makeDb();
+    expect(await fetchContactProfilePicture(db, job)).toEqual({ ok: false, reason: "fetch failed" });
+    expect(m.setContactProfilePicture).toHaveBeenCalledWith(db, "ct", null);
   });
 
   it("corpo em chunks acima de 2 MB (sem content-length) e abortado", async () => {

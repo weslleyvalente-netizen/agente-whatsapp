@@ -63,15 +63,18 @@ const defaultDownloadImage = async (url: string): Promise<{ buffer: Buffer; cont
   }
   if (parsed.protocol !== "https:") return null;
 
-  let response: Response;
-  try {
-    // redirect:"error": nao segue redirecionamentos (evita sair para http/hosts internos).
-    response = await fetch(parsed, { redirect: "error", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  } catch {
+  // redirect:"manual": nao segue redirecionamentos (evita sair para http/hosts internos); 3xx = foto oculta.
+  // Erros de rede/timeout propagam: a tentativa e marcada e o BullMQ repete.
+  const response = await fetch(parsed, { redirect: "manual", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    await response.body?.cancel().catch(() => undefined);
     return null;
   }
   // 5xx: erro transitorio do servidor da imagem; lanca para marcar a tentativa e o BullMQ repetir.
-  if (response.status >= 500) throw new Error(`Profile picture download error ${response.status}`);
+  if (response.status >= 500) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Profile picture download error ${response.status}`);
+  }
   if (!response.ok) return null;
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > PROFILE_PICTURE_MAX_BYTES) return null;
