@@ -71,9 +71,9 @@ export default function SettingsPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" | "customer_nudge_enabled" | "sla_alert_escalation_enabled" | "handoff_card_enabled" | "seller_message_suggestion_enabled" | "seller_audio_enabled" = "sales_workspace_enabled") {
+  async function toggleWorkspace(enabled: boolean, flag: "sales_workspace_enabled" | "sales_low_intent_cadence_enabled" | "sales_auto_pipeline_enabled" | "sales_opportunity_freeze_enabled" | "sales_action_queue_enabled" | "sales_qualified_handoff_task_enabled" | "scheduled_ad_closure_enabled" | "silence_task_auto_retire_enabled" | "lead_distribution_enabled" | "lead_distribution_shadow_enabled" | "seller_isolation_enabled" | "ai_after_hours_pending_enabled" | "push_notifications_enabled" | "unanswered_lead_sweep_enabled" | "customer_nudge_enabled" | "sla_alert_escalation_enabled" | "handoff_card_enabled" | "seller_message_suggestion_enabled" | "seller_audio_enabled" | "inbox_whatsapp_layout_enabled" = "sales_workspace_enabled") {
     if (!currentOrg || savingWorkspace) return;
-    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled" || flag === "customer_nudge_enabled" || flag === "sla_alert_escalation_enabled" || flag === "handoff_card_enabled" || flag === "seller_message_suggestion_enabled" || flag === "seller_audio_enabled";
+    const isLead = flag.startsWith("lead_distribution") || flag === "seller_isolation_enabled" || flag === "ai_after_hours_pending_enabled" || flag === "push_notifications_enabled" || flag === "unanswered_lead_sweep_enabled" || flag === "customer_nudge_enabled" || flag === "sla_alert_escalation_enabled" || flag === "handoff_card_enabled" || flag === "seller_message_suggestion_enabled" || flag === "seller_audio_enabled" || flag === "inbox_whatsapp_layout_enabled";
     const setErr = isLead ? setLeadError : setWorkspaceError;
     setSavingWorkspace(true); setErr(null);
     try {
@@ -760,6 +760,15 @@ export default function SettingsPage() {
                 <Switch id="seller-audio" checked={currentOrg?.settings.seller_audio_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "seller_audio_enabled")} />
               </div>
               <p className="text-xs text-muted-foreground">Usa o microfone do aparelho do vendedor. O vendedor grava, ouve e só então envia. Limite de 5 minutos por áudio e 30 envios por hora por usuário. Os áudios ficam guardados por 90 dias. Recomendamos testar com um número seu antes de liberar ao time.</p>
+            </div>
+          )}
+          {isManager && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="inbox-whatsapp-layout">Layout das Conversas estilo WhatsApp Web</Label>
+                <Switch id="inbox-whatsapp-layout" checked={currentOrg?.settings.inbox_whatsapp_layout_enabled === true} disabled={savingWorkspace} onCheckedChange={v => toggleWorkspace(v, "inbox_whatsapp_layout_enabled")} />
+              </div>
+              <p className="text-xs text-muted-foreground">Layout das Conversas igual ao WhatsApp Web. Pode ser desligado a qualquer momento.</p>
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
