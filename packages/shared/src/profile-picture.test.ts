@@ -7,6 +7,7 @@ import {
   avatarColorIndex,
   buildProfilePicturePath,
   contactInitials,
+  isProfilePicturePathFor,
   shouldRefreshProfilePicture,
 } from "./profile-picture.js";
 
@@ -78,5 +79,17 @@ describe("buildProfilePicturePath", () => {
   it("monta <org>/<contato>.<ext>", () => {
     expect(buildProfilePicturePath({ organizationId: "org", contactId: "contact", extension: "jpg" })).toBe("org/contact.jpg");
     expect(buildProfilePicturePath({ organizationId: "o", contactId: "c", extension: "webp" })).toBe("o/c.webp");
+  });
+});
+
+describe("isProfilePicturePathFor", () => {
+  const ids = { organizationId: "org-1", contactId: "c-1" };
+  it("aceita jpg, png e webp do próprio contato", () => {
+    for (const ext of ["jpg", "png", "webp"]) expect(isProfilePicturePathFor(`org-1/c-1.${ext}`, ids)).toBe(true);
+  });
+  it("rejeita outro contato, outra organização, '..', extra segmento, extensão errada e nulos", () => {
+    for (const p of ["org-1/c-2.jpg", "org-2/c-1.jpg", "org-1/../org-2/c-1.jpg", "org-1/x/c-1.jpg", "../org-1/c-1.jpg", "org-1/c-1.gif", "org-1/c-1.jpg/", "org-1/c-1", "", null, undefined]) {
+      expect(isProfilePicturePathFor(p, ids)).toBe(false);
+    }
   });
 });

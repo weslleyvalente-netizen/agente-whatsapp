@@ -12,7 +12,10 @@ vi.mock("@aula-agente/database", () => ({
     storage: { from: m.storageFrom },
     from: (table: string) => ({
       select: () => ({
-        in: async () => ({ data: table === "wa_contacts" ? m.contacts.value : m.convs.value, error: null }),
+        in: () => {
+          const result = { data: table === "wa_contacts" ? m.contacts.value : m.convs.value, error: null };
+          return { limit: async () => result, then: (res: (v: typeof result) => unknown) => res(result) };
+        },
       }),
     }),
   }),
@@ -29,7 +32,7 @@ async function post(body: unknown) {
   const app = Fastify(); await app.register(profilePictureUrlsRoutes);
   const r = await app.inject({ method: "POST", url: "/contacts/profile-picture-urls", payload: body as object }); await app.close(); return r;
 }
-const contact = (id: string, org = "org-1", path: string | null = `${id}.jpg`) => ({ id, organization_id: org, profile_picture_path: path });
+const contact = (id: string, org = "org-1", path: string | null = `${org}/${id}.jpg`) => ({ id, organization_id: org, profile_picture_path: path });
 
 beforeEach(() => {
   vi.clearAllMocks(); m.role.value = "agent"; m.settings.value = { seller_isolation_enabled: true }; m.memberOrg.value = "org-1";
@@ -46,9 +49,9 @@ describe("POST /contacts/profile-picture-urls", () => {
   it("devolve link assinado (3600 s) do bucket profile-pictures", async () => {
     const r = await post({ contact_ids: [C1] });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toEqual({ urls: { [C1]: `https://signed.example/${C1}.jpg?t=1` } });
+    expect(r.json()).toEqual({ urls: { [C1]: `https://signed.example/org-1/${C1}.jpg?t=1` } });
     expect(m.storageFrom).toHaveBeenCalledWith("profile-pictures");
-    expect(m.createSignedUrls).toHaveBeenCalledWith([`${C1}.jpg`], 3600);
+    expect(m.createSignedUrls).toHaveBeenCalledWith([`org-1/${C1}.jpg`], 3600);
   });
 
   it("body inválido -> 400", async () => {
@@ -76,6 +79,18 @@ describe("POST /contacts/profile-picture-urls", () => {
     expect(m.createSignedUrls).not.toHaveBeenCalled();
   });
 
+  it("caminho forjado (de outra organização/contato) -> ausente e nunca assinado", async () => {
+    m.contacts.value = [
+      contact(C1, "org-1", `org-2/${C1}.jpg`),
+      contact(C2, "org-1", `org-1/${C1}.jpg`),
+      contact("55555555-5555-4555-8555-555555555555", "org-1", `org-1/../org-2/x.jpg`),
+    ];
+    const r = await post({ contact_ids: [C1, C2, "55555555-5555-4555-8555-555555555555"] });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ urls: {} });
+    expect(m.createSignedUrls).not.toHaveBeenCalled();
+  });
+
   it("vendedor com isolamento: conversa de outro vendedor -> ausente; própria -> presente", async () => {
     m.contacts.value = [contact(C1), contact(C2)];
     m.convs.value = [
@@ -99,10 +114,17 @@ describe("POST /contacts/profile-picture-urls", () => {
     expect(Object.keys((await post({ contact_ids: [C1] })).json().urls)).toEqual([C1]);
   });
 
+  it("leitura de conversas no teto (possível truncamento): contato sem conversa carregada -> ausente", async () => {
+    m.contacts.value = [contact(C1), contact(C2)];
+    m.convs.value = Array.from({ length: 1000 }, () => ({ contact_id: C2, organization_id: "org-1", assigned_to: MARINA }));
+    const r = await post({ contact_ids: [C1, C2] });
+    expect(Object.keys(r.json().urls)).toEqual([C2]);
+  });
+
   it("erro ao assinar um item ou o lote -> ausente, 200", async () => {
     m.contacts.value = [contact(C1), contact(C2)];
     m.createSignedUrls.mockResolvedValueOnce({
-      data: [{ path: `${C1}.jpg`, signedUrl: null, error: "x" }, { path: `${C2}.jpg`, signedUrl: "https://s/2", error: null }], error: null,
+      data: [{ path: `org-1/${C1}.jpg`, signedUrl: null, error: "x" }, { path: `org-1/${C2}.jpg`, signedUrl: "https://s/2", error: null }], error: null,
     });
     const r = await post({ contact_ids: [C1, C2] });
     expect(r.statusCode).toBe(200);

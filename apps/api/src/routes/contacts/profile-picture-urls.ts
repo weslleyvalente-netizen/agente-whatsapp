@@ -1,11 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { PROFILE_PICTURE_BUCKET, PROFILE_PICTURE_SIGNED_URL_TTL_SECONDS } from "@aula-agente/shared";
+import { PROFILE_PICTURE_BUCKET, PROFILE_PICTURE_SIGNED_URL_TTL_SECONDS, isProfilePicturePathFor } from "@aula-agente/shared";
 import { getAdminClient } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { canViewLead } from "../../lib/lead-access.js";
 
 const bodySchema = z.object({ contact_ids: z.array(z.string().uuid()).min(1).max(100) });
+
+// Teto de conversas lidas por pedido (100 contatos). Se atingir, a leitura pode estar truncada
+// (inclusive pelo limite do PostgREST) e contatos sem conversa carregada ficam de fora.
+const CONVERSATIONS_LIMIT = 1000;
 
 interface ContactRow { id: string; organization_id: string; profile_picture_path: string | null }
 interface ConversationRow { contact_id: string; organization_id: string; assigned_to: string | null }
@@ -31,7 +35,9 @@ export default async function profilePictureUrlsRoutes(app: FastifyInstance) {
         return reply.status(500).send({ error: "Falha ao carregar os contatos" });
       }
       const contacts = ((contactData ?? []) as ContactRow[]).filter((c) => {
-        if (!c.profile_picture_path) return false;
+        // O caminho vem de uma coluna que membros da org conseguem editar: só assina o caminho
+        // canônico do próprio contato (nunca o de outra organização/contato).
+        if (!isProfilePicturePathFor(c.profile_picture_path, { organizationId: c.organization_id, contactId: c.id })) return false;
         return request.user.memberships.some((mb) => mb.organization_id === c.organization_id);
       });
       if (contacts.length === 0) return reply.send({ urls: {} });
@@ -39,11 +45,13 @@ export default async function profilePictureUrlsRoutes(app: FastifyInstance) {
       const { data: convData, error: convError } = await db
         .from("conversations")
         .select("contact_id, organization_id, assigned_to")
-        .in("contact_id", contacts.map((c) => c.id));
+        .in("contact_id", contacts.map((c) => c.id))
+        .limit(CONVERSATIONS_LIMIT);
       if (convError) {
         request.log.warn({ err: convError.message }, "Failed to load conversations for profile pictures");
         return reply.status(500).send({ error: "Falha ao carregar as conversas" });
       }
+      const truncated = (convData ?? []).length >= CONVERSATIONS_LIMIT;
       const convsByContact = new Map<string, ConversationRow[]>();
       for (const conv of (convData ?? []) as ConversationRow[]) {
         const list = convsByContact.get(conv.contact_id) ?? [];
@@ -67,7 +75,7 @@ export default async function profilePictureUrlsRoutes(app: FastifyInstance) {
       for (const contact of contacts) {
         const role = request.user.memberships.find((mb) => mb.organization_id === contact.organization_id)!.role;
         const convs = convsByContact.get(contact.id) ?? [];
-        let ok = convs.length === 0;
+        let ok = convs.length === 0 && !truncated;
         for (const conv of convs) {
           if (await canView(contact.organization_id, role, conv.assigned_to)) { ok = true; break; }
         }

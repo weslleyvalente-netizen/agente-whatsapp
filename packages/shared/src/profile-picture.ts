@@ -17,6 +17,19 @@ export function buildProfilePicturePath(p: {
 }
 
 /**
+ * Verdadeiro SÓ se `path` é exatamente `<org>/<contato>.<jpg|png|webp>` do próprio contato.
+ * Barra caminhos forjados (outro contato/organização, "..", segmentos extras, outra extensão).
+ */
+export function isProfilePicturePathFor(
+  path: string | null | undefined,
+  ids: { organizationId: string; contactId: string }
+): boolean {
+  if (!path) return false;
+  const extensions = ["jpg", "png", "webp"] as const;
+  return extensions.some((extension) => path === buildProfilePicturePath({ ...ids, extension }));
+}
+
+/**
  * Decide se vale buscar a foto de perfil de novo. Telefones que não são só dígitos (ex.: "...@lid")
  * nunca são consultados. Com foto: renova após 7 dias. Sem foto: tenta de novo após 24 h.
  */
