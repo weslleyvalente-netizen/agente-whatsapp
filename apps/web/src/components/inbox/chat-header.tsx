@@ -12,7 +12,9 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import type { ConversationStatus } from "@aula-agente/shared";
-import { formatPhone } from "@/lib/utils";
+import { cn, formatPhone } from "@/lib/utils";
+import { WA_THEME } from "@/lib/whatsapp-layout";
+import { ContactAvatar } from "./contact-avatar";
 
 const STATUS_LABELS: Record<ConversationStatus, string> = {
   open: "Aberto",
@@ -26,13 +28,15 @@ const PILL_TRIGGER_CLASS =
 
 interface ChatHeaderProps {
   compact?: boolean;
+  // Layout WhatsApp (flag da organização): fundo cinza e avatar. Desligado = cabeçalho de sempre.
+  waLayout?: boolean;
   conversation: {
     id: string;
     organization_id: string;
     assigned_to: string | null;
     status: ConversationStatus;
     is_human_takeover: boolean;
-    wa_contacts: { id: string; phone: string; name: string | null; ai_disabled: boolean } | null;
+    wa_contacts: { id: string; phone: string; name: string | null; ai_disabled: boolean; profile_picture_path?: string | null } | null;
     agents?: { name: string } | null;
   };
   onStatusChange: (status: string) => void;
@@ -46,6 +50,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({
   compact = false,
+  waLayout = false,
   conversation,
   onStatusChange,
   onTakeoverToggle,
@@ -56,12 +61,23 @@ export function ChatHeader({
   onClose,
 }: ChatHeaderProps) {
   return (
-    <div className={compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4 md:py-3"}>
-      <div className={compact ? "flex min-w-0 items-baseline gap-2" : "flex min-w-0 items-center gap-1 md:block"}>
+    <div className={waLayout
+      ? cn(compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex shrink-0 flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4", WA_THEME.header, WA_THEME.divider)
+      : compact ? "flex shrink-0 flex-col gap-1.5 border-b px-3 py-2" : "flex flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between md:gap-4 md:px-4 md:py-3"}>
+      <div className={waLayout && !compact ? "flex min-w-0 items-center gap-1 md:gap-3" : compact ? "flex min-w-0 items-baseline gap-2" : "flex min-w-0 items-center gap-1 md:block"}>
         {!compact && (
           <Button variant="ghost" size="icon" className="-ml-1 size-11 shrink-0 md:hidden" onClick={onClose} aria-label="Voltar para as conversas">
             <ArrowLeft className="h-5 w-5" />
           </Button>
+        )}
+        {waLayout && !compact && conversation.wa_contacts && (
+          <ContactAvatar
+            contactId={conversation.wa_contacts.id}
+            name={conversation.wa_contacts.name}
+            phone={conversation.wa_contacts.phone}
+            picturePath={conversation.wa_contacts.profile_picture_path}
+            className="mr-2 shrink-0 md:mr-0"
+          />
         )}
         <div className={compact ? "contents" : "min-w-0"}>
         <p className={compact ? "min-w-0 truncate text-sm font-medium" : "truncate font-medium"}>

@@ -59,7 +59,7 @@ export function MessageComposer({ value, onChange, onSend, sending, disabled = f
           WA_THEME.input
         )}
       />
-      {extraActions}
+      {extraActions && <div className="flex min-h-10 shrink-0 items-center gap-2">{extraActions}</div>}
       <button
         type="button"
         onClick={onSend}
