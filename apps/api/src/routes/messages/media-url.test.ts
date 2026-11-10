@@ -4,13 +4,13 @@ import Fastify from "fastify";
 const m = vi.hoisted(() => ({
   role: { value: "agent" }, settings: { value: {} as Record<string, boolean> }, memberOrg: { value: "org-1" },
   getMessageById: vi.fn(), getConversationById: vi.fn(), getOrganizationById: vi.fn(), listSalesReps: vi.fn(),
-  clearMessageMediaStatus: vi.fn(), enqueueStoreChatMedia: vi.fn(),
+  clearMessageMediaStatus: vi.fn(), mergeMessageMetadata: vi.fn(), enqueueStoreChatMedia: vi.fn(),
   createSignedUrl: vi.fn(), from: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => ({
   getMessageById: m.getMessageById, getConversationById: m.getConversationById,
   getOrganizationById: m.getOrganizationById, listSalesReps: m.listSalesReps,
-  clearMessageMediaStatus: m.clearMessageMediaStatus,
+  clearMessageMediaStatus: m.clearMessageMediaStatus, mergeMessageMetadata: m.mergeMessageMetadata,
   getAdminClient: () => ({ storage: { from: m.from } }),
 }));
 vi.mock("../../lib/queue.js", () => ({ enqueueStoreChatMedia: m.enqueueStoreChatMedia }));
@@ -47,6 +47,7 @@ beforeEach(() => {
   m.from.mockReturnValue({ createSignedUrl: m.createSignedUrl });
   m.clearMessageMediaStatus.mockResolvedValue(undefined);
   m.enqueueStoreChatMedia.mockResolvedValue({});
+  m.mergeMessageMetadata.mockResolvedValue(undefined);
 });
 
 describe("GET /messages/:messageId/media-url", () => {
@@ -71,6 +72,29 @@ describe("GET /messages/:messageId/media-url", () => {
     expect(m.createSignedUrl).toHaveBeenLastCalledWith(`org-1/conv-1/${MSG}.jpg`, 300);
     await get("?download=1");
     expect(m.createSignedUrl).toHaveBeenLastCalledWith(`org-1/conv-1/${MSG}.jpg`, 300, { download: true });
+  });
+
+  it("vídeo: assina sem download", async () => {
+    m.getMessageById.mockResolvedValue(row({ media_type: "video", media_url: `storage:chat-media/org-1/conv-1/${MSG}.mp4`, metadata: { media: { status: "stored", mime_type: "video/mp4" } } }));
+    expect((await get()).statusCode).toBe(200);
+    expect(m.createSignedUrl).toHaveBeenCalledWith(`org-1/conv-1/${MSG}.mp4`, 300);
+  });
+
+  it("documento com download=1 e sem nome guardado -> download: true", async () => {
+    m.getMessageById.mockResolvedValue(row({ metadata: {} }));
+    await get("?download=1");
+    expect(m.createSignedUrl).toHaveBeenCalledWith(`org-1/conv-1/${MSG}.pdf`, 300, { download: true });
+  });
+
+  it("nome hostil nunca chega ao createSignedUrl", async () => {
+    m.getMessageById.mockResolvedValue(row({ metadata: { media: { status: "stored", file_name: "x&token=abc#y.pdf" } } }));
+    const r = await get();
+    expect(m.createSignedUrl).toHaveBeenCalledWith(`org-1/conv-1/${MSG}.pdf`, 300, { download: "xtoken=abcy.pdf" });
+    expect(r.json().fileName).toBe("xtoken=abcy.pdf");
+    m.getMessageById.mockResolvedValue(row({ metadata: { media: { status: "stored", file_name: "&#?" } } }));
+    const r2 = await get();
+    expect(m.createSignedUrl).toHaveBeenLastCalledWith(`org-1/conv-1/${MSG}.pdf`, 300, { download: true });
+    expect(r2.json().fileName).toBeNull();
   });
 
   it("id inválido -> 400", async () => {
@@ -157,6 +181,16 @@ describe("POST /messages/:messageId/retry-media", () => {
     expect(m.clearMessageMediaStatus).toHaveBeenCalledWith(expect.anything(), MSG);
     expect(m.enqueueStoreChatMedia).toHaveBeenCalledTimes(1);
     expect(m.enqueueStoreChatMedia).toHaveBeenCalledWith({ messageId: MSG, conversationId: "conv-1", organizationId: "org-1" }, { retry: true });
+  });
+
+  it("fila falha: restaura status failed e responde 503", async () => {
+    m.getMessageById.mockResolvedValue(failed());
+    m.enqueueStoreChatMedia.mockRejectedValue(new Error("redis down"));
+    const r = await retry();
+    expect(r.statusCode).toBe(503);
+    expect(r.json().error).toBe("Não foi possível reenviar agora. Tente de novo em instantes.");
+    expect(m.clearMessageMediaStatus).toHaveBeenCalledTimes(1);
+    expect(m.mergeMessageMetadata).toHaveBeenCalledWith(expect.anything(), MSG, { media: { status: "failed" } });
   });
 
   it("status stored -> 409 sem enfileirar", async () => {

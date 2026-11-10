@@ -77,3 +77,28 @@ export function extensionFromMime(mime: string, fileName?: string): string {
   }
   return "bin";
 }
+
+const DOWNLOAD_NAME_MAX = 120;
+
+/**
+ * Nome de arquivo vindo do cliente (WhatsApp) é hostil: vai para `&download=<nome>` da URL assinada
+ * e para o Content-Disposition. Deixa só o nome-base, sem controles nem caracteres que alteram a
+ * query/cabeçalho. Devolve null quando nada aproveitável sobra.
+ */
+export function sanitizeDownloadName(name: string | null | undefined): string | null {
+  if (typeof name !== "string") return null;
+  const base = name.slice(Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\")) + 1);
+  let clean = base
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "")
+    .replace(/["&#?%;:*<>|/\\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (clean.length > DOWNLOAD_NAME_MAX) {
+    const dot = clean.lastIndexOf(".");
+    const ext = dot > 0 && clean.length - dot <= 9 ? clean.slice(dot) : "";
+    clean = clean.slice(0, DOWNLOAD_NAME_MAX - ext.length).trimEnd() + ext;
+  }
+  if (!clean || /^\.+$/.test(clean)) return null;
+  return clean;
+}

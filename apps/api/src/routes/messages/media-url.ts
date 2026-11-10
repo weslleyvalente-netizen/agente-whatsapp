@@ -4,12 +4,14 @@ import {
   CHAT_MEDIA_SIGNED_URL_TTL_SECONDS,
   isChatMediaRefFor,
   parseChatMediaRef,
+  sanitizeDownloadName,
 } from "@aula-agente/shared";
 import {
   clearMessageMediaStatus,
   getAdminClient,
   getConversationById,
   getMessageById,
+  mergeMessageMetadata,
 } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { canViewLead } from "../../lib/lead-access.js";
@@ -95,7 +97,7 @@ export default async function messageMediaUrlRoutes(app: FastifyInstance) {
 
       const query = querySchema.safeParse(request.query);
       const wantsDownload = (query.success && query.data.download === "1") || message.media_type === "document";
-      const fileName = message.metadata?.media?.file_name ?? null;
+      const fileName = sanitizeDownloadName(message.metadata?.media?.file_name);
       const mimeType = message.metadata?.media?.mime_type ?? null;
 
       const db = getAdminClient();
@@ -123,11 +125,20 @@ export default async function messageMediaUrlRoutes(app: FastifyInstance) {
         return reply.status(409).send({ error: "Media cannot be retried" });
       }
 
-      await clearMessageMediaStatus(getAdminClient(), message.id);
-      await enqueueStoreChatMedia(
-        { messageId: message.id, conversationId: message.conversation_id, organizationId: message.organization_id },
-        { retry: true }
-      );
+      // Limpa antes de enfileirar (o worker pode gravar "stored" logo em seguida); se a fila falhar,
+      // devolve o status "failed" para o botão de nova tentativa não sumir.
+      const db = getAdminClient();
+      await clearMessageMediaStatus(db, message.id);
+      try {
+        await enqueueStoreChatMedia(
+          { messageId: message.id, conversationId: message.conversation_id, organizationId: message.organization_id },
+          { retry: true }
+        );
+      } catch (err) {
+        request.log.warn({ messageId: message.id, err: err instanceof Error ? err.message : String(err) }, "Failed to enqueue chat media retry");
+        await mergeMessageMetadata(db, message.id, { media: { status: "failed" } });
+        return reply.status(503).send({ error: "Não foi possível reenviar agora. Tente de novo em instantes." });
+      }
       return reply.send({ ok: true });
     },
   });

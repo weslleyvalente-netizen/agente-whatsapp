@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  sanitizeDownloadName,
   CHAT_MEDIA_BUCKET,
   CHAT_MEDIA_REF_PREFIX,
   CHAT_MEDIA_MAX_BYTES,
@@ -58,5 +59,35 @@ describe("extensionFromMime", () => {
   it("desconhecido vira bin", () => {
     expect(extensionFromMime("application/octet-stream")).toBe("bin");
     expect(extensionFromMime("application/octet-stream", "semext")).toBe("bin");
+  });
+});
+
+describe("sanitizeDownloadName", () => {
+  it("remove caracteres que alteram a query ou o cabeçalho", () => {
+    expect(sanitizeDownloadName("x&token=abc.pdf")).toBe("xtoken=abc.pdf");
+    expect(sanitizeDownloadName("a#b.pdf")).toBe("ab.pdf");
+    expect(sanitizeDownloadName('a"b?c%d;e:f*g<h>i|j.pdf')).toBe("abcdefghij.pdf");
+  });
+  it("fica só com o nome-base", () => {
+    expect(sanitizeDownloadName("../../etc/passwd")).toBe("passwd");
+    expect(sanitizeDownloadName("C:\\temp\\x.pdf")).toBe("x.pdf");
+  });
+  it("remove CR/LF e controles", () => {
+    const r = sanitizeDownloadName("evil\r\nSet-Cookie: a=b.pdf");
+    expect(r).toBe("evilSet-Cookie a=b.pdf");
+    expect(r).not.toMatch(/[\r\n]/);
+    expect(sanitizeDownloadName("a\u0000b\u007f.pdf")).toBe("ab.pdf");
+  });
+  it("limita a 120 caracteres mantendo a extensão", () => {
+    const r = sanitizeDownloadName("a".repeat(300) + ".pdf")!;
+    expect(r.length).toBe(120);
+    expect(r.endsWith(".pdf")).toBe(true);
+  });
+  it("vazio, só espaços ou só pontos -> null", () => {
+    for (const v of ["", "   ", null, undefined, "..", "&#?"]) expect(sanitizeDownloadName(v)).toBeNull();
+  });
+  it("preserva acentos e travessão e colapsa espaços", () => {
+    expect(sanitizeDownloadName("Proposta João – nº 12.pdf")).toBe("Proposta João – nº 12.pdf");
+    expect(sanitizeDownloadName("  a   b.pdf ")).toBe("a b.pdf");
   });
 });
