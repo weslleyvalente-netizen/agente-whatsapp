@@ -64,4 +64,53 @@ describe("detectAttachmentFormat", () => {
     expect(detectAttachmentFormat(new Uint8Array(0), "a.png")).toBeNull();
     expect(detectAttachmentFormat(bytes(0x61, 0, 0x62), "a.txt")).toBeNull();
   });
+  it("não deixa extensões do protótipo de Object casarem", () => {
+    for (const name of ["a.constructor", "a.__proto__", "a.toString", "a.hasOwnProperty", "a.valueOf"]) {
+      expect(detectAttachmentFormat(ZIP, name)).toBeNull();
+      expect(detectAttachmentFormat(OLE, name)).toBeNull();
+      expect(detectAttachmentFormat(text("oi"), name)).toBeNull();
+    }
+  });
+
+  it("devolve mime sempre string nos casos aceitos", () => {
+    const cases: Array<[Uint8Array, string]> = [
+      [JPEG, "a.jpg"], [PNG, "a.png"], [WEBP, "a.webp"], [MP4, "a.mp4"], [MOV, "a.mov"], [PDF, "a.pdf"],
+      [ZIP, "a.docx"], [OLE, "a.xls"], [text("x"), "a.txt"], [text("x"), "a.csv"],
+    ];
+    for (const [b, n] of cases) {
+      const r = detectAttachmentFormat(b, n);
+      expect(r).not.toBeNull();
+      expect(typeof r?.mime).toBe("string");
+      expect(typeof r?.extension).toBe("string");
+    }
+  });
+
+  it("rejeita buffers truncados", () => {
+    expect(detectAttachmentFormat(bytes(0xff, 0xd8), "a.jpg")).toBeNull();
+    expect(detectAttachmentFormat(text("RIFF"), "a.webp")).toBeNull();
+    expect(detectAttachmentFormat(cat(text("RIFF"), bytes(0, 0, 0, 0), text("WAVE")), "a.webp")).toBeNull();
+    expect(detectAttachmentFormat(cat(bytes(0, 0, 0, 0x14), text("ftyp")), "a.mp4")).toBeNull();
+  });
+
+  it("rejeita marca qt com .mp4 e texto/pdf-dupla-extensão", () => {
+    expect(detectAttachmentFormat(MOV, "v.mp4")).toBeNull();
+    expect(detectAttachmentFormat(text("texto puro"), "a.pdf")).toBeNull();
+    expect(detectAttachmentFormat(PDF, "a.pdf.exe")).toBeNull();
+  });
+
+  it("só examina os primeiros 8 KB em busca de NUL", () => {
+    const late = new Uint8Array(9000).fill(0x61);
+    late[8192] = 0;
+    expect(detectAttachmentFormat(late, "a.txt")?.extension).toBe("txt");
+    const early = new Uint8Array(9000).fill(0x61);
+    early[100] = 0;
+    expect(detectAttachmentFormat(early, "a.txt")).toBeNull();
+  });
+
+  it("rejeita nomes sem nome-base ou extensão vazia", () => {
+    expect(detectAttachmentFormat(text("x"), "a.")).toBeNull();
+    expect(detectAttachmentFormat(text("x"), ".")).toBeNull();
+    expect(detectAttachmentFormat(text("x"), ".txt")).toBeNull();
+    expect(detectAttachmentFormat(PDF, ".pdf")).toBeNull();
+  });
 });

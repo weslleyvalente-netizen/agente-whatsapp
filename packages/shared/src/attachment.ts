@@ -9,22 +9,22 @@ export interface AttachmentFormat {
 
 const TEXT_SNIFF_BYTES = 8 * 1024;
 
-const OFFICE_ZIP_MIMES: Record<string, string> = {
+const OFFICE_ZIP_MIMES = new Map<string, string>(Object.entries({
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-};
+}));
 
-const OLE_MIMES: Record<string, string> = {
+const OLE_MIMES = new Map<string, string>(Object.entries({
   doc: "application/msword",
   xls: "application/vnd.ms-excel",
   ppt: "application/vnd.ms-powerpoint",
-};
+}));
 
-const TEXT_MIMES: Record<string, string> = {
+const TEXT_MIMES = new Map<string, string>(Object.entries({
   txt: "text/plain",
   csv: "text/csv",
-};
+}));
 
 function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean {
   if (bytes.length < offset + signature.length) return false;
@@ -33,7 +33,8 @@ function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean
 
 function fileExtension(fileName: string): string {
   const dot = fileName.lastIndexOf(".");
-  if (dot < 0) return "";
+  // Sem nome-base (".txt") ou sem extensão ("a.") não é um nome de arquivo válido.
+  if (dot <= 0) return "";
   return fileName.slice(dot + 1).trim().toLowerCase();
 }
 
@@ -58,7 +59,8 @@ export function detectAttachmentFormat(buffer: Uint8Array, fileName: string): At
   }
 
   // Vídeo: caixa "ftyp" no offset 4; marca "qt  " é QuickTime
-  if (startsWith(buffer, [0x66, 0x74, 0x79, 0x70], 4)) {
+  // Caixa ftyp completa: tamanho(4) + "ftyp"(4) + marca(4)
+  if (buffer.length >= 12 && startsWith(buffer, [0x66, 0x74, 0x79, 0x70], 4)) {
     if (startsWith(buffer, [0x71, 0x74, 0x20, 0x20], 8)) {
       return ext === "mov" ? { kind: "video", mime: "video/quicktime", extension: "mov" } : null;
     }
@@ -70,15 +72,15 @@ export function detectAttachmentFormat(buffer: Uint8Array, fileName: string): At
     return ext === "pdf" ? { kind: "document", mime: "application/pdf", extension: "pdf" } : null;
   }
   if (startsWith(buffer, [0x50, 0x4b, 0x03, 0x04])) {
-    const mime = OFFICE_ZIP_MIMES[ext];
+    const mime = OFFICE_ZIP_MIMES.get(ext);
     return mime ? { kind: "document", mime, extension: ext } : null;
   }
   if (startsWith(buffer, [0xd0, 0xcf, 0x11, 0xe0])) {
-    const mime = OLE_MIMES[ext];
+    const mime = OLE_MIMES.get(ext);
     return mime ? { kind: "document", mime, extension: ext } : null;
   }
 
-  const textMime = TEXT_MIMES[ext];
+  const textMime = TEXT_MIMES.get(ext);
   if (textMime) {
     const limit = Math.min(buffer.length, TEXT_SNIFF_BYTES);
     for (let i = 0; i < limit; i++) {
