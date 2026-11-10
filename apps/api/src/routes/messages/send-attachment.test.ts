@@ -45,7 +45,7 @@ function mp4(size: number): Buffer {
   return b;
 }
 
-function multipart(opts: { file: Buffer | null; fileName?: string; mime?: string; conversationId?: string; caption?: string }) {
+function multipart(opts: { file: Buffer | null; fileName?: string; mime?: string; conversationId?: string; caption?: string; extraFields?: string[]; fileField?: string }) {
   const b = "----testboundary";
   const chunks: Buffer[] = [];
   if (opts.conversationId !== undefined) {
@@ -54,9 +54,12 @@ function multipart(opts: { file: Buffer | null; fileName?: string; mime?: string
   if (opts.caption !== undefined) {
     chunks.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${opts.caption}\r\n`));
   }
+  for (const [i, v] of (opts.extraFields ?? []).entries()) {
+    chunks.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="extra${i}"\r\n\r\n${v}\r\n`));
+  }
   if (opts.file) {
     chunks.push(
-      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file"; filename="${opts.fileName ?? "foto.jpg"}"\r\nContent-Type: ${opts.mime ?? "image/jpeg"}\r\n\r\n`),
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="${opts.fileField ?? "file"}"; filename="${opts.fileName ?? "foto.jpg"}"\r\nContent-Type: ${opts.mime ?? "image/jpeg"}\r\n\r\n`),
       opts.file,
       Buffer.from("\r\n")
     );
@@ -202,6 +205,40 @@ describe("POST /messages/send-attachment", () => {
     expect(res.statusCode).toBe(429);
     expect(res.json().error).toMatch(/Limite de anexos por hora/);
     expect(sendPanelMessage).toHaveBeenCalledTimes(60);
+  });
+
+  it("legenda de 1000 'ç' (2000 bytes) é aceita", async () => {
+    const res = await post(await buildApp(), { file: JPEG, caption: "ç".repeat(1000) });
+    expect(res.statusCode).toBe(200);
+    expect(sendPanelMessage.mock.calls[0][0].attachment.caption).toBe("ç".repeat(1000));
+  });
+
+  it("campo caption de 20 KB -> 4xx em português, sem 500 e sem consumir vaga", async () => {
+    const app = await buildApp();
+    const res = await post(app, { file: JPEG, caption: "a".repeat(20 * 1024) });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    expect(res.json().error).toMatch(/[a-zç]/i);
+    expect(sendPanelMessage).not.toHaveBeenCalled();
+    for (let i = 0; i < 60; i++) expect((await post(app, { file: JPEG })).statusCode).toBe(200);
+  });
+
+  it("3 campos de texto antes do arquivo -> 4xx e sem consumir vaga", async () => {
+    const app = await buildApp();
+    const res = await post(app, { file: JPEG, caption: "oi", extraFields: ["x"] });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    expect(sendPanelMessage).not.toHaveBeenCalled();
+    for (let i = 0; i < 60; i++) expect((await post(app, { file: JPEG })).statusCode).toBe(200);
+  });
+
+  it("arquivo em campo que não se chama 'file' -> 400 e sem consumir vaga", async () => {
+    const app = await buildApp();
+    const res = await post(app, { file: JPEG, fileField: "outro" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "Nenhum arquivo enviado." });
+    expect(sendPanelMessage).not.toHaveBeenCalled();
+    for (let i = 0; i < 60; i++) expect((await post(app, { file: JPEG })).statusCode).toBe(200);
   });
 
   it("arquivo antes do conversation_id -> 400", async () => {

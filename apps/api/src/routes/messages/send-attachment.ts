@@ -19,7 +19,7 @@ function fieldValue(fields: Record<string, unknown> | undefined, name: string): 
 
 // O cliente envia conversation_id (e caption) ANTES do arquivo no multipart.
 export default async function messageSendAttachmentRoutes(app: FastifyInstance) {
-  app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
+  app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 2, fieldSize: 8 * 1024, parts: 3 } });
 
   app.post("/messages/send-attachment", {
     preHandler: [authMiddleware],
@@ -27,13 +27,32 @@ export default async function messageSendAttachmentRoutes(app: FastifyInstance) 
       // Lê as partes em ordem: só valem os campos que chegam ANTES do arquivo.
       const fields: Record<string, { value: unknown }> = {};
       let data: MultipartFile | undefined;
-      for await (const part of request.parts()) {
-        if (part.type === "file") {
-          data = part;
-          break;
+      let wrongFileField = false;
+      try {
+        for await (const part of request.parts()) {
+          if (part.type === "file") {
+            // Só o campo "file" é o anexo; qualquer outro arquivo é descartado.
+            if (part.fieldname !== "file") {
+              part.file.resume();
+              wrongFileField = true;
+              break;
+            }
+            data = part;
+            break;
+          }
+          if (part.fieldnameTruncated || part.valueTruncated) {
+            return reply.status(413).send({ error: "Campo do formulário grande demais." });
+          }
+          fields[part.fieldname] = { value: part.value };
         }
-        fields[part.fieldname] = { value: part.value };
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code === "FST_FIELDS_LIMIT" || code === "FST_PARTS_LIMIT" || code === "FST_FILES_LIMIT") {
+          return reply.status(400).send({ error: "Formulário inválido: campos demais." });
+        }
+        throw err;
       }
+      if (wrongFileField) return reply.status(400).send({ error: "Nenhum arquivo enviado." });
       if (!data) return reply.status(400).send({ error: "Nenhum arquivo enviado." });
 
       // Libera o stream sempre que respondemos sem ler o arquivo.
