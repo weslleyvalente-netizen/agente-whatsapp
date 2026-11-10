@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Message } from "@aula-agente/shared";
+import type { Message, MessageMetadata } from "@aula-agente/shared";
 import { brazilPhoneVariants } from "@aula-agente/shared";
 import { fetchAllPages } from "../pagination.js";
 
@@ -209,6 +209,31 @@ export async function setMessageMediaUrlIfEmpty(client: SupabaseClient, id: stri
     .select("id");
   if (error) throw error;
   return (data?.length ?? 0) > 0;
+}
+
+// Mescla um patch em messages.metadata (lê, mescla `media` por cima, grava).
+export async function mergeMessageMetadata(client: SupabaseClient, id: string, patch: Partial<MessageMetadata>): Promise<void> {
+  const { data, error } = await client.from("messages").select("metadata").eq("id", id).maybeSingle();
+  if (error) throw error;
+  const current = (data?.metadata ?? {}) as MessageMetadata;
+  const metadata: MessageMetadata = {
+    ...current,
+    ...patch,
+    ...(current.media || patch.media ? { media: { ...current.media, ...patch.media } as NonNullable<MessageMetadata["media"]> } : {}),
+  };
+  const { error: updateError } = await client.from("messages").update({ metadata }).eq("id", id);
+  if (updateError) throw updateError;
+}
+
+// Zera media.status (fica ausente) mantendo o resto de metadata; usado ao pedir nova tentativa da mídia.
+export async function clearMessageMediaStatus(client: SupabaseClient, id: string): Promise<void> {
+  const { data, error } = await client.from("messages").select("metadata").eq("id", id).maybeSingle();
+  if (error) throw error;
+  const current = (data?.metadata ?? {}) as MessageMetadata;
+  if (!current.media || !("status" in current.media)) return;
+  const { status: _status, ...media } = current.media;
+  const { error: updateError } = await client.from("messages").update({ metadata: { ...current, media } }).eq("id", id);
+  if (updateError) throw updateError;
 }
 
 // Mensagens com áudio guardado mais antigas que o corte (retenção).

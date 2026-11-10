@@ -4,6 +4,8 @@ import { WA_THEME, messageTick } from "@/lib/whatsapp-layout";
 import type { Message } from "@aula-agente/shared";
 import { hasStoredAudio } from "@/lib/customer-audio";
 import { CustomerAudioPlayer } from "./customer-audio-player";
+import { ChatMedia } from "./chat-media";
+import { chatMediaState, isMediaPlaceholder } from "@/lib/chat-media";
 
 interface MessageBubbleProps {
   message: Message;
@@ -23,6 +25,20 @@ interface MessageBubbleProps {
 // real content would be misleading, and silently showing nothing would
 // hide that a reply might be missing context.
 const UNTRANSCRIBED_AUDIO_PLACEHOLDER = "[audio]";
+
+// Imagem pública (enviada pela IA) segue no <img>; referência storage: vai pelo <ChatMedia>.
+function hasPublicImage(message: Message): boolean {
+  return message.media_type === "image" && Boolean(message.media_url) && !message.media_url!.startsWith("storage:");
+}
+
+// Mídia guardada sem legenda: o texto é só o placeholder do webhook (ou o próprio
+// nome do arquivo, no caso de documento), então o cartão/miniatura já diz tudo.
+function hideMediaText(message: Message): boolean {
+  if (chatMediaState(message) !== "stored") return false;
+  if (isMediaPlaceholder(message.content)) return true;
+  const fileName = message.metadata?.media?.file_name;
+  return message.media_type === "document" && Boolean(fileName) && message.content.trim() === fileName;
+}
 
 export function MessageBubble({ message, waLayout = false, tail = false }: MessageBubbleProps) {
   const isContact = message.role === "contact";
@@ -73,12 +89,17 @@ export function MessageBubble({ message, waLayout = false, tail = false }: Messa
             {isAgent ? "Agente" : "Atendente"}
           </p>
         )}
-        {message.media_type === "image" && message.media_url && (
+        {hasPublicImage(message) && (
           <img
-            src={message.media_url}
+            src={message.media_url!}
             alt="Foto enviada"
             className="mb-1 h-auto max-w-full rounded-md"
           />
+        )}
+        {chatMediaState(message) !== "none" && (
+          <div className="mb-1">
+            <ChatMedia message={message} />
+          </div>
         )}
         {(isContact || isHuman) && hasStoredAudio(message) && (
           <div className="mb-1">
@@ -90,7 +111,7 @@ export function MessageBubble({ message, waLayout = false, tail = false }: Messa
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio sem transcrição — conteúdo não verificado
           </p>
-        ) : hideHumanAudioPlaceholder ? null : showHumanAudioLabel ? (
+        ) : hideHumanAudioPlaceholder || hideMediaText(message) ? null : showHumanAudioLabel ? (
           <p className="flex items-center gap-1.5 text-sm italic opacity-70">
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio
@@ -168,8 +189,13 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
             {isAgent ? "IA" : "Atendente"}
           </p>
         )}
-        {message.media_type === "image" && message.media_url && (
-          <img src={message.media_url} alt="Foto enviada" className="mb-1 h-auto max-w-full rounded-md" />
+        {hasPublicImage(message) && (
+          <img src={message.media_url!} alt="Foto enviada" className="mb-1 h-auto max-w-full rounded-md" />
+        )}
+        {chatMediaState(message) !== "none" && (
+          <div className="mb-1">
+            <ChatMedia message={message} />
+          </div>
         )}
         {(isContact || isHuman) && hasStoredAudio(message) && (
           <div className="mb-1">
@@ -181,7 +207,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio sem transcrição — conteúdo não verificado
           </p>
-        ) : hideHumanAudioPlaceholder ? null : showHumanAudioLabel ? (
+        ) : hideHumanAudioPlaceholder || hideMediaText(message) ? null : showHumanAudioLabel ? (
           <p className={cn("flex items-center gap-1.5 text-sm italic", WA_THEME.meta)}>
             <Mic className="h-3.5 w-3.5 shrink-0" />
             Áudio

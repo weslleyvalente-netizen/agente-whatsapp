@@ -27,14 +27,16 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
   applyMessageDeliveryStatus,
+  mergeMessageMetadata,
 } from "@aula-agente/database";
+import { CHAT_MEDIA_MAX_BYTES, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
-import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueFetchProfilePicture } from "../../lib/queue.js";
+import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
@@ -180,6 +182,15 @@ function extractByType(
         content: (message.documentMessage as Record<string, string>)?.fileName || "[documento]",
         mediaType: "document",
       };
+    case "documentWithCaptionMessage": {
+      // Documento enviado COM legenda chega embrulhado pelo Baileys.
+      const inner = (message.documentWithCaptionMessage as { message?: { documentMessage?: Record<string, string> } } | undefined)
+        ?.message?.documentMessage;
+      return {
+        content: inner?.caption || inner?.fileName || "[documento]",
+        mediaType: "document",
+      };
+    }
     case "stickerMessage":
       return { content: "[sticker]", mediaType: "sticker" };
     case "locationMessage": {
@@ -192,6 +203,20 @@ function extractByType(
     default:
       return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
   }
+}
+
+function extractDeclaredMedia(
+  message: Record<string, unknown> | undefined,
+  messageType: string
+): { sizeBytes: number | null; fileName?: string; mimeType?: string } {
+  const wrapped = (message?.documentWithCaptionMessage as { message?: { documentMessage?: unknown } } | undefined)?.message?.documentMessage;
+  const node = (messageType === "documentWithCaptionMessage" ? wrapped : message?.[messageType]) as Record<string, unknown> | undefined;
+  if (!node || typeof node !== "object") return { sizeBytes: null };
+  return {
+    sizeBytes: parseDeclaredFileLength(node.fileLength),
+    ...(typeof node.fileName === "string" && node.fileName ? { fileName: node.fileName } : {}),
+    ...(typeof node.mimetype === "string" && node.mimetype ? { mimeType: node.mimetype } : {}),
+  };
 }
 
 export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null; durationSeconds?: number } {
@@ -548,6 +573,46 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           });
         } catch (err) {
           request.log.error({ err, messageId: message.id }, "Failed to enqueue customer audio capture");
+        }
+      }
+
+      // Imagem/vídeo/documento do cliente: baixa e guarda no Storage privado
+      // (visualização nas conversas). Mesmas regras do áudio: depois do retorno
+      // de contato ignorado e da dedupe, independe de takeover/IA, best-effort.
+      if (mediaType === "image" || mediaType === "video" || mediaType === "document") {
+        // O schema zod descarta campos desconhecidos (fileLength etc.): lê do corpo bruto.
+        const rawData = (request.body as { data?: { message?: Record<string, unknown>; messageType?: string } } | undefined)?.data;
+        const declared = extractDeclaredMedia(rawData?.message, String(rawData?.messageType ?? ""));
+        if (declared.sizeBytes !== null && declared.sizeBytes > CHAT_MEDIA_MAX_BYTES[mediaType]) {
+          // Tamanho anunciado acima do limite: nem baixa (evita montar centenas de MB em base64).
+          try {
+            await mergeMessageMetadata(getAdminClient(), message.id, {
+              media: {
+                status: "too_large",
+                size_bytes: declared.sizeBytes,
+                ...(declared.fileName ? { file_name: declared.fileName } : {}),
+                ...(declared.mimeType ? { mime_type: declared.mimeType } : {}),
+              },
+            });
+          } catch (err) {
+            request.log.error({ err, messageId: message.id }, "Failed to mark oversized customer media");
+          }
+        } else {
+          try {
+            await enqueueStoreChatMedia({
+              messageId: message.id,
+              conversationId: conversation.id,
+              organizationId,
+            });
+          } catch (err) {
+            request.log.error({ err, messageId: message.id }, "Failed to enqueue customer media capture");
+            // Sem fila não há nova tentativa automática: deixa o botão "Tentar de novo" disponível.
+            try {
+              await mergeMessageMetadata(getAdminClient(), message.id, { media: { status: "failed" } });
+            } catch (markErr) {
+              request.log.error({ err: markErr, messageId: message.id }, "Failed to mark media capture as failed");
+            }
+          }
         }
       }
 

@@ -10,6 +10,8 @@ import type {
   StoreCustomerAudioJobData,
   FetchProfilePictureJobData,
   CustomerAudioRetentionJobData,
+  StoreChatMediaJobData,
+  ChatMediaRetentionJobData,
 } from "./types.js";
 
 let processMessageQueue: Queue<ProcessMessageJobData> | null = null;
@@ -147,4 +149,30 @@ export function getCustomerAudioRetentionQueue() {
     });
   }
   return customerAudioRetentionQueue;
+}
+
+let storeChatMediaQueue: Queue<StoreChatMediaJobData> | null = null;
+export function getStoreChatMediaQueue() {
+  if (!storeChatMediaQueue) {
+    storeChatMediaQueue = new Queue<StoreChatMediaJobData>(QUEUE_NAMES.STORE_CHAT_MEDIA, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 4,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 2000 },
+      },
+    });
+  }
+  return storeChatMediaQueue;
+}
+
+let chatMediaRetentionQueue: Queue<ChatMediaRetentionJobData> | null = null;
+export function getChatMediaRetentionQueue() {
+  if (!chatMediaRetentionQueue) {
+    chatMediaRetentionQueue = new Queue<ChatMediaRetentionJobData>(QUEUE_NAMES.CHAT_MEDIA_RETENTION, {
+      connection: getRedisConnection(),
+    });
+  }
+  return chatMediaRetentionQueue;
 }

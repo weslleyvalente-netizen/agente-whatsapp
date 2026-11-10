@@ -12,6 +12,8 @@ export {
   getStoreCustomerAudioQueue,
   getFetchProfilePictureQueue,
   getCustomerAudioRetentionQueue,
+  getStoreChatMediaQueue,
+  getChatMediaRetentionQueue,
 } from "./queues.js";
 export type {
   ProcessMessageJobData,
@@ -22,4 +24,6 @@ export type {
   StoreCustomerAudioJobData,
   FetchProfilePictureJobData,
   CustomerAudioRetentionJobData,
+  StoreChatMediaJobData,
+  ChatMediaRetentionJobData,
 } from "./types.js";
