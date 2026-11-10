@@ -58,3 +58,4 @@ export * from "./evolution-status.js";
 export * from "./chat-media.js";
 
 export * from "./sla-nudge.js";
+export * from "./attachment.js";
