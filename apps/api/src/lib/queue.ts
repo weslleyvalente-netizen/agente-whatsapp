@@ -3,6 +3,7 @@ import {
   getProcessMessageQueue,
   getSendMessageQueue,
   getStoreCustomerAudioQueue,
+  getStoreChatMediaQueue,
   type FetchProfilePictureJobData,
 } from "@aula-agente/queue";
 
@@ -68,6 +69,16 @@ export function enqueueStoreCustomerAudio(data: {
   organizationId: string;
 }) {
   return getStoreCustomerAudioQueue().add("store-customer-audio", data, { jobId: data.messageId });
+}
+
+// Guarda imagem/vídeo/documento do cliente no Storage privado. jobId = messageId (webhook repetido não duplica);
+// retry:true usa outro jobId para reenfileirar depois de uma falha final.
+export function enqueueStoreChatMedia(
+  data: { messageId: string; conversationId: string; organizationId: string },
+  opts?: { retry?: boolean }
+) {
+  const jobId = opts?.retry ? `${data.messageId}-retry-${Date.now()}` : data.messageId;
+  return getStoreChatMediaQueue().add("store-chat-media", data, { jobId });
 }
 
 // Busca a foto de perfil do contato na Evolution. jobId = contactId: no máximo um job por contato na fila.

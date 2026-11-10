@@ -188,6 +188,8 @@ export const QUEUE_NAMES = {
   STALE_CONVERSATION_FOLLOWUP: "stale-conversation-followup",
   STORE_CUSTOMER_AUDIO: "store-customer-audio",
   CUSTOMER_AUDIO_RETENTION: "customer-audio-retention",
+  STORE_CHAT_MEDIA: "store-chat-media",
+  CHAT_MEDIA_RETENTION: "chat-media-retention",
   UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
   CUSTOMER_NUDGE: "customer-nudge",
   FETCH_PROFILE_PICTURE: "fetch-profile-picture",

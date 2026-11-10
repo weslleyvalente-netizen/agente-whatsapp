@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setMessageEvolutionId, updateMessageContent, getRecentMessages, applyMessageDeliveryStatus } from "./messages.js";
+import { setMessageEvolutionId, updateMessageContent, getRecentMessages, applyMessageDeliveryStatus, mergeMessageMetadata } from "./messages.js";
 
 // Minimal fake covering .from("messages").update(...).eq("id", ...).select().single(),
 // same style as the inline fakes used elsewhere in this package's query tests.
@@ -141,5 +141,46 @@ describe("applyMessageDeliveryStatus", () => {
     const { client, calls } = recorder(false);
     expect(await applyMessageDeliveryStatus(client as never, { organizationId: "org", evolutionMessageId: "E1", status: "read" })).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("mergeMessageMetadata", () => {
+  function fake(current: Record<string, unknown> | null) {
+    const updates: Array<{ metadata: Record<string, unknown>; id: unknown }> = [];
+    const client = {
+      from() {
+        let payload: { metadata: Record<string, unknown> } | undefined;
+        const b = {
+          select: () => b,
+          update(p: { metadata: Record<string, unknown> }) { payload = p; return b; },
+          eq(_c: string, id: unknown) {
+            if (payload) { updates.push({ ...payload, id }); return Promise.resolve({ error: null }); }
+            return b;
+          },
+          maybeSingle: async () => ({ data: current === null ? null : { metadata: current }, error: null }),
+        };
+        return b;
+      },
+    };
+    return { client, updates };
+  }
+
+  it("troca só o status de media e mantém file_name/mime_type", async () => {
+    const { client, updates } = fake({ media: { status: "stored", file_name: "a.pdf", mime_type: "application/pdf" } });
+    await mergeMessageMetadata(client as never, "m1", { media: { status: "failed" } });
+    expect(updates[0].metadata).toEqual({ media: { status: "failed", file_name: "a.pdf", mime_type: "application/pdf" } });
+    expect(updates[0].id).toBe("m1");
+  });
+
+  it("patch sem media deixa o media existente intacto", async () => {
+    const { client, updates } = fake({ media: { status: "stored", file_name: "a.pdf" } });
+    await mergeMessageMetadata(client as never, "m1", { model: "x" });
+    expect(updates[0].metadata).toEqual({ media: { status: "stored", file_name: "a.pdf" }, model: "x" });
+  });
+
+  it("preserva as outras chaves de metadata", async () => {
+    const { client, updates } = fake({ ai_processed_at: "T", task_id: "t1" });
+    await mergeMessageMetadata(client as never, "m1", { media: { status: "stored", size_bytes: 3 } });
+    expect(updates[0].metadata).toEqual({ ai_processed_at: "T", task_id: "t1", media: { status: "stored", size_bytes: 3 } });
   });
 });

@@ -8,6 +8,7 @@ import { startLeadSlaWorker } from "./workers/lead-sla.js";
 import { startUnansweredLeadSweepWorker } from "./workers/unanswered-lead-sweep.js";
 import { startCustomerNudgeWorker } from "./workers/customer-nudge.js";
 import { startPushNotificationsWorker } from "./workers/push-notifications.js";
+import { startStoreChatMediaWorker, startChatMediaRetentionWorker } from "./workers/store-chat-media.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
 import { startFetchProfilePictureWorker } from "./workers/fetch-profile-picture.js";
 
@@ -28,6 +29,8 @@ async function main() {
     startCustomerNudgeWorker(),
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
+    startStoreChatMediaWorker(),
+    startChatMediaRetentionWorker(),
     startFetchProfilePictureWorker(),
   ];
 
