@@ -16,6 +16,7 @@ import { useOrganization } from "@/providers/organization-provider";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { AudioRecorderBar } from "./audio-recorder-bar";
 import { MessageComposer } from "./message-composer";
+import { AttachmentComposer, type DroppedFiles } from "./attachment-composer";
 import { useWhatsappLayout } from "@/hooks/use-whatsapp-layout";
 import { WA_THEME, startsBubbleGroup } from "@/lib/whatsapp-layout";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,9 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioEnabled = currentOrg?.settings.seller_audio_enabled === true && recorder.supported;
   const recorderBusy = audioEnabled && recorder.phase !== "idle";
+  const attachmentsEnabled = currentOrg?.settings.seller_attachments_enabled === true;
+  const [dropped, setDropped] = useState<DroppedFiles | null>(null);
+  const [dragging, setDragging] = useState(false);
   const discardRef = useRef(recorder.discard);
   discardRef.current = recorder.discard;
   // Conversa dona da gravação atual, fixada no início da gravação.
@@ -246,6 +250,53 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
     />
   ) : null;
 
+  // Só reage a arraste que carrega arquivos.
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!attachmentsEnabled || !hasFiles(e)) return;
+    e.preventDefault();
+    setDragging(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    if (!attachmentsEnabled || !hasFiles(e)) return;
+    e.preventDefault();
+    setDragging(false);
+    if (recorderBusy) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) setDropped({ id: Date.now(), files });
+  };
+
+  // Com anexos ligados, soltar arquivo fora da área de mensagens não pode abrir o arquivo no navegador.
+  useEffect(() => {
+    if (!attachmentsEnabled) return;
+    const isFileDrag = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const block = (e: DragEvent) => { if (isFileDrag(e)) e.preventDefault(); };
+    const end = () => setDragging(false);
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    window.addEventListener("drop", end);
+    window.addEventListener("dragend", end);
+    return () => {
+      window.removeEventListener("dragover", block);
+      window.removeEventListener("drop", block);
+      window.removeEventListener("drop", end);
+      window.removeEventListener("dragend", end);
+      setDragging(false);
+    };
+  }, [attachmentsEnabled]);
+
+  const attachment = attachmentsEnabled ? (
+    <AttachmentComposer
+      conversationId={conversationId}
+      disabled={sending || recorderBusy}
+      dropped={dropped}
+      onSent={() => { fetchConversation(); onConversationChanged?.(); }}
+    />
+  ) : null;
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -276,7 +327,12 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
         )}
 
         {/* Messages */}
-        <div ref={scrollRef} className={waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4"}>
+        <div ref={scrollRef} onDragOver={attachmentsEnabled ? handleDragOver : undefined} onDragLeave={attachmentsEnabled ? handleDragLeave : undefined} onDrop={attachmentsEnabled ? handleDrop : undefined} className={cn(dragging && "ring-2 ring-inset ring-[#00a884]", waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4")}>
+          {dragging && (
+            <div className="sticky top-0 z-20 flex justify-center py-1" aria-hidden>
+              <span className="rounded-lg bg-[#00a884] px-3 py-1.5 text-xs font-medium text-white shadow-sm">Solte o arquivo para enviar</span>
+            </div>
+          )}
           {messages.map((msg, i) => {
             // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
             const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);
@@ -322,7 +378,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
                 onSend={handleSend}
                 sending={sending}
                 placeholder="Digite uma mensagem"
-                extraActions={recorderBar ?? undefined}
+                extraActions={attachment || recorderBar ? <>{attachment}{recorderBar}</> : undefined}
               />
             )}
           </div>
@@ -330,6 +386,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
           <div className="relative flex items-center gap-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:p-4">
             {!recorderBusy && (
               <>
+                {attachment}
                 <Input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
