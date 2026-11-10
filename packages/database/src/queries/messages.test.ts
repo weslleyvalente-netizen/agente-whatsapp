@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { setMessageEvolutionId, updateMessageContent, getRecentMessages, applyMessageDeliveryStatus, mergeMessageMetadata } from "./messages.js";
+import { setMessageEvolutionId, updateMessageContent, getRecentMessages, applyMessageDeliveryStatus, mergeMessageMetadata, clearMessageMediaStatus } from "./messages.js";
 
 // Minimal fake covering .from("messages").update(...).eq("id", ...).select().single(),
 // same style as the inline fakes used elsewhere in this package's query tests.
@@ -182,5 +182,41 @@ describe("mergeMessageMetadata", () => {
     const { client, updates } = fake({ ai_processed_at: "T", task_id: "t1" });
     await mergeMessageMetadata(client as never, "m1", { media: { status: "stored", size_bytes: 3 } });
     expect(updates[0].metadata).toEqual({ ai_processed_at: "T", task_id: "t1", media: { status: "stored", size_bytes: 3 } });
+  });
+});
+
+describe("clearMessageMediaStatus", () => {
+  function fake(current: Record<string, unknown> | null) {
+    const updates: Array<{ metadata: Record<string, unknown>; id: unknown }> = [];
+    const client = {
+      from() {
+        let payload: { metadata: Record<string, unknown> } | undefined;
+        const b = {
+          select: () => b,
+          update(p: { metadata: Record<string, unknown> }) { payload = p; return b; },
+          eq(_c: string, id: unknown) {
+            if (payload) { updates.push({ ...payload, id }); return Promise.resolve({ error: null }); }
+            return b;
+          },
+          maybeSingle: async () => ({ data: current === null ? null : { metadata: current }, error: null }),
+        };
+        return b;
+      },
+    };
+    return { client, updates };
+  }
+
+  it("remove só media.status e mantém o resto", async () => {
+    const { client, updates } = fake({ task_id: "t1", media: { status: "failed", file_name: "a.pdf", mime_type: "application/pdf" } });
+    await clearMessageMediaStatus(client as never, "m1");
+    expect(updates[0].metadata).toEqual({ task_id: "t1", media: { file_name: "a.pdf", mime_type: "application/pdf" } });
+    expect("status" in (updates[0].metadata.media as object)).toBe(false);
+    expect(updates[0].id).toBe("m1");
+  });
+
+  it("sem media não grava nada", async () => {
+    const { client, updates } = fake({ task_id: "t1" });
+    await clearMessageMediaStatus(client as never, "m1");
+    expect(updates).toHaveLength(0);
   });
 });
