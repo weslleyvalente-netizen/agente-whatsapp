@@ -90,14 +90,15 @@ export function sanitizeDownloadName(name: string | null | undefined): string | 
   const base = name.slice(Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\")) + 1);
   let clean = base
     // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, "")
     .replace(/["&#?%;:*<>|/\\]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (clean.length > DOWNLOAD_NAME_MAX) {
+  const chars = Array.from(clean);
+  if (chars.length > DOWNLOAD_NAME_MAX) {
     const dot = clean.lastIndexOf(".");
-    const ext = dot > 0 && clean.length - dot <= 9 ? clean.slice(dot) : "";
-    clean = clean.slice(0, DOWNLOAD_NAME_MAX - ext.length).trimEnd() + ext;
+    const ext = dot > 0 && clean.length - dot <= 9 ? Array.from(clean.slice(dot)) : [];
+    clean = (chars.slice(0, DOWNLOAD_NAME_MAX - ext.length).join("").trimEnd()) + ext.join("");
   }
   if (!clean || /^\.+$/.test(clean)) return null;
   return clean;

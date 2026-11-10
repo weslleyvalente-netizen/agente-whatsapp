@@ -90,4 +90,17 @@ describe("sanitizeDownloadName", () => {
     expect(sanitizeDownloadName("Proposta João – nº 12.pdf")).toBe("Proposta João – nº 12.pdf");
     expect(sanitizeDownloadName("  a   b.pdf ")).toBe("a b.pdf");
   });
+  it("remove bidi, invisíveis, zero-width e soft hyphen", () => {
+    expect(sanitizeDownloadName("invoice\u202Efdp.exe")).toBe("invoicefdp.exe");
+    expect(sanitizeDownloadName("a\u200Bb\u200Fc\u2066d\u2069e\u2060f\uFEFFg\u00ADh.pdf")).toBe("abcdefgh.pdf");
+  });
+  it("não corta par substituto de emoji no limite de 120", () => {
+    const r = sanitizeDownloadName("a".repeat(119) + "😀".repeat(5) + ".pdf")!;
+    expect(r.endsWith(".pdf")).toBe(true);
+    expect(Array.from(r).length).toBeLessThanOrEqual(120);
+    expect(r).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    const r2 = sanitizeDownloadName("a".repeat(118) + "😀".repeat(5))!;
+    expect(r2).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(Array.from(r2).length).toBe(120);
+  });
 });
