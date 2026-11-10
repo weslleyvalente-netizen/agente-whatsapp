@@ -34,7 +34,7 @@ import { ensureConversation } from "../../services/conversation.service.js";
 import { saveMessage } from "../../services/message.service.js";
 import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.service.js";
 import { handleConversationTakeover } from "../../services/task.service.js";
-import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueFetchProfilePicture } from "../../lib/queue.js";
+import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
@@ -548,6 +548,21 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
           });
         } catch (err) {
           request.log.error({ err, messageId: message.id }, "Failed to enqueue customer audio capture");
+        }
+      }
+
+      // Imagem/vídeo/documento do cliente: baixa e guarda no Storage privado
+      // (visualização nas conversas). Mesmas regras do áudio: depois do retorno
+      // de contato ignorado e da dedupe, independe de takeover/IA, best-effort.
+      if (mediaType === "image" || mediaType === "video" || mediaType === "document") {
+        try {
+          await enqueueStoreChatMedia({
+            messageId: message.id,
+            conversationId: conversation.id,
+            organizationId,
+          });
+        } catch (err) {
+          request.log.error({ err, messageId: message.id }, "Failed to enqueue customer media capture");
         }
       }
 
