@@ -5,7 +5,7 @@ import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
 import type { LeadAssignment, SalesRep, SlaAlert } from "@aula-agente/shared";
 import { SlaAlertsSection } from "./sla-alerts-section";
-import { nudgedAtLabel, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
+import { nudgedAtLabel, nudgeNotDeliveredMessage, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
 
 const REASONS: Record<string, string> = {
   no_available_rep: "Nenhum vendedor disponível", all_reps_sla_breached: "Todos estouraram o SLA", invalid_existing_owner: "Dono atual inválido",
@@ -61,7 +61,7 @@ export function ExceptionsPanel() {
     try {
       const r = await apiFetch(`/organizations/${currentOrg.id}/lead-assignments/${id}/nudge`, { method: "POST" }) as { status: string; nudgedAt?: string };
       if (r.status === "sent" && r.nudgedAt) setNudged(n => ({ ...n, [id]: nudgedAtLabel(r.nudgedAt!) }));
-      else setNotice({ kind: "error", text: "O vendedor não tem notificações ativadas" });
+      else setNotice({ kind: "error", text: nudgeNotDeliveredMessage(r.status) });
     } catch (err) { setNotice({ kind: "error", text: (err as Error).message }); }
     finally { setNudgeBusy(b => ({ ...b, [id]: false })); }
   };

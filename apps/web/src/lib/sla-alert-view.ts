@@ -1,4 +1,4 @@
-import { contactDisplayName, funnelConversationHref, overdueLabel, type SalesRep, type SlaAlert } from "@aula-agente/shared";
+import { contactDisplayName, funnelConversationHref, overdueLabel, SLA_NUDGE_COOLDOWN_MINUTES, type SalesRep, type SlaAlert } from "@aula-agente/shared";
 
 export interface SlaAlertRow { id: string; client: string; repName: string; overdue: string; href: string }
 
@@ -18,7 +18,7 @@ export function nudgedAtLabel(iso: string): string {
   return `Cutucado às ${new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })}`;
 }
 
-export interface NudgeAllResult { repId: string; repName: string; count: number; status: "sent" | "rate_limited" | "no_device" | "no_user"; retryAfterMinutes?: number }
+export interface NudgeAllResult { repId: string; repName: string; count: number; status: "sent" | "rate_limited" | "no_device" | "failed" | "no_user"; retryAfterMinutes?: number }
 
 /** Resumo do "Cutucar todos" em uma frase. */
 export function summarizeNudgeAll(results: NudgeAllResult[]): string {
@@ -27,10 +27,17 @@ export function summarizeNudgeAll(results: NudgeAllResult[]): string {
   const parts: string[] = [];
   if (sent.length) parts.push(`Aviso enviado para ${sent.join(", ")}`);
   const limited = results.filter((r) => r.status === "rate_limited");
-  if (limited.length) parts.push(`${limited.map((r) => r.repName).join(", ")}: já cutucado(s) há menos de 2 h`);
+  if (limited.length) parts.push(`${limited.map((r) => r.repName).join(", ")}: já cutucado(s) há menos de ${SLA_NUDGE_COOLDOWN_MINUTES / 60} h`);
   const noDevice = results.filter((r) => r.status === "no_device");
   if (noDevice.length) parts.push(`${noDevice.map((r) => r.repName).join(", ")}: sem notificações ativadas`);
+  const failed = results.filter((r) => r.status === "failed");
+  if (failed.length) parts.push(`${failed.map((r) => r.repName).join(", ")}: não foi possível entregar o aviso agora`);
   const noUser = results.filter((r) => r.status === "no_user");
   if (noUser.length) parts.push(`${noUser.map((r) => r.repName).join(", ")}: sem usuário vinculado`);
   return parts.join(". ") + ".";
+}
+
+/** Mensagem do painel quando o toque individual não foi enviado (resposta 200 com status diferente de "sent"). */
+export function nudgeNotDeliveredMessage(status: string): string {
+  return status === "failed" ? "Não foi possível entregar o aviso agora" : "O vendedor não tem notificações ativadas";
 }

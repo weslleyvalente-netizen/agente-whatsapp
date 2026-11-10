@@ -3,7 +3,7 @@ const m = vi.hoisted(() => ({
   assignmentOrg: { value: "org" as string | null },
   getAdminClient: vi.fn(() => ({ from: () => { const c: any = { select: () => c, eq: () => c, maybeSingle: async () => ({ data: m.assignmentOrg.value ? { organization_id: m.assignmentOrg.value } : null, error: null }) }; return c; } })), getOrganizationById: vi.fn(), getSalesRepByUser: vi.fn(), listSalesReps: vi.fn(),
   setRepAvailability: vi.fn(), acceptAssignment: vi.fn(), listOpenExceptions: vi.fn(), manualAssignLead: vi.fn(),
-  listAssignmentsForContact: vi.fn(), listSlaAlerts: vi.fn(), listContactsByIds: vi.fn(), getAssignmentForNudge: vi.fn(), getLastNudgeAt: vi.fn(), recordNudge: vi.fn(), sendPushToUser: vi.fn(), isPushConfigured: vi.fn(), computeSlaDueAt: vi.fn(() => new Date("2026-10-05T12:15:00Z")),
+  listAssignmentsForContact: vi.fn(), listSlaAlerts: vi.fn(), listContactsByIds: vi.fn(), getAssignmentForNudge: vi.fn(), getLastNudgeAt: vi.fn(), recordNudge: vi.fn(), sendPushToUser: vi.fn(), isPushConfigured: vi.fn(), claimPushDedupe: vi.fn(), releasePushDedupe: vi.fn(), computeSlaDueAt: vi.fn(() => new Date("2026-10-05T12:15:00Z")),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
@@ -185,6 +185,7 @@ describe("Cutucar vendedor (gestor)", () => {
     m.listContactsByIds.mockResolvedValue([{ id: "c1", name: "Ana Souza", phone: "5511" }]);
     m.isPushConfigured.mockReturnValue(true);
     m.getLastNudgeAt.mockResolvedValue(null);
+    m.claimPushDedupe.mockResolvedValue(true); m.releasePushDedupe.mockResolvedValue(undefined); m.recordNudge.mockResolvedValue(undefined);
     m.sendPushToUser.mockResolvedValue({ sent: 1, removed: 0, failed: 0 });
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -232,10 +233,39 @@ describe("Cutucar vendedor (gestor)", () => {
     const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
     expect(res.json()).toEqual({ status: "sent", delivered: 1, nudgedAt: NOW.toISOString() });
     expect(m.sendPushToUser).toHaveBeenCalledWith(expect.anything(), "ru1", {
-      title: "Cliente esperando resposta", body: "Marina, responda Ana Souza: sem resposta há 2 h",
+      title: "Cliente esperando resposta", body: "Marina, responda Ana Souza: prazo vencido há 2 h",
       url: `/opportunities?conversa=${CONV}`, tag: `nudge-${AID}`,
     }, { organizationId: ORG });
     expect(m.recordNudge).toHaveBeenCalledWith(expect.anything(), `nudge:${AID}:`, "ru1", NOW);
+  });
+  it("pedido simultâneo (trava já tomada): 429 sem enviar; a trava é liberada ao terminar", async () => {
+    m.claimPushDedupe.mockResolvedValue(false);
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
+    expect(res.statusCode).toBe(429);
+    expect(m.sendPushToUser).not.toHaveBeenCalled();
+    m.claimPushDedupe.mockResolvedValue(true);
+    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(200);
+    expect(m.claimPushDedupe).toHaveBeenLastCalledWith(expect.anything(), `nudge-lock:nudge:${AID}:`, "ru1");
+    expect(m.releasePushDedupe).toHaveBeenCalledWith(expect.anything(), [`nudge-lock:nudge:${AID}:`]);
+  });
+  it("trava liberada também quando o envio lança ou cai no 429", async () => {
+    m.sendPushToUser.mockRejectedValue(new Error("x"));
+    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(500);
+    expect(m.releasePushDedupe).toHaveBeenCalledTimes(1);
+    m.getLastNudgeAt.mockResolvedValue(new Date(NOW.getTime() - 60_000));
+    await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
+    expect(m.releasePushDedupe).toHaveBeenCalledTimes(2);
+  });
+  it("falha de envio (endpoints com erro) é distinguida de sem aparelho e não registra", async () => {
+    m.sendPushToUser.mockResolvedValue({ sent: 0, removed: 0, failed: 2 });
+    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).json()).toEqual({ status: "failed", delivered: 0 });
+    expect(m.recordNudge).not.toHaveBeenCalled();
+  });
+  it("falha ao gravar o toque depois de enviar: continua 200 sent", async () => {
+    m.recordNudge.mockRejectedValue(new Error("db"));
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe("sent");
   });
   it("sem aparelho: devolve no_device e NÃO registra o toque", async () => {
     m.sendPushToUser.mockResolvedValue({ sent: 0, removed: 0, failed: 0 });
@@ -254,6 +284,7 @@ describe("Cutucar todos (gestor)", () => {
     vi.useFakeTimers(); vi.setSystemTime(NOW);
     m.isPushConfigured.mockReturnValue(true);
     m.getLastNudgeAt.mockResolvedValue(null);
+    m.claimPushDedupe.mockResolvedValue(true); m.releasePushDedupe.mockResolvedValue(undefined); m.recordNudge.mockResolvedValue(undefined);
     m.sendPushToUser.mockResolvedValue({ sent: 1, removed: 0, failed: 0 });
     m.listSalesReps.mockResolvedValue([
       { id: "r1", user_id: "ru1", display_name: "Marina" }, { id: "r2", user_id: "ru2", display_name: "Marcio" }, { id: "r3", user_id: null, display_name: "Sem User" },
@@ -279,6 +310,12 @@ describe("Cutucar todos (gestor)", () => {
     }, { organizationId: ORG });
     expect(m.sendPushToUser.mock.calls[1][2].body).toBe("Marcio, 1 cliente esperando resposta: Cliente a");
     expect(m.recordNudge).toHaveBeenCalledWith(expect.anything(), "nudge-rep:r1:", "ru1", NOW);
+  });
+  it("falha de envio num vendedor aparece como failed e os demais seguem", async () => {
+    m.listSlaAlerts.mockResolvedValue([alert("1", "r1", "ca"), alert("2", "r2", "cb")]);
+    m.sendPushToUser.mockResolvedValueOnce({ sent: 0, removed: 0, failed: 1 }).mockResolvedValueOnce({ sent: 1, removed: 0, failed: 0 });
+    const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
+    expect(res.json().results.map((r: any) => r.status)).toEqual(["failed", "sent"]);
   });
   it("resultado por vendedor: rate_limited, no_device e no_user", async () => {
     m.listSlaAlerts.mockResolvedValue([alert("1", "r1", "ca"), alert("2", "r2", "cb"), alert("3", "r3", "cc")]);
