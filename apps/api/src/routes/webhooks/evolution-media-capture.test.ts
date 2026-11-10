@@ -32,12 +32,15 @@ const key = { remoteJid: "5511999990000@s.whatsapp.net", fromMe: false, id: "evo
 const image = { ...base, data: { key, message: { imageMessage: { caption: "foto" } }, messageType: "imageMessage" } };
 const video = { ...base, data: { key, message: { videoMessage: {} }, messageType: "videoMessage" } };
 const doc = { ...base, data: { key, message: { documentMessage: { fileName: "a.pdf" } }, messageType: "documentMessage" } };
+const wrappedDoc = { ...base, data: { key, message: { documentWithCaptionMessage: { message: { documentMessage: { caption: "contrato", fileName: "a.pdf" } } } }, messageType: "documentWithCaptionMessage" } };
+const wrappedDocNoCaption = { ...base, data: { key, message: { documentWithCaptionMessage: { message: { documentMessage: { fileName: "b.pdf" } } } }, messageType: "documentWithCaptionMessage" } };
+const fromMeImage = { ...image, data: { ...image.data, key: { ...key, fromMe: true } } };
 const text = { ...base, data: { key, message: { conversation: "oi" }, messageType: "conversation" } };
 const expected = { messageId: "msg-1", conversationId: "conv-1", organizationId: "org-1" };
 
 async function post(payload: unknown) {
   const app = Fastify(); await app.register(evolutionWebhookRoutes);
-  const r = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: payload as any }); await app.close(); return r;
+  const r = await app.inject({ method: "POST", url: "/webhooks/evolution", payload: payload as Record<string, unknown> }); await app.close(); return r;
 }
 
 beforeEach(() => {
@@ -78,7 +81,9 @@ describe("webhook: captura de mídia do cliente", () => {
 
   it("não enfileira para contato ignorado (no_store e minimal_record)", async () => {
     m.getIgnoredContact.mockResolvedValue({ retention_mode: "no_store" }); await post(image);
+    expect(m.saveMessage).not.toHaveBeenCalled();
     m.getIgnoredContact.mockResolvedValue({ retention_mode: "minimal_record" }); await post(image);
+    expect(m.saveMessage).toHaveBeenCalledTimes(1);
     expect(m.enqueueStoreChatMedia).not.toHaveBeenCalled();
   });
 
@@ -88,5 +93,28 @@ describe("webhook: captura de mídia do cliente", () => {
     const r = await post(image);
     expect(r.json()).toMatchObject({ skipped: "duplicate" });
     expect(m.enqueueStoreChatMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("documento com legenda (documentWithCaptionMessage) é salvo como document e enfileirado uma vez", async () => {
+    await post(wrappedDoc);
+    expect(m.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ mediaType: "document", content: "contrato" }));
+    expect(m.enqueueStoreChatMedia).toHaveBeenCalledTimes(1);
+    expect(m.enqueueStoreChatMedia).toHaveBeenCalledWith(expected);
+  });
+
+  it("documento com legenda sem caption usa o nome do arquivo", async () => {
+    await post(wrappedDocNoCaption);
+    expect(m.saveMessage).toHaveBeenCalledWith(expect.objectContaining({ mediaType: "document", content: "b.pdf" }));
+  });
+
+  it("documento com legenda de contato no_store não enfileira", async () => {
+    m.getIgnoredContact.mockResolvedValue({ retention_mode: "no_store" });
+    await post(wrappedDoc);
+    expect(m.enqueueStoreChatMedia).not.toHaveBeenCalled();
+  });
+
+  it("imagem enviada por nós (fromMe) não enfileira", async () => {
+    await post(fromMeImage);
+    expect(m.enqueueStoreChatMedia).not.toHaveBeenCalled();
   });
 });

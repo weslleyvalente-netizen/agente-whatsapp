@@ -180,6 +180,15 @@ function extractByType(
         content: (message.documentMessage as Record<string, string>)?.fileName || "[documento]",
         mediaType: "document",
       };
+    case "documentWithCaptionMessage": {
+      // Documento enviado COM legenda chega embrulhado pelo Baileys.
+      const inner = (message.documentWithCaptionMessage as { message?: { documentMessage?: Record<string, string> } } | undefined)
+        ?.message?.documentMessage;
+      return {
+        content: inner?.caption || inner?.fileName || "[documento]",
+        mediaType: "document",
+      };
+    }
     case "stickerMessage":
       return { content: "[sticker]", mediaType: "sticker" };
     case "locationMessage": {
