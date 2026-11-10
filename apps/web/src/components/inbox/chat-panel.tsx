@@ -252,10 +252,12 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
   // Só reage a arraste que carrega arquivos.
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  // Composer travado (envio de texto em andamento ou gravando áudio): não promete o envio, só impede o navegador de abrir o arquivo.
+  const attachBlocked = sending || recorderBusy;
   const handleDragOver = (e: React.DragEvent) => {
     if (!attachmentsEnabled || !hasFiles(e)) return;
     e.preventDefault();
-    setDragging(true);
+    setDragging(!attachBlocked);
   };
   const handleDragLeave = (e: React.DragEvent) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
@@ -264,7 +266,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
     if (!attachmentsEnabled || !hasFiles(e)) return;
     e.preventDefault();
     setDragging(false);
-    if (recorderBusy) return;
+    if (attachBlocked) return;
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) setDropped({ id: Date.now(), files });
   };
@@ -291,8 +293,9 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
   const attachment = attachmentsEnabled ? (
     <AttachmentComposer
       conversationId={conversationId}
-      disabled={sending || recorderBusy}
+      disabled={attachBlocked}
       dropped={dropped}
+      onConsumed={() => setDropped(null)}
       onSent={() => { fetchConversation(); onConversationChanged?.(); }}
     />
   ) : null;
@@ -306,7 +309,7 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
 
   return (
     <div className="flex h-full w-full">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", attachmentsEnabled && "relative")}>
         {conversation && (
           <ChatHeader
             compact={compact}
@@ -326,13 +329,13 @@ export function ChatPanel({ conversationId, onClose, onConversationChanged, comp
           />
         )}
 
+        {dragging && (
+          <div className="pointer-events-none absolute inset-x-0 top-16 z-20 flex justify-center" aria-hidden>
+            <span className="rounded-lg bg-[#00a884] px-3 py-1.5 text-xs font-medium text-white shadow-sm">Solte o arquivo para enviar</span>
+          </div>
+        )}
         {/* Messages */}
         <div ref={scrollRef} onDragOver={attachmentsEnabled ? handleDragOver : undefined} onDragLeave={attachmentsEnabled ? handleDragLeave : undefined} onDrop={attachmentsEnabled ? handleDrop : undefined} className={cn(dragging && "ring-2 ring-inset ring-[#00a884]", waLayout ? cn("min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 md:px-[5%] xl:px-[7%]", WA_THEME.chatBg) : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3 md:p-4")}>
-          {dragging && (
-            <div className="sticky top-0 z-20 flex justify-center py-1" aria-hidden>
-              <span className="rounded-lg bg-[#00a884] px-3 py-1.5 text-xs font-medium text-white shadow-sm">Solte o arquivo para enviar</span>
-            </div>
-          )}
           {messages.map((msg, i) => {
             // Separador de dia, como no WhatsApp: aparece quando o dia da mensagem muda em relação à anterior.
             const newDay = i === 0 || chatDayKey(messages[i - 1].created_at) !== chatDayKey(msg.created_at);

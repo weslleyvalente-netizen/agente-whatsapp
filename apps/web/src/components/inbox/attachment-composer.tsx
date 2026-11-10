@@ -8,6 +8,7 @@ import {
   ATTACHMENT_CAPTION_MAX,
   DOCUMENT_ACCEPT,
   IMAGE_VIDEO_ACCEPT,
+  attachmentErrorMessage,
   firstFileOf,
   validateAttachmentFile,
 } from "@/lib/attachment-picker";
@@ -27,6 +28,8 @@ interface AttachmentComposerProps {
   disabled?: boolean;
   onSent: () => void;
   dropped?: DroppedFiles | null;
+  // Chamado logo depois de abrir o arquivo solto: o pai limpa o estado e o arraste nunca reabre.
+  onConsumed?: () => void;
 }
 
 // Nome só para exibição: sem caminho, sem caracteres de controle/direção, tamanho limitado.
@@ -38,62 +41,71 @@ function safeDisplayName(name: string): string {
 
 // Clipe + diálogo de pré-visualização com legenda. Invisível sem a chave
 // seller_attachments_enabled da organização.
-export function AttachmentComposer({ conversationId, disabled = false, onSent, dropped = null }: AttachmentComposerProps) {
+export function AttachmentComposer({ conversationId, disabled = false, onSent, dropped = null, onConsumed }: AttachmentComposerProps) {
   const { currentOrg } = useOrganization();
   const enabled = currentOrg?.settings.seller_attachments_enabled === true;
 
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [selected, setSelected] = useState<{ file: File; previewUrl: string | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const file = selected?.file ?? null;
+  const previewUrl = selected?.previewUrl ?? null;
   const validation = file ? validateAttachmentFile({ name: file.name, size: file.size, type: file.type }) : null;
   const kind = validation && validation.ok ? validation.kind : null;
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Miniatura/player por object URL; revogada ao trocar o arquivo ou fechar.
-  useEffect(() => {
-    if (!file || (kind !== "image" && kind !== "video")) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file, kind]);
+  // URL da miniatura/player criada ao escolher o arquivo e revogada ao trocar/fechar,
+  // então nenhum <img>/<video> aponta para uma URL já revogada.
+  const urlRef = useRef<string | null>(null);
+  const conversationRef = useRef(conversationId);
+  conversationRef.current = conversationId;
+  const revokePreview = () => {
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    urlRef.current = null;
+  };
+  useEffect(() => revokePreview, []);
 
   const open = (files: ArrayLike<File>) => {
     const { file: first, multiple } = firstFileOf(files);
     if (!first || sending) return;
-    setFile(first);
-    setCaption("");
+    revokePreview();
+    const v = validateAttachmentFile({ name: first.name, size: first.size, type: first.type });
+    const url = v.ok && (v.kind === "image" || v.kind === "video") ? URL.createObjectURL(first) : null;
+    urlRef.current = url;
+    setSelected({ file: first, previewUrl: url });
     setError(null);
     setNotice(multiple ? "Envie um arquivo por vez." : null);
   };
 
-  const close = () => {
-    if (sending) return;
-    setFile(null);
+  const reset = () => {
+    revokePreview();
+    setSelected(null);
     setCaption("");
     setError(null);
     setNotice(null);
   };
 
-  // Arquivo solto na área de mensagens.
-  useEffect(() => {
-    if (dropped && enabled && !disabled) open(dropped.files);
-  }, [dropped?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const close = () => {
+    if (sending) return;
+    reset();
+  };
 
   // Troca de conversa: descarta o que estava pendente.
   useEffect(() => {
-    setFile(null);
-    setCaption("");
-    setError(null);
-    setNotice(null);
-  }, [conversationId]);
+    reset();
+    setSending(false);
+  }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Arquivo solto na área de mensagens.
+  useEffect(() => {
+    if (!dropped) return;
+    if (enabled && !disabled) open(dropped.files);
+    onConsumed?.();
+  }, [dropped?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!enabled) return null;
 
@@ -105,6 +117,7 @@ export function AttachmentComposer({ conversationId, disabled = false, onSent, d
 
   const send = async () => {
     if (!file || !validation || !validation.ok || sending) return;
+    const sentFor = conversationId;
     setSending(true);
     setError(null);
     try {
@@ -115,13 +128,14 @@ export function AttachmentComposer({ conversationId, disabled = false, onSent, d
       if (text) form.append("caption", text);
       form.append("file", file, file.name);
       await apiFetch("/messages/send-attachment", { method: "POST", body: form });
+      // Resposta de uma conversa que já não está na tela: ignora (o estado foi zerado na troca).
+      if (conversationRef.current !== sentFor) return;
       setSending(false);
-      setFile(null);
-      setCaption("");
-      setNotice(null);
+      reset();
       onSent();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao enviar o anexo");
+      if (conversationRef.current !== sentFor) return;
+      setError(attachmentErrorMessage(err));
       setSending(false);
     }
   };

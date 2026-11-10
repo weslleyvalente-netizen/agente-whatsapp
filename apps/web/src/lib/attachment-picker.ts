@@ -31,3 +31,10 @@ export function validateAttachmentFile(f: { name: string; size: number; type: st
 export function firstFileOf<T>(files: ArrayLike<T>): { file: T | null; multiple: boolean } {
   return { file: files.length > 0 ? files[0] : null, multiple: files.length > 1 };
 }
+
+// Mensagem da API é mostrada como veio; falha de rede (fetch rejeita com TypeError) vira texto em português.
+export function attachmentErrorMessage(err: unknown): string {
+  if (err instanceof TypeError) return "Sem conexão. Tente de novo.";
+  if (err instanceof Error && err.message) return err.message;
+  return "Erro ao enviar o anexo";
+}
