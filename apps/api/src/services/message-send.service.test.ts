@@ -54,7 +54,7 @@ import { trackFirstHumanMessage } from "./lead-human-message.js";
 vi.mock("./task.service.js", () => ({ handleConversationTakeover }));
 vi.mock("../lib/queue.js", () => ({ enqueueSendMessage }));
 
-import { sendPanelMessage, SellerAudioSendError } from "./message-send.service.js";
+import { sendPanelMessage, SellerAudioSendError, SellerAttachmentSendError } from "./message-send.service.js";
 
 const baseConversation = {
   id: "conv-1",
@@ -259,6 +259,91 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
       setMessageMediaUrlIfEmpty.mockResolvedValueOnce(false);
       await expect(sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio })).rejects.toThrow();
       expect(updateMessageContent).toHaveBeenCalled();
+      expect(enqueueSendMessage).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
+  });
+
+  describe("com anexo do vendedor", () => {
+    const attachment = {
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 1, 2]),
+      kind: "image" as "image" | "video" | "document",
+      mime: "image/jpeg",
+      extension: "jpg",
+      fileName: "foto.jpg",
+    };
+    const REF = "storage:chat-media/org-1/conv-1/msg-1.jpg";
+    const send = (a: Partial<typeof attachment> & { caption?: string } = {}, conv = baseConversation) =>
+      sendPanelMessage({ conversation: conv, content: "ignorado", actorUserId: "user-1", attachment: { ...attachment, ...a } });
+
+    it("salva, sobe em chat-media, grava media_url e enfileira com os campos do anexo e attempts 1", async () => {
+      await send({ caption: "Segue a foto" });
+      expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+        content: "Segue a foto", mediaType: "image", role: "human_agent",
+        metadata: { source: "seller_attachment", media: { status: "stored", file_name: "foto.jpg", mime_type: "image/jpeg", size_bytes: 5 } },
+      }));
+      expect(fakeDb.storage.from).toHaveBeenCalledWith("chat-media");
+      expect(upload).toHaveBeenCalledWith("org-1/conv-1/msg-1.jpg", attachment.buffer, { contentType: "image/jpeg", upsert: false });
+      expect(setMessageMediaUrlIfEmpty).toHaveBeenCalledWith(fakeDb, "msg-1", REF);
+      expect(enqueueSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: "msg-1", content: "Segue a foto", storedMediaRef: REF,
+          mediaFileName: "foto.jpg", mediaMime: "image/jpeg", mediaKind: "image",
+        }),
+        { attempts: 1 }
+      );
+      expect(upload.mock.invocationCallOrder[0]).toBeLessThan(enqueueSendMessage.mock.invocationCallOrder[0]);
+    });
+
+    it("sem legenda: [imagem], [video] ou o nome do arquivo", async () => {
+      await send();
+      expect(saveMessage).toHaveBeenLastCalledWith(expect.objectContaining({ content: "[imagem]" }));
+      await send({ kind: "video", mime: "video/mp4", extension: "mp4", fileName: "v.mp4" });
+      expect(saveMessage).toHaveBeenLastCalledWith(expect.objectContaining({ content: "[video]", mediaType: "video" }));
+      await send({ kind: "document", mime: "application/pdf", extension: "pdf", fileName: "proposta.pdf" });
+      expect(saveMessage).toHaveBeenLastCalledWith(expect.objectContaining({ content: "proposta.pdf", mediaType: "document" }));
+    });
+
+    it("takeover e handoff idênticos ao envio de texto", async () => {
+      await send();
+      expect(updateConversation).toHaveBeenCalledWith(fakeDb, "conv-1", expect.objectContaining({ is_human_takeover: true, assigned_to: "user-1" }));
+      expect(handleConversationTakeover).toHaveBeenCalledWith(fakeDb, "org-1", "conv-1", "user-1");
+      expect(createHandoffEvent).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ trigger_type: "painel_manual" }));
+      expect(recordHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ authorUserId: "user-1", via: "panel" }));
+    });
+
+    it("não refaz takeover quando já ativo", async () => {
+      await send({}, { ...baseConversation, is_human_takeover: true });
+      expect(handleConversationTakeover).not.toHaveBeenCalled();
+      expect(createHandoffEvent).not.toHaveBeenCalled();
+    });
+
+    it("upload falhando marca send_failed_at, lança uploaded=false e não enfileira", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      upload.mockResolvedValueOnce({ error: new Error("storage down") });
+      const err = await send().catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAttachmentSendError);
+      expect(err.uploaded).toBe(false);
+      expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[imagem]", expect.objectContaining({ source: "seller_attachment", send_failed_at: expect.any(String) }));
+      expect(enqueueSendMessage).not.toHaveBeenCalled();
+      expect(updateConversation).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
+
+    it("falha ao enfileirar depois do upload lança uploaded=true e marca send_failed_at", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      enqueueSendMessage.mockRejectedValueOnce(new Error("redis"));
+      const err = await send().catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAttachmentSendError);
+      expect(err.uploaded).toBe(true);
+      expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[imagem]", expect.objectContaining({ send_failed_at: expect.any(String) }));
+      log.mockRestore();
+    });
+
+    it("media_url não gravado falha sem enfileirar", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      setMessageMediaUrlIfEmpty.mockResolvedValueOnce(false);
+      await expect(send()).rejects.toBeInstanceOf(SellerAttachmentSendError);
       expect(enqueueSendMessage).not.toHaveBeenCalled();
       log.mockRestore();
     });

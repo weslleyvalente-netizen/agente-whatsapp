@@ -20,6 +20,11 @@ export interface SendMessageJobData {
   audioBase64?: string;
   // Referência "storage:<bucket>/<caminho>" do áudio do vendedor a enviar.
   storedAudioRef?: string;
+  // Anexo (imagem, vídeo ou documento) do vendedor guardado em chat-media.
+  storedMediaRef?: string;
+  mediaFileName?: string;
+  mediaMime?: string;
+  mediaKind?: "image" | "video" | "document";
 }
 
 export interface ProcessDocumentJobData {
