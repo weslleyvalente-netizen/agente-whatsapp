@@ -103,3 +103,53 @@ export function sanitizeDownloadName(name: string | null | undefined): string | 
   if (!clean || /^\.+$/.test(clean)) return null;
   return clean;
 }
+
+/**
+ * `fileLength` do Baileys é um Long: pode chegar como número, string numérica ou {low, high, unsigned}.
+ * Devolve o tamanho declarado em bytes, ou null quando ausente/ilegível.
+ */
+export function parseDeclaredFileLength(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === "string") {
+    return /^\d+$/.test(value.trim()) ? Number(value.trim()) : null;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const { low, high } = value as { low?: unknown; high?: unknown };
+    if (typeof low === "number" && typeof high === "number" && Number.isInteger(low) && Number.isInteger(high)) {
+      const n = (high >>> 0) * 4294967296 + (low >>> 0);
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+  return null;
+}
+
+const CONTENT_TYPE_FALLBACK: Record<"image" | "video" | "document", string> = {
+  image: "image/jpeg",
+  video: "video/mp4",
+  document: "application/octet-stream",
+};
+
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"]);
+const VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm", "video/3gpp", "video/x-matroska"]);
+const DANGEROUS_DOCUMENT_TYPES = new Set([
+  "text/html",
+  "image/svg+xml",
+  "application/xhtml+xml",
+  "application/javascript",
+  "text/javascript",
+  "application/x-javascript",
+  "application/ecmascript",
+  "text/ecmascript",
+  "text/xml",
+  "application/xml",
+]);
+
+/** O mimetype vem do cliente e vira o contentType do objeto (servido inline): só aceita tipos seguros. */
+export function safeChatMediaContentType(mediaType: "image" | "video" | "document", mime: string | null | undefined): string {
+  const key = (mime ?? "").split(";")[0].trim().toLowerCase();
+  const fallback = CONTENT_TYPE_FALLBACK[mediaType];
+  if (!key) return fallback;
+  if (mediaType === "image") return IMAGE_TYPES.has(key) ? key : fallback;
+  if (mediaType === "video") return VIDEO_TYPES.has(key) ? key : fallback;
+  return DANGEROUS_DOCUMENT_TYPES.has(key) || key.startsWith("image/svg") ? fallback : key;
+}

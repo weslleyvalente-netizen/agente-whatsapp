@@ -7,7 +7,7 @@ delete process.env.WEBHOOK_SECRET;
 
 const m = vi.hoisted(() => ({
   getInstanceByInstanceId: vi.fn(), getIgnoredContact: vi.fn(), ensureConversation: vi.fn(), saveMessage: vi.fn(),
-  enqueueProcessMessage: vi.fn(), enqueueStoreCustomerAudio: vi.fn(), enqueueStoreChatMedia: vi.fn(),
+  enqueueProcessMessage: vi.fn(), enqueueStoreCustomerAudio: vi.fn(), enqueueStoreChatMedia: vi.fn(), mergeMessageMetadata: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -18,6 +18,7 @@ vi.mock("@aula-agente/database", () => ({
   getOpenHandoffEvent: async () => null, markFirstHumanReply: async () => undefined,
   findPendingOutboundMessages: async () => [], setMessageEvolutionId: async () => undefined,
   upsertContact: async () => undefined,
+  mergeMessageMetadata: m.mergeMessageMetadata,
 }));
 vi.mock("../../services/conversation.service.js", () => ({ ensureConversation: m.ensureConversation }));
 vi.mock("../../services/message.service.js", () => ({ saveMessage: m.saveMessage }));
@@ -50,6 +51,7 @@ beforeEach(() => {
   m.ensureConversation.mockResolvedValue({ conversation: { id: "conv-1", is_human_takeover: false }, contact: { id: "c1", ai_disabled: false }, isNew: false });
   m.saveMessage.mockResolvedValue({ id: "msg-1", role: "contact", created_at: "2026-10-16T12:00:00Z" });
   m.enqueueStoreChatMedia.mockResolvedValue(undefined);
+  m.mergeMessageMetadata.mockResolvedValue(undefined);
 });
 
 describe("webhook: captura de mídia do cliente", () => {
@@ -72,6 +74,19 @@ describe("webhook: captura de mídia do cliente", () => {
     expect(r.statusCode).toBe(200);
     expect(m.saveMessage).toHaveBeenCalled();
     expect(m.enqueueProcessMessage).toHaveBeenCalled();
+  });
+
+  it("falha ao enfileirar marca media.status failed (botão Tentar de novo) e segue 200", async () => {
+    m.enqueueStoreChatMedia.mockRejectedValue(new Error("redis down"));
+    const r = await post(image);
+    expect(r.statusCode).toBe(200);
+    expect(m.mergeMessageMetadata).toHaveBeenCalledWith(expect.anything(), "msg-1", { media: { status: "failed" } });
+  });
+
+  it("falha ao enfileirar E ao marcar failed ainda responde 200", async () => {
+    m.enqueueStoreChatMedia.mockRejectedValue(new Error("redis down"));
+    m.mergeMessageMetadata.mockRejectedValue(new Error("db down"));
+    expect((await post(image)).statusCode).toBe(200);
   });
 
   it("não enfileira para texto", async () => {
@@ -116,5 +131,41 @@ describe("webhook: captura de mídia do cliente", () => {
   it("imagem enviada por nós (fromMe) não enfileira", async () => {
     await post(fromMeImage);
     expect(m.enqueueStoreChatMedia).not.toHaveBeenCalled();
+  });
+});
+
+describe("webhook: tamanho declarado (fileLength) acima do limite", () => {
+  const mk = (type: string, inner: Record<string, unknown>, wrap = false) => ({
+    ...base,
+    data: { key, messageType: type, message: wrap ? { [type]: { message: { documentMessage: inner } } } : { [type]: inner } },
+  });
+  const MB = 1024 * 1024;
+
+  it.each([
+    ["imagem número", mk("imageMessage", { mimetype: "image/jpeg", fileLength: 17 * MB }), { size_bytes: 17 * MB, mime_type: "image/jpeg" }],
+    ["vídeo string", mk("videoMessage", { mimetype: "video/mp4", fileLength: String(300 * MB) }), { size_bytes: 300 * MB, mime_type: "video/mp4" }],
+    ["documento Long", mk("documentMessage", { fileName: "a.zip", mimetype: "application/zip", fileLength: { low: 26 * MB, high: 0, unsigned: true } }), { size_bytes: 26 * MB, file_name: "a.zip", mime_type: "application/zip" }],
+    ["documento embrulhado", mk("documentWithCaptionMessage", { fileName: "b.zip", fileLength: 30 * MB }, true), { size_bytes: 30 * MB, file_name: "b.zip" }],
+  ])("%s: não enfileira e grava too_large", async (_n, payload, media) => {
+    const r = await post(payload);
+    expect(r.statusCode).toBe(200);
+    expect(m.enqueueStoreChatMedia).not.toHaveBeenCalled();
+    expect(m.mergeMessageMetadata).toHaveBeenCalledWith(expect.anything(), "msg-1", { media: { status: "too_large", ...media } });
+  });
+
+  it("tamanho dentro do limite, ausente ou ilegível: enfileira como antes", async () => {
+    for (const fileLength of [MB, undefined, "lixo", { foo: 1 }]) {
+      m.enqueueStoreChatMedia.mockClear();
+      await post(mk("imageMessage", { fileLength }));
+      expect(m.enqueueStoreChatMedia).toHaveBeenCalledTimes(1);
+    }
+    expect(m.mergeMessageMetadata).not.toHaveBeenCalled();
+  });
+
+  it("limite exato do documento (25 MB) ainda enfileira; falha ao gravar too_large não derruba o webhook", async () => {
+    await post(mk("documentMessage", { fileLength: 25 * MB }));
+    expect(m.enqueueStoreChatMedia).toHaveBeenCalledTimes(1);
+    m.mergeMessageMetadata.mockRejectedValue(new Error("db down"));
+    expect((await post(mk("videoMessage", { fileLength: 20 * MB }))).statusCode).toBe(200);
   });
 });

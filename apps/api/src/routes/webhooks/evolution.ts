@@ -27,7 +27,9 @@ import {
   setMessageEvolutionId,
   stampMessageMetadata,
   applyMessageDeliveryStatus,
+  mergeMessageMetadata,
 } from "@aula-agente/database";
+import { CHAT_MEDIA_MAX_BYTES, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
@@ -201,6 +203,20 @@ function extractByType(
     default:
       return { content: UNSUPPORTED_MESSAGE_PLACEHOLDER, mediaType: null };
   }
+}
+
+function extractDeclaredMedia(
+  message: Record<string, unknown> | undefined,
+  messageType: string
+): { sizeBytes: number | null; fileName?: string; mimeType?: string } {
+  const wrapped = (message?.documentWithCaptionMessage as { message?: { documentMessage?: unknown } } | undefined)?.message?.documentMessage;
+  const node = (messageType === "documentWithCaptionMessage" ? wrapped : message?.[messageType]) as Record<string, unknown> | undefined;
+  if (!node || typeof node !== "object") return { sizeBytes: null };
+  return {
+    sizeBytes: parseDeclaredFileLength(node.fileLength),
+    ...(typeof node.fileName === "string" && node.fileName ? { fileName: node.fileName } : {}),
+    ...(typeof node.mimetype === "string" && node.mimetype ? { mimeType: node.mimetype } : {}),
+  };
 }
 
 export function extractMessageContent(data: Record<string, unknown>): { content: string; mediaType: string | null; durationSeconds?: number } {
@@ -564,14 +580,39 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // (visualização nas conversas). Mesmas regras do áudio: depois do retorno
       // de contato ignorado e da dedupe, independe de takeover/IA, best-effort.
       if (mediaType === "image" || mediaType === "video" || mediaType === "document") {
-        try {
-          await enqueueStoreChatMedia({
-            messageId: message.id,
-            conversationId: conversation.id,
-            organizationId,
-          });
-        } catch (err) {
-          request.log.error({ err, messageId: message.id }, "Failed to enqueue customer media capture");
+        // O schema zod descarta campos desconhecidos (fileLength etc.): lê do corpo bruto.
+        const rawData = (request.body as { data?: { message?: Record<string, unknown>; messageType?: string } } | undefined)?.data;
+        const declared = extractDeclaredMedia(rawData?.message, String(rawData?.messageType ?? ""));
+        if (declared.sizeBytes !== null && declared.sizeBytes > CHAT_MEDIA_MAX_BYTES[mediaType]) {
+          // Tamanho anunciado acima do limite: nem baixa (evita montar centenas de MB em base64).
+          try {
+            await mergeMessageMetadata(getAdminClient(), message.id, {
+              media: {
+                status: "too_large",
+                size_bytes: declared.sizeBytes,
+                ...(declared.fileName ? { file_name: declared.fileName } : {}),
+                ...(declared.mimeType ? { mime_type: declared.mimeType } : {}),
+              },
+            });
+          } catch (err) {
+            request.log.error({ err, messageId: message.id }, "Failed to mark oversized customer media");
+          }
+        } else {
+          try {
+            await enqueueStoreChatMedia({
+              messageId: message.id,
+              conversationId: conversation.id,
+              organizationId,
+            });
+          } catch (err) {
+            request.log.error({ err, messageId: message.id }, "Failed to enqueue customer media capture");
+            // Sem fila não há nova tentativa automática: deixa o botão "Tentar de novo" disponível.
+            try {
+              await mergeMessageMetadata(getAdminClient(), message.id, { media: { status: "failed" } });
+            } catch (markErr) {
+              request.log.error({ err: markErr, messageId: message.id }, "Failed to mark media capture as failed");
+            }
+          }
         }
       }
 

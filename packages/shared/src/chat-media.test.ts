@@ -8,6 +8,8 @@ import {
   parseChatMediaRef,
   isChatMediaRefFor,
   extensionFromMime,
+  parseDeclaredFileLength,
+  safeChatMediaContentType,
 } from "./chat-media.js";
 
 const ids = { organizationId: "org1", conversationId: "conv1", messageId: "msg1" };
@@ -102,5 +104,38 @@ describe("sanitizeDownloadName", () => {
     const r2 = sanitizeDownloadName("a".repeat(118) + "😀".repeat(5))!;
     expect(r2).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
     expect(Array.from(r2).length).toBe(120);
+  });
+});
+
+describe("parseDeclaredFileLength", () => {
+  it("número, string numérica e Long {low, high}", () => {
+    expect(parseDeclaredFileLength(1234)).toBe(1234);
+    expect(parseDeclaredFileLength("300000000")).toBe(300000000);
+    expect(parseDeclaredFileLength({ low: 5, high: 0, unsigned: false })).toBe(5);
+    expect(parseDeclaredFileLength({ low: 0, high: 1 })).toBe(4294967296);
+    expect(parseDeclaredFileLength({ low: -1, high: 0 })).toBe(4294967295);
+  });
+  it("lixo vira null", () => {
+    for (const v of [undefined, null, "abc", "", -1, NaN, Infinity, {}, { low: "x", high: 0 }, [], true, "-5"]) {
+      expect(parseDeclaredFileLength(v)).toBeNull();
+    }
+  });
+});
+
+describe("safeChatMediaContentType", () => {
+  it("aceita tipos da lista por mídia", () => {
+    expect(safeChatMediaContentType("image", "image/png")).toBe("image/png");
+    expect(safeChatMediaContentType("video", "VIDEO/MP4; codecs=x")).toBe("video/mp4");
+    expect(safeChatMediaContentType("document", "application/pdf")).toBe("application/pdf");
+  });
+  it("rejeita html/svg e tipos fora da lista, com fallback", () => {
+    expect(safeChatMediaContentType("image", "text/html")).toBe("image/jpeg");
+    expect(safeChatMediaContentType("image", "image/svg+xml")).toBe("image/jpeg");
+    expect(safeChatMediaContentType("video", "text/html")).toBe("video/mp4");
+    expect(safeChatMediaContentType("document", "text/html")).toBe("application/octet-stream");
+    expect(safeChatMediaContentType("document", "image/svg+xml")).toBe("application/octet-stream");
+    expect(safeChatMediaContentType("document", "application/xhtml+xml")).toBe("application/octet-stream");
+    expect(safeChatMediaContentType("document", "application/javascript")).toBe("application/octet-stream");
+    expect(safeChatMediaContentType("document", undefined)).toBe("application/octet-stream");
   });
 });

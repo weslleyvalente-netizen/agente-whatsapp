@@ -7,6 +7,7 @@ const MEDIA_TYPES = new Set(["image", "video", "document"]);
 export type ChatMediaState = "stored" | "expired" | "too_large" | "failed" | "pending" | "none";
 
 export interface ChatMediaInput {
+  role: string;
   media_type: string | null;
   media_url: string | null;
   metadata: { media?: { status?: string } } | null;
@@ -15,11 +16,16 @@ export interface ChatMediaInput {
 
 export function chatMediaState(m: ChatMediaInput, now: Date = new Date()): ChatMediaState {
   if (!m.media_type || !MEDIA_TYPES.has(m.media_type)) return "none";
+  const stored = m.media_url?.startsWith(CHAT_MEDIA_REF_PREFIX) ?? false;
+  // Só o cliente tem captura em andamento; mídia enviada da loja não fica "carregando".
+  if (m.role !== "contact" && !stored) return "none";
   if (m.media_url) return m.media_url.startsWith(CHAT_MEDIA_REF_PREFIX) ? "stored" : "none";
   const status = m.metadata?.media?.status;
   if (status === "stored") return "expired";
   if (status === "too_large") return "too_large";
   if (status === "failed") return "failed";
+  // Após "Tentar de novo" o status é limpo: a captura voltou à fila, qualquer que seja a idade.
+  if (m.metadata?.media) return "pending";
   const age = now.getTime() - new Date(m.created_at).getTime();
   return age < PENDING_WINDOW_MS ? "pending" : "none";
 }

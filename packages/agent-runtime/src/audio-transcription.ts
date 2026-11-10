@@ -41,11 +41,21 @@ export interface EvolutionMediaBase64 {
   fileName?: string;
 }
 
+export class EvolutionMediaTooLargeError extends Error {
+  constructor(public readonly contentLength: number) {
+    super(`Evolution media too large (content-length ${contentLength})`);
+    this.name = "EvolutionMediaTooLargeError";
+  }
+}
+
 // Baixa a mídia (imagem/vídeo/documento) como veio, sem convertToMp4.
+// maxBytes: tamanho máximo do arquivo; se o Content-Length da resposta (JSON com base64, ~4/3 do
+// arquivo) passar de ~1,4x isso, rejeita ANTES de ler o corpo (evita estourar a memória do worker).
 export async function fetchMediaBase64(
   instanceName: string,
   evolutionMessageId: string,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  options: { maxBytes?: number } = {}
 ): Promise<EvolutionMediaBase64> {
   const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
     method: "POST",
@@ -59,6 +69,13 @@ export async function fetchMediaBase64(
 
   if (!response.ok) {
     throw new Error(`Evolution media fetch error ${response.status}`);
+  }
+
+  if (options.maxBytes !== undefined) {
+    const declared = Number(response.headers?.get("content-length"));
+    if (Number.isFinite(declared) && declared > Math.ceil(options.maxBytes * 1.4)) {
+      throw new EvolutionMediaTooLargeError(declared);
+    }
   }
 
   const data = await response.json();

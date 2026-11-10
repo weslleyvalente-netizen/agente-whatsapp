@@ -25,4 +25,4 @@ export {
   type SellerMessageContext,
 } from "./seller-message-suggestion.js";
 
-export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, fetchMediaBase64, type EvolutionMediaBase64, type EvolutionMediaResponse, type TranscriptionResult } from "./audio-transcription.js";
+export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, fetchMediaBase64, EvolutionMediaTooLargeError, type EvolutionMediaBase64, type EvolutionMediaResponse, type TranscriptionResult } from "./audio-transcription.js";

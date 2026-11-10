@@ -8,6 +8,7 @@ import {
   extensionFromMime,
   isChatMediaRefFor,
   parseChatMediaRef,
+  safeChatMediaContentType,
 } from "@aula-agente/shared";
 import {
   clearMessageMediaUrls,
@@ -18,7 +19,7 @@ import {
   mergeMessageMetadata,
   setMessageMediaUrlIfEmpty,
 } from "@aula-agente/database";
-import { fetchMediaBase64, type EvolutionMediaBase64 } from "@aula-agente/agent-runtime";
+import { fetchMediaBase64, EvolutionMediaTooLargeError, type EvolutionMediaBase64 } from "@aula-agente/agent-runtime";
 
 export interface StoreChatMediaInput {
   messageId: string;
@@ -33,17 +34,15 @@ export type StoreChatMediaResult =
   | { ok: false; reason: string; permanent?: boolean };
 
 type ChatMediaType = "image" | "video" | "document";
-type FetchMedia = (instanceName: string, evolutionMessageId: string) => Promise<Partial<EvolutionMediaBase64>>;
+type FetchMedia = (
+  instanceName: string,
+  evolutionMessageId: string,
+  maxBytes?: number
+) => Promise<Partial<EvolutionMediaBase64>>;
 
 const CAPTURE_FETCH_TIMEOUT_MS = 90_000;
-const defaultFetchMedia: FetchMedia = (instanceName, evolutionMessageId) =>
-  fetchMediaBase64(instanceName, evolutionMessageId, CAPTURE_FETCH_TIMEOUT_MS);
-
-const FALLBACK_CONTENT_TYPE: Record<ChatMediaType, string> = {
-  image: "image/jpeg",
-  video: "video/mp4",
-  document: "application/octet-stream",
-};
+const defaultFetchMedia: FetchMedia = (instanceName, evolutionMessageId, maxBytes) =>
+  fetchMediaBase64(instanceName, evolutionMessageId, CAPTURE_FETCH_TIMEOUT_MS, { maxBytes });
 
 function isChatMediaType(value: string | null | undefined): value is ChatMediaType {
   return value === "image" || value === "video" || value === "document";
@@ -74,13 +73,23 @@ export async function storeChatMedia(
     const conversation = await getConversationById(db, message.conversation_id);
     const instance = await getInstanceById(db, conversation.evolution_instance_id);
 
-    const media = await fetchMedia(instance.instance_name, message.evolution_message_id);
+    let media: Partial<EvolutionMediaBase64>;
+    try {
+      media = await fetchMedia(instance.instance_name, message.evolution_message_id, CHAT_MEDIA_MAX_BYTES[mediaType]);
+    } catch (err) {
+      // Evolution anunciou um corpo grande demais: permanente, sem retentativa e sem ler o corpo.
+      if (err instanceof EvolutionMediaTooLargeError) {
+        await mergeMessageMetadata(db, message.id, { media: { status: "too_large" } });
+        return { ok: true, skipped: "too_large" };
+      }
+      throw err;
+    }
     const buffer = Buffer.from(media.base64 ?? "", "base64");
     if (buffer.length === 0) {
       await mergeMessageMetadata(db, message.id, { media: { status: "failed" } });
       return { ok: false, reason: "empty_media", permanent: true };
     }
-    const contentType = media.mimetype || FALLBACK_CONTENT_TYPE[mediaType];
+    const contentType = safeChatMediaContentType(mediaType, media.mimetype);
     const fileName = media.fileName || (mediaType === "document" ? message.content?.trim() || undefined : undefined);
 
     if (buffer.length > CHAT_MEDIA_MAX_BYTES[mediaType]) {

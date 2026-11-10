@@ -5,6 +5,7 @@ const m = vi.hoisted(() => ({
   listExpiredStoredAudioMessages: vi.fn(), clearMessageMediaUrls: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => m);
+import { EvolutionMediaTooLargeError } from "@aula-agente/agent-runtime";
 import { storeChatMedia, runChatMediaRetention } from "./chat-media.js";
 
 const job = { messageId: "msg", conversationId: "conv", organizationId: "org" };
@@ -34,7 +35,7 @@ describe("storeChatMedia", () => {
   it("imagem de contato: sobe no bucket, grava media_url e metadata stored", async () => {
     const { db, upload } = makeDb();
     expect(await storeChatMedia(db, job, fetchMedia)).toEqual({ ok: true, mediaUrl: REF });
-    expect(fetchMedia).toHaveBeenCalledWith("minha-instancia", "EVO1");
+    expect(fetchMedia).toHaveBeenCalledWith("minha-instancia", "EVO1", 16 * 1024 * 1024);
     expect(db.storage.from).toHaveBeenCalledWith("chat-media");
     expect(upload).toHaveBeenCalledWith("org/conv/msg.jpg", expect.any(Buffer), { contentType: "image/jpeg", upsert: false });
     expect(m.setMessageMediaUrlIfEmpty).toHaveBeenCalledWith(db, "msg", REF);
@@ -61,6 +62,27 @@ describe("storeChatMedia", () => {
     expect(upload).not.toHaveBeenCalled();
     expect(m.setMessageMediaUrlIfEmpty).not.toHaveBeenCalled();
     expect(m.mergeMessageMetadata).toHaveBeenCalledWith(db, "msg", { media: { status: "too_large", mime_type: "image/jpeg", size_bytes: 16 * 1024 * 1024 + 1 } });
+  });
+
+  it("Content-Length acima do limite (EvolutionMediaTooLargeError): too_large sem retentativa e passa o limite do tipo", async () => {
+    fetchMedia.mockRejectedValue(new EvolutionMediaTooLargeError(300_000_000));
+    const { db, upload } = makeDb();
+    expect(await storeChatMedia(db, job, fetchMedia)).toEqual({ ok: true, skipped: "too_large" });
+    expect(fetchMedia).toHaveBeenCalledWith("minha-instancia", "EVO1", 16 * 1024 * 1024);
+    expect(upload).not.toHaveBeenCalled();
+    expect(m.mergeMessageMetadata).toHaveBeenCalledWith(db, "msg", { media: { status: "too_large" } });
+  });
+
+  it.each([
+    ["image", "text/html", "image/jpeg", "jpg"],
+    ["image", "image/svg+xml", "image/jpeg", "jpg"],
+    ["document", "text/html", "application/octet-stream", "bin"],
+  ])("mimetype do cliente fora da lista (%s %s): usa o fallback %s", async (mediaType, mimetype, expectedType, ext) => {
+    m.getMessageById.mockResolvedValue(msg({ media_type: mediaType }));
+    fetchMedia.mockResolvedValue({ base64: Buffer.from("abc").toString("base64"), mimetype });
+    const { db, upload } = makeDb();
+    await storeChatMedia(db, job, fetchMedia);
+    expect(upload).toHaveBeenCalledWith(`org/conv/msg.${ext}`, expect.any(Buffer), { contentType: expectedType, upsert: false });
   });
 
   it.each([[""], [undefined]])("base64 vazio/ausente (%s): falha permanente e status failed", async (b64) => {

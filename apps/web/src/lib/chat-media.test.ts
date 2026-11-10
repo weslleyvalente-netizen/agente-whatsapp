@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chatMediaState, formatBytes, isMediaPlaceholder } from "./chat-media";
 
 const NOW = new Date("2026-11-09T12:00:00Z");
-const base = { media_type: "image", media_url: null, metadata: null, created_at: "2026-11-09T11:58:00Z" };
+const base = { role: "contact", media_type: "image", media_url: null, metadata: null, created_at: "2026-11-09T11:58:00Z" };
 
 describe("chatMediaState", () => {
   it("stored quando media_url é referência do chat-media", () => {
@@ -26,6 +26,18 @@ describe("chatMediaState", () => {
     expect(chatMediaState({ ...base, media_type: "text" }, NOW)).toBe("none");
     expect(chatMediaState({ ...base, media_type: null }, NOW)).toBe("none");
     expect(chatMediaState({ ...base, media_type: "audio", media_url: "storage:customer-audio/a.mp4" }, NOW)).toBe("none");
+  });
+  it("mídia do vendedor (human_agent) sem referência: none, sem spinner", () => {
+    expect(chatMediaState({ ...base, role: "human_agent" }, NOW)).toBe("none");
+    expect(chatMediaState({ ...base, role: "human_agent", metadata: { media: { status: "failed" } } }, NOW)).toBe("none");
+  });
+  it("mídia do vendedor com referência storage: stored", () => {
+    expect(chatMediaState({ ...base, role: "human_agent", media_url: "storage:chat-media/o/c/m.jpg" }, NOW)).toBe("stored");
+  });
+  it("após tentar de novo (media sem status, sem url) volta a pending mesmo em mensagem antiga", () => {
+    const old = { ...base, created_at: "2026-11-01T10:00:00Z" };
+    expect(chatMediaState({ ...old, metadata: { media: {} } }, NOW)).toBe("pending");
+    expect(chatMediaState({ ...old, metadata: null }, NOW)).toBe("none");
   });
   it("aceita video e document", () => {
     expect(chatMediaState({ ...base, media_type: "video" }, NOW)).toBe("pending");
