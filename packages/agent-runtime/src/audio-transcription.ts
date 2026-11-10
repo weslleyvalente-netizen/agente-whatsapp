@@ -35,6 +35,40 @@ export async function fetchAudioAsMp4(
   return { base64: data.base64, mimetype: data.mimetype };
 }
 
+export interface EvolutionMediaBase64 {
+  base64: string;
+  mimetype: string;
+  fileName?: string;
+}
+
+// Baixa a mídia (imagem/vídeo/documento) como veio, sem convertToMp4.
+export async function fetchMediaBase64(
+  instanceName: string,
+  evolutionMessageId: string,
+  timeoutMs = 60_000
+): Promise<EvolutionMediaBase64> {
+  const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: EVOLUTION_API_KEY,
+    },
+    body: JSON.stringify({ message: { key: { id: evolutionMessageId } } }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Evolution media fetch error ${response.status}`);
+  }
+
+  const data = await response.json();
+  return {
+    base64: data.base64,
+    mimetype: data.mimetype,
+    ...(typeof data.fileName === "string" ? { fileName: data.fileName } : {}),
+  };
+}
+
 // Whisper picks its decoder from the file extension in the multipart
 // upload, not the mimetype header. Evolution's convertToMp4 always
 // returns "audio/mp4" in practice, but this stays defensive for any other

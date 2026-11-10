@@ -19,7 +19,9 @@ export interface Message {
 }
 
 export interface MessageMetadata {
-  source?: "task_followup" | "automatic_followup" | "seller_audio";
+  source?: "task_followup" | "automatic_followup" | "seller_audio" | "seller_attachment";
+  // Estado da mídia (imagem/vídeo/documento) guardada no Storage.
+  media?: { status: "stored" | "too_large" | "failed"; file_name?: string; mime_type?: string; size_bytes?: number };
   // Envio do áudio do vendedor falhou (ISO).
   send_failed_at?: string;
   task_id?: string;
