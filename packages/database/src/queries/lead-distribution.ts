@@ -260,3 +260,45 @@ export async function listActiveAssignments(db: SupabaseClient, organizationId: 
   if (error) throw error;
   return (data ?? []) as LeadAssignment[];
 }
+
+export interface ContactBasics { id: string; name: string | null; phone: string | null }
+
+/** Nome e telefone de vários contatos em lotes de 100 (sem N+1; limite de URL do PostgREST). Contato inexistente simplesmente não volta. */
+export async function listContactsByIds(db: SupabaseClient, organizationId: string, ids: string[]): Promise<ContactBasics[]> {
+  const unique = [...new Set(ids)];
+  const out: ContactBasics[] = [];
+  for (let i = 0; i < unique.length; i += 100) {
+    const { data, error } = await db.from("wa_contacts").select("id, name, phone").eq("organization_id", organizationId).in("id", unique.slice(i, i + 100));
+    if (error) throw error;
+    for (const r of (data ?? []) as Array<{ id: string; name: string | null; phone: string | null }>) out.push({ id: r.id, name: r.name ?? null, phone: r.phone ?? null });
+  }
+  return out;
+}
+
+export interface NudgeTarget {
+  id: string; conversation_id: string; contact_id: string; rep_id: string | null;
+  status: string; sla_action: string; sla_breached: boolean; sla_due_at: string | null; assigned_at: string;
+}
+
+/** Atribuição da organização para o "Cutucar" (null se não existir nesta organização). */
+export async function getAssignmentForNudge(db: SupabaseClient, organizationId: string, assignmentId: string): Promise<NudgeTarget | null> {
+  const { data, error } = await db.from("lead_assignments")
+    .select("id, conversation_id, contact_id, rep_id, status, sla_action, sla_breached, sla_due_at, assigned_at")
+    .eq("organization_id", organizationId).eq("id", assignmentId).maybeSingle();
+  if (error) throw error;
+  return (data as NudgeTarget | null) ?? null;
+}
+
+/** Instante do último toque registrado com esta chave (prefixo em push_notification_log: `nudge:<atribuição>:` ou `nudge-rep:<vendedor>:`). */
+export async function getLastNudgeAt(db: SupabaseClient, keyPrefix: string): Promise<Date | null> {
+  const { data, error } = await db.from("push_notification_log").select("created_at").like("dedupe_key", `${keyPrefix}%`)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? new Date((data as { created_at: string }).created_at) : null;
+}
+
+/** Registra um toque enviado (a chave leva o instante, então cada toque é uma linha; o worker apaga o log após 7 dias). */
+export async function recordNudge(db: SupabaseClient, keyPrefix: string, userId: string, at: Date): Promise<void> {
+  const { error } = await db.from("push_notification_log").insert({ dedupe_key: `${keyPrefix}${at.getTime()}`, user_id: userId, created_at: at.toISOString() });
+  if (error) throw error;
+}
