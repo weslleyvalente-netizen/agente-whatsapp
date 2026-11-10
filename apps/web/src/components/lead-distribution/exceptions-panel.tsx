@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
-import type { LeadAssignment, SalesRep } from "@aula-agente/shared";
+import type { LeadAssignment, SalesRep, SlaAlert } from "@aula-agente/shared";
+import { SlaAlertsSection } from "./sla-alerts-section";
+import { nudgedAtLabel, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
 
 const REASONS: Record<string, string> = {
   no_available_rep: "Nenhum vendedor disponível", all_reps_sla_breached: "Todos estouraram o SLA", invalid_existing_owner: "Dono atual inválido",
@@ -14,7 +16,11 @@ const REASONS: Record<string, string> = {
 export function ExceptionsPanel() {
   const { currentOrg } = useOrganization();
   const [items, setItems] = useState<LeadAssignment[] | null>(null);
-  const [alerts, setAlerts] = useState<LeadAssignment[]>([]);
+  const [alerts, setAlerts] = useState<SlaAlert[]>([]);
+  const [nudged, setNudged] = useState<Record<string, string>>({});
+  const [nudgeBusy, setNudgeBusy] = useState<Record<string, boolean>>({});
+  const [nudgingAll, setNudgingAll] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [reps, setReps] = useState<SalesRep[]>([]);
   const [target, setTarget] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +55,25 @@ export function ExceptionsPanel() {
     try { await apiFetch(`/organizations/${currentOrg.id}/lead-assignments/manual`, { method: "POST", body: JSON.stringify({ conversationId: a.conversation_id, repId }) }); await load(); }
     catch (err) { setError((err as Error).message); }
   };
+  const nudge = async (id: string) => {
+    if (!currentOrg) return;
+    setNotice(null); setNudgeBusy(b => ({ ...b, [id]: true }));
+    try {
+      const r = await apiFetch(`/organizations/${currentOrg.id}/lead-assignments/${id}/nudge`, { method: "POST" }) as { status: string; nudgedAt?: string };
+      if (r.status === "sent" && r.nudgedAt) setNudged(n => ({ ...n, [id]: nudgedAtLabel(r.nudgedAt!) }));
+      else setNotice({ kind: "error", text: "O vendedor não tem notificações ativadas" });
+    } catch (err) { setNotice({ kind: "error", text: (err as Error).message }); }
+    finally { setNudgeBusy(b => ({ ...b, [id]: false })); }
+  };
+  const nudgeAll = async () => {
+    if (!currentOrg) return;
+    setNotice(null); setNudgingAll(true);
+    try {
+      const r = await apiFetch(`/organizations/${currentOrg.id}/lead-assignments/nudge-all`, { method: "POST" }) as { results: NudgeAllResult[] };
+      setNotice({ kind: "info", text: summarizeNudgeAll(r.results) });
+    } catch (err) { setNotice({ kind: "error", text: (err as Error).message }); }
+    finally { setNudgingAll(false); }
+  };
   return (
     <section aria-label="Leads sem responsável" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
       <h2 className="font-medium">Leads sem responsável <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{items.length}</span></h2>
@@ -64,13 +89,7 @@ export function ExceptionsPanel() {
         </div>
       ))}
       {error && <p role="alert" className="mt-2 text-destructive">{error}</p>}
-      {alerts.length > 0 && (
-        <div className="mt-4 border-t pt-3" aria-label="Atrasos de resposta na carteira">
-          <h3 className="font-medium">Atrasos de resposta (clientes que já têm vendedor) <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{alerts.length}</span></h3>
-          <p className="text-xs text-muted-foreground">Estes clientes continuam com o mesmo vendedor; não há redistribuição automática.</p>
-          {alerts.map(a => <p key={a.id} className="mt-1">{reps.find(r => r.id === a.rep_id)?.display_name ?? "—"} · prazo vencido em {new Date(a.sla_due_at ?? a.assigned_at).toLocaleString("pt-BR")}</p>)}
-        </div>
-      )}
+      <SlaAlertsSection alerts={alerts} reps={reps} nudged={nudged} busy={nudgeBusy} nudgingAll={nudgingAll} notice={notice} onNudge={nudge} onNudgeAll={nudgeAll} />
     </section>
   );
 }
