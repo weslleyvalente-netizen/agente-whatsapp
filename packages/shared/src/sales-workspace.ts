@@ -19,6 +19,8 @@ export function isSubstantiveCustomerMessage(content?: string | null): boolean {
  if (content.startsWith("[Cliente veio de um anúncio:")) return false;
  if (/^\[(?:audio|image|document|video|sticker)/i.test(content.trim())) return true;
  if (content.includes("?")) return true;
+ // CPF, CEP, telefone e similares são curtos mas são a resposta que o vendedor pediu.
+ if ((content.match(/\d/g) ?? []).length >= 5) return true;
  const letters = content.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
  return letters.length > 0 && !COURTESY.test(letters) && letters.length >= 12;
 }
