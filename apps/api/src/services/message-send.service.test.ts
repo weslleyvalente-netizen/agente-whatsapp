@@ -13,11 +13,14 @@ const {
   setMessageMediaUrlIfEmpty,
   updateMessageContent,
   upload,
+  remove,
   fakeDb,
 } = vi.hoisted(() => {
   const upload = vi.fn().mockResolvedValue({ error: null });
+  const remove = vi.fn().mockResolvedValue({ error: null });
   return {
-  fakeDb: { storage: { from: vi.fn(() => ({ upload })) } },
+  fakeDb: { storage: { from: vi.fn(() => ({ upload, remove })) } },
+  remove,
   setMessageMediaUrlIfEmpty: vi.fn().mockResolvedValue(true),
   updateMessageContent: vi.fn().mockResolvedValue(undefined),
   upload,
@@ -337,6 +340,60 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
       expect(err).toBeInstanceOf(SellerAttachmentSendError);
       expect(err.uploaded).toBe(true);
       expect(updateMessageContent).toHaveBeenCalledWith(fakeDb, "msg-1", "[imagem]", expect.objectContaining({ send_failed_at: expect.any(String) }));
+      log.mockRestore();
+    });
+
+    it("com legenda: o job leva caption com o texto", async () => {
+      await send({ caption: "Segue a proposta" });
+      expect(enqueueSendMessage).toHaveBeenCalledWith(expect.objectContaining({ caption: "Segue a proposta" }), { attempts: 1 });
+    });
+
+    it("sem legenda: o job não tem a chave caption e content é o placeholder", async () => {
+      await send();
+      const job = enqueueSendMessage.mock.calls[0][0];
+      expect("caption" in job).toBe(false);
+      expect(job.content).toBe("[imagem]");
+      await send({ kind: "document", mime: "application/pdf", extension: "pdf", fileName: "proposta.pdf" });
+      const doc = enqueueSendMessage.mock.calls[1][0];
+      expect("caption" in doc).toBe(false);
+      expect(doc.content).toBe("proposta.pdf");
+    });
+
+    it("media_url não gravado remove o objeto recém-enviado", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      setMessageMediaUrlIfEmpty.mockResolvedValueOnce(false);
+      await expect(send()).rejects.toBeInstanceOf(SellerAttachmentSendError);
+      expect(remove).toHaveBeenCalledWith(["org-1/conv-1/msg-1.jpg"]);
+      log.mockRestore();
+    });
+
+    it("setMessageMediaUrlIfEmpty lançando também remove o objeto", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      setMessageMediaUrlIfEmpty.mockRejectedValueOnce(new Error("db"));
+      const err = await send().catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAttachmentSendError);
+      expect(err.uploaded).toBe(true);
+      expect(remove).toHaveBeenCalledWith(["org-1/conv-1/msg-1.jpg"]);
+      log.mockRestore();
+    });
+
+    it("erro na remoção não mascara o erro original", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      setMessageMediaUrlIfEmpty.mockResolvedValueOnce(false);
+      remove.mockRejectedValueOnce(new Error("storage down"));
+      const err = await send().catch((e) => e);
+      expect(err).toBeInstanceOf(SellerAttachmentSendError);
+      expect(err.message).toBe("Falha ao enviar o anexo");
+      log.mockRestore();
+    });
+
+    it("upload falho ou falha ao enfileirar não removem o objeto", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      upload.mockResolvedValueOnce({ error: new Error("x") });
+      await send().catch(() => {});
+      enqueueSendMessage.mockRejectedValueOnce(new Error("redis"));
+      await send().catch(() => {});
+      expect(remove).not.toHaveBeenCalled();
       log.mockRestore();
     });
 

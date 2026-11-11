@@ -65,7 +65,13 @@ export default async function messageSendAttachmentRoutes(app: FastifyInstance) 
       if (!conversationId.success) return reject(400, "Conversa inválida.");
 
       const db = getAdminClient();
-      const conversation = await getConversationById(db, conversationId.data);
+      // getConversationById lança quando a conversa não existe: tratar como 404, não 500.
+      let conversation: Awaited<ReturnType<typeof getConversationById>> | null = null;
+      try {
+        conversation = await getConversationById(db, conversationId.data);
+      } catch {
+        conversation = null;
+      }
       if (!conversation) return reject(404, "Conversa não encontrada");
 
       const membership = request.user.memberships.find((m) => m.organization_id === conversation.organization_id);

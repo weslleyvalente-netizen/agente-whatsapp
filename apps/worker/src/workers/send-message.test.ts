@@ -184,6 +184,32 @@ describe("processSendMessageJob", () => {
       expect(JSON.stringify(body)).not.toContain("[imagem]");
     });
 
+    it("uses the job caption exactly, and never the [imagem] content placeholder", async () => {
+      const imgData = { storedMediaRef: "storage:chat-media/org-1/conv-1/msg-media.jpg", content: "[imagem]", mediaKind: "image", mediaMime: "image/jpeg", mediaFileName: "foto.jpg" };
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "E" } }));
+      global.fetch = fetchMock as never;
+      await processSendMessageJob(mediaJob(imgData));
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).caption ?? "").toBe("");
+      await processSendMessageJob(mediaJob({ ...imgData, content: "Segue a proposta", caption: "Segue a proposta" }));
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).caption).toBe("Segue a proposta");
+    });
+
+    it("redacts the signed URL from the error when Evolution echoes it", async () => {
+      const signed = "https://signed.test/x?token=1";
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: `bad media ${signed}` }), text: async () => `bad media ${signed}` });
+      global.fetch = fetchMock as never;
+
+      const err = await processSendMessageJob(mediaJob()).catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(String(err.message)).not.toContain(signed);
+      expect(String(err.message)).not.toContain("token=1");
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-media", "proposta.pdf",
+        expect.objectContaining({ send_failed_at: expect.any(String) }),
+      );
+    });
+
     it("falls back to a neutral file name with the ref extension for documents", async () => {
       const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "E" } }));
       global.fetch = fetchMock as never;

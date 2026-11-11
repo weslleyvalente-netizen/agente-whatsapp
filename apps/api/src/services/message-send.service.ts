@@ -65,6 +65,14 @@ export class SellerAudioSendError extends Error {
   }
 }
 
+async function removeOrphanUpload(db: ReturnType<typeof getAdminClient>, bucket: string, path: string) {
+  try {
+    await db.storage.from(bucket).remove([path]);
+  } catch (err) {
+    console.error(`Failed to remove orphaned attachment ${path}:`, err);
+  }
+}
+
 export interface SendPanelMessageResult {
   message: Message;
   instanceId: string;
@@ -148,7 +156,16 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
       });
       if (error) throw error;
       uploaded = true;
-      if (!(await setMessageMediaUrlIfEmpty(db, message.id, storedMediaRef))) {
+      let linked = false;
+      try {
+        linked = await setMessageMediaUrlIfEmpty(db, message.id, storedMediaRef);
+      } catch (linkErr) {
+        await removeOrphanUpload(db, parsed.bucket, parsed.path);
+        throw linkErr;
+      }
+      if (!linked) {
+        // A linha nunca apontou para o arquivo: remove só o objeto que acabou de subir.
+        await removeOrphanUpload(db, parsed.bucket, parsed.path);
         throw new Error("Não foi possível gravar a referência do anexo");
       }
     }
@@ -216,7 +233,13 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
         organizationId: conversation.organization_id,
         ...(storedAudioRef ? { storedAudioRef } : {}),
         ...(attachment && storedMediaRef
-          ? { storedMediaRef, mediaFileName: attachmentName!, mediaMime: attachment.mime, mediaKind: attachment.kind }
+          ? {
+              storedMediaRef,
+              mediaFileName: attachmentName!,
+              mediaMime: attachment.mime,
+              mediaKind: attachment.kind,
+              ...(attachment.caption ? { caption: attachment.caption } : {}),
+            }
           : {}),
       },
       params.noAutoRetry || audio || attachment ? { attempts: 1 } : undefined

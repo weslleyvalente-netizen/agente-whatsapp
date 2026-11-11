@@ -182,11 +182,20 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
       if (error || !data?.signedUrl) throw new Error(`Seller media signing failed: ${error?.message ?? "no url"}`);
       const kind = mediaKind ?? "document";
       const extension = ref.path.slice(ref.path.lastIndexOf(".") + 1);
-      response = await sendEvolutionMedia(instance.instance_name, phone, data.signedUrl, caption ?? "", {
-        mediatype: kind,
-        ...(kind === "document" ? { fileName: mediaFileName || `arquivo.${extension}` } : {}),
-        ...(mediaMime ? { mimetype: mediaMime } : {}),
-      });
+      const signedUrl = data.signedUrl;
+      try {
+        response = await sendEvolutionMedia(instance.instance_name, phone, signedUrl, caption ?? "", {
+          mediatype: kind,
+          ...(kind === "document" ? { fileName: mediaFileName || `arquivo.${extension}` } : {}),
+          ...(mediaMime ? { mimetype: mediaMime } : {}),
+        });
+      } catch (sendError) {
+        // A resposta da Evolution pode repetir a URL assinada (segredo): nunca vai para failedReason/logs.
+        if (sendError instanceof Error && sendError.message.includes(signedUrl)) {
+          throw new Error(sendError.message.split(signedUrl).join("[redacted]"));
+        }
+        throw sendError;
+      }
     } catch (error) {
       await markSellerAudioFailed(db, messageId, recorded?.content ?? content, recorded?.metadata);
       throw error;

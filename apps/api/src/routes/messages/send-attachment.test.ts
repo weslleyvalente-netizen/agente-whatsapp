@@ -169,6 +169,17 @@ describe("POST /messages/send-attachment", () => {
     expect((await post(await buildApp(), { file: JPEG })).statusCode).toBe(404);
   });
 
+  it("getConversationById lançando (conversa inexistente) -> 404 e sem consumir vaga", async () => {
+    getConversationById.mockRejectedValue(new Error("JSON object requested, multiple (or no) rows returned"));
+    const app = await buildApp();
+    const res = await post(app, { file: JPEG });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: "Conversa não encontrada" });
+    expect(sendPanelMessage).not.toHaveBeenCalled();
+    getConversationById.mockResolvedValue({ id: CONV, organization_id: "org-1", assigned_to: "user-1" });
+    for (let i = 0; i < 60; i++) expect((await post(app, { file: JPEG })).statusCode).toBe(200);
+  });
+
   it("flag desligada -> 404", async () => {
     getOrganizationById.mockResolvedValue({ id: "org-1", settings: {} });
     const res = await post(await buildApp(), { file: JPEG });
