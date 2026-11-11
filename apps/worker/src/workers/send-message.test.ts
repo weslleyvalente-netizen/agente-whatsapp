@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download } = vi.hoisted(() => ({
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl } = vi.hoisted(() => ({
+  createSignedUrl: vi.fn(),
   getAdminClient: vi.fn(),
   updateMessageContent: vi.fn().mockResolvedValue(undefined),
   download: vi.fn(),
@@ -35,7 +36,8 @@ describe("processSendMessageJob", () => {
     setMessageEvolutionId.mockClear();
     updateMessageContent.mockClear();
     download.mockReset();
-    getAdminClient.mockImplementation(() => ({ storage: { from: vi.fn(() => ({ download })) } }));
+    createSignedUrl.mockReset();
+    getAdminClient.mockImplementation(() => ({ storage: { from: vi.fn(() => ({ download, createSignedUrl })) } }));
   });
 
   afterEach(() => {
@@ -117,6 +119,185 @@ describe("processSendMessageJob", () => {
 
     expect(setMessageEvolutionId).not.toHaveBeenCalled();
   });
+  describe("stored attachment (storedMediaRef)", () => {
+    const ref = "storage:chat-media/org-1/conv-1/msg-media.pdf";
+    const baseData = {
+      conversationId: "conv-1",
+      messageId: "msg-media",
+      instanceId: "inst-1",
+      phone: "5511999999999",
+      content: "proposta.pdf",
+      organizationId: "org-1",
+      storedMediaRef: ref,
+      mediaFileName: "proposta.pdf",
+      mediaMime: "application/pdf",
+      mediaKind: "document",
+    };
+    const mediaJob = (over: Record<string, unknown> = {}) => ({ data: { ...baseData, ...over } }) as never;
+
+    beforeEach(() => {
+      vi.mocked(database.getMessageById).mockResolvedValue({
+        id: "msg-media", organization_id: "org-1", conversation_id: "conv-1", role: "human_agent",
+        content: "proposta.pdf", metadata: { source: "seller_media" },
+      } as never);
+      createSignedUrl.mockResolvedValue({ data: { signedUrl: "https://signed.test/x?token=1" }, error: null });
+    });
+    afterEach(() => {
+      vi.mocked(database.getMessageById).mockResolvedValue(null as never);
+    });
+
+    it("signs the chat-media path for 300s and sends a document via sendMedia", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "EVO-MEDIA-1" } }));
+      global.fetch = fetchMock as never;
+
+      await processSendMessageJob(mediaJob({ caption: "segue" }));
+
+      expect(createSignedUrl).toHaveBeenCalledWith("org-1/conv-1/msg-media.pdf", 300);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://evolution.test/message/sendMedia/loja-1");
+      expect(JSON.parse(init.body)).toEqual({
+        number: "5511999999999", mediatype: "document", media: "https://signed.test/x?token=1",
+        caption: "segue", fileName: "proposta.pdf", mimetype: "application/pdf",
+      });
+      expect(setMessageEvolutionId).toHaveBeenCalledWith(expect.anything(), "msg-media", "EVO-MEDIA-1");
+      expect(updateMessageContent).not.toHaveBeenCalled();
+    });
+
+    it("sends an image without caption or fileName when the seller typed none", async () => {
+      vi.mocked(database.getMessageById).mockResolvedValue({
+        id: "msg-media", organization_id: "org-1", conversation_id: "conv-1", role: "human_agent",
+        content: "[imagem]", metadata: null,
+      } as never);
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "EVO-IMG" } }));
+      global.fetch = fetchMock as never;
+
+      await processSendMessageJob(mediaJob({
+        storedMediaRef: "storage:chat-media/org-1/conv-1/msg-media.jpg",
+        content: "[imagem]", mediaKind: "image", mediaMime: "image/jpeg", mediaFileName: "foto.jpg",
+      }));
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.mediatype).toBe("image");
+      expect(body.caption ?? "").toBe("");
+      expect(body.fileName).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain("[imagem]");
+    });
+
+    it("uses the job caption exactly, and never the [imagem] content placeholder", async () => {
+      const imgData = { storedMediaRef: "storage:chat-media/org-1/conv-1/msg-media.jpg", content: "[imagem]", mediaKind: "image", mediaMime: "image/jpeg", mediaFileName: "foto.jpg" };
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "E" } }));
+      global.fetch = fetchMock as never;
+      await processSendMessageJob(mediaJob(imgData));
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).caption ?? "").toBe("");
+      await processSendMessageJob(mediaJob({ ...imgData, content: "Segue a proposta", caption: "Segue a proposta" }));
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).caption).toBe("Segue a proposta");
+    });
+
+    it("redacts the signed URL from the error when Evolution echoes it", async () => {
+      const signed = "https://signed.test/x?token=1";
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: `bad media ${signed}` }), text: async () => `bad media ${signed}` });
+      global.fetch = fetchMock as never;
+
+      const err = await processSendMessageJob(mediaJob()).catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(String(err.message)).not.toContain(signed);
+      expect(String(err.message)).not.toContain("token=1");
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-media", "proposta.pdf",
+        expect.objectContaining({ send_failed_at: expect.any(String) }),
+      );
+    });
+
+    it("falls back to a neutral file name with the ref extension for documents", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "E" } }));
+      global.fetch = fetchMock as never;
+
+      await processSendMessageJob(mediaJob({ mediaFileName: undefined }));
+
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).fileName).toBe("arquivo.pdf");
+    });
+
+    it("signing failure marks send_failed_at, rethrows and never calls Evolution", async () => {
+      createSignedUrl.mockResolvedValue({ data: null, error: { message: "nope" } });
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(mediaJob())).rejects.toThrow();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-media", "proposta.pdf",
+        expect.objectContaining({ source: "seller_media", send_failed_at: expect.any(String) }),
+      );
+    });
+
+    it("Evolution error marks send_failed_at, rethrows and never sends text", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "boom" }, false));
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(mediaJob())).rejects.toThrow(/media send error/);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).not.toContain("sendText");
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-media", "proposta.pdf",
+        expect.objectContaining({ send_failed_at: expect.any(String) }),
+      );
+    });
+
+    it("invalid ref counts as failure without signing", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(mediaJob({ storedMediaRef: "garbage" }))).rejects.toThrow();
+
+      expect(createSignedUrl).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMessageContent).toHaveBeenCalled();
+    });
+
+    it("ref from another conversation is rejected without signing", async () => {
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as never;
+
+      await expect(processSendMessageJob(mediaJob({
+        storedMediaRef: "storage:chat-media/org-1/conv-OTHER/msg-media.pdf",
+      }))).rejects.toThrow();
+
+      expect(createSignedUrl).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMessageContent).toHaveBeenCalledWith(
+        expect.anything(), "msg-media", "proposta.pdf",
+        expect.objectContaining({ send_failed_at: expect.any(String) }),
+      );
+    });
+
+    it("missing message row is rejected without signing", async () => {
+      vi.mocked(database.getMessageById).mockResolvedValue(null as never);
+      global.fetch = vi.fn() as never;
+
+      await expect(processSendMessageJob(mediaJob())).rejects.toThrow();
+      expect(createSignedUrl).not.toHaveBeenCalled();
+    });
+
+    it("AI image with mediaUrl keeps the legacy payload", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ key: { id: "EVO-AI" } }));
+      global.fetch = fetchMock as never;
+
+      await processSendMessageJob({
+        data: { conversationId: "conv-1", messageId: "msg-ai", instanceId: "inst-1", phone: "5511999999999",
+          content: "foto", organizationId: "org-1", mediaUrl: "https://img.test/a.jpg", caption: "olha" },
+      } as never);
+
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        number: "5511999999999", mediatype: "image", media: "https://img.test/a.jpg", caption: "olha",
+      });
+      expect(createSignedUrl).not.toHaveBeenCalled();
+    });
+  });
+
   describe("seller audio (storedAudioRef)", () => {
     const sellerJob = {
       data: {

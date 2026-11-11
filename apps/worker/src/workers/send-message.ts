@@ -1,7 +1,7 @@
 import {processScheduledAdClosure,shouldSuppressScheduledAdLegacySend} from "./scheduled-ad-closure.js";
 import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
-import { QUEUE_NAMES, parseCustomerAudioRef } from "@aula-agente/shared";
+import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
 import { shouldCancelPreFreezeAgentMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
@@ -44,7 +44,13 @@ async function sendEvolutionText(instanceName: string, phone: string, text: stri
   return response.json();
 }
 
-async function sendEvolutionMedia(instanceName: string, phone: string, mediaUrl: string, caption: string) {
+async function sendEvolutionMedia(
+  instanceName: string,
+  phone: string,
+  mediaUrl: string,
+  caption: string,
+  opts?: { mediatype?: "image" | "video" | "document"; fileName?: string; mimetype?: string }
+) {
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 
@@ -54,7 +60,14 @@ async function sendEvolutionMedia(instanceName: string, phone: string, mediaUrl:
       "Content-Type": "application/json",
       apikey: EVOLUTION_API_KEY,
     },
-    body: JSON.stringify({ number: phone, mediatype: "image", media: mediaUrl, caption }),
+    body: JSON.stringify({
+      number: phone,
+      mediatype: opts?.mediatype ?? "image",
+      media: mediaUrl,
+      caption,
+      ...(opts?.fileName ? { fileName: opts.fileName } : {}),
+      ...(opts?.mimetype ? { mimetype: opts.mimetype } : {}),
+    }),
   });
 
   if (!response.ok) {
@@ -98,7 +111,7 @@ async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, mess
 }
 
 export async function processSendMessageJob(job: Job<SendMessageJobData> | { data: SendMessageJobData }) {
-  const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption, storedAudioRef } = job.data;
+  const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption, storedAudioRef, storedMediaRef, mediaFileName, mediaMime, mediaKind } = job.data;
 
   const db = getAdminClient();
   const internalNotification=messageId.startsWith("handoff-notify-");
@@ -106,7 +119,7 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
   if(!internalNotification){
     try{ recorded=await getMessageById(db,messageId); }
     catch(error){
-      if(storedAudioRef) await markSellerAudioFailed(db,messageId,content);
+      if(storedAudioRef || storedMediaRef) await markSellerAudioFailed(db,messageId,content);
       throw error;
     }
   }
@@ -144,6 +157,45 @@ export async function processSendMessageJob(job: Job<SendMessageJobData> | { dat
       if (error || !data) throw new Error(`Seller audio download failed: ${error?.message ?? "no data"}`);
       const base64 = Buffer.from(await data.arrayBuffer()).toString("base64");
       response = await sendEvolutionAudio(instance.instance_name, phone, base64);
+    } catch (error) {
+      await markSellerAudioFailed(db, messageId, recorded?.content ?? content, recorded?.metadata);
+      throw error;
+    }
+  } else if (storedMediaRef) {
+    // Seller attachment: no text fallback and no retry. Any failure marks the message and fails the job.
+    try {
+      instance = await getInstanceById(db, instanceId);
+      const ref = parseChatMediaRef(storedMediaRef);
+      if (!ref) throw new Error(`Invalid stored media ref: ${storedMediaRef}`);
+      // The ref must be this very message's own path; media_url can be edited by members via RLS.
+      if (
+        !recorded ||
+        !isChatMediaRefFor(storedMediaRef, {
+          organizationId: recorded.organization_id,
+          conversationId: recorded.conversation_id,
+          messageId: recorded.id,
+        })
+      ) {
+        throw new Error("Stored media ref does not belong to this message");
+      }
+      const { data, error } = await db.storage.from(ref.bucket).createSignedUrl(ref.path, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS);
+      if (error || !data?.signedUrl) throw new Error(`Seller media signing failed: ${error?.message ?? "no url"}`);
+      const kind = mediaKind ?? "document";
+      const extension = ref.path.slice(ref.path.lastIndexOf(".") + 1);
+      const signedUrl = data.signedUrl;
+      try {
+        response = await sendEvolutionMedia(instance.instance_name, phone, signedUrl, caption ?? "", {
+          mediatype: kind,
+          ...(kind === "document" ? { fileName: mediaFileName || `arquivo.${extension}` } : {}),
+          ...(mediaMime ? { mimetype: mediaMime } : {}),
+        });
+      } catch (sendError) {
+        // A resposta da Evolution pode repetir a URL assinada (segredo): nunca vai para failedReason/logs.
+        if (sendError instanceof Error && sendError.message.includes(signedUrl)) {
+          throw new Error(sendError.message.split(signedUrl).join("[redacted]"));
+        }
+        throw sendError;
+      }
     } catch (error) {
       await markSellerAudioFailed(db, messageId, recorded?.content ?? content, recorded?.metadata);
       throw error;

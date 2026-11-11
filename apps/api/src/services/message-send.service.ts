@@ -8,7 +8,14 @@ import {
   setMessageMediaUrlIfEmpty,
   updateMessageContent,
 } from "@aula-agente/database";
-import { CUSTOMER_AUDIO_BUCKET, buildCustomerAudioRef, parseCustomerAudioRef } from "@aula-agente/shared";
+import {
+  CUSTOMER_AUDIO_BUCKET,
+  buildCustomerAudioRef,
+  parseCustomerAudioRef,
+  buildChatMediaRef,
+  parseChatMediaRef,
+  sanitizeDownloadName,
+} from "@aula-agente/shared";
 import type { Conversation, Message } from "@aula-agente/shared";
 import { saveMessage } from "./message.service.js";
 import { handleConversationTakeover } from "./task.service.js";
@@ -31,6 +38,23 @@ export interface SendPanelMessageParams {
   noAutoRetry?: boolean;
   // Áudio gravado pelo vendedor: sobe para o Storage antes de enfileirar o envio.
   audio?: { buffer: Buffer; extension: "webm" | "mp4" | "ogg"; durationSeconds?: number };
+  // Imagem, vídeo ou documento enviado pelo vendedor: sobe para o bucket chat-media antes de enfileirar.
+  attachment?: {
+    buffer: Buffer;
+    kind: "image" | "video" | "document";
+    mime: string;
+    extension: string;
+    fileName: string;
+    caption?: string;
+  };
+}
+
+/** Falha no envio de anexo; `uploaded` indica se o arquivo já foi armazenado (conta no limite por hora). */
+export class SellerAttachmentSendError extends Error {
+  constructor(message: string, public readonly uploaded: boolean) {
+    super(message);
+    this.name = "SellerAttachmentSendError";
+  }
 }
 
 /** Falha no envio de áudio; `uploaded` indica se o arquivo já foi armazenado (conta no limite por hora). */
@@ -38,6 +62,14 @@ export class SellerAudioSendError extends Error {
   constructor(message: string, public readonly uploaded: boolean) {
     super(message);
     this.name = "SellerAudioSendError";
+  }
+}
+
+async function removeOrphanUpload(db: ReturnType<typeof getAdminClient>, bucket: string, path: string) {
+  try {
+    await db.storage.from(bucket).remove([path]);
+  } catch (err) {
+    console.error(`Failed to remove orphaned attachment ${path}:`, err);
   }
 }
 
@@ -50,11 +82,21 @@ export interface SendPanelMessageResult {
 // orchestration is shared by the manual inbox send and the
 // follow-up-from-task flow (task-followup.service.ts) instead of duplicated.
 export async function sendPanelMessage(params: SendPanelMessageParams): Promise<SendPanelMessageResult> {
-  const { conversation, actorUserId, audio } = params;
-  const content = audio ? "[audio]" : params.content;
+  const { conversation, actorUserId, audio, attachment } = params;
+  const attachmentName = attachment ? sanitizeDownloadName(attachment.fileName) ?? `anexo.${attachment.extension}` : null;
+  const content = audio
+    ? "[audio]"
+    : attachment
+      ? attachment.caption ?? (attachment.kind === "image" ? "[imagem]" : attachment.kind === "video" ? "[video]" : attachmentName!)
+      : params.content;
   const metadata = audio
     ? { source: "seller_audio", ...(audio.durationSeconds != null ? { duration_seconds: audio.durationSeconds } : {}) }
-    : params.metadata;
+    : attachment
+      ? {
+          source: "seller_attachment",
+          media: { status: "stored", file_name: attachmentName, mime_type: attachment.mime, size_bytes: attachment.buffer.length },
+        }
+      : params.metadata;
   const activateTakeover = params.activateTakeover ?? true;
   const db = getAdminClient();
 
@@ -64,7 +106,7 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
     evolutionMessageId: null,
     role: "human_agent",
     content,
-    ...(audio ? { mediaType: "audio" as const } : {}),
+    ...(audio ? { mediaType: "audio" as const } : attachment ? { mediaType: attachment.kind } : {}),
     metadata: metadata ?? null,
   });
 
@@ -73,9 +115,10 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
   }
 
   let storedAudioRef: string | undefined;
+  let storedMediaRef: string | undefined;
   let uploaded = false;
 
-  // Para áudio, qualquer falha depois de salvar a linha marca send_failed_at (o painel não pode mostrar
+  // Para áudio e anexo, qualquer falha depois de salvar a linha marca send_failed_at (o painel não pode mostrar
   // como enviado um áudio que não saiu) e relança com a informação de que o arquivo já foi armazenado.
   try {
     if (audio) {
@@ -95,6 +138,35 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
       uploaded = true;
       if (!(await setMessageMediaUrlIfEmpty(db, message.id, storedAudioRef))) {
         throw new Error("Não foi possível gravar a referência do áudio");
+      }
+    }
+
+    if (attachment) {
+      storedMediaRef = buildChatMediaRef({
+        organizationId: conversation.organization_id,
+        conversationId: conversation.id,
+        messageId: message.id,
+        extension: attachment.extension,
+      });
+      const parsed = parseChatMediaRef(storedMediaRef);
+      if (!parsed) throw new Error("Referência de anexo inválida");
+      const { error } = await db.storage.from(parsed.bucket).upload(parsed.path, attachment.buffer, {
+        contentType: attachment.mime,
+        upsert: false,
+      });
+      if (error) throw error;
+      uploaded = true;
+      let linked = false;
+      try {
+        linked = await setMessageMediaUrlIfEmpty(db, message.id, storedMediaRef);
+      } catch (linkErr) {
+        await removeOrphanUpload(db, parsed.bucket, parsed.path);
+        throw linkErr;
+      }
+      if (!linked) {
+        // A linha nunca apontou para o arquivo: remove só o objeto que acabou de subir.
+        await removeOrphanUpload(db, parsed.bucket, parsed.path);
+        throw new Error("Não foi possível gravar a referência do anexo");
       }
     }
 
@@ -160,14 +232,23 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
         content,
         organizationId: conversation.organization_id,
         ...(storedAudioRef ? { storedAudioRef } : {}),
+        ...(attachment && storedMediaRef
+          ? {
+              storedMediaRef,
+              mediaFileName: attachmentName!,
+              mediaMime: attachment.mime,
+              mediaKind: attachment.kind,
+              ...(attachment.caption ? { caption: attachment.caption } : {}),
+            }
+          : {}),
       },
-      params.noAutoRetry || audio ? { attempts: 1 } : undefined
+      params.noAutoRetry || audio || attachment ? { attempts: 1 } : undefined
     );
 
     return { message, instanceId: instance.id };
   } catch (err) {
-    if (!audio) throw err;
-    console.error(`Failed to send seller audio for conversation ${conversation.id}:`, err);
+    if (!audio && !attachment) throw err;
+    console.error(`Failed to send seller ${audio ? "audio" : "attachment"} for conversation ${conversation.id}:`, err);
     try {
       await updateMessageContent(db, message.id, content, {
         ...(metadata ?? {}),
@@ -176,6 +257,7 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
     } catch (markErr) {
       console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
     }
+    if (attachment) throw new SellerAttachmentSendError("Falha ao enviar o anexo", uploaded);
     throw new SellerAudioSendError("Falha ao enviar o áudio", uploaded);
   }
 }

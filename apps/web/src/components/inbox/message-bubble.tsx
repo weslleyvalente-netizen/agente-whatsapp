@@ -40,12 +40,22 @@ function hideMediaText(message: Message): boolean {
   return message.media_type === "document" && Boolean(fileName) && message.content.trim() === fileName;
 }
 
+// Anexo (imagem/vídeo/documento) do atendente que o Evolution não entregou.
+function isHumanAttachmentFailed(message: Message): boolean {
+  return (
+    message.role === "human_agent" &&
+    (message.media_type === "image" || message.media_type === "video" || message.media_type === "document") &&
+    Boolean(message.metadata?.send_failed_at)
+  );
+}
+
 export function MessageBubble({ message, waLayout = false, tail = false }: MessageBubbleProps) {
   const isContact = message.role === "contact";
   const isAgent = message.role === "agent";
   const isHuman = message.role === "human_agent";
   const isSystem = message.role === "system";
 
+  const attachmentFailed = isHumanAttachmentFailed(message);
   const isPlaceholderAudio = message.media_type === "audio" && message.content === UNTRANSCRIBED_AUDIO_PLACEHOLDER;
   const showUntranscribedNotice = isContact && isPlaceholderAudio;
   const hideHumanAudioPlaceholder =
@@ -96,7 +106,7 @@ export function MessageBubble({ message, waLayout = false, tail = false }: Messa
             className="mb-1 h-auto max-w-full rounded-md"
           />
         )}
-        {chatMediaState(message) !== "none" && (
+        {!attachmentFailed && chatMediaState(message) !== "none" && (
           <div className="mb-1">
             <ChatMedia message={message} />
           </div>
@@ -122,6 +132,7 @@ export function MessageBubble({ message, waLayout = false, tail = false }: Messa
         {isHuman && message.media_type === "audio" && message.metadata?.send_failed_at && (
           <p className="mt-1 text-xs font-semibold text-destructive">Áudio não enviado</p>
         )}
+        {attachmentFailed && <p className="mt-1 text-xs font-semibold text-destructive">Anexo não enviado</p>}
         <p
           title={new Date(message.created_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "full", timeStyle: "medium" })}
           className={cn(
@@ -165,6 +176,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
   const out = !isContact;
   const tick = messageTick(message);
   const audioFailed = isHuman && message.media_type === "audio" && Boolean(message.metadata?.send_failed_at);
+  const attachmentFailed = isHumanAttachmentFailed(message);
 
   return (
     <div className={cn("flex", out ? "justify-end pr-2" : "justify-start pl-2")}>
@@ -192,7 +204,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
         {hasPublicImage(message) && (
           <img src={message.media_url!} alt="Foto enviada" className="mb-1 h-auto max-w-full rounded-md" />
         )}
-        {chatMediaState(message) !== "none" && (
+        {!attachmentFailed && chatMediaState(message) !== "none" && (
           <div className="mb-1">
             <ChatMedia message={message} />
           </div>
@@ -216,6 +228,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
           <p className="whitespace-pre-wrap break-words text-sm leading-[19px]">{message.content}</p>
         )}
         {audioFailed && <p className="mt-1 text-xs font-semibold text-destructive">Áudio não enviado</p>}
+        {attachmentFailed && <p className="mt-1 text-xs font-semibold text-destructive">Anexo não enviado</p>}
         <div className={cn("tabular-data mt-0.5 flex items-center justify-end gap-1 text-[11px] leading-none", WA_THEME.meta)}>
           <span
             title={new Date(message.created_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", dateStyle: "full", timeStyle: "medium" })}
@@ -229,7 +242,7 @@ function WaMessageBubble({ message, tail, showUntranscribedNotice, hideHumanAudi
           {tick === "sent" && <Check className="h-3.5 w-3.5" role="img" aria-label="Enviada" />}
           {tick === "delivered" && <CheckCheck className="h-3.5 w-3.5" role="img" aria-label="Entregue" />}
           {tick === "read" && <CheckCheck className={cn("h-3.5 w-3.5", WA_THEME.tickRead)} role="img" aria-label="Lida" />}
-          {tick === "failed" && !audioFailed && <span className="font-semibold text-destructive">não enviado</span>}
+          {tick === "failed" && !audioFailed && !attachmentFailed && <span className="font-semibold text-destructive">não enviado</span>}
         </div>
       </div>
     </div>

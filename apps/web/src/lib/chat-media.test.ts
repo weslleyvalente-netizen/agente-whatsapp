@@ -34,6 +34,18 @@ describe("chatMediaState", () => {
   it("mídia do vendedor com referência storage: stored", () => {
     expect(chatMediaState({ ...base, role: "human_agent", media_url: "storage:chat-media/o/c/m.jpg" }, NOW)).toBe("stored");
   });
+  it("anexo do atendente guardado (imagem, vídeo, documento) é stored, nunca pending", () => {
+    for (const media_type of ["image", "video", "document"]) {
+      const m = { ...base, role: "human_agent", media_type, media_url: "storage:chat-media/o/c/m.bin" };
+      expect(chatMediaState(m, NOW)).toBe("stored");
+      expect(chatMediaState({ ...m, created_at: "2026-11-09T11:59:59Z", metadata: { media: {} } }, NOW)).toBe("stored");
+    }
+  });
+  it("anexo do atendente sem referência nunca vira pending/failed (sem 'Tentar de novo')", () => {
+    for (const metadata of [null, { media: {} }, { media: { status: "failed" } }, { media: { status: "stored" } }]) {
+      expect(chatMediaState({ ...base, role: "human_agent", metadata }, NOW)).toBe("none");
+    }
+  });
   it("após tentar de novo (media sem status, sem url) volta a pending mesmo em mensagem antiga", () => {
     const old = { ...base, created_at: "2026-11-01T10:00:00Z" };
     expect(chatMediaState({ ...old, metadata: { media: {} } }, NOW)).toBe("pending");
