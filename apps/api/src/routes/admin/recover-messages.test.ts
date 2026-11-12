@@ -19,7 +19,7 @@ vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
 vi.mock("../../lib/redis-probe.js", () => ({ probeRedis: m.probeRedis }));
 
 import Fastify from "fastify";
-import routes, { recoveryConfig, resetRecoveryState, waitForRecoveryIdle } from "./recover-messages.js";
+import routes, { recoveryConfig, resetRecoveryState, waitForRecoveryIdle, reconcileRecentMessages, RECONCILE_LOOKBACK_MS, RECONCILE_GRACE_MS, reconcileLimits } from "./recover-messages.js";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
@@ -405,5 +405,138 @@ describe("reenvio em segundo plano", () => {
     expect(st.state).toBe("failed");
     expect(JSON.stringify(st)).not.toContain("abc123");
     expect((await post(a, { since: SINCE, until: UNTIL, dryRun: false })).statusCode).toBe(202);
+  });
+});
+
+describe("recuperação automática (reconcileRecentMessages)", () => {
+  const NOW = new Date("2026-11-12T14:00:00.000Z");
+  const nowSec = NOW.getTime() / 1000;
+
+  it("busca só a janela recente, sem as mensagens dos últimos minutos", async () => {
+    await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    const w = m.findStoredMessages.mock.calls[0][1];
+    expect(w.gteSec).toBe(Math.floor((NOW.getTime() - RECONCILE_LOOKBACK_MS) / 1000));
+    expect(w.lteSec).toBe(Math.ceil((NOW.getTime() - RECONCILE_GRACE_MS) / 1000));
+  });
+
+  it("reenvia ao webhook a mensagem que a Evolution tem e o CRM não tem", async () => {
+    received = [rec("A", nowSec - 1800), rec("B", nowSec - 1700)];
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ customers: 1, replayed: 2, failed: 0 });
+    expect(delivered.map((d) => d.id)).toEqual(["A", "B"]);
+    expect(delivered[0].headers).toMatchObject({ apikey: SECRET });
+  });
+
+  it("não reenvia o que já está no CRM", async () => {
+    received = [rec("A", nowSec - 1800)];
+    m.findExistingEvolutionMessageIds.mockImplementation(async (_db: unknown, ids: string[]) => new Set(ids));
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ customers: 0, replayed: 0 });
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("cliente já respondido tem a mensagem gravada no CRM, mas sem acionar a IA (modo só gravar)", async () => {
+    received = [rec("A", nowSec - 1800)];
+    sent = [sentRec("S", nowSec - 600)];
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ customers: 0, replayed: 0, saved: 1, failed: 0 });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].headers).toMatchObject({ "x-replay-save-only": REPLAY_TOKEN });
+  });
+
+  it("mensagem a ser respondida pela IA NÃO usa o modo só gravar", async () => {
+    received = [rec("A", nowSec - 1800)];
+    await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(delivered[0].headers["x-replay-save-only"]).toBeUndefined();
+  });
+
+  it("sem Redis não faz nada", async () => {
+    m.probeRedis.mockResolvedValue(false);
+    received = [rec("A", nowSec - 1800)];
+    expect(await reconcileRecentMessages(await app("owner"), ORG, { now: NOW })).toMatchObject({ skipped: "redis_down", replayed: 0 });
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("sem instância com agente ativo não faz nada", async () => {
+    m.getInstancesByOrganization.mockResolvedValue([]);
+    expect(await reconcileRecentMessages(await app("owner"), ORG, { now: NOW })).toMatchObject({ skipped: "no_instances" });
+  });
+
+  it("não roda junto com outra recuperação da mesma organização", async () => {
+    received = [rec("A", nowSec - 1800)];
+    let release!: () => void;
+    webhookBehavior = () => new Promise((res) => { release = () => res({ status: 200, body: { ok: true } }); });
+    const a = await app("owner");
+    const first = reconcileRecentMessages(a, ORG, { now: NOW });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await reconcileRecentMessages(a, ORG, { now: NOW })).toMatchObject({ skipped: "running" });
+    release();
+    await first;
+  });
+
+  it("erro na Evolution não derruba nem trava: devolve falha e libera para a próxima", async () => {
+    m.findStoredMessages.mockRejectedValueOnce(new Error("apikey=abc123"));
+    const a = await app("owner");
+    const r = await reconcileRecentMessages(a, ORG, { now: NOW });
+    expect(r).toMatchObject({ skipped: "error", replayed: 0 });
+    expect(JSON.stringify(r)).not.toContain("abc123");
+    received = [rec("A", nowSec - 1800)];
+    expect(await reconcileRecentMessages(a, ORG, { now: NOW })).toMatchObject({ replayed: 1 });
+  });
+});
+
+describe("recuperação automática: instâncias, limites e interrupção", () => {
+  const NOW = new Date("2026-11-12T14:00:00.000Z");
+  const nowSec = NOW.getTime() / 1000;
+  const two = [
+    { id: "i1", instance_name: "inst-a", instance_id: "inst-a", active_agent_id: "ag" },
+    { id: "i2", instance_name: "inst-b", instance_id: "inst-b", active_agent_id: "ag" },
+  ];
+
+  beforeEach(() => { reconcileLimits.maxCustomers = 50; reconcileLimits.budgetMs = 240_000; });
+
+  it("falha em uma instância não impede a recuperação das outras e é informada sem vazar detalhes", async () => {
+    m.getInstancesByOrganization.mockResolvedValue(two);
+    m.findStoredMessages.mockImplementation(async (inst: string, _w: unknown, fromMe: boolean) => {
+      if (inst === "inst-b") throw new Error("apikey=abc123 http://evolution/secret");
+      return fromMe ? [] : [rec("A", nowSec - 1800)];
+    });
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ replayed: 1, failedInstances: ["inst-b"] });
+    expect(r.skipped).toBeUndefined();
+    expect(JSON.stringify(r)).not.toContain("abc123");
+  });
+
+  it("todas as instâncias falhando devolve skipped=error com a lista de instâncias", async () => {
+    m.getInstancesByOrganization.mockResolvedValue(two);
+    m.findStoredMessages.mockRejectedValue(new Error("boom"));
+    expect(await reconcileRecentMessages(await app("owner"), ORG, { now: NOW })).toMatchObject({ skipped: "error", failedInstances: ["inst-a", "inst-b"] });
+  });
+
+  it("resposta enviada por OUTRO número da empresa não conta como resposta (escopo por instância)", async () => {
+    m.getInstancesByOrganization.mockResolvedValue(two);
+    m.findStoredMessages.mockImplementation(async (inst: string, _w: unknown, fromMe: boolean) => {
+      if (inst === "inst-a") return fromMe ? [sentRec("S", nowSec - 600)] : [];
+      return fromMe ? [] : [rec("B", nowSec - 1800)];
+    });
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ replayed: 1, saved: 0 });
+    expect(delivered[0].headers["x-replay-save-only"]).toBeUndefined();
+  });
+
+  it("limita os clientes por ciclo e avisa que truncou", async () => {
+    reconcileLimits.maxCustomers = 2;
+    received = [rec("A", nowSec - 1800, "5511911110001@s.whatsapp.net"), rec("B", nowSec - 1700, "5511911110002@s.whatsapp.net"), rec("C", nowSec - 1600, "5511911110003@s.whatsapp.net")];
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+    expect(r).toMatchObject({ replayed: 2, truncated: true });
+    expect(delivered.map((d) => d.id)).toEqual(["A", "B"]);
+  });
+
+  it("para no meio do ciclo quando a chave é desligada", async () => {
+    received = [rec("A", nowSec - 1800, "5511911110001@s.whatsapp.net"), rec("B", nowSec - 1700, "5511911110002@s.whatsapp.net")];
+    const stillEnabled = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW, stillEnabled });
+    expect(r).toMatchObject({ replayed: 1, stopped: true });
+    expect(delivered.map((d) => d.id)).toEqual(["A"]);
   });
 });

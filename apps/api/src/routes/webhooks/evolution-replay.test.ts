@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
-import evolutionWebhookRoutes, { resolveReplayCreatedAt, REPLAY_TIMESTAMP_HEADER } from "./evolution.js";
+import evolutionWebhookRoutes, { resolveReplayCreatedAt, REPLAY_TIMESTAMP_HEADER, REPLAY_SAVE_ONLY_HEADER } from "./evolution.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
 process.env.WEBHOOK_SECRET = "test-secret";
@@ -74,6 +74,16 @@ describe("webhook — replay preserva created_at", () => {
     const res = await post({ [REPLAY_TIMESTAMP_HEADER]: REPLAY_TOKEN });
     expect(res.statusCode).toBe(200);
     expect(m.saveMessage.mock.calls[0][0].createdAt).toBe("2025-10-16T23:30:00.000Z");
+    expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
+  });
+  it("modo só gravar: grava a mensagem e NÃO enfileira a IA", async () => {
+    const res = await post({ [REPLAY_TIMESTAMP_HEADER]: REPLAY_TOKEN, [REPLAY_SAVE_ONLY_HEADER]: REPLAY_TOKEN });
+    expect(res.json()).toMatchObject({ ok: true, skipped: "saved_only" });
+    expect(m.saveMessage).toHaveBeenCalledTimes(1);
+    expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
+  });
+  it("modo só gravar com token forjado é ignorado: enfileira normalmente", async () => {
+    await post({ [REPLAY_SAVE_ONLY_HEADER]: "1" });
     expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
   });
   it("webhook ignora o cabeçalho de replay sem o token (forjado)", async () => {
