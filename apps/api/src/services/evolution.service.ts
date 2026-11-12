@@ -186,17 +186,29 @@ export class ObserveInvalidResponseError extends Error {
   constructor() { super("invalid_response"); this.name = "ObserveInvalidResponseError"; }
 }
 
-/** null = resposta inválida ou instância ausente. {at:null, reasonCode:null} = instância presente e sem desconexão registrada. */
+/**
+ * null = resposta inválida: instância ausente, data que não é uma data válida ou código que não é número.
+ * {at:null, reasonCode:null} = instância presente e SEM desconexão registrada (campos nulos/ausentes).
+ * Fuso: na 2.3.7 `disconnectionAt` é um Timestamp (sem fuso) do Prisma, serializado como ISO em UTC com "Z"; new Date(...) lê o mesmo instante.
+ */
 export function parseDisconnection(res: any, instanceName: string): { at: Date | null; reasonCode: number | null } | null {
   const list: any[] = Array.isArray(res) ? res : res && typeof res === "object" ? [res] : [];
   const item = list.find((i) => i && (i.name === instanceName || i.instance?.instanceName === instanceName));
   if (!item) return null;
-  const at = item.disconnectionAt ? new Date(item.disconnectionAt) : null;
-  const code = Number(item.disconnectionReasonCode);
-  return {
-    at: at && Number.isFinite(at.getTime()) ? at : null,
-    reasonCode: item.disconnectionReasonCode !== null && item.disconnectionReasonCode !== undefined && Number.isFinite(code) ? code : null,
-  };
+  const rawAt = item.disconnectionAt;
+  const rawCode = item.disconnectionReasonCode;
+  let at: Date | null = null;
+  if (rawAt !== null && rawAt !== undefined) {
+    if (typeof rawAt !== "string") return null;
+    at = new Date(rawAt);
+    if (!Number.isFinite(at.getTime())) return null;
+  }
+  let reasonCode: number | null = null;
+  if (rawCode !== null && rawCode !== undefined) {
+    reasonCode = Number(rawCode);
+    if (rawCode === "" || !Number.isFinite(reasonCode)) return null;
+  }
+  return { at, reasonCode };
 }
 
 export function newestReceivedTimestamp(records: EvolutionStoredMessage[]): Date | null {

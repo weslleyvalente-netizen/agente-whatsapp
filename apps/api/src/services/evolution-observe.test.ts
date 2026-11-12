@@ -35,8 +35,21 @@ describe("parseDisconnection", () => {
     expect(parseDisconnection(null, "weslley")).toBeNull();
     expect(parseDisconnection([], "weslley")).toBeNull();
   });
-  it("data inválida vira null, e o código não numérico também", () => {
-    expect(parseDisconnection({ name: "weslley", disconnectionAt: "ontem", disconnectionReasonCode: "abc" }, "weslley")).toEqual({ at: null, reasonCode: null });
+  it("data inválida ou código não numérico é resposta inválida (null), não 'sem desconexão'", () => {
+    expect(parseDisconnection({ name: "weslley", disconnectionAt: "ontem", disconnectionReasonCode: 401 }, "weslley")).toBeNull();
+    expect(parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: "abc" }, "weslley")).toBeNull();
+    expect(parseDisconnection({ name: "weslley", disconnectionAt: 12345, disconnectionReasonCode: null }, "weslley")).toBeNull();
+  });
+  it("data ausente (null/undefined) com código ausente continua sendo 'sem desconexão registrada'", () => {
+    expect(parseDisconnection({ name: "weslley", disconnectionAt: undefined }, "weslley")).toEqual({ at: null, reasonCode: null });
+  });
+  it("fuso: resposta REAL e sanitizada da 2.3.7 (12/11/2026, 4 campos): ISO em UTC com 'Z'; o instante lido é o mesmo", () => {
+    // Capturada do próprio Evolution (GET /instance/fetchInstances?instanceName=weslley, só estes campos). 22:28:00Z = 19:28 em Brasília,
+    // que foi quando o QR foi relido; a coluna é Timestamp (sem fuso) e a API a serializa em UTC com "Z".
+    const real = { name: "weslley", connectionStatus: "open", disconnectionReasonCode: 401, disconnectionAt: "2026-11-12T22:28:00.859Z" };
+    const out = parseDisconnection([real], "weslley")!;
+    expect(out).toEqual({ at: new Date(Date.UTC(2026, 10, 12, 22, 28, 0, 859)), reasonCode: 401 });
+    expect(out.at!.toISOString()).toBe("2026-11-12T22:28:00.859Z");
   });
   it("não devolve nenhum outro campo (disconnectionObject pode ter dados de sessão)", () => {
     const out = parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: 401, disconnectionObject: "{secret}", token: "abc" }, "weslley")!;
@@ -78,6 +91,11 @@ describe("consultas reais com fetch simulado", () => {
 
   it("observeDisconnection: instância ausente na resposta vira invalid_response", async () => {
     respond([{ name: "outra" }]);
+    await expect(observeDisconnection("weslley")).rejects.toBeInstanceOf(ObserveInvalidResponseError);
+  });
+
+  it("observeDisconnection: data inválida vira invalid_response", async () => {
+    respond([{ name: "weslley", disconnectionAt: "ontem", disconnectionReasonCode: 401 }]);
     await expect(observeDisconnection("weslley")).rejects.toBeInstanceOf(ObserveInvalidResponseError);
   });
 

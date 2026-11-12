@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { observeDisconnection } from "./evolution.service.js";
 import { observeInstance, runObservationCycle, startEvolutionMonitor, defaultMonitorDeps, type MonitorDeps, type ObservationRow } from "./evolution-monitor.js";
 
 const db = vi.hoisted(() => ({ calls: [] as Array<[string, ...unknown[]]>, result: { data: null as unknown, error: null as unknown } }));
@@ -165,6 +166,32 @@ describe("falha de coleta não vira desconexão nova", () => {
     for (let k = 0; k < 3; k++) await observeInstance(base, ctx, new Date(NOW.getTime() + k * 300_000)).then((r) => base.insert(r));
     expect(rows.map((r) => r.disconnect_since_previous)).toEqual([null, null, false]);
     expect(rows[1].disconnection_error_kind).toBe("timeout");
+  });
+
+  it.each([
+    ["resposta sem a instância esperada", [{ name: "outra" }]],
+    ["data inválida", [{ name: "weslley", disconnectionAt: "ontem", disconnectionReasonCode: 401 }]],
+  ])("evento antigo → %s → mesmo evento antigo: marca erro de coleta e a reaparição não conta como nova", async (_n, bad) => {
+    const old = { name: "weslley", disconnectionAt: OLD.toISOString(), disconnectionReasonCode: 401 };
+    const bodies = [[old], bad, [old]];
+    const realFetch = globalThis.fetch;
+    let i = 0;
+    globalThis.fetch = (async () => ({ ok: true, json: async () => bodies[i++], text: async () => "" })) as never;
+    try {
+      const rows: ObservationRow[] = [];
+      const d = deps({
+        disconnection: observeDisconnection,
+        previousDisconnectionAt: vi.fn().mockImplementation(async () => {
+          const valid = [...rows].reverse().find((r) => r.disconnection_error_kind === null);
+          return valid === undefined ? undefined : valid.disconnection_at ? new Date(valid.disconnection_at) : null;
+        }),
+      });
+      for (let k = 0; k < 3; k++) rows.push(await observeInstance(d, ctx, new Date(NOW.getTime() + k * 300_000)));
+      expect(rows[1]).toMatchObject({ disconnection_error_kind: "invalid_response", disconnection_at: null, disconnect_since_previous: null });
+      expect(rows.map((r) => r.disconnect_since_previous)).toEqual([null, null, false]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it("a consulta real da observação anterior ignora linhas com erro de coleta", async () => {
