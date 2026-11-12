@@ -457,6 +457,21 @@ describe("recuperação automática (reconcileRecentMessages)", () => {
     expect(delivered).toHaveLength(0);
   });
 
+  it("sem WEBHOOK_SECRET não roda: o webhook ignoraria o modo só gravar e a IA responderia quem já foi respondido", async () => {
+    const saved = process.env.WEBHOOK_SECRET;
+    delete process.env.WEBHOOK_SECRET;
+    try {
+      received = [rec("A", nowSec - 1800)];
+      sent = [sentRec("S", nowSec - 600)];
+      const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW });
+      expect(r).toMatchObject({ skipped: "no_secret", replayed: 0, saved: 0 });
+      expect(delivered).toHaveLength(0);
+      expect(m.findStoredMessages).not.toHaveBeenCalled();
+    } finally {
+      process.env.WEBHOOK_SECRET = saved;
+    }
+  });
+
   it("sem instância com agente ativo não faz nada", async () => {
     m.getInstancesByOrganization.mockResolvedValue([]);
     expect(await reconcileRecentMessages(await app("owner"), ORG, { now: NOW })).toMatchObject({ skipped: "no_instances" });
