@@ -29,6 +29,7 @@ import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
 import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
 import { startAutoRecover } from "./services/auto-recover.js";
+import { startEvolutionMonitor } from "./services/evolution-monitor.js";
 
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
@@ -94,6 +95,8 @@ const start = async () => {
   startHealthMonitor(server.log);
   // Rede de segurança contra o WhatsApp "conectado mas surdo": reenvia o que a Evolution guardou e o CRM não recebeu (chave desligada por padrão).
   startAutoRecover(server, server.log);
+  // Registro periódico do estado da conexão do Evolution (chave settings.evolution_monitor_enabled, desligada por padrão).
+  startEvolutionMonitor(server.log);
 };
 
 start().catch((err) => {

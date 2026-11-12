@@ -168,3 +168,101 @@ export async function findMessagesByRemoteJid(
   });
   return extractRecords(result);
 }
+
+
+// ---- Observação periódica (monitor de conexão) ----
+// Consultas curtas e com tempo limite, só para o monitor. Devolvem apenas estados e horários: nunca o corpo bruto da
+// resposta (disconnectionObject e outros campos podem ter dados de sessão).
+export const OBSERVE_TIMEOUT_MS = 10_000;
+const OBSERVE_PAGE_SIZE = 50;
+
+export function parseConnectionState(res: any): string | null {
+  const state = res?.instance?.state ?? res?.state;
+  return typeof state === "string" && state.length > 0 ? state : null;
+}
+
+/** Resposta da Evolution que não tem o formato esperado (instância ausente, corpo inesperado). Não é o mesmo que "sem desconexão". */
+export class ObserveInvalidResponseError extends Error {
+  constructor() { super("invalid_response"); this.name = "ObserveInvalidResponseError"; }
+}
+
+/**
+ * null = resposta inválida: instância ausente, data que não é uma data válida ou código que não é número.
+ * {at:null, reasonCode:null} = instância presente e SEM desconexão registrada (campos nulos/ausentes).
+ * Fuso: na 2.3.7 `disconnectionAt` é um Timestamp (sem fuso) do Prisma, serializado como ISO em UTC com "Z"; new Date(...) lê o mesmo instante.
+ */
+export function parseDisconnection(res: any, instanceName: string): { at: Date | null; reasonCode: number | null } | null {
+  const list: any[] = Array.isArray(res) ? res : res && typeof res === "object" ? [res] : [];
+  const item = list.find((i) => i && (i.name === instanceName || i.instance?.instanceName === instanceName));
+  if (!item) return null;
+  const rawAt = item.disconnectionAt;
+  const rawCode = item.disconnectionReasonCode;
+  let at: Date | null = null;
+  if (rawAt !== null && rawAt !== undefined) {
+    if (typeof rawAt !== "string") return null;
+    at = new Date(rawAt);
+    if (!Number.isFinite(at.getTime())) return null;
+  }
+  let reasonCode: number | null = null;
+  if (rawCode !== null && rawCode !== undefined) {
+    reasonCode = Number(rawCode);
+    if (rawCode === "" || !Number.isFinite(reasonCode)) return null;
+  }
+  return { at, reasonCode };
+}
+
+export function newestReceivedTimestamp(records: EvolutionStoredMessage[]): Date | null {
+  const stamps = records.map(tsSec).filter((t) => Number.isFinite(t) && t > 0);
+  return stamps.length > 0 ? new Date(Math.max(...stamps) * 1000) : null;
+}
+
+/** Só a classe do erro: o texto da Evolution pode conter URL, chave ou corpo da resposta. */
+export function classifyObserveError(err: unknown): string {
+  const e = err as { name?: string; message?: string } | null;
+  if (e instanceof ObserveInvalidResponseError) return "invalid_response";
+  if (e?.name === "TimeoutError" || e?.name === "AbortError") return "timeout";
+  const m = /Evolution API error (\d{3})/.exec(String(e?.message ?? ""));
+  if (m) return `http_${m[1]}`;
+  if (e instanceof TypeError) return "network";
+  return "unknown";
+}
+
+export async function observeConnectionState(instanceName: string): Promise<string | null> {
+  return parseConnectionState(await evolutionFetch(`/instance/connectionState/${encodeURIComponent(instanceName)}`, { signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS) }));
+}
+
+export async function observeDisconnection(instanceName: string): Promise<{ at: Date | null; reasonCode: number | null }> {
+  const res = await evolutionFetch(`/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, { signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS) });
+  const parsed = parseDisconnection(res, instanceName);
+  if (parsed === null) throw new ObserveInvalidResponseError();
+  return parsed;
+}
+
+const OBSERVE_MAX_PAGES = 4;
+
+/**
+ * Horário da mensagem RECEBIDA mais recente que a Evolution guardou. Verificado no código da Evolution 2.3.7 (channel.service.ts,
+ * fetchMessages): a listagem vem SEMPRE em ordem decrescente de messageTimestamp, paginada (skip/take, pages = ceil(total/offset), 0 sem registros),
+ * e o filtro key.fromMe=false é IGNORADO (a condição é "fromMe ? filtro : nada"), então as páginas misturam enviadas e recebidas.
+ * Por isso filtra aqui (key.fromMe === false) e olha até OBSERVE_MAX_PAGES páginas recentes; sem recebida nelas devolve null
+ * ("nenhuma nas últimas 200 mensagens", não "nunca"). Lista vazia é null; resposta sem lista é inválida.
+ * É sinal de atividade, não prova de perda: para provar atraso, correlacione uma mensagem de teste nos dois lados.
+ */
+export async function observeLatestReceivedAt(instanceName: string): Promise<Date | null> {
+  const fetchPage = (page: number) => evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS),
+    body: JSON.stringify({ where: {}, page, offset: OBSERVE_PAGE_SIZE }),
+  });
+  const hasRecords = (r: any) => Array.isArray(r) || Array.isArray(r?.messages?.records) || Array.isArray(r?.messages);
+  for (let page = 1; page <= OBSERVE_MAX_PAGES; page++) {
+    const res = await fetchPage(page);
+    if (!hasRecords(res)) throw new ObserveInvalidResponseError();
+    const received = extractRecords(res).filter((r) => r?.key?.fromMe === false);
+    const newest = newestReceivedTimestamp(received);
+    if (newest) return newest;
+    const pages = typeof res?.messages?.pages === "number" ? res.messages.pages : 1;
+    if (page >= pages) break;
+  }
+  return null;
+}
