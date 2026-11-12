@@ -24,7 +24,7 @@ describe("parseDisconnection", () => {
   });
   it("aceita objeto único e instance.instanceName", () => {
     expect(parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: "428" }, "weslley")).toEqual({ at: new Date("2026-11-12T14:16:27.094Z"), reasonCode: 428 });
-    expect(parseDisconnection([{ instance: { instanceName: "weslley" }, disconnectionAt: "2026-11-12T14:16:27.094Z" }], "weslley").at).toEqual(new Date("2026-11-12T14:16:27.094Z"));
+    expect(parseDisconnection([{ instance: { instanceName: "weslley" }, disconnectionAt: "2026-11-12T14:16:27.094Z" }], "weslley")!.at).toEqual(new Date("2026-11-12T14:16:27.094Z"));
   });
   it("instância presente sem desconexão registrada: nulos (ausência de evento)", () => {
     expect(parseDisconnection([{ name: "weslley", disconnectionAt: null, disconnectionReasonCode: null }], "weslley")).toEqual({ at: null, reasonCode: null });
