@@ -93,6 +93,8 @@ export interface OrganizationSettings {
   // Recuperação automática: a cada 5 min a API compara o que a Evolution guardou nas últimas 2 h com o CRM e reenvia o que faltou
   // (WhatsApp "conectado mas surdo"). Só roda com true; desligada por padrão.
   auto_recover_messages_enabled?: boolean;
+  // Monitor da conexão do Evolution: a cada 5 min grava estado e horários em evolution_connection_observations. Desligado por padrão.
+  evolution_monitor_enabled?: boolean;
   // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
   // that haven't configured this yet fall back to
   // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /

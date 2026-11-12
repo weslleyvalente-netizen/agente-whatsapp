@@ -168,3 +168,67 @@ export async function findMessagesByRemoteJid(
   });
   return extractRecords(result);
 }
+
+
+// ---- Observação periódica (monitor de conexão) ----
+// Consultas curtas e com tempo limite, só para o monitor. Devolvem apenas estados e horários: nunca o corpo bruto da
+// resposta (disconnectionObject e outros campos podem ter dados de sessão).
+export const OBSERVE_TIMEOUT_MS = 10_000;
+const OBSERVE_PAGE_SIZE = 50;
+
+export function parseConnectionState(res: any): string | null {
+  const state = res?.instance?.state ?? res?.state;
+  return typeof state === "string" && state.length > 0 ? state : null;
+}
+
+export function parseDisconnection(res: any, instanceName: string): { at: Date | null; reasonCode: number | null } {
+  const list: any[] = Array.isArray(res) ? res : res && typeof res === "object" ? [res] : [];
+  const item = list.find((i) => i && (i.name === instanceName || i.instance?.instanceName === instanceName));
+  if (!item) return { at: null, reasonCode: null };
+  const at = item.disconnectionAt ? new Date(item.disconnectionAt) : null;
+  const code = Number(item.disconnectionReasonCode);
+  return {
+    at: at && Number.isFinite(at.getTime()) ? at : null,
+    reasonCode: item.disconnectionReasonCode !== null && item.disconnectionReasonCode !== undefined && Number.isFinite(code) ? code : null,
+  };
+}
+
+export function newestReceivedTimestamp(records: EvolutionStoredMessage[]): Date | null {
+  const stamps = records.map(tsSec).filter((t) => Number.isFinite(t) && t > 0);
+  return stamps.length > 0 ? new Date(Math.max(...stamps) * 1000) : null;
+}
+
+/** Só a classe do erro: o texto da Evolution pode conter URL, chave ou corpo da resposta. */
+export function classifyObserveError(err: unknown): string {
+  const e = err as { name?: string; message?: string } | null;
+  if (e?.name === "TimeoutError" || e?.name === "AbortError") return "timeout";
+  const m = /Evolution API error (\d{3})/.exec(String(e?.message ?? ""));
+  if (m) return `http_${m[1]}`;
+  if (e instanceof TypeError) return "network";
+  return "unknown";
+}
+
+export async function observeConnectionState(instanceName: string): Promise<string | null> {
+  return parseConnectionState(await evolutionFetch(`/instance/connectionState/${encodeURIComponent(instanceName)}`, { signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS) }));
+}
+
+export async function observeDisconnection(instanceName: string): Promise<{ at: Date | null; reasonCode: number | null }> {
+  const res = await evolutionFetch(`/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, { signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS) });
+  return parseDisconnection(res, instanceName);
+}
+
+/** Horário da mensagem RECEBIDA mais recente que a Evolution guardou (a ordem da listagem varia entre versões). */
+export async function observeLatestReceivedAt(instanceName: string): Promise<Date | null> {
+  const fetchPage = (page: number) => evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS),
+    body: JSON.stringify({ where: { key: { fromMe: false } }, page, offset: OBSERVE_PAGE_SIZE }),
+  });
+  const first = await fetchPage(1);
+  const records = extractRecords(first);
+  const pages = typeof first?.messages?.pages === "number" ? first.messages.pages : 1;
+  const stamps = records.map(tsSec).filter(Number.isFinite);
+  const ascending = stamps.length > 1 && stamps[0] < stamps[stamps.length - 1];
+  if (ascending && pages > 1) return newestReceivedTimestamp([...records, ...extractRecords(await fetchPage(pages))]);
+  return newestReceivedTimestamp(records);
+}
