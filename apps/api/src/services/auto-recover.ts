@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { getAdminClient, getAllOrganizations } from "@aula-agente/database";
+import { getAdminClient, getAllOrganizations, getOrganizationById } from "@aula-agente/database";
 import { reconcileRecentMessages } from "../routes/admin/recover-messages.js";
 
 // Recuperação automática de mensagens perdidas. Roda no processo da API (setInterval), como o alerta de silêncio.
@@ -20,9 +20,21 @@ export async function runAutoRecoverOnce(app: FastifyInstance, log: AutoRecoverL
   for (const org of orgs) {
     if (org.settings?.auto_recover_messages_enabled !== true) continue;
     try {
-      const r = await reconcileRecentMessages(app, org.id);
-      if (r.replayed > 0 || r.failed > 0) {
-        log.info({ organizationId: org.id, customers: r.customers, replayed: r.replayed, failed: r.failed }, "auto-recover: mensagens perdidas reenviadas ao CRM");
+      // Relê a chave antes de cada cliente: desligar interrompe também um ciclo em andamento.
+      const stillEnabled = async () => {
+        try {
+          const fresh = await getOrganizationById(getAdminClient(), org.id);
+          return fresh.settings?.auto_recover_messages_enabled === true;
+        } catch {
+          return false;
+        }
+      };
+      const r = await reconcileRecentMessages(app, org.id, { stillEnabled });
+      const detail = { organizationId: org.id, customers: r.customers, replayed: r.replayed, saved: r.saved, failed: r.failed, failedInstances: r.failedInstances, truncated: r.truncated === true, stopped: r.stopped === true };
+      if (r.skipped === "error" || r.failedInstances.length > 0) {
+        log.error({ ...detail, skipped: r.skipped }, "auto-recover: ciclo com falha na consulta à Evolution");
+      } else if (r.replayed > 0 || r.saved > 0 || r.failed > 0 || r.truncated || r.stopped) {
+        log.info(detail, "auto-recover: mensagens perdidas reenviadas ao CRM");
       }
     } catch (err) {
       log.error({ organizationId: org.id, errName: (err as Error)?.name }, "auto-recover: run failed");

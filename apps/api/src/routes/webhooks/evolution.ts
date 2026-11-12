@@ -91,6 +91,13 @@ const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]
 // Só é respeitado com o token aleatório do processo (REPLAY_TOKEN) E com
 // WEBHOOK_SECRET configurado; sem isso o comportamento é o de sempre.
 export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
+// Modo "só gravar" da recuperação: grava a mensagem (com o horário original) mas NÃO a encaminha à IA. Usado para clientes
+// que já foram respondidos (pelo celular da loja ou pela IA) depois da mensagem perdida. Mesmas exigências do cabeçalho acima.
+export const REPLAY_SAVE_ONLY_HEADER = "x-replay-save-only";
+
+export function isReplaySaveOnly(headers: Record<string, unknown>): boolean {
+  return !!process.env.WEBHOOK_SECRET && headers[REPLAY_SAVE_ONLY_HEADER] === REPLAY_TOKEN;
+}
 
 export function resolveReplayCreatedAt(
   headers: Record<string, unknown>,
@@ -686,6 +693,11 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // takeover state.
       if (contact.ai_disabled) {
         return reply.status(200).send({ ok: true, skipped: "ai_disabled" });
+      }
+
+      // Recuperação em modo "só gravar": a mensagem já está no CRM; não vai para a IA.
+      if (isReplaySaveOnly(request.headers)) {
+        return reply.status(200).send({ ok: true, messageId: message.id, skipped: "saved_only" });
       }
 
       // Marca ANTES de enfileirar que o webhook encaminhou esta mensagem à IA (a varredura de cliente sem resposta só
