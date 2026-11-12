@@ -31,7 +31,7 @@ export async function runAutoRecoverOnce(app: FastifyInstance, log: AutoRecoverL
       };
       const r = await reconcileRecentMessages(app, org.id, { stillEnabled });
       const detail = { organizationId: org.id, customers: r.customers, replayed: r.replayed, saved: r.saved, failed: r.failed, failedInstances: r.failedInstances, truncated: r.truncated === true, stopped: r.stopped === true };
-      if (r.skipped === "error" || r.failedInstances.length > 0) {
+      if (r.skipped === "error" || r.skipped === "no_secret" || r.failedInstances.length > 0) {
         log.error({ ...detail, skipped: r.skipped }, "auto-recover: ciclo com falha na consulta à Evolution");
       } else if (r.replayed > 0 || r.saved > 0 || r.failed > 0 || r.truncated || r.stopped) {
         log.info(detail, "auto-recover: mensagens perdidas reenviadas ao CRM");

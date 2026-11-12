@@ -299,10 +299,11 @@ export const RECONCILE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
 // Mensagens muito recentes ainda podem estar a caminho pelo webhook normal; deixa passar alguns minutos antes de buscar.
 export const RECONCILE_GRACE_MS = 3 * 60 * 1000;
 // Teto por ciclo (o que sobrar entra no próximo, pois continua ausente do CRM). Mutável para os testes.
+// O tempo é conferido ENTRE clientes: a busca inicial na Evolution e um cliente com muitas mensagens podem passar do orçamento.
 export const reconcileLimits = { maxCustomers: 50, budgetMs: 4 * 60 * 1000 };
 
 export interface ReconcileResult {
-  skipped?: "running" | "no_instances" | "redis_down" | "error";
+  skipped?: "running" | "no_instances" | "redis_down" | "no_secret" | "error";
   customers: number;   // clientes reenviados à IA
   replayed: number;    // mensagens reenviadas à IA
   saved: number;       // mensagens só gravadas (cliente já respondido)
@@ -330,6 +331,9 @@ export async function reconcileRecentMessages(app: FastifyInstance, organization
     return empty("error");
   }
   if (instances.length === 0) return empty("no_instances");
+  // Sem WEBHOOK_SECRET o webhook ignora os cabeçalhos de replay (horário original e "só gravar"): o cliente já respondido
+  // iria para a IA. Falha de forma segura em vez de rodar.
+  if (!process.env.WEBHOOK_SECRET) return empty("no_secret");
   // Sem Redis a IA não responde e o reenvio pendura.
   if (!(await probeRedis())) return empty("redis_down");
   // Sem await entre has() e add(): uma recuperação por organização por vez (compartilhada com o botão manual).
