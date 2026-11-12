@@ -91,19 +91,38 @@ describe("consultas reais com fetch simulado", () => {
     await expect(observeLatestReceivedAt("weslley")).rejects.toBeInstanceOf(ObserveInvalidResponseError);
   });
 
-  it("observeLatestReceivedAt: não infere a ordem; olha a primeira e a última página e fica com o maior horário", async () => {
+  it("observeLatestReceivedAt: na 2.3.7 o filtro fromMe=false é ignorado; filtra no cliente e ignora as enviadas", async () => {
+    const f = respond({ messages: { total: 3, pages: 1, records: [
+      { key: { fromMe: true }, messageTimestamp: 9000 },   // enviada mais nova: não conta
+      { key: { fromMe: false }, messageTimestamp: 8000 },
+      { key: { fromMe: false }, messageTimestamp: 7000 },
+    ] } });
+    expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(8000 * 1000));
+    const body = JSON.parse(f.mock.calls[0][1].body);
+    expect(body).toMatchObject({ page: 1, offset: 50 });
+    expect(JSON.stringify(body.where ?? {})).not.toContain("fromMe"); // filtro enganoso removido
+  });
+
+  it("observeLatestReceivedAt: se a 1ª página só tem enviadas, procura nas seguintes (ordem decrescente da 2.3.7), até um teto", async () => {
+    const out = [{ key: { fromMe: true }, messageTimestamp: 9000 }];
     const f = respond(
-      { messages: { total: 120, pages: 3, records: [{ messageTimestamp: 1000 }, { messageTimestamp: 1000 }] } },
-      { messages: { total: 120, pages: 3, records: [{ messageTimestamp: 5000 }, { messageTimestamp: 4000 }] } },
+      { messages: { total: 400, pages: 8, records: out } },
+      { messages: { total: 400, pages: 8, records: out } },
+      { messages: { total: 400, pages: 8, records: [{ key: { fromMe: false }, messageTimestamp: 6000 }] } },
     );
-    expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(5000 * 1000));
-    const bodies = f.mock.calls.map((c) => JSON.parse(c[1].body));
-    expect(bodies.map((b) => b.page)).toEqual([1, 3]);
-    expect(bodies[0].where).toEqual({ key: { fromMe: false } });
+    expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(6000 * 1000));
+    expect(f).toHaveBeenCalledTimes(3);
+  });
+
+  it("observeLatestReceivedAt: sem nenhuma recebida nas páginas do teto devolve null sem passar do limite", async () => {
+    const only = { messages: { total: 1000, pages: 20, records: [{ key: { fromMe: true }, messageTimestamp: 9000 }] } };
+    const f = respond(only, only, only, only, only, only);
+    expect(await observeLatestReceivedAt("weslley")).toBeNull();
+    expect(f.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
   it("observeLatestReceivedAt: uma página só faz uma consulta", async () => {
-    const f = respond({ messages: { pages: 1, records: [{ messageTimestamp: 2000 }] } });
+    const f = respond({ messages: { pages: 1, records: [{ key: { fromMe: false }, messageTimestamp: 2000 }] } });
     expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(2000 * 1000));
     expect(f).toHaveBeenCalledTimes(1);
   });

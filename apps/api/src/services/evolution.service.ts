@@ -226,26 +226,31 @@ export async function observeDisconnection(instanceName: string): Promise<{ at: 
   return parsed;
 }
 
+const OBSERVE_MAX_PAGES = 4;
+
 /**
- * Horário da mensagem RECEBIDA mais recente que a Evolution guardou. Não infere a ordenação (varia entre versões e pode ter horários
- * iguais): olha a primeira e a última página e fica com o maior horário. Lista vazia é "sem mensagens" (null); resposta sem lista
- * de mensagens é inválida. É sinal de atividade, não prova de perda: para provar atraso, correlacione uma mensagem de teste nos dois lados.
+ * Horário da mensagem RECEBIDA mais recente que a Evolution guardou. Verificado no código da Evolution 2.3.7 (channel.service.ts,
+ * fetchMessages): a listagem vem SEMPRE em ordem decrescente de messageTimestamp, paginada (skip/take, pages = ceil(total/offset), 0 sem registros),
+ * e o filtro key.fromMe=false é IGNORADO (a condição é "fromMe ? filtro : nada"), então as páginas misturam enviadas e recebidas.
+ * Por isso filtra aqui (key.fromMe === false) e olha até OBSERVE_MAX_PAGES páginas recentes; sem recebida nelas devolve null
+ * ("nenhuma nas últimas 200 mensagens", não "nunca"). Lista vazia é null; resposta sem lista é inválida.
+ * É sinal de atividade, não prova de perda: para provar atraso, correlacione uma mensagem de teste nos dois lados.
  */
 export async function observeLatestReceivedAt(instanceName: string): Promise<Date | null> {
   const fetchPage = (page: number) => evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
     method: "POST",
     signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS),
-    body: JSON.stringify({ where: { key: { fromMe: false } }, page, offset: OBSERVE_PAGE_SIZE }),
+    body: JSON.stringify({ where: {}, page, offset: OBSERVE_PAGE_SIZE }),
   });
   const hasRecords = (r: any) => Array.isArray(r) || Array.isArray(r?.messages?.records) || Array.isArray(r?.messages);
-  const first = await fetchPage(1);
-  if (!hasRecords(first)) throw new ObserveInvalidResponseError();
-  const records = extractRecords(first);
-  const pages = typeof first?.messages?.pages === "number" ? first.messages.pages : 1;
-  if (pages > 1) {
-    const last = await fetchPage(pages);
-    if (!hasRecords(last)) throw new ObserveInvalidResponseError();
-    records.push(...extractRecords(last));
+  for (let page = 1; page <= OBSERVE_MAX_PAGES; page++) {
+    const res = await fetchPage(page);
+    if (!hasRecords(res)) throw new ObserveInvalidResponseError();
+    const received = extractRecords(res).filter((r) => r?.key?.fromMe === false);
+    const newest = newestReceivedTimestamp(received);
+    if (newest) return newest;
+    const pages = typeof res?.messages?.pages === "number" ? res.messages.pages : 1;
+    if (page >= pages) break;
   }
-  return newestReceivedTimestamp(records);
+  return null;
 }
