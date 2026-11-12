@@ -54,6 +54,14 @@ Procedimento:
 4. Ensaiar o **rollback no serviço isolado**: voltar à imagem original pelo digest, preservando volumes, e anotar o que acontece com a sessão (se pedir QR, refazer e medir).
 5. Se a conta de teste ainda ficar "aberta mas surda" com o patch, testar a variante do #2883 (um passo por vez); se também falhar, a hipótese cai e o plano B é a UAZAPI.
 
+## 1b. Sem número reserva: medir no próprio 9050
+Se não houver número de teste, o 9050 faz o papel do controle: as quedas já ocorrem nele (5 em 6 dias).
+1. Com o monitor (#92) ligado e a imagem ORIGINAL, medir por **2 a 3 dias**, com mensagens de teste em horários registrados e correlação com os logs
+   (reconexões, código da última desconexão, `Stream Errored (ack)` com `class="status"`). Um código 500 é só uma pista; a evidência específica é a assinatura no log.
+2. **Se a falha não aparecer nesse período, a medição é inconclusiva** (não autoriza a troca nem a descarta).
+3. Só depois decidir a troca de imagem, separadamente, com o digest de rollback conferido; comparar as quedas por dia antes e depois.
+O monitor é consulta a cada 5 min e só vê a última desconexão: serve para localizar e comparar, não para contar cada queda.
+
 ## 2. Troca em produção (só se o teste isolado reproduzir o defeito no controle e passar com o patch)
 - **Fora do horário comercial.** Indisponibilidade estimada de 1 a 2 min e continuidade da sessão (sem novo QR) são **estimativas**, não garantias: ensaiar antes (item 1.4).
 - EasyPanel > `evolution` > Fonte: trocar **Imagem Docker** por **Dockerfile** (este conteúdo, com o digest) e Implantar.
@@ -63,7 +71,8 @@ Procedimento:
 - Observar **pelo menos 24 h** com sondas (não só 2 h: 2 h servem só para checar a troca inicial).
 
 ### Gatilhos de reversão (qualquer um)
-- sem receber mensagem de cliente por 30 min no horário comercial (confirmado com mensagem de teste que não chega ao Evolution);
+- **Recebimento:** uma mensagem de teste, mandada de outro aparelho e **confirmada no celular da loja**, que não chega ao Evolution nem ao CRM em alguns minutos
+  (30 min sem tráfego espontâneo podem ser só um período sem mensagens: não usar isso sozinho como gatilho);
 - falha de envio pelo CRM ou erros do webhook para a API;
 - `connectionState` diferente de `open` por mais de 5 min, ou reconexões repetidas;
 - duplicatas ou respostas automáticas em massa a mensagens antigas.
