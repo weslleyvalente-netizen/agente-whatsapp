@@ -19,7 +19,7 @@ vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
 vi.mock("../../lib/redis-probe.js", () => ({ probeRedis: m.probeRedis }));
 
 import Fastify from "fastify";
-import routes, { recoveryConfig, resetRecoveryState, waitForRecoveryIdle } from "./recover-messages.js";
+import routes, { recoveryConfig, resetRecoveryState, waitForRecoveryIdle, reconcileRecentMessages, RECONCILE_LOOKBACK_MS, RECONCILE_GRACE_MS } from "./recover-messages.js";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 
@@ -405,5 +405,75 @@ describe("reenvio em segundo plano", () => {
     expect(st.state).toBe("failed");
     expect(JSON.stringify(st)).not.toContain("abc123");
     expect((await post(a, { since: SINCE, until: UNTIL, dryRun: false })).statusCode).toBe(202);
+  });
+});
+
+describe("recuperação automática (reconcileRecentMessages)", () => {
+  const NOW = new Date("2026-11-12T14:00:00.000Z");
+  const nowSec = NOW.getTime() / 1000;
+
+  it("busca só a janela recente, sem as mensagens dos últimos minutos", async () => {
+    await reconcileRecentMessages(await app("owner"), ORG, NOW);
+    const w = m.findStoredMessages.mock.calls[0][1];
+    expect(w.gteSec).toBe(Math.floor((NOW.getTime() - RECONCILE_LOOKBACK_MS) / 1000));
+    expect(w.lteSec).toBe(Math.ceil((NOW.getTime() - RECONCILE_GRACE_MS) / 1000));
+  });
+
+  it("reenvia ao webhook a mensagem que a Evolution tem e o CRM não tem", async () => {
+    received = [rec("A", nowSec - 1800), rec("B", nowSec - 1700)];
+    const r = await reconcileRecentMessages(await app("owner"), ORG, NOW);
+    expect(r).toMatchObject({ customers: 1, replayed: 2, failed: 0 });
+    expect(delivered.map((d) => d.id)).toEqual(["A", "B"]);
+    expect(delivered[0].headers).toMatchObject({ apikey: SECRET });
+  });
+
+  it("não reenvia o que já está no CRM", async () => {
+    received = [rec("A", nowSec - 1800)];
+    m.findExistingEvolutionMessageIds.mockImplementation(async (_db: unknown, ids: string[]) => new Set(ids));
+    const r = await reconcileRecentMessages(await app("owner"), ORG, NOW);
+    expect(r).toMatchObject({ customers: 0, replayed: 0 });
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("não reenvia cliente que já recebeu resposta depois da mensagem perdida", async () => {
+    received = [rec("A", nowSec - 1800)];
+    sent = [sentRec("S", nowSec - 600)];
+    const r = await reconcileRecentMessages(await app("owner"), ORG, NOW);
+    expect(r).toMatchObject({ customers: 0, replayed: 0 });
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("sem Redis não faz nada", async () => {
+    m.probeRedis.mockResolvedValue(false);
+    received = [rec("A", nowSec - 1800)];
+    expect(await reconcileRecentMessages(await app("owner"), ORG, NOW)).toMatchObject({ skipped: "redis_down", replayed: 0 });
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("sem instância com agente ativo não faz nada", async () => {
+    m.getInstancesByOrganization.mockResolvedValue([]);
+    expect(await reconcileRecentMessages(await app("owner"), ORG, NOW)).toMatchObject({ skipped: "no_instances" });
+  });
+
+  it("não roda junto com outra recuperação da mesma organização", async () => {
+    received = [rec("A", nowSec - 1800)];
+    let release!: () => void;
+    webhookBehavior = () => new Promise((res) => { release = () => res({ status: 200, body: { ok: true } }); });
+    const a = await app("owner");
+    const first = reconcileRecentMessages(a, ORG, NOW);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await reconcileRecentMessages(a, ORG, NOW)).toMatchObject({ skipped: "running" });
+    release();
+    await first;
+  });
+
+  it("erro na Evolution não derruba nem trava: devolve falha e libera para a próxima", async () => {
+    m.findStoredMessages.mockRejectedValueOnce(new Error("apikey=abc123"));
+    const a = await app("owner");
+    const r = await reconcileRecentMessages(a, ORG, NOW);
+    expect(r).toMatchObject({ skipped: "error", replayed: 0 });
+    expect(JSON.stringify(r)).not.toContain("abc123");
+    received = [rec("A", nowSec - 1800)];
+    expect(await reconcileRecentMessages(a, ORG, NOW)).toMatchObject({ replayed: 1 });
   });
 });

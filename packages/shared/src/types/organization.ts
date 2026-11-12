@@ -90,6 +90,9 @@ export interface OrganizationSettings {
   // Redis fora, WhatsApp desconectado). Separado de handoff_notification_phone, que avisa a cada handoff.
   // Vazio/null: só a faixa no painel, sem WhatsApp.
   health_alert_phone?: string | null;
+  // Recuperação automática: a cada 5 min a API compara o que a Evolution guardou nas últimas 2 h com o CRM e reenvia o que faltou
+  // (WhatsApp "conectado mas surdo"). Só roda com true; desligada por padrão.
+  auto_recover_messages_enabled?: boolean;
   // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
   // that haven't configured this yet fall back to
   // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /

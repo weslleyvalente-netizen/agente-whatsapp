@@ -28,6 +28,7 @@ import pushRoutes from "./routes/push/index.js";
 import recoverMessagesRoutes from "./routes/admin/recover-messages.js";
 import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
+import { startAutoRecover } from "./services/auto-recover.js";
 
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
@@ -91,6 +92,8 @@ const start = async () => {
   server.log.info(`API server running on port ${port}`);
   // Alerta de silêncio: setInterval no próprio processo da API, sem fila (independe do Redis).
   startHealthMonitor(server.log);
+  // Rede de segurança contra o WhatsApp "conectado mas surdo": reenvia o que a Evolution guardou e o CRM não recebeu (chave desligada por padrão).
+  startAutoRecover(server, server.log);
 };
 
 start().catch((err) => {

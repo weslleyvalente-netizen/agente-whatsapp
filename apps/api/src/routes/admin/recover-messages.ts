@@ -279,6 +279,63 @@ export default async function recoverMessagesRoutes(app: FastifyInstance) {
   });
 }
 
+// ---- Recuperação automática ----
+// Rede de segurança contra o WhatsApp "conectado mas surdo": a cada ciclo, compara o que a Evolution guardou nas
+// últimas horas com o CRM e reenvia ao webhook só o que faltou (mesma lógica do botão manual, sem clientes já respondidos).
+export const RECONCILE_LOOKBACK_MS = 2 * 60 * 60 * 1000;
+// Mensagens muito recentes ainda podem estar a caminho pelo webhook normal; deixa passar alguns minutos antes de buscar.
+export const RECONCILE_GRACE_MS = 3 * 60 * 1000;
+
+export interface ReconcileResult {
+  skipped?: "running" | "no_instances" | "redis_down" | "error";
+  customers: number;
+  replayed: number;
+  failed: number;
+}
+
+export async function reconcileRecentMessages(app: FastifyInstance, organizationId: string, now: Date = new Date()): Promise<ReconcileResult> {
+  const empty = (skipped: ReconcileResult["skipped"]): ReconcileResult => ({ skipped, customers: 0, replayed: 0, failed: 0 });
+  if (running.has(organizationId)) return empty("running");
+  let instances: any[];
+  try {
+    instances = (await getInstancesByOrganization(getAdminClient(), organizationId)).filter((i: any) => i.active_agent_id);
+  } catch {
+    return empty("error");
+  }
+  if (instances.length === 0) return empty("no_instances");
+  // Sem Redis a IA não responde e o reenvio pendura.
+  if (!(await probeRedis())) return empty("redis_down");
+  // Sem await entre has() e add(): uma recuperação por organização por vez (compartilhada com o botão manual).
+  if (running.has(organizationId)) return empty("running");
+  running.add(organizationId);
+  try {
+    const a = await analyze({
+      organizationId, instances,
+      sinceMs: now.getTime() - RECONCILE_LOOKBACK_MS, untilMs: now.getTime() - RECONCILE_GRACE_MS,
+      includeAnswered: false,
+    });
+    const secret = process.env.WEBHOOK_SECRET;
+    let replayed = 0, failed = 0;
+    for (let gi = 0; gi < a.groups.length; gi++) {
+      if (gi > 0) await sleep(recoveryConfig.interMs);
+      const items = a.groups[gi].items;
+      for (let i = 0; i < items.length; i++) {
+        if (i > 0) await sleep(recoveryConfig.intraMs);
+        const { rec, instanceId } = items[i];
+        const outcome = await replayOne(app, rec, instanceId, secret);
+        if (outcome === "replayed") replayed++;
+        else if (outcome === "failed") failed++;
+      }
+    }
+    return { customers: a.groups.length, replayed, failed };
+  } catch {
+    // O erro da Evolution pode conter URL/chave: nada dele sai daqui.
+    return empty("error");
+  } finally {
+    running.delete(organizationId);
+  }
+}
+
 async function replayOne(
   app: FastifyInstance, rec: EvolutionStoredMessage, instanceId: string, secret: string | undefined
 ): Promise<"replayed" | "duplicate" | "failed"> {
