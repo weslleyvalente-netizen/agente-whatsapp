@@ -53,6 +53,10 @@ describe("resposta do cliente que merece atenção",()=>{
  it("mensagem curta de cortesia não conta",()=>{
   for(const latestContent of ["ok","Obrigado!","👍","blz","valeu"])expect(classifySalesCard({...c,latestContent},n).customerReplied).toBe(false);
  });
+ it("dado numérico (CPF, CEP, telefone) conta, mesmo curto",()=>{
+  for(const latestContent of ["11144477735","111.444.777-35","74000-000","62 99912-3903"])expect(classifySalesCard({...c,latestContent},n).customerReplied).toBe(true);
+  expect(classifySalesCard({...c,latestContent:"2 mil"},n).customerReplied).toBe(false);
+ });
  it("pergunta ou mensagem com substância conta",()=>{
   expect(classifySalesCard({...c,latestContent:"qual o valor da parcela?"},n).customerReplied).toBe(true);
   expect(classifySalesCard({...c,latestContent:"Tenho 3 mil de entrada e quero fechar"},n).customerReplied).toBe(true);
