@@ -181,10 +181,16 @@ export function parseConnectionState(res: any): string | null {
   return typeof state === "string" && state.length > 0 ? state : null;
 }
 
-export function parseDisconnection(res: any, instanceName: string): { at: Date | null; reasonCode: number | null } {
+/** Resposta da Evolution que não tem o formato esperado (instância ausente, corpo inesperado). Não é o mesmo que "sem desconexão". */
+export class ObserveInvalidResponseError extends Error {
+  constructor() { super("invalid_response"); this.name = "ObserveInvalidResponseError"; }
+}
+
+/** null = resposta inválida ou instância ausente. {at:null, reasonCode:null} = instância presente e sem desconexão registrada. */
+export function parseDisconnection(res: any, instanceName: string): { at: Date | null; reasonCode: number | null } | null {
   const list: any[] = Array.isArray(res) ? res : res && typeof res === "object" ? [res] : [];
   const item = list.find((i) => i && (i.name === instanceName || i.instance?.instanceName === instanceName));
-  if (!item) return { at: null, reasonCode: null };
+  if (!item) return null;
   const at = item.disconnectionAt ? new Date(item.disconnectionAt) : null;
   const code = Number(item.disconnectionReasonCode);
   return {
@@ -201,6 +207,7 @@ export function newestReceivedTimestamp(records: EvolutionStoredMessage[]): Date
 /** Só a classe do erro: o texto da Evolution pode conter URL, chave ou corpo da resposta. */
 export function classifyObserveError(err: unknown): string {
   const e = err as { name?: string; message?: string } | null;
+  if (e instanceof ObserveInvalidResponseError) return "invalid_response";
   if (e?.name === "TimeoutError" || e?.name === "AbortError") return "timeout";
   const m = /Evolution API error (\d{3})/.exec(String(e?.message ?? ""));
   if (m) return `http_${m[1]}`;
@@ -214,21 +221,31 @@ export async function observeConnectionState(instanceName: string): Promise<stri
 
 export async function observeDisconnection(instanceName: string): Promise<{ at: Date | null; reasonCode: number | null }> {
   const res = await evolutionFetch(`/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, { signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS) });
-  return parseDisconnection(res, instanceName);
+  const parsed = parseDisconnection(res, instanceName);
+  if (parsed === null) throw new ObserveInvalidResponseError();
+  return parsed;
 }
 
-/** Horário da mensagem RECEBIDA mais recente que a Evolution guardou (a ordem da listagem varia entre versões). */
+/**
+ * Horário da mensagem RECEBIDA mais recente que a Evolution guardou. Não infere a ordenação (varia entre versões e pode ter horários
+ * iguais): olha a primeira e a última página e fica com o maior horário. Lista vazia é "sem mensagens" (null); resposta sem lista
+ * de mensagens é inválida. É sinal de atividade, não prova de perda: para provar atraso, correlacione uma mensagem de teste nos dois lados.
+ */
 export async function observeLatestReceivedAt(instanceName: string): Promise<Date | null> {
   const fetchPage = (page: number) => evolutionFetch(`/chat/findMessages/${encodeURIComponent(instanceName)}`, {
     method: "POST",
     signal: AbortSignal.timeout(OBSERVE_TIMEOUT_MS),
     body: JSON.stringify({ where: { key: { fromMe: false } }, page, offset: OBSERVE_PAGE_SIZE }),
   });
+  const hasRecords = (r: any) => Array.isArray(r) || Array.isArray(r?.messages?.records) || Array.isArray(r?.messages);
   const first = await fetchPage(1);
+  if (!hasRecords(first)) throw new ObserveInvalidResponseError();
   const records = extractRecords(first);
   const pages = typeof first?.messages?.pages === "number" ? first.messages.pages : 1;
-  const stamps = records.map(tsSec).filter(Number.isFinite);
-  const ascending = stamps.length > 1 && stamps[0] < stamps[stamps.length - 1];
-  if (ascending && pages > 1) return newestReceivedTimestamp([...records, ...extractRecords(await fetchPage(pages))]);
+  if (pages > 1) {
+    const last = await fetchPage(pages);
+    if (!hasRecords(last)) throw new ObserveInvalidResponseError();
+    records.push(...extractRecords(last));
+  }
   return newestReceivedTimestamp(records);
 }

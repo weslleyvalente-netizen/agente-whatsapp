@@ -30,3 +30,6 @@ CREATE TABLE IF NOT EXISTS public.evolution_connection_observations (
 CREATE INDEX IF NOT EXISTS evolution_connection_observations_org_instance_time
   ON public.evolution_connection_observations (organization_id, instance_name, observed_at DESC);
 ALTER TABLE public.evolution_connection_observations ENABLE ROW LEVEL SECURITY;
+-- A limpeza global (observed_at < agora - 30 dias) não filtra por organização.
+CREATE INDEX IF NOT EXISTS evolution_connection_observations_observed_at
+  ON public.evolution_connection_observations (observed_at);

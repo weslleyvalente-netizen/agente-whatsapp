@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseConnectionState, parseDisconnection, newestReceivedTimestamp, classifyObserveError } from "./evolution.service.js";
+import { parseConnectionState, parseDisconnection, newestReceivedTimestamp, classifyObserveError, ObserveInvalidResponseError, observeDisconnection, observeLatestReceivedAt } from "./evolution.service.js";
+import { afterEach, vi } from "vitest";
 
 describe("parseConnectionState", () => {
   it("lê instance.state e state", () => {
@@ -25,16 +26,20 @@ describe("parseDisconnection", () => {
     expect(parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: "428" }, "weslley")).toEqual({ at: new Date("2026-11-12T14:16:27.094Z"), reasonCode: 428 });
     expect(parseDisconnection([{ instance: { instanceName: "weslley" }, disconnectionAt: "2026-11-12T14:16:27.094Z" }], "weslley").at).toEqual(new Date("2026-11-12T14:16:27.094Z"));
   });
-  it("sem registro de desconexão ou instância ausente: nulos", () => {
+  it("instância presente sem desconexão registrada: nulos (ausência de evento)", () => {
     expect(parseDisconnection([{ name: "weslley", disconnectionAt: null, disconnectionReasonCode: null }], "weslley")).toEqual({ at: null, reasonCode: null });
-    expect(parseDisconnection([{ name: "x" }], "weslley")).toEqual({ at: null, reasonCode: null });
-    expect(parseDisconnection("lixo", "weslley")).toEqual({ at: null, reasonCode: null });
+  });
+  it("instância ausente ou resposta inválida: null (não é o mesmo que ausência de evento)", () => {
+    expect(parseDisconnection([{ name: "x" }], "weslley")).toBeNull();
+    expect(parseDisconnection("lixo", "weslley")).toBeNull();
+    expect(parseDisconnection(null, "weslley")).toBeNull();
+    expect(parseDisconnection([], "weslley")).toBeNull();
   });
   it("data inválida vira null, e o código não numérico também", () => {
     expect(parseDisconnection({ name: "weslley", disconnectionAt: "ontem", disconnectionReasonCode: "abc" }, "weslley")).toEqual({ at: null, reasonCode: null });
   });
   it("não devolve nenhum outro campo (disconnectionObject pode ter dados de sessão)", () => {
-    const out = parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: 401, disconnectionObject: "{secret}", token: "abc" }, "weslley");
+    const out = parseDisconnection({ name: "weslley", disconnectionAt: "2026-11-12T14:16:27.094Z", disconnectionReasonCode: 401, disconnectionObject: "{secret}", token: "abc" }, "weslley")!;
     expect(Object.keys(out).sort()).toEqual(["at", "reasonCode"]);
   });
 });
@@ -57,5 +62,49 @@ describe("classifyObserveError", () => {
     expect(classifyObserveError(Object.assign(new Error("x"), { name: "AbortError" }))).toBe("timeout");
     expect(classifyObserveError(new TypeError("fetch failed http://evolution/secret"))).toBe("network");
     expect(classifyObserveError("qualquer coisa")).toBe("unknown");
+    expect(classifyObserveError(new ObserveInvalidResponseError())).toBe("invalid_response");
+  });
+});
+
+describe("consultas reais com fetch simulado", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; vi.restoreAllMocks(); });
+  const respond = (...bodies: unknown[]) => {
+    const f = vi.fn();
+    for (const b of bodies) f.mockResolvedValueOnce({ ok: true, json: async () => b, text: async () => "" });
+    globalThis.fetch = f as never;
+    return f;
+  };
+
+  it("observeDisconnection: instância ausente na resposta vira invalid_response", async () => {
+    respond([{ name: "outra" }]);
+    await expect(observeDisconnection("weslley")).rejects.toBeInstanceOf(ObserveInvalidResponseError);
+  });
+
+  it("observeLatestReceivedAt: lista vazia é 'sem mensagens' (null), não erro", async () => {
+    respond({ messages: { total: 0, pages: 0, records: [] } });
+    expect(await observeLatestReceivedAt("weslley")).toBeNull();
+  });
+
+  it("observeLatestReceivedAt: resposta sem lista de mensagens é invalid_response", async () => {
+    respond({ qualquer: "coisa" });
+    await expect(observeLatestReceivedAt("weslley")).rejects.toBeInstanceOf(ObserveInvalidResponseError);
+  });
+
+  it("observeLatestReceivedAt: não infere a ordem; olha a primeira e a última página e fica com o maior horário", async () => {
+    const f = respond(
+      { messages: { total: 120, pages: 3, records: [{ messageTimestamp: 1000 }, { messageTimestamp: 1000 }] } },
+      { messages: { total: 120, pages: 3, records: [{ messageTimestamp: 5000 }, { messageTimestamp: 4000 }] } },
+    );
+    expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(5000 * 1000));
+    const bodies = f.mock.calls.map((c) => JSON.parse(c[1].body));
+    expect(bodies.map((b) => b.page)).toEqual([1, 3]);
+    expect(bodies[0].where).toEqual({ key: { fromMe: false } });
+  });
+
+  it("observeLatestReceivedAt: uma página só faz uma consulta", async () => {
+    const f = respond({ messages: { pages: 1, records: [{ messageTimestamp: 2000 }] } });
+    expect(await observeLatestReceivedAt("weslley")).toEqual(new Date(2000 * 1000));
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });

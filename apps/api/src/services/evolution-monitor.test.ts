@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { observeInstance, runObservationCycle, type MonitorDeps, type ObservationRow } from "./evolution-monitor.js";
+import { observeInstance, runObservationCycle, startEvolutionMonitor, defaultMonitorDeps, type MonitorDeps, type ObservationRow } from "./evolution-monitor.js";
+
+const db = vi.hoisted(() => ({ calls: [] as Array<[string, ...unknown[]]>, result: { data: null as unknown, error: null as unknown } }));
+vi.mock("@aula-agente/database", () => {
+  const chain: Record<string, unknown> = {};
+  for (const m of ["from", "select", "eq", "is", "order", "limit", "delete", "lt"]) chain[m] = (...a: unknown[]) => { db.calls.push([m, ...a]); return chain; };
+  chain.maybeSingle = async () => db.result;
+  return { getAdminClient: () => chain, getAllOrganizations: vi.fn(), getInstancesByOrganization: vi.fn() };
+});
 
 const NOW = new Date("2026-11-12T18:00:00.000Z");
 const ctx = { organizationId: "org-1", instanceName: "weslley", instanceId: "inst-1" };
@@ -121,9 +129,64 @@ describe("runObservationCycle", () => {
     expect(d.prune).toHaveBeenCalledWith(new Date("2026-10-13T18:00:00.000Z"));
   });
 
+  it("sem nenhuma organização com a chave ligada não apaga nada (nem limpeza global)", async () => {
+    (d.listOrganizations as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "b", settings: {} }]);
+    await runObservationCycle(d, NOW);
+    expect(d.prune).not.toHaveBeenCalled();
+    expect(d.listInstances).not.toHaveBeenCalled();
+  });
+
   it("registra no log quando a instância não está open", async () => {
     (d.connectionState as ReturnType<typeof vi.fn>).mockResolvedValue("close");
     await runObservationCycle(d, NOW);
     expect(d.log.info).toHaveBeenCalledWith(expect.objectContaining({ instanceName: "weslley", state: "close" }), expect.any(String));
+  });
+});
+
+describe("falha de coleta não vira desconexão nova", () => {
+  const OLD = new Date("2026-11-12T14:16:27.094Z");
+  it("evento antigo → timeout → mesmo evento antigo: terceira observação diz false", async () => {
+    const rows: ObservationRow[] = [];
+    const seq = [
+      () => Promise.resolve({ at: OLD, reasonCode: 401 }),
+      () => Promise.reject(Object.assign(new Error("x"), { name: "TimeoutError" })),
+      () => Promise.resolve({ at: OLD, reasonCode: 401 }),
+    ];
+    let i = 0;
+    const base = deps({
+      disconnection: vi.fn().mockImplementation(() => seq[i++]()),
+      // mesma regra da consulta real: só linhas em que a consulta da desconexão deu certo
+      previousDisconnectionAt: vi.fn().mockImplementation(async () => {
+        const valid = [...rows].reverse().find((r) => r.disconnection_error_kind === null);
+        return valid === undefined ? undefined : valid.disconnection_at ? new Date(valid.disconnection_at) : null;
+      }),
+      insert: vi.fn().mockImplementation(async (r: ObservationRow) => { rows.push(r); }),
+    });
+    for (let k = 0; k < 3; k++) await observeInstance(base, ctx, new Date(NOW.getTime() + k * 300_000)).then((r) => base.insert(r));
+    expect(rows.map((r) => r.disconnect_since_previous)).toEqual([null, null, false]);
+    expect(rows[1].disconnection_error_kind).toBe("timeout");
+  });
+
+  it("a consulta real da observação anterior ignora linhas com erro de coleta", async () => {
+    db.calls.length = 0;
+    db.result = { data: { disconnection_at: "2026-11-12T14:16:27.094Z" }, error: null };
+    const out = await defaultMonitorDeps({ info() {}, error() {} }).previousDisconnectionAt("org-1", "weslley");
+    expect(out).toEqual(new Date("2026-11-12T14:16:27.094Z"));
+    expect(db.calls).toContainEqual(["is", "disconnection_error_kind", null]);
+  });
+});
+
+describe("desligamento", () => {
+  it("EVOLUTION_MONITOR_DISABLED=1 não cria timers", () => {
+    process.env.EVOLUTION_MONITOR_DISABLED = "1";
+    try {
+      const spy = vi.spyOn(globalThis, "setInterval");
+      const t = startEvolutionMonitor({ info() {}, error() {} });
+      expect(t).toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    } finally {
+      delete process.env.EVOLUTION_MONITOR_DISABLED;
+    }
   });
 });

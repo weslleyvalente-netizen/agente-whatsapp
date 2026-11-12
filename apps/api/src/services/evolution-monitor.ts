@@ -9,7 +9,10 @@ import {
 //
 // LIMITAÇÃO: é consulta periódica (a cada 5 min). Não assinamos CONNECTION_UPDATE (a instância só envia MESSAGES_UPSERT/UPDATE),
 // e a Evolution só informa a ÚLTIMA desconexão, não o histórico. Duas quedas entre observações aparecem como uma só.
-// disconnect_since_previous marca quando o horário da última desconexão mudou desde a observação anterior (reconexão rápida).
+// disconnect_since_previous marca quando o horário da última desconexão mudou desde a última observação VÁLIDA (reconexão rápida);
+// observações em que a consulta falhou não contam como referência.
+// Com mais de uma réplica da API (ou deploy com sobreposição) os timers de cada processo rodam e gravam: sai linha duplicada,
+// sem efeito além de volume (retenção de 30 dias). Não há trava compartilhada de propósito (YAGNI para 1 réplica).
 
 export const OBSERVE_INTERVAL_MS = 5 * 60 * 1000;
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -93,8 +96,10 @@ export async function runObservationCycle(deps: MonitorDeps, now: Date = new Dat
     deps.log.error({ errName: (err as Error)?.name }, "evolution-monitor: failed to list organizations");
     return;
   }
+  let anyEnabled = false;
   for (const org of orgs) {
     if (org.settings?.evolution_monitor_enabled !== true) continue;
+    anyEnabled = true;
     let instances: Array<{ id: string; instance_name: string }>;
     try {
       instances = await deps.listInstances(org.id);
@@ -117,6 +122,8 @@ export async function runObservationCycle(deps: MonitorDeps, now: Date = new Dat
       }
     }
   }
+  // Sem nenhuma organização ligada o ciclo não faz mais nada (nem a limpeza global): desligar a chave para todo o trabalho.
+  if (!anyEnabled) return;
   try {
     await deps.prune(new Date(now.getTime() - RETENTION_MS));
   } catch (err) {
@@ -140,6 +147,8 @@ export const defaultMonitorDeps = (log: MonitorLog): MonitorDeps => ({
     const { data, error } = await getAdminClient()
       .from("evolution_connection_observations").select("disconnection_at")
       .eq("organization_id", organizationId).eq("instance_name", instanceName)
+      // Só observações em que a consulta da desconexão DEU CERTO: uma falha de coleta (disconnection_at nulo) não é "sem evento".
+      .is("disconnection_error_kind", null)
       .order("observed_at", { ascending: false }).limit(1).maybeSingle();
     if (error) throw error;
     if (!data) return undefined;
@@ -163,7 +172,9 @@ export const defaultMonitorDeps = (log: MonitorLog): MonitorDeps => ({
   log,
 });
 
-export function startEvolutionMonitor(log: MonitorLog = console): NodeJS.Timeout {
+/** EVOLUTION_MONITOR_DISABLED=1 no ambiente da API impede até a criação dos timers (desligamento total, exige reiniciar a API). */
+export function startEvolutionMonitor(log: MonitorLog = console): NodeJS.Timeout | null {
+  if (process.env.EVOLUTION_MONITOR_DISABLED === "1") return null;
   const deps = defaultMonitorDeps(log);
   let busy = false;
   const tick = () => {
