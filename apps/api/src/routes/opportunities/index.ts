@@ -30,6 +30,7 @@ import {
 import { authMiddleware } from "../../middleware/auth.js";
 import { isLeadVisible, isManager, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
+import { getAdOriginForContact, type AdOrigin } from "../../services/lead-ad-origin.service.js";
 
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
@@ -143,7 +144,14 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       return { ...safe, has_cpf: !!cpf_encrypted, cpf: request.query.revealCpf === "true" && cpf_encrypted ? decryptCpf(cpf_encrypted) : null };
     })() : null;
     const [events, tasks] = await Promise.all([getOpportunityEvents(db, opportunity.id), getOpenTasksByContact(db, opportunity.organization_id, opportunity.contact_id)]);
-    return { opportunity, customer: { id: customer.id, name: customer.name, phone: customer.phone }, conversation, qualification, events, tasks: tasks.filter(t => t.opportunity_id === opportunity.id || !t.opportunity_id), origin: customer.metadata?.lead_origin ?? null };
+    // Origem por anúncio: complemento só de leitura; qualquer falha (ex.: tabela ainda não criada) não derruba os detalhes.
+    let ad_origin: AdOrigin | null = null;
+    try {
+      ad_origin = await getAdOriginForContact(db, opportunity.organization_id, opportunity.contact_id, opportunity.created_at);
+    } catch (err) {
+      request.log.warn({ err: (err as { message?: string })?.message, opportunityId: opportunity.id }, "Failed to load ad origin for opportunity details");
+    }
+    return { opportunity, customer: { id: customer.id, name: customer.name, phone: customer.phone }, conversation, qualification, events, tasks: tasks.filter(t => t.opportunity_id === opportunity.id || !t.opportunity_id), origin: customer.metadata?.lead_origin ?? null, ad_origin };
   });
 
   app.post<{ Params: { organizationId: string } }>(

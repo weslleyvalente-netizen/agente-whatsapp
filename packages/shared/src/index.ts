@@ -20,6 +20,7 @@ export * from "./task-followup-coordination.js";
 export * from "./message-echo-match.js";
 
 export * from "./lead-origin.js";
+export * from "./lead-ad-touch.js";
 export * from "./seller-message-suggestion.js";
 
 export * from "./sales-workspace.js";

@@ -39,6 +39,7 @@ import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
+import { recordAdTouch } from "../../services/lead-ad-touch.service.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
@@ -377,11 +378,25 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         const context = payload.data.contextInfo;
         const message = payload.data.message as Record<string, unknown> | null | undefined;
         const nested = message?.extendedTextMessage as { contextInfo?: { externalAdReply?: Record<string, unknown> } } | undefined;
-        const origin = identifyLeadOrigin({ text: extracted.content, ad: context?.externalAdReply ?? nested?.contextInfo?.externalAdReply });
+        const ad = context?.externalAdReply ?? nested?.contextInfo?.externalAdReply;
+        const origin = identifyLeadOrigin({ text: extracted.content, ad });
         try {
           await recordLeadOrigin(getAdminClient(), organizationId, contact.id, origin);
         } catch (err) {
           request.log.error({ err, contactId: contact.id }, "Failed to record lead origin");
+        }
+        // Origem estruturada por anúncio (tabela lead_ad_touches). Best-effort: nunca atrapalha o recebimento da mensagem.
+        if (ad) {
+          const ts = payload.data.messageTimestamp;
+          try {
+            await recordAdTouch(getAdminClient(), {
+              organizationId, contactId: contact.id, conversationId: conversation.id, evolutionMessageId: payload.data.key.id,
+              touchedAt: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : new Date(),
+              ad,
+            });
+          } catch (err) {
+            request.log.error({ err: (err as { message?: string })?.message, contactId: contact.id }, "Failed to record ad touch");
+          }
         }
       }
 
