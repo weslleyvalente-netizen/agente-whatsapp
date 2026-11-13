@@ -1,14 +1,16 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { extractAdTouch } from "@aula-agente/shared";
+import { extractAdTouch, shouldRecordTouch, type RecentTouch } from "@aula-agente/shared";
 
 export type RecordAdTouchResult = "recorded" | "duplicate" | "skipped";
 
+const RECENT_LIMIT = 20;
+
 /**
  * Registra um "toque" de anúncio (tabela lead_ad_touches) a partir do externalAdReply de uma mensagem do cliente.
- * Regras: só grava quando o anúncio difere do último toque do contato (mesma chave: id do anúncio, senão link sem
- * parâmetros, senão título+texto) e o reenvio da mesma mensagem não duplica (índice único por mensagem).
- * A primeira origem do contato (selo do card, metadata.lead_origin) NÃO é tocada aqui. Erros (exceto duplicidade) sobem
- * para o chamador, que os registra sem interromper o recebimento da mensagem.
+ * Regras (shouldRecordTouch): anúncio novo para o contato, ou o mesmo anúncio com outro clique comprovado (ctwa_clid diferente)
+ * ou, sem como comparar o clique, em novo atendimento (24 h ou mais depois do último toque dele). O reenvio da mesma mensagem
+ * é barrado pelo índice único por mensagem. A primeira origem do contato (selo do card, metadata.lead_origin) NÃO é tocada.
+ * Erros (exceto duplicidade) sobem para o chamador, que os registra sem interromper o recebimento da mensagem.
  */
 export async function recordAdTouch(
   db: SupabaseClient,
@@ -24,14 +26,15 @@ export async function recordAdTouch(
   const touch = extractAdTouch(p.ad);
   if (!touch) return "skipped";
 
-  const { data: latest, error: latestError } = await db
-    .from("lead_ad_touches").select("touch_key")
+  const { data: recent, error: recentError } = await db
+    .from("lead_ad_touches").select("touch_key, ctwa_clid, touched_at")
     .eq("organization_id", p.organizationId).eq("contact_id", p.contactId)
-    .order("touched_at", { ascending: false }).limit(1).maybeSingle();
-  if (latestError) throw latestError;
-  if ((latest as { touch_key: string } | null)?.touch_key === touch.touch_key) return "duplicate";
+    .order("touched_at", { ascending: false }).limit(RECENT_LIMIT);
+  if (recentError) throw recentError;
 
   const at = Number.isFinite(p.touchedAt.getTime()) && p.touchedAt.getTime() <= Date.now() ? p.touchedAt : new Date();
+  if (!shouldRecordTouch({ touch_key: touch.touch_key, ctwa_clid: touch.ctwa_clid, touchedAt: at }, (recent ?? []) as RecentTouch[])) return "duplicate";
+
   const { error } = await db.from("lead_ad_touches").insert({
     organization_id: p.organizationId, contact_id: p.contactId, conversation_id: p.conversationId,
     evolution_message_id: p.evolutionMessageId, touched_at: at.toISOString(),

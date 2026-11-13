@@ -39,16 +39,27 @@ CREATE INDEX IF NOT EXISTS lead_ad_touches_ad
 -- Só a service role (API) acessa: RLS ligada e nenhuma policy.
 ALTER TABLE public.lead_ad_touches ENABLE ROW LEVEL SECURITY;
 
--- Toque que originou cada oportunidade: o mais recente até a criação dela (1 min de tolerância de relógio).
--- Mesma regra de pickAttributedTouch (packages/shared/src/lead-ad-touch.ts). O histórico completo fica em lead_ad_touches.
+-- Toque que originou cada oportunidade, só com evidência (mesma regra de attributeTouch, packages/shared/src/lead-ad-touch.ts):
+-- 1) toque ligado a uma conversa do negócio (lead_assignments.conversation_id) e até a criação dele, sem limite de idade ('conversation');
+-- 2) senão, o mais recente dentro de 14 dias antes da criação ('time'); 3) senão nada: touch_id nulo e basis 'indeterminate'.
+-- Tolerância de 1 min de relógio. O histórico completo fica em lead_ad_touches.
 CREATE OR REPLACE VIEW public.opportunity_ad_origins WITH (security_invoker = true) AS
 SELECT o.id AS opportunity_id, o.organization_id, o.contact_id,
-       t.id AS touch_id, t.touched_at, t.platform, t.source_type, t.ad_id, t.ad_title, t.ad_body, t.ad_url,
-       t.campaign_id, t.campaign_name
+       t.id AS touch_id, COALESCE(t.basis, 'indeterminate') AS basis,
+       t.touched_at, t.platform, t.source_type, t.ad_id, t.ad_title, t.ad_body, t.ad_url, t.campaign_id, t.campaign_name
 FROM public.opportunities o
 LEFT JOIN LATERAL (
-  SELECT * FROM public.lead_ad_touches t
-  WHERE t.organization_id = o.organization_id AND t.contact_id = o.contact_id
-    AND t.touched_at <= o.created_at + interval '1 minute'
-  ORDER BY t.touched_at DESC LIMIT 1
+  SELECT x.*, CASE WHEN x.linked THEN 'conversation' ELSE 'time' END AS basis
+  FROM (
+    SELECT t.*, (t.conversation_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM public.lead_assignments la
+             WHERE la.organization_id = o.organization_id AND la.opportunity_id = o.id AND la.conversation_id = t.conversation_id
+           )) AS linked
+    FROM public.lead_ad_touches t
+    WHERE t.organization_id = o.organization_id AND t.contact_id = o.contact_id
+      AND t.touched_at <= o.created_at + interval '1 minute'
+  ) x
+  WHERE x.linked OR x.touched_at >= o.created_at - interval '14 days'
+  ORDER BY x.linked DESC, x.touched_at DESC
+  LIMIT 1
 ) t ON true;

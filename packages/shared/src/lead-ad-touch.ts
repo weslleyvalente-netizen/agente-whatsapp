@@ -29,7 +29,19 @@ export interface LeadAdTouch extends Omit<AdTouchData, "touch_key" | "campaign_i
 
 /** O que a API devolve para a tela: sem ctwa_clid nem a lista interna de campos. */
 export type AdTouchView = Pick<LeadAdTouch, "id" | "touched_at" | "platform" | "source_type" | "ad_id" | "ad_title" | "ad_body" | "ad_url" | "campaign_id" | "campaign_name" | "conversation_id">;
-export interface AdOrigin { touches: AdTouchView[]; attributed_touch_id: string | null }
+export type AttributionBasis = "conversation" | "time" | "indeterminate";
+export interface AdOrigin {
+  /** Mais recentes primeiro. Sempre inclui o primeiro toque do contato e o toque atribuído, mesmo que passem do limite da listagem. */
+  touches: AdTouchView[];
+  /** Total de toques do contato (pode ser maior que touches.length). */
+  total_touches: number;
+  /** Toque mais antigo do contato (não é deduzido pela posição na lista). */
+  first_touch_id: string | null;
+  /** Só para oportunidade: toque que a originou. */
+  attributed_touch_id: string | null;
+  /** Só para oportunidade: "conversation" (ligado à conversa), "time" (janela de tempo) ou "indeterminate" (sem evidência). null = fora de oportunidade. */
+  attribution: AttributionBasis | null;
+}
 
 const MAX = { title: 300, body: 1000, url: 1000, id: 200, clid: 500, sourceType: 60 } as const;
 const MAX_FIELD_NAMES = 40;
@@ -99,21 +111,55 @@ export function extractAdTouch(ad: Record<string, unknown> | null | undefined): 
   };
 }
 
+export const TOUCH_SESSION_GAP_MS = 24 * 60 * 60 * 1000;
+export const ATTRIBUTION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const CLOCK_TOLERANCE_MS = 60_000;
+const RECENT_TOUCH_COMPARE = 20;
+
+export interface RecentTouch { touch_key: string; ctwa_clid: string | null; touched_at: string }
 
 /**
- * Toque que originou a oportunidade: o mais recente até o momento da criação dela (tolerância de 1 min de relógio).
- * Mesma regra da view opportunity_ad_origins. Os demais toques do contato ficam no histórico.
+ * Este contexto de anúncio é um NOVO toque? Reenvio da mesma mensagem é barrado à parte (índice único por mensagem).
+ * - anúncio que não aparece nos toques recentes do contato: novo;
+ * - mesmo anúncio e mesmo clique (ctwa_clid) já visto: duplicado; clique diferente (comprova outro clique): novo;
+ * - mesmo anúncio sem como comparar o clique (falta em um dos lados): vale o tempo desde o último toque do anúncio:
+ *   24 h ou mais = novo atendimento; menos, ou mensagem mais antiga que o último toque (reenvio) = duplicado.
  */
-export function pickAttributedTouch<T extends { touched_at: string }>(touches: T[], opportunityCreatedAt: string): T | null {
-  const limit = Date.parse(opportunityCreatedAt);
-  if (!Number.isFinite(limit)) return null;
-  let best: T | null = null;
-  let bestAt = -Infinity;
+export function shouldRecordTouch(
+  candidate: { touch_key: string; ctwa_clid: string | null; touchedAt: Date },
+  recent: RecentTouch[]
+): boolean {
+  const same = recent.filter((r) => r.touch_key === candidate.touch_key).slice(0, RECENT_TOUCH_COMPARE);
+  if (same.length === 0) return true;
+  if (candidate.ctwa_clid && same.some((r) => r.ctwa_clid === candidate.ctwa_clid)) return false;
+  const latest = same.reduce((best, r) => (Date.parse(r.touched_at) > Date.parse(best.touched_at) ? r : best));
+  if (candidate.ctwa_clid && latest.ctwa_clid) return true; // ambos com clique e diferentes: outro clique comprovado
+  const gap = candidate.touchedAt.getTime() - Date.parse(latest.touched_at);
+  return Number.isFinite(gap) && gap >= TOUCH_SESSION_GAP_MS;
+}
+
+/**
+ * Toque que originou a oportunidade, só com evidência:
+ * 1. ligado à conversa do negócio (conversation_id) e até a criação dela, sem limite de idade: "conversation";
+ * 2. senão, o mais recente dentro de 14 dias antes da criação: "time";
+ * 3. senão, origem "indeterminate" (nada é atribuído). Tolerância de 1 min de relógio. Mesma regra da view opportunity_ad_origins.
+ */
+export function attributeTouch<T extends { touched_at: string; conversation_id?: string | null }>(
+  touches: T[],
+  opportunity: { createdAt: string; conversationIds?: string[] }
+): { touch: T | null; basis: AttributionBasis } {
+  const created = Date.parse(opportunity.createdAt);
+  if (!Number.isFinite(created)) return { touch: null, basis: "indeterminate" };
+  const conversations = new Set(opportunity.conversationIds ?? []);
+  let linked: T | null = null, linkedAt = -Infinity;
+  let recent: T | null = null, recentAt = -Infinity;
   for (const t of touches) {
     const at = Date.parse(t.touched_at);
-    if (!Number.isFinite(at) || at > limit + CLOCK_TOLERANCE_MS) continue;
-    if (at > bestAt) { best = t; bestAt = at; }
+    if (!Number.isFinite(at) || at > created + CLOCK_TOLERANCE_MS) continue;
+    if (t.conversation_id && conversations.has(t.conversation_id) && at > linkedAt) { linked = t; linkedAt = at; }
+    if (at >= created - ATTRIBUTION_WINDOW_MS && at > recentAt) { recent = t; recentAt = at; }
   }
-  return best;
+  if (linked) return { touch: linked, basis: "conversation" };
+  if (recent) return { touch: recent, basis: "time" };
+  return { touch: null, basis: "indeterminate" };
 }

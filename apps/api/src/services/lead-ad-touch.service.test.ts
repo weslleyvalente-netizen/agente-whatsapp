@@ -5,12 +5,12 @@ const ORG = "o1", CONTACT = "c1";
 const ad = { title: "Seu próximo carro", body: "Consórcio", sourceId: "999", sourceUrl: "https://www.instagram.com/p/AAA/", sourceType: "ad", ctwaClid: "clid", thumbnail: "BIN" };
 const when = new Date("2026-11-13T15:00:00.000Z");
 
-function fakeDb(opts: { latest?: { touch_key: string } | null; insertError?: { code?: string; message?: string } | null; selectError?: unknown } = {}) {
+function fakeDb(opts: { recent?: Array<{ touch_key: string; ctwa_clid?: string | null; touched_at: string }>; insertError?: { code?: string; message?: string } | null; selectError?: unknown } = {}) {
   const calls: Array<{ op: string; args: unknown[] }> = [];
   const inserted: Array<Record<string, unknown>> = [];
   const chain: Record<string, unknown> = {};
-  for (const op of ["select", "eq", "order", "limit"]) chain[op] = (...args: unknown[]) => { calls.push({ op, args }); return chain; };
-  chain.maybeSingle = async () => ({ data: opts.latest ?? null, error: opts.selectError ?? null });
+  for (const op of ["select", "eq", "order"]) chain[op] = (...args: unknown[]) => { calls.push({ op, args }); return chain; };
+  chain.limit = async (...args: unknown[]) => { calls.push({ op: "limit", args }); return { data: opts.recent ?? [], error: opts.selectError ?? null }; };
   const table = { ...chain, insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: opts.insertError ?? null }; } };
   return { db: { from: (t: string) => { calls.push({ op: "from", args: [t] }); return table; } } as never, calls, inserted };
 }
@@ -31,14 +31,33 @@ describe("recordAdTouch", () => {
     expect(JSON.stringify(f.inserted[0])).not.toContain("BIN");
   });
 
-  it("mesmo anúncio do último toque: não grava de novo", async () => {
-    const f = fakeDb({ latest: { touch_key: "id:999" } });
+  it("mesmo anúncio e mesmo clique já registrado: não grava de novo", async () => {
+    const f = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid", touched_at: "2026-11-13T14:00:00Z" }] });
     expect(await recordAdTouch(f.db, base)).toBe("duplicate");
     expect(f.inserted).toHaveLength(0);
   });
 
-  it("anúncio diferente do último toque: registra um novo toque (a primeira origem fica preservada)", async () => {
-    const f = fakeDb({ latest: { touch_key: "id:111" } });
+  it("MESMO anúncio com outro clique (novo atendimento depois): grava um novo toque", async () => {
+    const f = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid-antigo", touched_at: "2026-11-01T14:00:00Z" }] });
+    expect(await recordAdTouch(f.db, base)).toBe("recorded");
+    expect(f.inserted[0]).toMatchObject({ ad_id: "999", ctwa_clid: "clid" });
+  });
+
+  it("mesmo anúncio sem clique para comparar: dentro de 24 h é a mesma sessão; depois disso é novo atendimento", async () => {
+    const noClid = { ...ad, ctwaClid: undefined };
+    const same = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: null, touched_at: "2026-11-13T05:00:00Z" }] });
+    expect(await recordAdTouch(same.db, { ...base, ad: noClid })).toBe("duplicate");
+    const later = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: null, touched_at: "2026-11-10T05:00:00Z" }] });
+    expect(await recordAdTouch(later.db, { ...base, ad: noClid })).toBe("recorded");
+  });
+
+  it("a mesma mensagem reenviada continua barrada pelo índice único", async () => {
+    const f = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid-antigo", touched_at: "2026-11-01T14:00:00Z" }], insertError: { code: "23505" } });
+    expect(await recordAdTouch(f.db, base)).toBe("duplicate");
+  });
+
+  it("anúncio diferente dos toques recentes: registra um novo toque (a primeira origem fica preservada)", async () => {
+    const f = fakeDb({ recent: [{ touch_key: "id:111", ctwa_clid: "x", touched_at: "2026-11-13T14:00:00Z" }] });
     expect(await recordAdTouch(f.db, base)).toBe("recorded");
     expect(f.inserted).toHaveLength(1);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractAdTouch, pickAttributedTouch } from "./lead-ad-touch.js";
+import { extractAdTouch, attributeTouch, shouldRecordTouch, ATTRIBUTION_WINDOW_MS, TOUCH_SESSION_GAP_MS } from "./lead-ad-touch.js";
 
 const full = {
   title: "Seu próximo carro", body: "Consórcio ou carta contemplada", sourceType: "ad", sourceId: "120248978818540570",
@@ -62,23 +62,71 @@ describe("extractAdTouch", () => {
   });
 });
 
-describe("pickAttributedTouch", () => {
-  const T = (id: string, at: string) => ({ id, touched_at: at });
-  const touches = [T("c", "2026-11-12T10:00:00Z"), T("b", "2026-11-10T10:00:00Z"), T("a", "2026-11-01T10:00:00Z")];
-  it("escolhe o toque mais recente até a criação da oportunidade", () => {
-    expect(pickAttributedTouch(touches, "2026-11-11T00:00:00Z")?.id).toBe("b");
-    expect(pickAttributedTouch(touches, "2026-11-13T00:00:00Z")?.id).toBe("c");
+describe("shouldRecordTouch (deduplicação)", () => {
+  const at = (iso: string) => new Date(iso);
+  const prev = (key: string, clid: string | null, iso: string) => ({ touch_key: key, ctwa_clid: clid, touched_at: iso });
+  const cand = (key: string, clid: string | null, iso: string) => ({ touch_key: key, ctwa_clid: clid, touchedAt: at(iso) });
+
+  it("primeiro toque do contato é gravado", () => {
+    expect(shouldRecordTouch(cand("id:1", "A", "2026-11-13T10:00:00Z"), [])).toBe(true);
+  });
+  it("anúncio diferente do histórico recente é um novo toque", () => {
+    expect(shouldRecordTouch(cand("id:2", "B", "2026-11-13T10:00:00Z"), [prev("id:1", "A", "2026-11-13T09:00:00Z")])).toBe(true);
+  });
+  it("MESMO anúncio com outro clique comprovado (ctwa_clid diferente) em atendimento posterior é novo toque", () => {
+    expect(shouldRecordTouch(cand("id:1", "B", "2026-11-13T10:00:00Z"), [prev("id:1", "A", "2026-11-13T09:50:00Z")])).toBe(true);
+  });
+  it("mesmo anúncio com o mesmo clique não duplica, mesmo que apareça de novo", () => {
+    expect(shouldRecordTouch(cand("id:1", "A", "2026-12-30T10:00:00Z"), [prev("id:1", "A", "2026-11-13T09:50:00Z")])).toBe(false);
+  });
+  it("o clique já visto em qualquer toque recente do mesmo anúncio conta como duplicado", () => {
+    const recent = [prev("id:1", "B", "2026-11-14T00:00:00Z"), prev("id:2", "X", "2026-11-13T12:00:00Z"), prev("id:1", "A", "2026-11-13T09:50:00Z")];
+    expect(shouldRecordTouch(cand("id:1", "A", "2026-11-14T01:00:00Z"), recent)).toBe(false);
+  });
+  it("sem identificador de clique: dentro de 24 h é a mesma sessão (não duplica); a partir de 24 h é novo atendimento", () => {
+    const recent = [prev("id:1", null, "2026-11-13T10:00:00Z")];
+    expect(shouldRecordTouch(cand("id:1", null, "2026-11-14T09:59:00Z"), recent)).toBe(false);
+    expect(shouldRecordTouch(cand("id:1", null, new Date(Date.parse("2026-11-13T10:00:00Z") + TOUCH_SESSION_GAP_MS).toISOString()), recent)).toBe(true);
+  });
+  it("clique de um lado e ausente do outro: não prova novo clique; vale a regra das 24 h", () => {
+    expect(shouldRecordTouch(cand("id:1", "B", "2026-11-13T12:00:00Z"), [prev("id:1", null, "2026-11-13T10:00:00Z")])).toBe(false);
+    expect(shouldRecordTouch(cand("id:1", null, "2026-11-20T12:00:00Z"), [prev("id:1", "A", "2026-11-13T10:00:00Z")])).toBe(true);
+  });
+  it("mensagem antiga reenviada (anterior ao último toque do mesmo anúncio) não cria toque", () => {
+    expect(shouldRecordTouch(cand("id:1", null, "2026-11-10T10:00:00Z"), [prev("id:1", null, "2026-11-13T10:00:00Z")])).toBe(false);
+  });
+});
+
+describe("attributeTouch (atribuição à oportunidade)", () => {
+  const T = (id: string, at: string, conversation_id: string | null = null) => ({ id, touched_at: at, conversation_id });
+  const created = "2026-11-13T12:00:00Z";
+  const day = 24 * 60 * 60 * 1000;
+  const before = (days: number) => new Date(Date.parse(created) - days * day).toISOString();
+
+  it("prioriza o toque ligado à conversa do negócio, mesmo que haja um mais recente de outra conversa", () => {
+    const touches = [T("recente", before(1), "outra"), T("da-conversa", before(3), "c1")];
+    expect(attributeTouch(touches, { createdAt: created, conversationIds: ["c1"] })).toMatchObject({ basis: "conversation", touch: { id: "da-conversa" } });
+  });
+  it("toque da conversa vale mesmo fora da janela de tempo (a ligação com a conversa é a evidência)", () => {
+    expect(attributeTouch([T("antigo", before(40), "c1")], { createdAt: created, conversationIds: ["c1"] })).toMatchObject({ basis: "conversation", touch: { id: "antigo" } });
+  });
+  it("sem ligação com a conversa: o mais recente dentro da janela de tempo (base 'time')", () => {
+    const touches = [T("b", before(2)), T("a", before(10))];
+    expect(attributeTouch(touches, { createdAt: created })).toMatchObject({ basis: "time", touch: { id: "b" } });
+  });
+  it("anúncio antigo sem relação comprovada NÃO é atribuído: origem indeterminada", () => {
+    const old = [T("velho", new Date(Date.parse(created) - ATTRIBUTION_WINDOW_MS - day).toISOString())];
+    expect(attributeTouch(old, { createdAt: created })).toEqual({ touch: null, basis: "indeterminate" });
+    expect(attributeTouch(old, { createdAt: created, conversationIds: ["c1"] })).toEqual({ touch: null, basis: "indeterminate" });
+  });
+  it("toque depois da criação do negócio não conta; lista vazia ou datas inválidas: indeterminada", () => {
+    expect(attributeTouch([T("depois", "2026-11-20T00:00:00Z", "c1")], { createdAt: created, conversationIds: ["c1"] })).toEqual({ touch: null, basis: "indeterminate" });
+    expect(attributeTouch([], { createdAt: created })).toEqual({ touch: null, basis: "indeterminate" });
+    expect(attributeTouch([T("x", "lixo")], { createdAt: created })).toEqual({ touch: null, basis: "indeterminate" });
+    expect(attributeTouch([T("x", before(1))], { createdAt: "lixo" })).toEqual({ touch: null, basis: "indeterminate" });
   });
   it("tolera 1 minuto de diferença de relógio", () => {
-    expect(pickAttributedTouch([T("x", "2026-11-10T10:00:30Z")], "2026-11-10T10:00:00Z")?.id).toBe("x");
-    expect(pickAttributedTouch([T("x", "2026-11-10T10:02:00Z")], "2026-11-10T10:00:00Z")).toBeNull();
-  });
-  it("sem toque anterior ou lista vazia: null", () => {
-    expect(pickAttributedTouch(touches, "2026-10-01T00:00:00Z")).toBeNull();
-    expect(pickAttributedTouch([], "2026-11-10T00:00:00Z")).toBeNull();
-  });
-  it("datas inválidas não quebram", () => {
-    expect(pickAttributedTouch([T("x", "lixo")], "2026-11-10T00:00:00Z")).toBeNull();
-    expect(pickAttributedTouch(touches, "lixo")).toBeNull();
+    expect(attributeTouch([T("x", "2026-11-13T12:00:30Z")], { createdAt: created }).touch?.id).toBe("x");
+    expect(attributeTouch([T("x", "2026-11-13T12:02:00Z")], { createdAt: created }).touch).toBeNull();
   });
 });

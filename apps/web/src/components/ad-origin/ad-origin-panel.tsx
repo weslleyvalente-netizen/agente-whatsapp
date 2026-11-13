@@ -23,8 +23,8 @@ export function AdOriginPanel({ contactId }: { contactId: string }) {
   return (
     <>
       <details>
-        <summary className="cursor-pointer text-sm font-semibold">Anúncio de origem ({origin.touches.length})</summary>
-        <AdOriginList touches={origin.touches} />
+        <summary className="cursor-pointer text-sm font-semibold">Anúncio de origem ({origin.total_touches})</summary>
+        <AdOriginList touches={origin.touches} firstTouchId={origin.first_touch_id} totalTouches={origin.total_touches} />
       </details>
       <Separator />
     </>

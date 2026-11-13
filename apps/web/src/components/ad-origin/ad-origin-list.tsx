@@ -1,18 +1,30 @@
-import type { AdTouchView } from "@aula-agente/shared";
+import type { AdTouchView, AttributionBasis } from "@aula-agente/shared";
 import { adPlatformLabel, adTouchHeading, formatAdTouchDate, safeAdUrl } from "@/lib/ad-origin";
 
 export interface AdOriginListProps {
   touches: AdTouchView[];
   /** Toque que originou a oportunidade (só nos detalhes da oportunidade). */
   attributedId?: string | null;
+  /** Base da atribuição: ligado à conversa, pelo horário, ou indeterminada (nenhum anúncio com evidência). null fora de oportunidade. */
+  attribution?: AttributionBasis | null;
+  /** Toque mais antigo do contato (vem da API; a posição na lista não serve, pois ela pode estar truncada). */
+  firstTouchId?: string | null;
+  /** Total de toques do contato, para avisar quando a lista mostra só parte deles. */
+  totalTouches?: number;
 }
 
 // Detalhes do(s) anúncio(s) pelos quais o cliente chegou, do mais recente ao primeiro. Só aparece dentro de um bloco
 // recolhido do atendimento/oportunidade: nada disso vai para os cards do funil.
-export function AdOriginList({ touches, attributedId = null }: AdOriginListProps) {
+export function AdOriginList({ touches, attributedId = null, attribution = null, firstTouchId = null, totalTouches }: AdOriginListProps) {
   if (touches.length === 0) return null;
-  const firstId = touches[touches.length - 1].id;
+  const attributionNote = attribution === "conversation" ? " · originou este negócio (ligado à conversa)" : attribution === "time" ? " · originou este negócio (pelo horário)" : "";
   return (
+    <div>
+    {attribution === "indeterminate" && (
+      <p role="status" className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+        Origem do anúncio indeterminada: nenhum anúncio ligado a este negócio por conversa ou por data próxima.
+      </p>
+    )}
     <ul className="mt-2 space-y-3">
       {touches.map((t) => {
         const link = safeAdUrl(t.ad_url);
@@ -22,8 +34,8 @@ export function AdOriginList({ touches, attributedId = null }: AdOriginListProps
             <p className="text-xs text-muted-foreground">
               {adPlatformLabel(t.platform)}
               {formatAdTouchDate(t.touched_at) ? ` · ${formatAdTouchDate(t.touched_at)}` : ""}
-              {touches.length > 1 && t.id === firstId ? " · primeiro anúncio" : ""}
-              {attributedId === t.id ? " · originou este negócio" : ""}
+              {firstTouchId && touches.length > 1 && t.id === firstTouchId ? " · primeiro anúncio" : ""}
+              {attributedId === t.id ? attributionNote : ""}
             </p>
             {t.ad_body && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{t.ad_body}</p>}
             {(t.campaign_name || t.campaign_id) && (
@@ -39,5 +51,9 @@ export function AdOriginList({ touches, attributedId = null }: AdOriginListProps
         );
       })}
     </ul>
+    {totalTouches !== undefined && totalTouches > touches.length && (
+      <p className="mt-2 text-xs text-muted-foreground">Mostrando {touches.length} de {totalTouches} anúncios.</p>
+    )}
+    </div>
   );
 }
