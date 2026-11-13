@@ -40,6 +40,7 @@ import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { recordAdTouch } from "../../services/lead-ad-touch.service.js";
+import { runWithTimeout } from "../../lib/with-timeout.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
@@ -94,6 +95,10 @@ const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]
 export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
 // Modo "só gravar" da recuperação: grava a mensagem (com o horário original) mas NÃO a encaminha à IA. Usado para clientes
 // que já foram respondidos (pelo celular da loja ou pela IA) depois da mensagem perdida. Mesmas exigências do cabeçalho acima.
+// Limite de tempo do registro do anúncio no webhook (consulta + gravação). Mutável só para os testes.
+export const AD_TOUCH_TIMEOUT_MS = 2000;
+export const adTouchConfig = { timeoutMs: AD_TOUCH_TIMEOUT_MS };
+
 export const REPLAY_SAVE_ONLY_HEADER = "x-replay-save-only";
 
 export function isReplaySaveOnly(headers: Record<string, unknown>): boolean {
@@ -385,17 +390,23 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         } catch (err) {
           request.log.error({ err, contactId: contact.id }, "Failed to record lead origin");
         }
-        // Origem estruturada por anúncio (tabela lead_ad_touches). Best-effort: nunca atrapalha o recebimento da mensagem.
+        // Origem estruturada por anúncio (tabela lead_ad_touches). Melhor esforço com limite de tempo para a operação COMPLETA
+        // (consulta + gravação): demora ou falha nunca atrasam além do limite nem impedem salvar a mensagem e acionar a IA.
+        // O timeout fica no log (event "ad_touch_timeout") para identificar atribuições possivelmente perdidas.
         if (ad) {
           const ts = payload.data.messageTimestamp;
-          try {
-            await recordAdTouch(getAdminClient(), {
-              organizationId, contactId: contact.id, conversationId: conversation.id, evolutionMessageId: payload.data.key.id,
-              touchedAt: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : new Date(),
-              ad,
-            });
-          } catch (err) {
-            request.log.error({ err: (err as { message?: string })?.message, contactId: contact.id }, "Failed to record ad touch");
+          const outcome = await runWithTimeout((signal) => recordAdTouch(getAdminClient(), {
+            organizationId, contactId: contact.id, conversationId: conversation.id, evolutionMessageId: payload.data.key.id,
+            touchedAt: typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : new Date(),
+            ad, signal,
+          }), adTouchConfig.timeoutMs);
+          if (outcome.status === "timeout") {
+            request.log.warn(
+              { event: "ad_touch_timeout", organizationId, contactId: contact.id, evolutionMessageId: payload.data.key.id, timeoutMs: adTouchConfig.timeoutMs },
+              "Ad touch recording timed out; attribution for this message may be lost"
+            );
+          } else if (outcome.status === "error") {
+            request.log.error({ err: (outcome.error as { message?: string })?.message, contactId: contact.id }, "Failed to record ad touch");
           }
         }
       }

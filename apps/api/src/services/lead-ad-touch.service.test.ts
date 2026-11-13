@@ -10,8 +10,9 @@ function fakeDb(opts: { recent?: Array<{ touch_key: string; ctwa_clid?: string |
   const inserted: Array<Record<string, unknown>> = [];
   const chain: Record<string, unknown> = {};
   for (const op of ["select", "eq", "order"]) chain[op] = (...args: unknown[]) => { calls.push({ op, args }); return chain; };
-  chain.limit = async (...args: unknown[]) => { calls.push({ op: "limit", args }); return { data: opts.recent ?? [], error: opts.selectError ?? null }; };
-  const table = { ...chain, insert: async (row: Record<string, unknown>) => { inserted.push(row); return { error: opts.insertError ?? null }; } };
+  const thenable = (value: unknown) => ({ abortSignal: (s: AbortSignal) => { calls.push({ op: "abortSignal", args: [s] }); return Promise.resolve(value); }, then: (res: (v: unknown) => unknown) => res(value) });
+  chain.limit = (...args: unknown[]) => { calls.push({ op: "limit", args }); return thenable({ data: opts.recent ?? [], error: opts.selectError ?? null }); };
+  const table = { ...chain, insert: (row: Record<string, unknown>) => { inserted.push(row); return thenable({ error: opts.insertError ?? null }); } };
   return { db: { from: (t: string) => { calls.push({ op: "from", args: [t] }); return table; } } as never, calls, inserted };
 }
 
@@ -118,5 +119,20 @@ describe("recordAdTouch", () => {
     const g = fakeDb();
     await recordAdTouch(g.db, { ...base, touchedAt: new Date("invalid") });
     expect(Number.isFinite(Date.parse(g.inserted[0].touched_at as string))).toBe(true);
+  });
+
+  it("com sinal de cancelamento: ele é aplicado à consulta E à gravação (o limite de tempo cobre a operação completa)", async () => {
+    const f = fakeDb();
+    const controller = new AbortController();
+    expect(await recordAdTouch(f.db, { ...base, signal: controller.signal })).toBe("recorded");
+    const used = f.calls.filter((c) => c.op === "abortSignal");
+    expect(used).toHaveLength(2);
+    expect(used.every((c) => c.args[0] === controller.signal)).toBe(true);
+  });
+
+  it("sem sinal: nada muda no comportamento (nenhum abortSignal)", async () => {
+    const f = fakeDb();
+    await recordAdTouch(f.db, base);
+    expect(f.calls.some((c) => c.op === "abortSignal")).toBe(false);
   });
 });
