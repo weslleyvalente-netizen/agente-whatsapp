@@ -1,0 +1,87 @@
+{
+  "_comment": "Cenários únicos de atribuição de anúncio à oportunidade. Usados por DOIS testes que devem concordar: a API (apps/api/src/services/ad-attribution-scenarios.test.ts) e a view SQL (scripts/validate-ad-attribution-view.mjs). Datas em UTC; a oportunidade é criada em 2026-11-13T12:00:00Z. Vínculo comprovado = lead_assignments.conversation_id da oportunidade.",
+  "organization": "org1",
+  "scenarios": [
+    {
+      "name": "1 contato, 2 conversas, 2 anúncios, oportunidade vinculada SÓ à conversa antiga (v1): vale o anúncio dessa conversa, mesmo antigo e mesmo havendo outro mais recente",
+      "contact": "c1", "opportunity": { "id": "p1", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v1"] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-10-20T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-12T12:00:00Z", "conversation_id": "v2" }
+      ],
+      "expected": { "touch_id": "A", "basis": "conversation" }
+    },
+    {
+      "name": "mesma situação, vinculada SÓ à conversa recente (v2)",
+      "contact": "c2", "opportunity": { "id": "p2", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v2"] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-10-20T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-12T12:00:00Z", "conversation_id": "v2" }
+      ],
+      "expected": { "touch_id": "B", "basis": "conversation" }
+    },
+    {
+      "name": "sem vínculo comprovado: vale a janela de 14 dias, marcada como ESTIMADA (o anúncio antigo, fora da janela, não entra)",
+      "contact": "c3", "opportunity": { "id": "p3", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": [] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-10-20T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-12T12:00:00Z", "conversation_id": "v2" }
+      ],
+      "expected": { "touch_id": "B", "basis": "estimated" }
+    },
+    {
+      "name": "sem vínculo e só anúncio antigo: origem indeterminada, nada é atribuído",
+      "contact": "c4", "opportunity": { "id": "p4", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": [] },
+      "touches": [ { "id": "A", "touched_at": "2026-10-20T12:00:00Z", "conversation_id": "v1" } ],
+      "expected": { "touch_id": null, "basis": "indeterminate" }
+    },
+    {
+      "name": "vinculada às duas conversas: o mais recente entre os ligados",
+      "contact": "c5", "opportunity": { "id": "p5", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v1", "v2"] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-10-20T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-12T12:00:00Z", "conversation_id": "v2" }
+      ],
+      "expected": { "touch_id": "B", "basis": "conversation" }
+    },
+    {
+      "name": "toque ligado à conversa mas DEPOIS da criação não conta; vale o anterior ligado",
+      "contact": "c6", "opportunity": { "id": "p6", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v1"] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-11-11T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-13T13:00:00Z", "conversation_id": "v1" }
+      ],
+      "expected": { "touch_id": "A", "basis": "conversation" }
+    },
+    {
+      "name": "estimada: vários toques na janela, vale o mais recente; toque sem conversa também entra na estimativa",
+      "contact": "c7", "opportunity": { "id": "p7", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": [] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-11-05T12:00:00Z", "conversation_id": "v1" },
+        { "id": "B", "touched_at": "2026-11-12T12:00:00Z", "conversation_id": null }
+      ],
+      "expected": { "touch_id": "B", "basis": "estimated" }
+    },
+    {
+      "name": "vínculo comprovado a uma conversa SEM toque: cai na estimativa pela janela",
+      "contact": "c8", "opportunity": { "id": "p8", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v3"] },
+      "touches": [ { "id": "A", "touched_at": "2026-11-10T12:00:00Z", "conversation_id": "v1" } ],
+      "expected": { "touch_id": "A", "basis": "estimated" }
+    },
+    {
+      "name": "tolerância de 1 min de relógio: toque 30 s depois da criação ainda conta; 2 min depois não",
+      "contact": "c9", "opportunity": { "id": "p9", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": [] },
+      "touches": [
+        { "id": "A", "touched_at": "2026-11-13T12:00:30Z", "conversation_id": null },
+        { "id": "B", "touched_at": "2026-11-13T12:02:00Z", "conversation_id": null }
+      ],
+      "expected": { "touch_id": "A", "basis": "estimated" }
+    },
+    {
+      "name": "contato sem nenhum toque: indeterminada",
+      "contact": "c10", "opportunity": { "id": "p10", "created_at": "2026-11-13T12:00:00Z", "linked_conversations": ["v1"] },
+      "touches": [],
+      "expected": { "touch_id": null, "basis": "indeterminate" }
+    }
+  ]
+}

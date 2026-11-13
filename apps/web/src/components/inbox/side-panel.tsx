@@ -1,5 +1,6 @@
 "use client";
 
+import { AdOriginPanel } from "@/components/ad-origin/ad-origin-panel";
 import { TagsInput } from "./tags-input";
 import { NotesPanel } from "./notes-panel";
 import { QualificationPanel } from "./qualification-panel";
@@ -34,6 +35,9 @@ export function SidePanel({ conversation, onUpdate }: SidePanelProps) {
       </div>
 
       <Separator />
+
+      {/* Anúncio de origem: recolhido e só aparece quando há anúncio registrado */}
+      <AdOriginPanel contactId={conversation.wa_contacts.id} />
 
       {/* Qualification — same context the AI already gathered, so a human
           taking over doesn't have to re-ask or re-read the whole thread */}
