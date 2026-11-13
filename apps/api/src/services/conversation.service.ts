@@ -5,6 +5,7 @@ import {
   updateConversation,
 } from "@aula-agente/database";
 import { upsertContact, getOrganizationById } from "@aula-agente/database";
+import { runWithTimeout } from "../lib/with-timeout.js";
 import {
   resolveReturningCustomerOwnership,
   createReturningCustomerDeps,
@@ -19,6 +20,9 @@ interface EnsureConversationParams {
   contactName: string | null;
   contactPhotoUrl: string | null;
 }
+
+/** Limite para a operação COMPLETA de herdar o vendedor; estourou, segue o fluxo normal (conversa sem dono) para não atrasar a MarIAna. */
+export const RETURNING_OWNER_TIMEOUT_MS = 1500;
 
 export async function ensureConversation(params: EnsureConversationParams) {
   const db = getAdminClient();
@@ -60,20 +64,27 @@ export async function ensureConversation(params: EnsureConversationParams) {
   return { conversation, contact, isNew: true };
 }
 
-/** Chave de desligamento: `returning_customer_owner_enabled: false` nas configurações da organização volta ao comportamento antigo. */
+/**
+ * Ativação explícita: só herda quando `returning_customer_owner_enabled === true` nas configurações da organização.
+ * A operação completa (configuração + consultas) tem limite de tempo; timeout ou erro → null (fluxo normal, sem dono).
+ */
 async function resolveInheritedOwnership(
   db: ReturnType<typeof getAdminClient>,
   organizationId: string,
   contactId: string,
 ): Promise<ReturningCustomerOwnership | null> {
-  try {
+  const outcome = await runWithTimeout(async (signal) => {
     const org = await getOrganizationById(db, organizationId);
-    if ((org.settings as { returning_customer_owner_enabled?: boolean } | null)?.returning_customer_owner_enabled === false) return null;
-    return await resolveReturningCustomerOwnership(createReturningCustomerDeps(db), { organizationId, contactId });
-  } catch (err) {
-    console.error("conversation: falha ao herdar responsável do cliente que voltou; criando sem dono", err);
-    return null;
+    if ((org.settings as { returning_customer_owner_enabled?: boolean } | null)?.returning_customer_owner_enabled !== true) return null;
+    return resolveReturningCustomerOwnership(createReturningCustomerDeps(db, signal), { organizationId, contactId });
+  }, RETURNING_OWNER_TIMEOUT_MS);
+  if (outcome.status === "ok") return outcome.value;
+  if (outcome.status === "timeout") {
+    console.warn(JSON.stringify({ event: "returning_owner_timeout", organizationId, contactId, timeoutMs: RETURNING_OWNER_TIMEOUT_MS }));
+  } else {
+    console.error("conversation: falha ao herdar responsável do cliente que voltou; criando sem dono", outcome.error);
   }
+  return null;
 }
 
 export async function setHumanTakeover(conversationId: string, takeover: boolean) {

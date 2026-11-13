@@ -70,7 +70,9 @@ export async function resolveReturningCustomerOwnership(
 }
 
 /** Implementação real sobre o Supabase (cliente admin). */
-export function createReturningCustomerDeps(db: AdminClient): ReturningCustomerDeps {
+export function createReturningCustomerDeps(db: AdminClient, signal?: AbortSignal): ReturningCustomerDeps {
+  // Com sinal (limite de tempo do chamador), cancela a consulta em andamento quando o prazo estoura.
+  const abortable = <Q extends { abortSignal(s: AbortSignal): Q }>(query: Q): Q => (signal ? query.abortSignal(signal) : query);
   return {
     async getOwnerLookbackDays(organizationId) {
       const org = await getOrganizationById(db, organizationId);
@@ -78,47 +80,36 @@ export function createReturningCustomerDeps(db: AdminClient): ReturningCustomerD
       return typeof days === "number" && days > 0 ? days : DEFAULT_OWNER_LOOKBACK_DAYS;
     },
     async getPreviousConversation(organizationId, contactId) {
-      const { data, error } = await db
-        .from("conversations")
-        .select("id")
-        .eq("organization_id", organizationId)
-        .eq("contact_id", contactId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const { data, error } = await abortable(
+        db.from("conversations").select("id").eq("organization_id", organizationId).eq("contact_id", contactId)
+          .order("created_at", { ascending: false }).limit(1),
+      ).maybeSingle();
       if (error) throw error;
       return (data as PreviousConversationRef | null) ?? null;
     },
     async resolveCurrentOwner({ organizationId, contactId, conversationId, lookbackDays }) {
-      const { data, error } = await db.rpc("resolve_current_owner", {
+      const { data, error } = await abortable(db.rpc("resolve_current_owner", {
         p_org: organizationId,
         p_contact: contactId,
         p_conversation: conversationId,
         p_lookback_days: lookbackDays,
-      });
+      }));
       if (error) throw error;
       const row = (Array.isArray(data) ? data[0] : data) as { rep_id: string | null; outcome: string } | null | undefined;
       return { repId: row?.rep_id ?? null, outcome: row?.outcome ?? "none" };
     },
     async getRepUserId(organizationId, repId) {
-      const { data, error } = await db
-        .from("sales_reps")
-        .select("user_id")
-        .eq("organization_id", organizationId)
-        .eq("id", repId)
-        .maybeSingle();
+      const { data, error } = await abortable(
+        db.from("sales_reps").select("user_id").eq("organization_id", organizationId).eq("id", repId),
+      ).maybeSingle();
       if (error) throw error;
       return (data as { user_id: string } | null)?.user_id ?? null;
     },
     async getLastHumanMessageAt(conversationId) {
-      const { data, error } = await db
-        .from("messages")
-        .select("created_at")
-        .eq("conversation_id", conversationId)
-        .eq("role", "human_agent")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const { data, error } = await abortable(
+        db.from("messages").select("created_at").eq("conversation_id", conversationId).eq("role", "human_agent")
+          .order("created_at", { ascending: false }).limit(1),
+      ).maybeSingle();
       if (error) throw error;
       const at = (data as { created_at: string } | null)?.created_at;
       return at ? new Date(at) : null;

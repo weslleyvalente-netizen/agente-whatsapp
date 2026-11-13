@@ -50,7 +50,7 @@ export interface OrganizationSettings {
   // ISO: quando a chave acima foi ligada. A escalada só considera estouros posteriores a isto (e de no máximo 24 h).
   sla_alert_escalation_activated_at?: string;
   owner_lookback_days?: number;
-  /** false desliga a herança do vendedor anterior quando um cliente volta e abre conversa nova (padrão: ligada). */
+  /** Ativação explícita (somente `true` liga; ausente/false = desligada): cliente que volta e abre conversa nova mantém o vendedor anterior. */
   returning_customer_owner_enabled?: boolean;
   business_calendar?: import("../business-calendar.js").BusinessCalendar;
   // Modo noite: depois de um requestHuman fora do horário comercial a IA continua respondendo (sem requestHuman) até um humano responder. Desligado por padrão.
