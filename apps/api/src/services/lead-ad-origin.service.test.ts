@@ -79,7 +79,7 @@ describe("getAdOriginForContact", () => {
       const opportunityCreated = days(30);
       const r = await getAdOriginForContact(fakeDb(many).db, ORG, C, { createdAt: opportunityCreated });
       // toques até a criação: t29 (31 dias atrás) em diante; o mais recente até a criação dentro da janela de 14 dias
-      expect(r.attribution).toBe("time");
+      expect(r.attribution).toBe("estimated");
       expect(r.attributed_touch_id).toBe("t29");
       expect(r.touches.some((t) => t.id === "t29")).toBe(true);
     });

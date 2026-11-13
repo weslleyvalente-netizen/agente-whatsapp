@@ -39,17 +39,20 @@ CREATE INDEX IF NOT EXISTS lead_ad_touches_ad
 -- Só a service role (API) acessa: RLS ligada e nenhuma policy.
 ALTER TABLE public.lead_ad_touches ENABLE ROW LEVEL SECURITY;
 
--- Toque que originou cada oportunidade, só com evidência (mesma regra de attributeTouch, packages/shared/src/lead-ad-touch.ts):
--- 1) toque ligado a uma conversa do negócio (lead_assignments.conversation_id) e até a criação dele, sem limite de idade ('conversation');
--- 2) senão, o mais recente dentro de 14 dias antes da criação ('time'); 3) senão nada: touch_id nulo e basis 'indeterminate'.
--- Tolerância de 1 min de relógio. O histórico completo fica em lead_ad_touches.
+-- Toque que originou cada oportunidade, só com evidência (mesma regra de attributeTouch, packages/shared/src/lead-ad-touch.ts;
+-- os dois são validados contra os mesmos cenários em supabase/tests/ad-attribution-scenarios.json):
+-- 1) toque ligado a uma conversa VINCULADA à oportunidade (lead_assignments.conversation_id, a mesma relação que a API usa) e até a
+--    criação dela, sem limite de idade: basis 'conversation' (comprovada);
+-- 2) senão, o mais recente dentro de 14 dias antes da criação: basis 'estimated' (estimada, NÃO comprovada);
+-- 3) senão nada: touch_id nulo e basis 'indeterminate'. Tolerância de 1 min de relógio.
+-- O histórico completo fica em lead_ad_touches.
 CREATE OR REPLACE VIEW public.opportunity_ad_origins WITH (security_invoker = true) AS
 SELECT o.id AS opportunity_id, o.organization_id, o.contact_id,
        t.id AS touch_id, COALESCE(t.basis, 'indeterminate') AS basis,
        t.touched_at, t.platform, t.source_type, t.ad_id, t.ad_title, t.ad_body, t.ad_url, t.campaign_id, t.campaign_name
 FROM public.opportunities o
 LEFT JOIN LATERAL (
-  SELECT x.*, CASE WHEN x.linked THEN 'conversation' ELSE 'time' END AS basis
+  SELECT x.*, CASE WHEN x.linked THEN 'conversation' ELSE 'estimated' END AS basis
   FROM (
     SELECT t.*, (t.conversation_id IS NOT NULL AND EXISTS (
              SELECT 1 FROM public.lead_assignments la

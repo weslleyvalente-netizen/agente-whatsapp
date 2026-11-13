@@ -5,7 +5,7 @@ export interface AdOriginListProps {
   touches: AdTouchView[];
   /** Toque que originou a oportunidade (só nos detalhes da oportunidade). */
   attributedId?: string | null;
-  /** Base da atribuição: ligado à conversa, pelo horário, ou indeterminada (nenhum anúncio com evidência). null fora de oportunidade. */
+  /** Base da atribuição: comprovada pela conversa, estimada pelo horário (não comprovada), ou indeterminada (nenhum anúncio com evidência). null fora de oportunidade. */
   attribution?: AttributionBasis | null;
   /** Toque mais antigo do contato (vem da API; a posição na lista não serve, pois ela pode estar truncada). */
   firstTouchId?: string | null;
@@ -17,7 +17,7 @@ export interface AdOriginListProps {
 // recolhido do atendimento/oportunidade: nada disso vai para os cards do funil.
 export function AdOriginList({ touches, attributedId = null, attribution = null, firstTouchId = null, totalTouches }: AdOriginListProps) {
   if (touches.length === 0) return null;
-  const attributionNote = attribution === "conversation" ? " · originou este negócio (ligado à conversa)" : attribution === "time" ? " · originou este negócio (pelo horário)" : "";
+  const attributionNote = attribution === "conversation" ? " · originou este negócio (ligado à conversa)" : attribution === "estimated" ? " · origem estimada pelo horário (não comprovada)" : "";
   return (
     <div>
     {attribution === "indeterminate" && (

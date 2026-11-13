@@ -67,3 +67,25 @@ function dedupe(list: AdTouchView[]): AdTouchView[] {
   for (const t of list) if (!seen.has(t.id)) seen.set(t.id, t);
   return [...seen.values()];
 }
+
+const ASSIGNMENT_LIMIT = 100;
+
+/**
+ * Conversas vinculadas à oportunidade: as de lead_assignments (a MESMA relação usada pela view opportunity_ad_origins).
+ * Nunca "a conversa mais recente do contato": ela pode ser outra.
+ */
+export async function getOpportunityConversationIds(db: Db, organizationId: string, opportunityId: string): Promise<string[]> {
+  const { data, error } = await db.from("lead_assignments").select("conversation_id")
+    .eq("organization_id", organizationId).eq("opportunity_id", opportunityId)
+    .not("conversation_id", "is", null).limit(ASSIGNMENT_LIMIT);
+  if (error) throw error;
+  return [...new Set(((data ?? []) as Array<{ conversation_id: string | null }>).map((r) => r.conversation_id).filter((id): id is string => !!id))];
+}
+
+/** Origem por anúncio de uma oportunidade: vínculo comprovado pela conversa (lead_assignments), senão estimativa por janela de 14 dias, senão indeterminada. */
+export async function getAdOriginForOpportunity(
+  db: Db, opportunity: { id: string; organization_id: string; contact_id: string; created_at: string }
+): Promise<AdOrigin> {
+  const conversationIds = await getOpportunityConversationIds(db, opportunity.organization_id, opportunity.id);
+  return getAdOriginForContact(db, opportunity.organization_id, opportunity.contact_id, { createdAt: opportunity.created_at, conversationIds });
+}

@@ -95,6 +95,31 @@ describe("shouldRecordTouch (deduplicação)", () => {
   it("mensagem antiga reenviada (anterior ao último toque do mesmo anúncio) não cria toque", () => {
     expect(shouldRecordTouch(cand("id:1", null, "2026-11-10T10:00:00Z"), [prev("id:1", null, "2026-11-13T10:00:00Z")])).toBe(false);
   });
+
+  describe("mensagens recuperadas fora de ordem", () => {
+    const latest = prev("id:1", "NOVO", "2026-11-13T10:00:00Z");
+    it("clique NUNCA visto, com horário anterior ao último toque do mesmo anúncio: é um toque distinto e antigo, e é gravado", () => {
+      expect(shouldRecordTouch(cand("id:1", "ANTIGO", "2026-11-01T10:00:00Z"), [latest])).toBe(true);
+    });
+    it("o mesmo clique antigo recuperado de novo (já gravado) não duplica, mesmo fora de ordem", () => {
+      const recent = [latest, prev("id:1", "ANTIGO", "2026-11-01T10:00:00Z")];
+      expect(shouldRecordTouch(cand("id:1", "ANTIGO", "2026-11-01T10:00:00Z"), recent)).toBe(false);
+      expect(shouldRecordTouch(cand("id:1", "ANTIGO", "2026-10-20T10:00:00Z"), recent)).toBe(false);
+    });
+    it("antigo SEM clique para comparar, anterior ao último toque: não prova nada, não grava", () => {
+      expect(shouldRecordTouch(cand("id:1", null, "2026-11-01T10:00:00Z"), [latest])).toBe(false);
+    });
+    it("clique novo e antigo de um anúncio cujo último toque não tinha clique: sem prova, não grava", () => {
+      expect(shouldRecordTouch(cand("id:1", "ANTIGO", "2026-11-01T10:00:00Z"), [prev("id:1", null, "2026-11-13T10:00:00Z")])).toBe(false);
+    });
+    it("a ordem em que os toques chegam não muda o resultado: dois cliques distintos são ambos gravados", () => {
+      // chega primeiro o mais novo, depois o mais antigo (recuperação fora de ordem)
+      const first = cand("id:1", "B", "2026-11-13T10:00:00Z");
+      const second = cand("id:1", "A", "2026-11-01T10:00:00Z");
+      expect(shouldRecordTouch(first, [])).toBe(true);
+      expect(shouldRecordTouch(second, [prev("id:1", "B", "2026-11-13T10:00:00Z")])).toBe(true);
+    });
+  });
 });
 
 describe("attributeTouch (atribuição à oportunidade)", () => {
@@ -110,9 +135,9 @@ describe("attributeTouch (atribuição à oportunidade)", () => {
   it("toque da conversa vale mesmo fora da janela de tempo (a ligação com a conversa é a evidência)", () => {
     expect(attributeTouch([T("antigo", before(40), "c1")], { createdAt: created, conversationIds: ["c1"] })).toMatchObject({ basis: "conversation", touch: { id: "antigo" } });
   });
-  it("sem ligação com a conversa: o mais recente dentro da janela de tempo (base 'time')", () => {
+  it("sem ligação com a conversa: o mais recente dentro da janela de tempo (base 'estimated', não comprovada)", () => {
     const touches = [T("b", before(2)), T("a", before(10))];
-    expect(attributeTouch(touches, { createdAt: created })).toMatchObject({ basis: "time", touch: { id: "b" } });
+    expect(attributeTouch(touches, { createdAt: created })).toMatchObject({ basis: "estimated", touch: { id: "b" } });
   });
   it("anúncio antigo sem relação comprovada NÃO é atribuído: origem indeterminada", () => {
     const old = [T("velho", new Date(Date.parse(created) - ATTRIBUTION_WINDOW_MS - day).toISOString())];

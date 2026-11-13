@@ -30,7 +30,7 @@ import {
 import { authMiddleware } from "../../middleware/auth.js";
 import { isLeadVisible, isManager, isSellerFilterEnabled, resolveLeadVisibility } from "../../lib/lead-visibility.js";
 import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
-import { getAdOriginForContact, type AdOrigin } from "../../services/lead-ad-origin.service.js";
+import { getAdOriginForOpportunity, type AdOrigin } from "../../services/lead-ad-origin.service.js";
 
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 
@@ -147,7 +147,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     // Origem por anúncio: complemento só de leitura; qualquer falha (ex.: tabela ainda não criada) não derruba os detalhes.
     let ad_origin: AdOrigin | null = null;
     try {
-      ad_origin = await getAdOriginForContact(db, opportunity.organization_id, opportunity.contact_id, { createdAt: opportunity.created_at, conversationIds: conversation ? [conversation.id] : [] });
+      ad_origin = await getAdOriginForOpportunity(db, opportunity);
     } catch (err) {
       request.log.warn({ err: (err as { message?: string })?.message, opportunityId: opportunity.id }, "Failed to load ad origin for opportunity details");
     }

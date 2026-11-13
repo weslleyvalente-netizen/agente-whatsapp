@@ -47,7 +47,9 @@ describe("AdOriginList", () => {
   it("marca o anúncio que originou o negócio, indicando a base (conversa ou horário)", () => {
     const touches = [t({ id: "b", ad_title: "Segundo" }), t({ id: "a", ad_title: "Primeiro" })];
     expect(html(touches, { attributedId: "a", attribution: "conversation" })).toContain("originou este negócio (ligado à conversa)");
-    expect(html(touches, { attributedId: "a", attribution: "time" })).toContain("originou este negócio (pelo horário)");
+    const estimated = html(touches, { attributedId: "a", attribution: "estimated" });
+    expect(estimated).toContain("origem estimada pelo horário (não comprovada)");
+    expect(estimated).not.toContain("originou este negócio");
   });
 
   it("origem indeterminada: avisa que nenhum anúncio está ligado ao negócio, sem marcar nenhum", () => {

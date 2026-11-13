@@ -29,7 +29,8 @@ export interface LeadAdTouch extends Omit<AdTouchData, "touch_key" | "campaign_i
 
 /** O que a API devolve para a tela: sem ctwa_clid nem a lista interna de campos. */
 export type AdTouchView = Pick<LeadAdTouch, "id" | "touched_at" | "platform" | "source_type" | "ad_id" | "ad_title" | "ad_body" | "ad_url" | "campaign_id" | "campaign_name" | "conversation_id">;
-export type AttributionBasis = "conversation" | "time" | "indeterminate";
+/** conversation = vínculo comprovado (conversa do negócio); estimated = só proximidade no tempo, NÃO comprovada; indeterminate = sem evidência. */
+export type AttributionBasis = "conversation" | "estimated" | "indeterminate";
 export interface AdOrigin {
   /** Mais recentes primeiro. Sempre inclui o primeiro toque do contato e o toque atribuído, mesmo que passem do limite da listagem. */
   touches: AdTouchView[];
@@ -39,7 +40,7 @@ export interface AdOrigin {
   first_touch_id: string | null;
   /** Só para oportunidade: toque que a originou. */
   attributed_touch_id: string | null;
-  /** Só para oportunidade: "conversation" (ligado à conversa), "time" (janela de tempo) ou "indeterminate" (sem evidência). null = fora de oportunidade. */
+  /** Só para oportunidade: "conversation" (comprovada), "estimated" (só proximidade no tempo, não comprovada) ou "indeterminate" (sem evidência). null = fora de oportunidade. */
   attribution: AttributionBasis | null;
 }
 
@@ -140,8 +141,8 @@ export function shouldRecordTouch(
 
 /**
  * Toque que originou a oportunidade, só com evidência:
- * 1. ligado à conversa do negócio (conversation_id) e até a criação dela, sem limite de idade: "conversation";
- * 2. senão, o mais recente dentro de 14 dias antes da criação: "time";
+ * 1. ligado a uma conversa VINCULADA ao negócio (lead_assignments.conversation_id) e até a criação dele, sem limite de idade: "conversation" (comprovada);
+ * 2. senão, o mais recente dentro de 14 dias antes da criação: "estimated" (estimada, NÃO comprovada);
  * 3. senão, origem "indeterminate" (nada é atribuído). Tolerância de 1 min de relógio. Mesma regra da view opportunity_ad_origins.
  */
 export function attributeTouch<T extends { touched_at: string; conversation_id?: string | null }>(
@@ -160,6 +161,6 @@ export function attributeTouch<T extends { touched_at: string; conversation_id?:
     if (at >= created - ATTRIBUTION_WINDOW_MS && at > recentAt) { recent = t; recentAt = at; }
   }
   if (linked) return { touch: linked, basis: "conversation" };
-  if (recent) return { touch: recent, basis: "time" };
+  if (recent) return { touch: recent, basis: "estimated" };
   return { touch: null, basis: "indeterminate" };
 }

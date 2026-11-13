@@ -51,6 +51,23 @@ describe("recordAdTouch", () => {
     expect(await recordAdTouch(later.db, { ...base, ad: noClid })).toBe("recorded");
   });
 
+  it("mensagem recuperada FORA DE ORDEM: clique nunca visto com horário anterior ao último toque do anúncio é gravado com o horário original", async () => {
+    const f = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid-novo", touched_at: "2026-11-13T10:00:00Z" }] });
+    const older = new Date("2026-11-01T10:00:00.000Z");
+    expect(await recordAdTouch(f.db, { ...base, ad: { ...ad, ctwaClid: "clid-antigo" }, touchedAt: older })).toBe("recorded");
+    expect(f.inserted[0]).toMatchObject({ ctwa_clid: "clid-antigo", touched_at: "2026-11-01T10:00:00.000Z" });
+  });
+
+  it("recuperação fora de ordem do MESMO clique já gravado, ou sem clique para comparar, não duplica", async () => {
+    const seen = fakeDb({ recent: [
+      { touch_key: "id:999", ctwa_clid: "clid-novo", touched_at: "2026-11-13T10:00:00Z" },
+      { touch_key: "id:999", ctwa_clid: "clid-antigo", touched_at: "2026-11-01T10:00:00Z" },
+    ] });
+    expect(await recordAdTouch(seen.db, { ...base, ad: { ...ad, ctwaClid: "clid-antigo" }, touchedAt: new Date("2026-11-01T10:00:00Z") })).toBe("duplicate");
+    const noClid = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid-novo", touched_at: "2026-11-13T10:00:00Z" }] });
+    expect(await recordAdTouch(noClid.db, { ...base, ad: { ...ad, ctwaClid: undefined }, touchedAt: new Date("2026-11-01T10:00:00Z") })).toBe("duplicate");
+  });
+
   it("a mesma mensagem reenviada continua barrada pelo índice único", async () => {
     const f = fakeDb({ recent: [{ touch_key: "id:999", ctwa_clid: "clid-antigo", touched_at: "2026-11-01T14:00:00Z" }], insertError: { code: "23505" } });
     expect(await recordAdTouch(f.db, base)).toBe("duplicate");
