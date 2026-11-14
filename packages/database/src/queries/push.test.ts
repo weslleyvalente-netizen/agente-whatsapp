@@ -169,6 +169,17 @@ describe("listCustomerMessageCandidates", () => {
     expect(candidates.map(x => x.userId)).toEqual(["u2"]);
     expect(humanChecks.sort()).toEqual(["c2", "c3"]);
   });
+  it("conversa nova de cliente que voltou (vendedor herdado, nasce em takeover) já gera o aviso ao vendedor — sem tarefa/evento extra", async () => {
+    // Forma que ensureConversation cria até 24 h após atendimento humano. (Depois de 24 h a conversa nasce sem takeover e sem
+    // resposta humana: já coberto pelo teste acima, "sem takeover só notifica se nunca houve resposta humana".)
+    const rows = [msg("m1", "c-takeover", "Ok maravilha", "u-vendedor", true, "2026-10-17T12:00:00Z")];
+    const { db: d } = db({ messages: { data: rows } });
+    const { candidates } = await listCustomerMessageCandidates(d, since, ["o"]);
+    expect(candidates.map((c) => [c.userId, c.tag, c.dedupeKeys])).toEqual([
+      ["u-vendedor", "c-takeover", ["msg:m1"]],
+    ]);
+    expect(candidates[0]).toMatchObject({ title: "Ana", url: "/opportunities?conversa=c-takeover" });
+  });
   it("informa truncatedAt ao atingir o limite de linhas", async () => {
     const rows = Array.from({ length: 500 }, (_, i) => msg(`m${i}`, "c1", "x", "u1", true, `2026-10-17T12:00:${String(i % 60).padStart(2, "0")}Z`));
     const { db: d } = db({ messages: { data: rows } });
