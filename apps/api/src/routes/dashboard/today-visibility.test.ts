@@ -23,6 +23,13 @@ describe("dashboard/today visibility", () => {
     expect(await today()).toEqual(["dono-meu", "livre", "minha"]);
   });
   it("gestor recebe todas", async () => { m.role.value = "admin"; expect(await today()).toHaveLength(5); });
+  it("tarefa 'Mensagem não enviada' SEM responsável aparece para o gestor e para o vendedor; a de outro vendedor continua isolada", async () => {
+    const failed = (id: string, assignee: string | null) => ({ ...row(id, assignee), task: { ...row(id, assignee).task, type: "message_send_failed", priority: "high", due_date: toDay() } });
+    function toDay() { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date()); }
+    m.getOpenTasksWithScoreInputs.mockResolvedValue([row("normal", "marina-user"), failed("falha-livre", null), failed("falha-do-marcio", "marcio-user")]);
+    m.role.value = "admin"; expect(await today()).toEqual(["falha-do-marcio", "falha-livre", "normal"]);
+    m.role.value = "agent"; expect(await today()).toEqual(["falha-livre", "normal"]);
+  });
   it("flag desligada não restringe", async () => {
     m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: false } }); expect(await today()).toHaveLength(5);
   });

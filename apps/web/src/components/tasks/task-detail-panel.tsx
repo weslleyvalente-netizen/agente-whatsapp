@@ -54,6 +54,7 @@ interface TaskDetails {
     due_time: string | null;
     conversation_id: string | null;
     followup_suggested_message?: string | null;
+    consolidated_pendencies?: { type: string }[];
   };
   customer: { id: string; name: string | null; phone: string } | null;
   conversation: { id: string; lastMessageAt: string } | null;
@@ -297,6 +298,18 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
     }
   };
 
+  // Confirmação MANUAL de que a mensagem foi recuperada (reenviada por outro caminho): encerra só a pendência "Mensagem não enviada".
+  const handleConfirmResent = async () => {
+    try {
+      await apiFetch(`/tasks/${taskId}/complete`, { method: "POST", body: JSON.stringify({ pendency_type: "message_send_failed", note: "Reenvio confirmado manualmente pelo vendedor." }) });
+      onTaskClosed?.(taskId);
+      onTaskChanged();
+      await fetchDetails();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao confirmar o reenvio");
+    }
+  };
+
   const handleCancel = async () => {
     if (!confirm("Cancelar esta tarefa?")) return;
     try {
@@ -381,6 +394,11 @@ export function TaskDetailPanel({ task, taskId, organizationId, onClose, onTaskC
               >
                 Concluir
               </Button>
+              {isOpenTask && (details.task.consolidated_pendencies ?? []).some((p) => p.type === "message_send_failed") && (details.task.consolidated_pendencies ?? []).length > 1 && (
+                <Button size="sm" variant="secondary" onClick={handleConfirmResent} title="Encerra só o aviso de mensagem não enviada; as outras pendências continuam abertas">
+                  Confirmar reenvio
+                </Button>
+              )}
               {/* Embutido no card do funil o chat já está ao lado: o botão abriria um segundo diálogo por cima. */}
               {!embedded && (
                 <Button

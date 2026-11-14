@@ -13,8 +13,10 @@ export const BURST_THRESHOLD = 3;
 export const CONVERSATION_BUCKET_MIN = 10;
 /** Aviso agregado: 1 por 30 min e instância; piora da rajada (a cada 5 falhas a mais) avisa de novo dentro da janela. */
 export const BURST_BUCKET_MIN = 30;
-/** Falha de mensagem mais antiga que isto nunca alerta (reprocessamento de fila, backlog depois de uma queda). */
+/** Falha de mensagem mais antiga que isto NÃO gera push (reprocessamento de fila, backlog depois de uma queda): evita enxurrada. */
 export const MAX_ALERT_AGE_MIN = 120;
+/** Mas a tarefa persistente (silenciosa, 1 por contato) continua sendo criada até este limite: falha comercial relevante precisa de recuperação. */
+export const MAX_TASK_AGE_HOURS = 72;
 
 export type AlertKind = "seller" | "manager_conversation" | "manager_burst";
 export interface PlannedAlert { userId: string; kind: AlertKind }
@@ -78,11 +80,14 @@ export async function notifySendFailure(deps: SendFailureDeps, ctx: SendFailureC
   const err = (what: string, e: unknown) => deps.log.error(`send-failure-alert: ${what} (${String((e as Error)?.message ?? e).replace(/\d{8,}/g, "***").slice(0, 160)})`);
   try {
     const created = ctx.messageCreatedAt ? Date.parse(ctx.messageCreatedAt) : NaN;
-    if (Number.isFinite(created) && now.getTime() - created > MAX_ALERT_AGE_MIN * 60_000) { result.skipped.push("too_old"); return result; }
+    const ageMs = Number.isFinite(created) ? now.getTime() - created : 0;
+    if (ageMs > MAX_TASK_AGE_HOURS * 3_600_000) { result.skipped.push("too_old"); return result; }
     const s = await deps.settings(ctx.organizationId);
-    const pushOn = s.send_failure_alerts_enabled === true && s.push_notifications_enabled === true;
+    const stalePush = ageMs > MAX_ALERT_AGE_MIN * 60_000;
+    const pushOn = s.send_failure_alerts_enabled === true && s.push_notifications_enabled === true && !stalePush;
     const tasksOn = s.send_failure_tasks_enabled === true;
-    if (!pushOn && !tasksOn) { result.skipped.push("disabled"); return result; }
+    if (stalePush) result.skipped.push("stale_no_push");
+    if (!pushOn && !tasksOn) { if (!stalePush) result.skipped.push("disabled"); return result; }
     // Tarefa persistente primeiro: é o canal que não depende de assinatura push.
     if (tasksOn) {
       try { await deps.createTask(ctx, buildTaskText(ctx)); result.tasks += 1; } catch (e) { result.skipped.push("error:task"); err("task failed", e); }

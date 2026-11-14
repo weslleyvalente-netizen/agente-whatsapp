@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, findOpenTask, resolvePendency } = vi.hoisted(() => ({
-  findOpenTask: vi.fn().mockResolvedValue(null), resolvePendency: vi.fn().mockResolvedValue({ taskCompleted: false }),
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, resolvePendency, createTaskDedup } = vi.hoisted(() => ({
+  resolvePendency: vi.fn().mockResolvedValue(0), createTaskDedup: vi.fn().mockResolvedValue({}),
   markMessageSendFailed: vi.fn().mockResolvedValue(true),
   createSignedUrl: vi.fn(),
   getAdminClient: vi.fn(),
@@ -14,7 +14,7 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageCon
 vi.mock("@aula-agente/database", () => ({
   shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
-  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, findOpenTaskWithPendencyType: findOpenTask, resolveAwaitingCustomerPendency: resolvePendency, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
+  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, recoverSendFailures: resolvePendency, createTaskWithDedup: createTaskDedup, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
 const notifyMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sent: 1, skipped: [] }));
 vi.mock("../lib/send-failure-alert.js", () => ({ notifySendFailure: notifyMock }));
@@ -579,34 +579,48 @@ describe("alerta de falha definitiva de envio (vendedor e gestores)", () => {
   });
 });
 
-describe("reenvio bem-sucedido encerra a pendência 'Mensagem não enviada' (só a criada ANTES dele)", () => {
+describe("envio aceito aciona a recuperação por EVIDÊNCIA da falha 'Mensagem não enviada'", () => {
   const data = { conversationId: "conv-1", messageId: "msg-2", instanceId: "inst-1", phone: "5562900000000", content: "reenvio", organizationId: "org-1" };
   const ok = () => vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "E2" } }), text: async () => "" });
   beforeEach(() => {
     process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
     getInstanceById.mockResolvedValue({ instance_name: "weslley" }); getAdminClient.mockImplementation(() => ({}));
     vi.mocked(database.getConversationById).mockResolvedValue({ id: "conv-1", contact_id: "ct-1" } as never);
-    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-2", role: "human_agent", content: "reenvio", media_type: null, created_at: "2026-11-16T15:10:00Z", metadata: null } as never);
-    findOpenTask.mockReset().mockResolvedValue({ id: "task-9" }); resolvePendency.mockReset().mockResolvedValue({ taskCompleted: true });
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-2", role: "human_agent", content: "reenvio", media_type: null, created_at: "2026-11-16T15:10:00Z", metadata: { resend_of: "msg-1" } } as never);
+    resolvePendency.mockReset().mockResolvedValue(1);
   });
   afterEach(() => { global.fetch = originalFetch; vi.mocked(database.getMessageById).mockResolvedValue(null as never); });
 
-  it("envio aceito: encerra a pendência message_send_failed do contato com corte no horário da mensagem enviada", async () => {
+  it("envio aceito: passa à recuperação a mensagem aceita, a CONVERSA dela e o contato (nunca 'qualquer mensagem do contato')", async () => {
     global.fetch = ok() as never;
     await processSendMessageJob({ data } as never);
-    expect(findOpenTask).toHaveBeenCalledWith(expect.anything(), "org-1", "ct-1", "message_send_failed");
-    expect(resolvePendency).toHaveBeenCalledWith(expect.anything(), "org-1", "task-9", "message_send_failed", expect.stringContaining("reenviada"), 0, "2026-11-16T15:10:00Z");
+    expect(resolvePendency).toHaveBeenCalledWith(expect.anything(), "org-1", "ct-1",
+      { id: "msg-2", conversation_id: "conv-1", content: "reenvio", media_type: null, metadata: { resend_of: "msg-1" }, created_at: "2026-11-16T15:10:00Z" });
   });
-  it("sem tarefa aberta: nada a encerrar; envio que falha: não encerra nada", async () => {
-    global.fetch = ok() as never; findOpenTask.mockResolvedValue(null);
-    await processSendMessageJob({ data } as never); expect(resolvePendency).not.toHaveBeenCalled();
-    findOpenTask.mockResolvedValue({ id: "task-9" });
+  it("envio que falha não aciona a recuperação", async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => "{}", json: async () => ({}) }) as never;
     await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
     expect(resolvePendency).not.toHaveBeenCalled();
   });
-  it("falha ao encerrar nunca derruba o envio", async () => {
+  it("falha ao recuperar nunca derruba o envio", async () => {
     global.fetch = ok() as never; resolvePendency.mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data } as never)).resolves.toBeUndefined();
+  });
+});
+
+describe("tarefa 'Mensagem não enviada' criada pela falha definitiva", () => {
+  const ctx = { organizationId: "org-1", conversationId: "conv-9", contactId: "ct-9", messageId: "msg-9", messageCreatedAt: null, senderRole: "human_agent", contactName: "Ana", instanceName: "weslley", assigneeId: null };
+  const text = { description: "d", reason: "r" };
+  beforeEach(() => createTaskDedup.mockClear());
+  it("guarda a referência da mensagem e da conversa; sem responsável fica SEM responsável (não 'da IA')", async () => {
+    const { realSendFailureDeps } = await import("./send-message.js");
+    await realSendFailureDeps({} as never).createTask(ctx as never, text);
+    const input = createTaskDedup.mock.calls[0][1];
+    expect(input).toMatchObject({ type: "message_send_failed", conversation_id: "conv-9", assignee_type: null, assignee_id: null, failed_message: { message_id: "msg-9", conversation_id: "conv-9" } });
+  });
+  it("com responsável: atribui ao vendedor e leva a pendência junto na consolidação", async () => {
+    const { realSendFailureDeps } = await import("./send-message.js");
+    await realSendFailureDeps({} as never).createTask({ ...ctx, assigneeId: "marina" } as never, text);
+    expect(createTaskDedup.mock.calls[0][1]).toMatchObject({ assignee_type: "human", assignee_id: "marina", assign_on_merge: true, failed_message: { message_id: "msg-9" } });
   });
 });

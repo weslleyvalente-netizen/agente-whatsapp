@@ -11,7 +11,12 @@ Quando a **última tentativa** falha e a marca é gravada **pela primeira vez**,
 - Deduplicação por conversa e por janela de 30 min (`push_notification_log`). Contato sem nome aparece como "um cliente". O aviso **nunca** inclui o texto da mensagem, telefone ou chaves.
 
 ## Canal persistente (sem depender de push)
-Opt-in separado: `send_failure_tasks_enabled === true` cria (ou atualiza, com dedupe por contato) a tarefa **"Mensagem não enviada"** (prioridade alta, hoje), atribuída ao responsável da conversa; sem responsável fica sem atribuição (fila dos gestores). Com a consolidação ligada entra como pendência na tarefa aberta do negócio. A tarefa **se encerra sozinha** quando um envio posterior (um reenvio) é aceito na conversa; só a pendência desta falha, nunca as outras obrigações. O tipo não entra no follow-up automático nem conta como sinal comercial.
+Opt-in separado: `send_failure_tasks_enabled === true` cria (ou atualiza, com dedupe por contato) a tarefa **"Mensagem não enviada"** (prioridade alta, hoje), atribuída ao responsável da conversa; sem responsável fica **sem responsável** (nunca "da IA"), visível na fila dos gestores (Tarefas e "Hoje") e também para os vendedores. Com a consolidação ligada entra como pendência na tarefa aberta do negócio. O tipo não entra no follow-up automático nem conta como sinal comercial.
+
+### Referência da falha e encerramento
+Cada falha guarda na pendência `failed_messages: [{message_id, conversation_id, failed_at}]`. Falhas seguidas (mesma conversa ou várias conversas do contato) **somam referências**, não se sobrescrevem; o texto passa a dizer "N mensagens".
+O encerramento **automático** só ocorre quando uma mensagem aceita pela Evolution é **evidência de recuperação daquela mensagem**, na **mesma conversa**: (1) é a mesma mensagem reprocessada; (2) tem `metadata.resend_of` apontando para ela; ou (3) é um reenvio do mesmo texto e mesmo tipo de mídia, depois da falha (texto vazio nunca basta). Um "bom dia" ou outra resposta qualquer **não** encerra nada; outra conversa do mesmo contato também não. Se só parte das mensagens foi recuperada, a pendência continua com as restantes.
+**Manual:** o vendedor conclui a tarefa (ou, em tarefa consolidada, usa **"Confirmar reenvio"** no painel, que encerra só esta pendência). Se o vendedor reescrever a mensagem com outro texto, o encerramento é manual.
 
 ## Cobertura verificada em 14/11 (leitura)
 - Vendedores com push ativo: Marina (2 assinaturas) e Márcio (3), com centenas de avisos push registrados na última semana, o último em 14/11.
@@ -24,7 +29,7 @@ Opt-in separado: `send_failure_tasks_enabled === true` cria (ou atualiza, com de
 - Sem as chaves, nada acontece. Sem migração.
 
 ## Mensagens antigas e deduplicação
-- **Idade:** falha de mensagem criada há mais de 120 min nunca alerta (reprocessamento de fila, backlog depois de uma queda). O alerta só dispara na última tentativa de um job em execução e só na primeira marcação.
+- **Idade:** falha de mensagem criada há mais de 120 min **não gera push** (reprocessamento de fila, backlog depois de uma queda: sem enxurrada), mas a **tarefa persistente continua sendo criada** (silenciosa, 1 por contato) até 72 h, para a falha comercial relevante ter como ser recuperada; acima de 72 h nada é criado. O alerta só dispara na última tentativa de um job em execução e só na primeira marcação.
 - **Dedupe do push:** 1 aviso por conversa e usuário a cada **10 min** (uma falha posterior, depois da janela, avisa de novo). O agregado é 1 por 30 min e instância, mas **a cada 5 falhas a mais** avisa de novo. Nada fica escondido: a tarefa persistente registra a falha mesmo quando o push foi suprimido.
 
 ## Segurança
