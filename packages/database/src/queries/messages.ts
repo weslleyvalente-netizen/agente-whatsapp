@@ -109,13 +109,24 @@ export async function setMessageEvolutionId(
     .single();
   if (error) throw error;
   const message=data as Message;
-  if(message.metadata?.low_intent_followup && !message.metadata.low_intent_followup.confirmed_at){
-    const metadata={...message.metadata,low_intent_followup:{...message.metadata.low_intent_followup,confirmed_at:new Date().toISOString()}};
-    const {data:confirmed,error:confirmationError}=await client.from("messages").update({metadata}).eq("id",id).select().single();
-    if(confirmationError)throw confirmationError;
-    return confirmed as Message;
+  // Ajustes de metadata numa única escrita extra (o caminho normal continua sendo um só update):
+  // - se estava marcada como falha (send_failed_at) e a Evolution agora a aceitou, ela FOI entregue: a marca sai (inbox e
+  //   consultas voltam a tratá-la como enviada) e fica send_recovered_at como rastro;
+  // - cadência de baixa intenção: registra o primeiro instante confirmado.
+  let metadata: Record<string, any> | null = null;
+  const current = (message.metadata ?? null) as Record<string, any> | null;
+  if (current?.send_failed_at) {
+    const { send_failed_at: _f, send_error: _e, ...rest } = current;
+    metadata = { ...rest, send_recovered_at: new Date().toISOString() };
   }
-  return message;
+  const base = metadata ?? current;
+  if (base?.low_intent_followup && !base.low_intent_followup.confirmed_at) {
+    metadata = { ...base, low_intent_followup: { ...base.low_intent_followup, confirmed_at: new Date().toISOString() } };
+  }
+  if (!metadata) return message;
+  const { data: updated, error: metaError } = await client.from("messages").update({ metadata }).eq("id", id).select().single();
+  if (metaError) throw metaError;
+  return updated as Message;
 }
 
 export async function getMessageById(client: SupabaseClient, id: string) {

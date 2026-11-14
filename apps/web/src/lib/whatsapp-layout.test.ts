@@ -12,6 +12,11 @@ describe("messageTick", () => {
     expect(messageTick({ role: "human_agent", evolution_message_id: null, metadata: null })).toBeNull();
     expect(messageTick({ role: "agent", evolution_message_id: null, metadata: {} })).toBeNull();
   });
+  it("falha recuperada (send_failed_at removido, send_recovered_at no lugar): volta a ✓ / ✓✓, não 'falhou'", () => {
+    const meta = { send_recovered_at: "2026-11-14T10:00:00Z" } as any;
+    expect(messageTick({ role: "human_agent", evolution_message_id: "ABC", metadata: meta })).toBe("sent");
+    expect(messageTick({ role: "human_agent", evolution_message_id: "ABC", delivered_at: "x", metadata: meta })).toBe("delivered");
+  });
   it("com send_failed_at: falhou (mesmo com id)", () => {
     expect(messageTick({ role: "human_agent", evolution_message_id: null, metadata: { send_failed_at: "2026-11-08T10:00:00Z" } })).toBe("failed");
     expect(messageTick({ role: "agent", evolution_message_id: "ABC", metadata: { send_failed_at: "2026-11-08T10:00:00Z" } })).toBe("failed");

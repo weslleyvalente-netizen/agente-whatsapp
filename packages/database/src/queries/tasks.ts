@@ -832,19 +832,35 @@ const normText = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " "
 export interface AcceptedOutbound { id: string; conversation_id: string; content: string | null; media_type: string | null; metadata: Record<string, unknown> | null; created_at: string }
 interface FailedRow { id: string; content: string | null; media_type: string | null; created_at: string }
 
+/** Salvaguardas da evidência por CONTEÚDO (id e resend_of não dependem delas). */
+export const RESEND_CONTENT_WINDOW_MS = 2 * 60 * 60 * 1000; // o reenvio tem de vir até 2 h depois da falha
+export const RESEND_CONTENT_MIN_CHARS = 24; // textos curtos ("Bom dia!", "Ok") repetem-se sem ser reenvio
+const isAutomatedOutbound = (m: Record<string, unknown> | null) =>
+  !!m && (["automatic_followup", "task_followup"].includes(String(m.source ?? "")) || !!m.low_intent_followup || !!m.scheduled_ad_closure);
+
+/** Evidência FORTE: é a mesma mensagem (reprocessada pela mesma linha) ou um reenvio explícito (metadata.resend_of). */
+export function isStrongRecoveryOf(accepted: AcceptedOutbound, failed: FailedRow): boolean {
+  return accepted.id === failed.id || accepted.metadata?.resend_of === failed.id;
+}
+
+/** Evidência por CONTEÚDO (fraca, com salvaguardas): mesmo texto e mesma mídia, na mesma conversa, até 2 h depois da falha,
+ *  texto com 24+ caracteres, e a mensagem aceita não é automática (follow-up, cadência, encerramento de anúncio) — uma mensagem
+ *  comercial padronizada repetida depois não é reenvio. */
+export function isContentResendOf(accepted: AcceptedOutbound, failed: FailedRow): boolean {
+  const text = normText(failed.content);
+  if (text.length < RESEND_CONTENT_MIN_CHARS || isAutomatedOutbound(accepted.metadata)) return false;
+  const gap = Date.parse(accepted.created_at) - Date.parse(failed.created_at);
+  if (!(gap > 0 && gap <= RESEND_CONTENT_WINDOW_MS)) return false;
+  return normText(accepted.content) === text && (accepted.media_type ?? null) === (failed.media_type ?? null);
+}
+
 /**
- * A mensagem aceita pela Evolution recupera a falha `failed`? Só com evidência específica:
- *  1. é a MESMA mensagem (reprocessada/reenviada pela mesma linha); ou
- *  2. foi reenviada explicitamente a partir dela (metadata.resend_of); ou
- *  3. é um reenvio do mesmo conteúdo na mesma conversa, depois da falha (mesmo texto e mesmo tipo de mídia; texto vazio nunca basta).
- * Qualquer outra mensagem posterior (um "bom dia", outra resposta) NÃO recupera a falha.
+ * A mensagem aceita pela Evolution recupera a falha `failed`? Só com evidência específica: a mesma mensagem, um `resend_of`
+ * explícito, ou (com as salvaguardas acima) o mesmo conteúdo reenviado logo depois. Qualquer outra mensagem posterior
+ * (um "bom dia", outra resposta, uma mensagem padronizada repetida) NÃO recupera a falha.
  */
 export function isRecoveryOf(accepted: AcceptedOutbound, failed: FailedRow): boolean {
-  if (accepted.id === failed.id) return true;
-  if (accepted.metadata?.resend_of === failed.id) return true;
-  const text = normText(failed.content);
-  if (!text || Date.parse(accepted.created_at) <= Date.parse(failed.created_at)) return false;
-  return normText(accepted.content) === text && (accepted.media_type ?? null) === (failed.media_type ?? null);
+  return isStrongRecoveryOf(accepted, failed) || isContentResendOf(accepted, failed);
 }
 
 /**
@@ -862,7 +878,12 @@ export async function recoverSendFailures(client: SupabaseClient, organizationId
     const { data, error } = await client.from("messages").select("id, content, media_type, created_at").in("id", refs.map((r) => r.message_id)).eq("conversation_id", accepted.conversation_id);
     if (error) throw error;
     const rows = new Map(((data ?? []) as FailedRow[]).map((r) => [r.id, r]));
-    const recovered = new Set(refs.filter((r) => { const row = rows.get(r.message_id); return !!row && isRecoveryOf(accepted, row); }).map((r) => r.message_id));
+    const strong = refs.filter((r) => { const row = rows.get(r.message_id); return !!row && isStrongRecoveryOf(accepted, row); }).map((r) => r.message_id);
+    // Por conteúdo, UMA mensagem aceita recupera no máximo UMA falha (a mais recente que ela repete): textos iguais em falhas
+    // diferentes não se encerram em bloco por um único envio.
+    const byContent = refs.map((r) => rows.get(r.message_id)).filter((row): row is FailedRow => !!row && !strong.includes(row.id) && isContentResendOf(accepted, row))
+      .sort((x, y) => Date.parse(y.created_at) - Date.parse(x.created_at)).slice(0, 1).map((row) => row.id);
+    const recovered = new Set([...strong, ...byContent]);
     if (!recovered.size) continue;
     const remaining: FailedMessageRef[] = (pendency.failed_messages ?? []).filter((f) => !recovered.has(f.message_id));
     const note = `Reenvio detectado (${recovered.size} mensagem(ns) recuperada(s) na conversa): falha de envio atendida.`;

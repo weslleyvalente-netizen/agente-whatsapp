@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createRealSchemaDb } from "./real-schema-db.js";
 import { markMessageSendFailed } from "../queries/messages.js";
 import { hasOutboundMessageAfter } from "../queries/unanswered-leads.js";
-import { countRecentSendFailures } from "../queries/messages.js";
+import { countRecentSendFailures, setMessageEvolutionId } from "../queries/messages.js";
 import { listManagerUserIds } from "../queries/push.js";
 import { createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency, recoverSendFailures, closeSinglePendency } from "../queries/tasks.js";
 
@@ -111,7 +111,7 @@ describe("tarefa 'Mensagem não enviada': encerramento por evidência", () => {
 
   it("duas falhas consecutivas na MESMA conversa viram uma tarefa sem perder a referência de nenhuma mensagem; sem responsável fica sem responsável", async () => {
     const m1 = await msg(convA, "human_agent", "2026-11-14T12:00:00Z", "Segue a proposta de 90 mil");
-    const m2 = await msg(convA, "human_agent", "2026-11-14T12:05:00Z", "Pode confirmar?");
+    const m2 = await msg(convA, "human_agent", "2026-11-14T12:05:00Z", "Pode confirmar o pagamento hoje?");
     const t1 = await fail(convA, m1); const t2 = await fail(convA, m2, "2026-11-14T12:05:00.000Z");
     expect(t2.task.id).toBe(t1.task.id);
     const row = await taskRow();
@@ -145,7 +145,7 @@ describe("tarefa 'Mensagem não enviada': encerramento por evidência", () => {
   });
 
   it("uma falha na conversa B soma à tarefa; recuperar a A não encerra a B", async () => {
-    const mb = await msg(convB, "agent", "2026-11-14T13:30:00Z", "Olá, sou a MarIAna");
+    const mb = await msg(convB, "agent", "2026-11-14T13:30:00Z", "Olá, sou a MarIAna, da Moto e Trilha");
     await fail(convB, mb, "2026-11-14T13:30:00.000Z");
     const row = await taskRow(); expect(row.consolidated_pendencies[0].failed_messages).toHaveLength(2);
     const [fa] = row.consolidated_pendencies[0].failed_messages.filter((f: any) => f.conversation_id === convA).map((f: any) => f.message_id) as string[];
@@ -157,7 +157,7 @@ describe("tarefa 'Mensagem não enviada': encerramento por evidência", () => {
 
   it("mensagem ANTERIOR à falha ou sem texto não serve de evidência; resend_of explícito e reprocessamento da mesma mensagem servem", async () => {
     const [fb] = (await taskRow()).consolidated_pendencies[0].failed_messages.map((f: any) => f.message_id) as string[];
-    const before = await msg(convB, "agent", "2026-11-14T13:00:00Z", "Olá, sou a MarIAna", { evo: "OK-EARLIER" }); // mesmo texto, mas ANTES da falha
+    const before = await msg(convB, "agent", "2026-11-14T13:00:00Z", "Olá, sou a MarIAna, da Moto e Trilha", { evo: "OK-EARLIER" }); // mesmo texto, mas ANTES da falha
     expect(await recoverSendFailures(db, org, ct, await accepted(before))).toBe(0);
     const explicit = await msg(convB, "human_agent", "2026-11-14T14:00:00Z", "texto diferente, reescrito", { evo: "OK-X", meta: { resend_of: fb } });
     expect(await recoverSendFailures(db, org, ct, await accepted(explicit))).toBe(1);
@@ -187,5 +187,86 @@ describe("tarefa 'Mensagem não enviada': encerramento por evidência", () => {
     const closed = await closeSinglePendency(db, row.id, { actor: { type: "human", id: null }, note: "Reenvio confirmado manualmente pelo vendedor.", pendencyType: "message_send_failed" });
     expect(closed?.status).not.toBe("completed");
     expect(closed?.consolidated_pendencies.map((p: any) => p.type)).toEqual(["request_documents"]);
+  });
+});
+
+describe("mensagem marcada como falha que depois é aceita (recuperação da MESMA mensagem)", () => {
+  it("setMessageEvolutionId remove send_failed_at/send_error, deixa send_recovered_at e preserva o resto do metadata", async () => {
+    const m = await addMsg("human_agent", "2026-11-14T08:00:00Z", { meta: { source: "seller_attachment", other: 1 } });
+    expect(await markMessageSendFailed(db, m, "Evolution API send error 400: Connection Closed")).toBe(true);
+    const recovered = await setMessageEvolutionId(db, m, "EVO-RECOVERED");
+    expect(recovered.evolution_message_id).toBe("EVO-RECOVERED");
+    const row = await one("select metadata from messages where id=$1", [m]);
+    expect(row.metadata.send_failed_at).toBeUndefined(); expect(row.metadata.send_error).toBeUndefined();
+    expect(row.metadata.send_recovered_at).toBeTruthy(); expect(row.metadata.source).toBe("seller_attachment"); expect(row.metadata.other).toBe(1);
+  });
+  it("as consultas deixam de tratá-la como falha: conta como resposta entregue e sai da contagem de falhas", async () => {
+    const before = await countRecentSendFailures(db, org, "2026-11-14T00:00:00Z");
+    const c3 = (await one("insert into conversations(organization_id, agent_id, evolution_instance_id, contact_id) select organization_id, agent_id, evolution_instance_id, contact_id from conversations where id=$1 returning id", [conv])).id;
+    const m = (await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'agent','resposta','2026-11-14T09:00:00Z') returning id", [c3, org])).id as string;
+    await markMessageSendFailed(db, m, "x");
+    expect(await countRecentSendFailures(db, org, "2026-11-14T00:00:00Z")).toBe(before + 1);
+    expect(await hasOutboundMessageAfter(db, c3, "2026-11-14T08:59:00Z")).toBe(false);
+    await setMessageEvolutionId(db, m, "EVO-OK-2");
+    expect(await countRecentSendFailures(db, org, "2026-11-14T00:00:00Z")).toBe(before);
+    expect(await hasOutboundMessageAfter(db, c3, "2026-11-14T08:59:00Z")).toBe(true);
+  });
+  it("mensagem que nunca falhou não ganha send_recovered_at nem perde metadata; reaplicar é inofensivo", async () => {
+    const m = await addMsg("agent", "2026-11-14T10:00:00Z", { meta: { model: "x" } });
+    await setMessageEvolutionId(db, m, "EVO-A"); await setMessageEvolutionId(db, m, "EVO-A");
+    const row = await one("select metadata from messages where id=$1", [m]);
+    expect(row.metadata).toEqual({ model: "x" });
+  });
+});
+
+describe("evidência por conteúdo: mensagens repetidas sem intenção de reenvio", () => {
+  let ct: string; let cv: string;
+  const T = "Olá! Segue a condição especial de carta contemplada válida até sexta."; // padronizada, 24+ caracteres
+  const msg = async (at: string, content: string, over: { evo?: string | null; meta?: object } = {}) =>
+    (await one("insert into messages(conversation_id, organization_id, role, content, created_at, evolution_message_id, metadata) values ($1,$2,'human_agent',$3,$4,$5,$6) returning id", [cv, org, content, at, over.evo ?? null, over.meta ? JSON.stringify(over.meta) : null])).id as string;
+  const fail = (mid: string, at: string) => createTaskWithDedup(db, { organization_id: org, contact_id: ct, conversation_id: cv, opportunity_id: null, type: "message_send_failed", description: "A mensagem NÃO foi entregue", reason: "Falha", priority: "high", due_date: "2026-11-16", created_by_type: "ai", created_by_id: null, assignee_type: null, assignee_id: null, failed_message: { message_id: mid, conversation_id: cv, failed_at: at } });
+  const accepted = async (id: string) => { const r = await one("select id, conversation_id, content, media_type, metadata, created_at from messages where id=$1", [id]); return { ...r, metadata: r.metadata ?? null }; };
+  const open = async () => (await one("select status, consolidated_pendencies from tasks where contact_id=$1 and type='message_send_failed' order by created_at desc limit 1", [ct]));
+  beforeAll(async () => {
+    ct = (await one("insert into wa_contacts(organization_id, phone) values ($1,'5562944444444') returning id", [org])).id;
+    cv = (await one("insert into conversations(organization_id, agent_id, evolution_instance_id, contact_id) select organization_id, agent_id, evolution_instance_id, $2 from conversations where id=$1 returning id", [conv, ct])).id;
+  });
+
+  it("mensagem padronizada repetida DEPOIS da janela de 2 h não encerra a falha", async () => {
+    const f = await msg("2026-11-14T08:00:00Z", T); await fail(f, "2026-11-14T08:00:00.000Z");
+    const later = await msg("2026-11-14T11:00:00Z", T, { evo: "L1" }); // 3 h depois
+    expect(await recoverSendFailures(db, org, ct, await accepted(later))).toBe(0);
+    expect((await open()).status).toBe("pending");
+  });
+  it("texto curto repetido dentro da janela não encerra ('Bom dia!', 'Ok, combinado')", async () => {
+    const short = await msg("2026-11-14T08:10:00Z", "Ok, combinado"); await fail(short, "2026-11-14T08:10:00.000Z");
+    const again = await msg("2026-11-14T08:20:00Z", "Ok, combinado", { evo: "S1" });
+    expect(await recoverSendFailures(db, org, ct, await accepted(again))).toBe(0);
+  });
+  it("mensagem automática (follow-up, cadência, encerramento de anúncio) com o mesmo texto não é reenvio", async () => {
+    for (const [i, meta] of [{ source: "automatic_followup" }, { source: "task_followup" }, { low_intent_followup: { anchor: "a", stage: 1 } }, { scheduled_ad_closure: { batch_id: "b" } }].entries()) {
+      const auto = await msg(`2026-11-14T08:3${i}:00Z`, T, { evo: `A${i}`, meta });
+      expect(await recoverSendFailures(db, org, ct, await accepted(auto))).toBe(0);
+    }
+    expect((await open()).status).toBe("pending");
+  });
+  it("o mesmo texto reenviado logo depois (dentro da janela, 24+ caracteres, manual) ainda recupera — e só UMA falha por envio", async () => {
+    const dup = await msg("2026-11-14T08:40:00Z", T); await fail(dup, "2026-11-14T08:40:00.000Z"); // 2ª falha com texto idêntico à 1ª
+    const resend = await msg("2026-11-14T09:00:00Z", T, { evo: "R1" });
+    expect(await recoverSendFailures(db, org, ct, await accepted(resend))).toBe(1);
+    const refs = (await open()).consolidated_pendencies.find((p: any) => p.type === "message_send_failed").failed_messages.map((f: any) => f.message_id);
+    expect(refs).toHaveLength(2); // das 3 falhas (T, "Ok, combinado", T) sobram 2: a falha mais recente com esse texto saiu
+    expect(refs).not.toContain(dup);
+  });
+  it("evidência FORTE não depende de janela nem tamanho: resend_of explícito e a mesma mensagem", async () => {
+    const short = (await open()).consolidated_pendencies.find((p: any) => p.type === "message_send_failed").failed_messages.map((f: any) => f.message_id) as string[];
+    const target = (await one("select id from messages where id = any($1) and content='Ok, combinado'", [short])).id as string;
+    const explicit = await msg("2026-11-14T20:00:00Z", "reescrevi do zero", { evo: "E1", meta: { resend_of: target } }); // 12 h depois
+    expect(await recoverSendFailures(db, org, ct, await accepted(explicit))).toBe(1);
+    const left = (await open()).consolidated_pendencies.find((p: any) => p.type === "message_send_failed").failed_messages.map((f: any) => f.message_id);
+    expect(left).toHaveLength(1); expect(left).not.toContain(target);
+    await setMessageEvolutionId(db, left[0], "SAME-1");
+    expect(await recoverSendFailures(db, org, ct, await accepted(left[0]))).toBe(1);
+    expect((await open()).status).toBe("completed");
   });
 });
