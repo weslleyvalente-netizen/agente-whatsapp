@@ -52,6 +52,8 @@ export interface OrganizationSettings {
   owner_lookback_days?: number;
   /** Ativação explícita (somente `true` liga; ausente/false = desligada): cliente que volta e abre conversa nova mantém o vendedor anterior. */
   returning_customer_owner_enabled?: boolean;
+  /** Ativação explícita (somente `true` liga): financiamento de TESTES (propostas fictícias, tabelas financing_*). Independe do financiamento manual. */
+  financing_mock_enabled?: boolean;
   business_calendar?: import("../business-calendar.js").BusinessCalendar;
   // Modo noite: depois de um requestHuman fora do horário comercial a IA continua respondendo (sem requestHuman) até um humano responder. Desligado por padrão.
   ai_after_hours_pending_enabled?: boolean;
