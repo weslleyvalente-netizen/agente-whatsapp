@@ -13,7 +13,7 @@ interface Opp { id?: string; contact?: string; owner?: string | null; waitingOn?
 function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean; pendencyAdded?: boolean; nonMembers?: string[]; openNudges?: any[] } = {}) {
   const convs = (o.convs ?? [{}]).map((c, i) => ({ id: c.id ?? `c${i}`, contact: c.contact ?? `ct${i}`, ...c }));
   const opps = (o.opps ?? convs.map((c): Opp => ({ contact: c.contact }))).map((p, i) => ({ id: p.id ?? `op${i}`, owner: "owner" in p ? p.owner : "seller1", waitingOn: null, waitingOnUntil: null, ...p }));
-  const textCalls: string[] = []; const created: any[] = []; const completed: Array<{ id: string; note: string }> = []; const pushes: any[] = []; const touches: any[] = []; const claimedKeys: string[] = []; const claimed = new Set<string>(); const logs: string[] = [];
+  const textCalls: string[] = []; const undone: Array<{ id: string; note: string }> = []; const created: any[] = []; const completed: Array<{ id: string; note: string }> = []; const pushes: any[] = []; const touches: any[] = []; const claimedKeys: string[] = []; const claimed = new Set<string>(); const logs: string[] = [];
   const settings = { customer_nudge_enabled: true, push_notifications_enabled: true, ...(o.settings ?? {}) };
   const deps: NudgeDeps = {
     listOrganizations: async () => [{ id: "org1", settings }],
@@ -27,6 +27,7 @@ function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: O
     isFrozen: async (_o, contactId) => (o.frozen ?? []).includes(contactId),
     createTask: async (i) => { created.push(i); return { id: `task-${created.length}`, wasUpdated: o.createWasUpdated ?? false, ...(o.pendencyAdded === undefined ? {} : { pendencyAdded: o.pendencyAdded }) }; },
     recordTouch: async (_o, taskId, conversationId, touch) => { touches.push({ taskId, conversationId, touch }); },
+    undoNudge: async (_o, id, note) => { undone.push({ id, note }); },
     contactName: async () => "Erica",
     listOpenNudgeTasks: async () => [...(o.openTasks ?? []), ...(o.openNudges ?? [])],
     openOpportunityIds: async (_o, ids) => new Set((o.openOppIds ?? ids).filter((x) => ids.includes(x))),
@@ -39,7 +40,7 @@ function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: O
     sendPush: async (_o, u, p) => { if (o.pushThrows) throw new Error("push down"); pushes.push({ u, p }); return o.pushSent ?? 1; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, created, completed, pushes, logs, textCalls, touches, claimedKeys };
+  return { deps, undone, created, completed, pushes, logs, textCalls, touches, claimedKeys };
 }
 
 describe("runCustomerNudge: criação", () => {
@@ -251,6 +252,25 @@ describe("runCustomerNudge: tarefas consolidadas por negócio (task_consolidatio
     w.deps.recordTouch = async () => { throw new Error("db down"); };
     const s = await runCustomerNudge(w.deps, NOW);
     expect(s.created).toBe(1); expect(s.errors).toBe(1); expect(w.logs.some((l) => l.includes("touch not recorded"))).toBe(true);
+  });
+  it("pendência agrupada + toque que falha nas 2 tentativas: desfaz a pendência, não conta como criada e não envia push", async () => {
+    const w = world({ settings: { ...CONSOLIDATED, customer_nudge_consolidated_enabled: true, push_notifications_enabled: true }, createWasUpdated: true, pendencyAdded: true });
+    let calls = 0; w.deps.recordTouch = async () => { calls++; throw new Error("db down"); };
+    const s = await runCustomerNudge(w.deps, NOW);
+    expect(calls).toBe(2); expect(w.undone).toHaveLength(1); expect(s.created).toBe(0); expect(s.grouped).toBe(0); expect(w.pushes).toHaveLength(0);
+    expect(s.skipped.touch_not_recorded_undone).toBe(1);
+  });
+  it("falha transitória do toque (2ª tentativa funciona): conta normalmente, sem desfazer", async () => {
+    const w = world({ settings: { ...CONSOLIDATED, customer_nudge_consolidated_enabled: true }, createWasUpdated: true, pendencyAdded: true });
+    let calls = 0; const orig = w.deps.recordTouch; w.deps.recordTouch = async (...a) => { if (++calls === 1) throw new Error("blip"); return orig(...a); };
+    const s = await runCustomerNudge(w.deps, NOW);
+    expect(s.created).toBe(1); expect(s.errors).toBe(0); expect(w.undone).toHaveLength(0); expect(w.touches).toHaveLength(1);
+  });
+  it("se o desfazer também falha: erro alto no log (pendência sem toque), sem derrubar a execução", async () => {
+    const w = world({ settings: { ...CONSOLIDATED, customer_nudge_consolidated_enabled: true }, createWasUpdated: true, pendencyAdded: true });
+    w.deps.recordTouch = async () => { throw new Error("down"); }; w.deps.undoNudge = async () => { throw new Error("down2"); };
+    const s = await runCustomerNudge(w.deps, NOW);
+    expect(s.created).toBe(0); expect(s.errors).toBe(2); expect(w.logs.some((l) => l.includes("UNDO FAILED"))).toBe(true);
   });
   it("negócio aguardando equipe, administradora ou data combinada continua bloqueado mesmo com consolidação ativa", async () => {
     for (const [waitingOn, waitingOnUntil, reason] of [["team", null, "waiting_on_us"], ["bank_or_admin", null, "waiting_on_us"], ["scheduled_date", "2026-11-20", "waiting_scheduled"]] as const) {

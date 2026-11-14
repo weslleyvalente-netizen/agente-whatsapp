@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { closeSinglePendency, createTaskWithDedup, resolveUnresponsiveTasksOnReply, updateTask } from "@aula-agente/database";
+import { closeSinglePendency, completeNudgeTasksOnSellerMessage, createTaskWithDedup, resolveUnresponsiveTasksOnReply, updateTask } from "@aula-agente/database";
 import { buildRealDeps, runCustomerNudge } from "./customer-nudge.js";
 
 // HOMOLOGAÇÃO LOCAL com o esquema REAL: as ~65 migrações de supabase/migrations aplicadas num Postgres embutido (constraints, gatilhos, jsonb,
@@ -171,5 +171,56 @@ describe("Cutucar consolidado — esquema real do banco", () => {
     expect(s.created).toBe(2);
     expect(s.skipped.run_cap).toBeGreaterThan(0);
     await orgSettings({});
+  });
+
+  it("pendency_type inexistente com UMA pendência restante: erro, nada é alterado, a tarefa não é concluída", async () => {
+    const d = await seedDeal(); // só return_customer
+    await expect(closeSinglePendency(db, d.taskId!, { actor: { type: "human", id: MARINA }, note: null, pendencyType: "customer_nudge" })).rejects.toThrow(/não tem a pendência/);
+    const t = await getTask(d.taskId!);
+    expect(t.status).toBe("pending"); expect(pendTypes(t)).toEqual(["return_customer"]);
+    expect(await all("select 1 from task_events where task_id = $1 and event_type in ('completed','consolidated_pendency_resolved')", [d.taskId])).toHaveLength(0);
+    // o tipo que a tarefa tem continua válido (nesse caso não há o que separar: null = fluxo antigo)
+    expect(await closeSinglePendency(db, d.taskId!, { actor: { type: "human", id: MARINA }, note: null, pendencyType: "return_customer" })).toBeNull();
+  });
+
+  it("falha ao gravar o toque: a pendência é desfeita (nada fica sem toque contado) e a próxima execução refaz com a contagem certa", async () => {
+    const d = await seedDeal();
+    const failing = buildRealDeps(db, { log: quietLog, recordTouch: async () => { throw new Error("db down"); } });
+    const s1 = await runCustomerNudge(failing, NOW);
+    expect(s1.created).toBe(0);
+    expect(pendTypes(await getTask(d.taskId!))).toEqual(["return_customer"]); // desfeita
+    const s2 = await runCustomerNudge(deps(), NOW);
+    expect(s2.created).toBeGreaterThanOrEqual(1); // o banco de teste é compartilhado: outros negócios também entram
+    const touches = await all("select note from task_events where task_id = $1 and event_type = 'customer_nudge_touch'", [d.taskId]);
+    expect(touches).toHaveLength(1); expect(touches[0].note).toContain("toque 1 de 3"); // não pulou nem perdeu a contagem
+  });
+
+  it("negócio com duas conversas: a pendência fica ligada à conversa certa e só o evento DELA a encerra", async () => {
+    // Conversa A (antiga) com a tarefa consolidada; conversa B (mais recente) é a que esfriou e recebe o cutucar.
+    const d = await seedDeal({ sellerAt: "2026-11-13T15:00:00.000Z" });
+    const convB = await one("insert into conversations(organization_id, agent_id, evolution_instance_id, contact_id, assigned_to, last_message_at) values ($1,$2,$3,$4,$5,$6) returning id", [orgId, agentId, instanceId, d.contactId, MARINA, "2026-11-14T15:00:00.000Z"]);
+    await pg.query("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Oi', '2026-11-14T13:00:00Z'), ($1,$2,'human_agent','Proposta enviada', '2026-11-14T15:00:00Z')", [convB.id, orgId]);
+    // a conversa A volta a ter um cliente respondendo? não: ela está calada. Só B deve gerar o cutucar (mais recente primeiro; 1 por negócio).
+    await runCustomerNudge(deps(), NOW);
+    const t = await getTask(d.taskId!);
+    expect(t.conversation_id).toBe(d.convId); // a tarefa é da conversa A
+    const nudge = t.consolidated_pendencies.find((p: any) => p.type === "customer_nudge");
+    expect(nudge).toBeTruthy();
+    expect([d.convId, convB.id]).toContain(nudge.conversation_id); // gravada na pendência
+    const nudgeConv = nudge.conversation_id as string; const otherConv = nudgeConv === d.convId ? convB.id : d.convId;
+    const touches = await all("select note from task_events where task_id = $1 and event_type = 'customer_nudge_touch'", [d.taskId]);
+    expect(touches).toHaveLength(1); expect(touches[0].note).toContain(`nudge-conv:${nudgeConv}`);
+    // cliente responde na OUTRA conversa: a pendência continua
+    const r1 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Oi de novo','2026-11-17T19:00:00Z') returning id, created_at", [otherConv, orgId]);
+    await resolveUnresponsiveTasksOnReply(db, { organizationId: orgId, contactId: d.contactId, conversationId: otherConv, role: "contact", createdAt: r1.created_at, messageId: r1.id });
+    expect(pendTypes(await getTask(d.taskId!))).toContain("customer_nudge");
+    // o vendedor fala na OUTRA conversa: a pendência continua (o evento certo é na conversa do cutucar)
+    await pg.query("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'human_agent','x','2026-11-17T20:00:00Z')", [otherConv, orgId]);
+    await completeNudgeTasksOnSellerMessage(db, orgId, otherConv, "2026-11-17T20:00:00.000Z");
+    expect(pendTypes(await getTask(d.taskId!))).toContain("customer_nudge");
+    // cliente responde na conversa CERTA: encerra só o cutucar
+    const r2 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Fechou','2026-11-17T21:00:00Z') returning id, created_at", [nudgeConv, orgId]);
+    await resolveUnresponsiveTasksOnReply(db, { organizationId: orgId, contactId: d.contactId, conversationId: nudgeConv, role: "contact", createdAt: r2.created_at, messageId: r2.id });
+    expect(pendTypes(await getTask(d.taskId!))).toEqual(["return_customer"]);
   });
 });

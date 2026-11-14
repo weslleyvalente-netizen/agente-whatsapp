@@ -46,6 +46,8 @@ export interface NudgeDeps {
   createTask(input: { organizationId: string; contactId: string; conversationId: string; opportunityId: string; ownerId: string; description: string; reason: string; priority: "normal" | "high"; dueDate: string }): Promise<{ id: string; wasUpdated: boolean; pendencyAdded?: boolean }>;
   /** Registra o toque (evento na tarefa que o carrega): a contagem de toques não depende da pendência continuar na lista consolidada. */
   recordTouch(organizationId: string, taskId: string, conversationId: string, touch: number): Promise<void>;
+  /** Desfaz a pendência recém-agrupada quando o toque não pôde ser registrado (sem toque registrado a contagem se perderia). */
+  undoNudge(organizationId: string, taskId: string, note: string): Promise<void>;
   contactName(organizationId: string, contactId: string): Promise<string | null>;
   // Resolução automática
   listOpenNudgeTasks(organizationId: string): Promise<OpenNudgeTask[]>;
@@ -207,10 +209,22 @@ async function createNudgeTasks(
       });
       // wasUpdated sem pendência nova = já existia o mesmo cutucar aberto (refresh). Com consolidação, pendencyAdded=true é criação.
       if (wasUpdated && pendencyAdded !== true) { skip("task_already_open"); continue; }
+      // O toque só existe como EVENTO quando a pendência entrou numa tarefa consolidada (a tarefa legada do tipo já conta por si).
+      // Duas tentativas; se falhar, desfaz a pendência para a próxima execução refazer tudo — nunca fica pendência sem toque contado.
+      let touchOk = false; let touchErr: unknown = null;
+      for (let attempt = 0; attempt < 2 && !touchOk; attempt++) {
+        try { await deps.recordTouch(organizationId, taskId, conv.id, decision.touch); touchOk = true; } catch (err) { touchErr = err; }
+      }
+      if (!touchOk) {
+        summary.errors++; deps.log.error(`customer-nudge: touch not recorded task ${taskId} conv ${conv.id} (${errText(touchErr)})`);
+        if (wasUpdated) {
+          try { await deps.undoNudge(organizationId, taskId, "Cutucar desfeito: o toque não pôde ser registrado; será refeito na próxima execução."); skip("touch_not_recorded_undone"); }
+          catch (err) { summary.errors++; deps.log.error(`customer-nudge: UNDO FAILED task ${taskId} conv ${conv.id} (${errText(err)}) — pendência sem toque registrado`); }
+          continue;
+        }
+      }
       createdNow++; summary.created++;
       if (wasUpdated) summary.grouped++;
-      try { await deps.recordTouch(organizationId, taskId, conv.id, decision.touch); }
-      catch (err) { summary.errors++; deps.log.error(`customer-nudge: touch not recorded task ${taskId} conv ${conv.id} (${errText(err)})`); }
       openOppIds.add(opp.id);
       deps.log.info(`customer-nudge: task ${taskId} org ${organizationId} conv ${conv.id} touch ${decision.touch}`);
       if (pushEnabled && await pushToOwner(deps, organizationId, ownerId!, conv, taskId, decision.touch)) summary.pushed++;
@@ -263,6 +277,7 @@ export function buildRealDeps(db: SupabaseClient = getAdminClient(), overrides: 
       return (data as { name: string | null } | null)?.name ?? null;
     },
     recordTouch: (orgId, taskId, conversationId, touch) => recordNudgeTouch(db, orgId, taskId, conversationId, touch),
+    undoNudge: (orgId, taskId, note) => completeNudgeTask(db, orgId, taskId, note),
     listOpenNudgeTasks: (orgId) => listOpenNudgeTasks(db, orgId),
     openOpportunityIds: (orgId, ids) => listOpenOpportunityIds(db, orgId, ids),
     contactsWithOpenOpportunity: (orgId, contactIds) => listContactIdsWithOpenOpportunity(db, orgId, contactIds),

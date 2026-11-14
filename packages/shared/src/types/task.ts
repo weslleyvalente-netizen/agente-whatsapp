@@ -51,6 +51,8 @@ export interface Task {
 // open with whatever else is still pending, instead of closing it outright.
 export interface TaskPendency {
   freeze_opportunity_id?: string;
+  /** Só no "Cutucar cliente": a conversa do negócio à qual a pendência se refere (a tarefa consolidada pode ser de outra conversa do mesmo negócio). */
+  conversation_id?: string | null;
   type: TaskType;
   description: string;
   reason: string | null;

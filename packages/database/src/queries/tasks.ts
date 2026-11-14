@@ -284,6 +284,14 @@ export async function resolveAwaitingCustomerPendency(
   return { taskCompleted: true };
 }
 
+export class PendencyNotFoundError extends Error { constructor(type: string){super(`A tarefa não tem a pendência ${type}.`); this.name="PendencyNotFoundError";} }
+
+/** Tipos que a tarefa realmente carrega: a lista consolidada, ou o próprio tipo quando a lista está vazia. */
+function taskPendencyTypes(task: Task): TaskType[] {
+  const list = task.consolidated_pendencies ?? [];
+  return list.length ? list.map((p) => p.type) : [task.type];
+}
+
 /**
  * Encerramento MANUAL (concluir/cancelar) de uma tarefa consolidada: encerra só UMA pendência.
  * `pendencyType` escolhe qual; sem ele vale a pendência principal (a que a tarefa exibe). As demais continuam abertas.
@@ -298,10 +306,11 @@ export async function closeSinglePendency(
   const task = await getTaskById(client, taskId);
   if (!OPEN_TASK_STATUSES.includes(task.status)) return null;
   const pendencies = task.consolidated_pendencies ?? [];
+  // Valida ANTES de decidir "não há o que separar": pendency_type inexistente nunca pode virar conclusão da tarefa inteira.
+  if (input.pendencyType && !taskPendencyTypes(task).includes(input.pendencyType)) throw new PendencyNotFoundError(input.pendencyType);
   if (pendencies.length <= 1) return null;
   let target: TaskType;
   if (input.pendencyType) {
-    if (!pendencies.some((p) => p.type === input.pendencyType)) throw new Error(`A tarefa não tem a pendência ${input.pendencyType}.`);
     target = input.pendencyType;
   } else {
     target = pendencies.some((p) => p.type === task.type) ? task.type : pickPrimaryPendency(pendencies)!.type;
@@ -322,9 +331,9 @@ export async function reschedulePendency(
   const task = await getTaskById(client, taskId);
   if (!OPEN_TASK_STATUSES.includes(task.status)) return null;
   const pendencies = task.consolidated_pendencies ?? [];
+  if (input.pendencyType && !taskPendencyTypes(task).includes(input.pendencyType)) throw new PendencyNotFoundError(input.pendencyType);
   if (pendencies.length <= 1) return null;
   const target = input.pendencyType ?? (pendencies.some((p) => p.type === task.type) ? task.type : pickPrimaryPendency(pendencies)!.type);
-  if (!pendencies.some((p) => p.type === target)) throw new Error(`A tarefa não tem a pendência ${target}.`);
   const next = pendencies.map((p) => (p.type === target ? { ...p, due_date: input.dueDate, due_time: input.dueTime } : p));
   const primary = pickPrimaryPendency(next)!;
   return updateTask(client, taskId, {
@@ -347,9 +356,11 @@ export async function resolveUnresponsiveTasksOnReply(
   if (input.role !== "contact" || !Number.isFinite(Date.parse(input.createdAt))) return;
   const tasks = await getOpenTasksByContact(client, input.organizationId, input.contactId);
   for (const task of tasks) {
-    if (task.conversation_id !== input.conversationId) continue;
     for (const type of RESOLVED_ON_CUSTOMER_REPLY) {
       if (task.type !== type && !(task.consolidated_pendencies ?? []).some(p => p.type === type)) continue;
+      // O cutucar vale para a conversa gravada na PRÓPRIA pendência (a tarefa consolidada pode ser de outra conversa do negócio).
+      const pendencyConv = type === "customer_nudge" ? (task.consolidated_pendencies ?? []).find(p => p.type === type)?.conversation_id : undefined;
+      if ((pendencyConv ?? task.conversation_id) !== input.conversationId) continue;
       await resolveAwaitingCustomerPendency(client, input.organizationId, task.id, type,
         type === "stalled_negotiation"
           ? `Cliente respondeu — negociação parada retomada. Mensagem: ${input.messageId}`
@@ -615,6 +626,7 @@ function toPendency(input: CreateTaskWithDedupInput): TaskPendency {
     added_at: new Date().toISOString(),
     added_by_type: input.created_by_type,
     added_by_id: input.created_by_id,
+    ...(input.type === "customer_nudge" && input.conversation_id ? { conversation_id: input.conversation_id } : {}),
   };
 }
 

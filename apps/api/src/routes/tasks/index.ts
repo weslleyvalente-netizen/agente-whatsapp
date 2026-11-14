@@ -47,6 +47,9 @@ import { authMiddleware } from "../../middleware/auth.js";
 // foreign-key-ish field accepted from the request body — those tables
 // aren't otherwise organization-scoped at the DB level, and these routes
 // use the RLS-bypassing admin client, so this check is the only guard.
+// pendency_type que a tarefa não tem: 409, nada é alterado (nunca vira conclusão da tarefa inteira).
+const isPendencyNotFound = (error: unknown) => (error as Error | null)?.name === "PendencyNotFoundError";
+
 async function belongsToOrganization(
   db: SupabaseClient,
   table: string,
@@ -219,7 +222,7 @@ export default async function taskRoutes(app: FastifyInstance) {
     try {
       completed = await completeTask(db, request.params.taskId, { type: "human", id: request.user.id }, parseResult.data.note ?? null, parseResult.data.pendency_type ?? null);
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("A tarefa não tem a pendência")) return reply.status(409).send({ error: error.message });
+      if (isPendencyNotFound(error)) return reply.status(409).send({ error: (error as Error).message });
       throw error;
     }
     await clearStaleNextAction(db, existing);
@@ -241,13 +244,19 @@ export default async function taskRoutes(app: FastifyInstance) {
     );
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-    const task = await cancelTask(
-      db,
-      request.params.taskId,
-      { type: "human", id: request.user.id },
-      parseResult.data.note ?? null,
-      parseResult.data.pendency_type ?? null
-    );
+    let task;
+    try {
+      task = await cancelTask(
+        db,
+        request.params.taskId,
+        { type: "human", id: request.user.id },
+        parseResult.data.note ?? null,
+        parseResult.data.pendency_type ?? null
+      );
+    } catch (error) {
+      if (isPendencyNotFound(error)) return reply.status(409).send({ error: (error as Error).message });
+      throw error;
+    }
     await clearStaleNextAction(db, existing);
     return task;
   });
@@ -265,15 +274,19 @@ export default async function taskRoutes(app: FastifyInstance) {
     );
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-    const task = await rescheduleTask(
-      db,
-      request.params.taskId,
-      { type: "human", id: request.user.id },
-      parseResult.data.due_date,
-      parseResult.data.due_time ?? null,
-      parseResult.data.pendency_type ?? null
-    );
-    return task;
+    try {
+      return await rescheduleTask(
+        db,
+        request.params.taskId,
+        { type: "human", id: request.user.id },
+        parseResult.data.due_date,
+        parseResult.data.due_time ?? null,
+        parseResult.data.pendency_type ?? null
+      );
+    } catch (error) {
+      if (isPendencyNotFound(error)) return reply.status(409).send({ error: (error as Error).message });
+      throw error;
+    }
   });
 
   // Follow-up direto da tarefa (D1-D7 em docs/plano-followup-tarefa.md).

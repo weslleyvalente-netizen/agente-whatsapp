@@ -156,7 +156,7 @@ export async function listOpenNudgeTasks(db: SupabaseClient, organizationId: str
   const byId = new Map<string, any>();
   for (const r of [...typed, ...grouped]) byId.set(r.id, r);
   return [...byId.values()].map((r) => ({
-    id: r.id, conversationId: r.conversation_id ?? null, contactId: r.contact_id, opportunityId: r.opportunity_id ?? null, createdAt: nudgeAddedAt(r) ?? r.created_at,
+    id: r.id, conversationId: ((r.consolidated_pendencies ?? []) as Array<{ type: string; conversation_id?: string | null }>).find((p) => p.type === "customer_nudge")?.conversation_id ?? r.conversation_id ?? null, contactId: r.contact_id, opportunityId: r.opportunity_id ?? null, createdAt: nudgeAddedAt(r) ?? r.created_at,
   }));
 }
 
