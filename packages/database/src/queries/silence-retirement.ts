@@ -22,7 +22,7 @@ export async function getSilenceRetirementCandidates(db: SupabaseClient, organiz
   const lastAt = lastContact.data?.created_at ?? null;
   let reached = false, human = false;
   if (lastAt) {
-   const {data: after, error: afterError} = await db.from("messages").select("role").eq("organization_id", organizationId).eq("conversation_id", task.conversation_id).in("role", ["agent", "human_agent"]).gt("created_at", lastAt).limit(50);
+   const {data: after, error: afterError} = await db.from("messages").select("role").eq("organization_id", organizationId).eq("conversation_id", task.conversation_id).in("role", ["agent", "human_agent"]).is("metadata->>send_failed_at", null).gt("created_at", lastAt).limit(50);
    if (afterError) throw afterError;
    reached = (after ?? []).length > 0;
    human = (after ?? []).some(m => m.role === "human_agent");

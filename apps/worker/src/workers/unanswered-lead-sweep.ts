@@ -1,5 +1,8 @@
 import { Worker } from "bullmq";
-import { QUEUE_NAMES, funnelConversationHref, isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
+import {
+  QUEUE_NAMES, funnelConversationHref, isBusinessOpen, resolveBusinessCalendar, deliverViaConnectedInstance, describeInstanceStates, EvolutionRejectedError,
+  fetchConnectionState, NoConnectedInstanceError, rankSendInstances, sanitizeEvolutionError, type InstanceCandidate,
+} from "@aula-agente/shared";
 import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue, type ProcessMessageJobData } from "@aula-agente/queue";
 import {
   claimPushDedupe, getAckContext, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
@@ -279,25 +282,43 @@ async function sendDigest(
 
 export async function sendEvolutionAlert(organizationId: string, phone: string, text: string) {
   // Direto pela Evolution, de propósito (como o health-monitor): a fila send-message depende do Redis, que pode ser a causa.
-  // Tudo que falha ANTES de a requisição HTTP ser emitida é DefinitiveSendError (nada foi enviado: as chaves são liberadas).
-  let url: string; let apiKey: string; let instanceName: string;
+  // O aviso sai por uma instância COMPROVADAMENTE CONECTADA (estado consultado na própria Evolution, não o status do banco):
+  // a mais nova com agente ativo pode estar desconectada (incidente de 14/11: "Pos venda" derrubava o resumo com HTTP 400).
+  // Isto NÃO muda a instância das conversas comerciais; vale só para o aviso interno.
+  // Tudo que falha ANTES de a requisição HTTP ser emitida (e toda recusa explícita da Evolution) é DefinitiveSendError: nada foi enviado e as chaves são liberadas.
+  let baseUrl: string; let apiKey: string; let candidates: InstanceCandidate[];
   try {
-    const instances = (await getInstancesByOrganization(getAdminClient(), organizationId)) as Array<{ instance_name: string; active_agent_id: string | null }>;
-    const instance = instances.find((i) => i.active_agent_id);
-    if (!instance) throw new Error("no active instance");
+    const instances = (await getInstancesByOrganization(getAdminClient(), organizationId)) as Array<{ instance_name: string; active_agent_id: string | null; created_at: string }>;
+    const withAgent = instances.filter((i) => i.active_agent_id);
+    if (!withAgent.length) throw new Error("no active instance");
     if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) throw new Error("Evolution env not configured");
-    instanceName = instance.instance_name; url = `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`; apiKey = process.env.EVOLUTION_API_KEY;
+    baseUrl = process.env.EVOLUTION_API_URL; apiKey = process.env.EVOLUTION_API_KEY;
+    candidates = await Promise.all(withAgent.map(async (i) => ({
+      name: i.instance_name, createdAt: i.created_at ?? "", activeAgent: true as const,
+      liveState: await fetchConnectionState({ baseUrl, apiKey, instanceName: i.instance_name }),
+    })));
   } catch (err) {
     throw new DefinitiveSendError(`pre-send failure: ${(err as Error)?.message ?? "unknown"}`);
   }
-  // Daqui em diante um timeout/erro de rede é ambíguo (pode ter entregado): erro comum, as chaves ficam.
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: apiKey },
-    body: JSON.stringify({ number: phone, text }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new DefinitiveSendError(`Evolution API send error ${response.status}`);
+  try {
+    const used = await deliverViaConnectedInstance(rankSendInstances(candidates), async (instanceName) => {
+      // Daqui em diante um timeout/erro de rede é ambíguo (pode ter entregado): erro comum, as chaves ficam e NENHUMA outra instância é tentada.
+      const response = await fetch(`${baseUrl}/message/sendText/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: apiKey },
+        body: JSON.stringify({ number: phone, text }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        const body = typeof response.text === "function" ? await response.text().catch(() => "") : "";
+        throw new EvolutionRejectedError(response.status, `[${instanceName}] ${sanitizeEvolutionError(response.status, body)}`);
+      }
+    }, describeInstanceStates(candidates));
+    console.log(`unanswered-sweep: alert sent via instance ${used}`);
+  } catch (err) {
+    if (err instanceof NoConnectedInstanceError) throw new DefinitiveSendError(err.message);
+    throw err;
+  }
 }
 
 export function buildRealDeps(): SweepDeps {

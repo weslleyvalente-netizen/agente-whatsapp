@@ -1,10 +1,10 @@
 import {processScheduledAdClosure,shouldSuppressScheduledAdLegacySend} from "./scheduled-ad-closure.js";
 import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
-import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef } from "@aula-agente/shared";
+import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef, sanitizeEvolutionError } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -38,7 +38,7 @@ async function sendEvolutionText(instanceName: string, phone: string, text: stri
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Evolution API send error ${response.status}: ${body}`);
+    throw new Error(sanitizeEvolutionError(response.status, body));
   }
 
   return response.json();
@@ -72,7 +72,7 @@ async function sendEvolutionMedia(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Evolution API media send error ${response.status}: ${body}`);
+    throw new Error(sanitizeEvolutionError(response.status, body).replace("send error","media send error"));
   }
 
   return response.json();
@@ -93,7 +93,7 @@ async function sendEvolutionAudio(instanceName: string, phone: string, audioBase
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Evolution API audio send error ${response.status}: ${body}`);
+    throw new Error(sanitizeEvolutionError(response.status, body).replace("send error","audio send error"));
   }
 
   return response.json();
@@ -110,7 +110,30 @@ async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, mess
   }
 }
 
-export async function processSendMessageJob(job: Job<SendMessageJobData> | { data: SendMessageJobData }) {
+type SendJob = Job<SendMessageJobData> | { data: SendMessageJobData };
+
+/**
+ * Envio com registro de falha: se a última tentativa falhar, a mensagem (que já foi gravada ao enfileirar) é marcada como NÃO enviada.
+ * Assim ela deixa de contar como resposta entregue (varredura de leads sem resposta, follow-ups, silêncio) e o painel pode mostrá-la.
+ * Só a tentativa FINAL marca: uma falha com retry pendente pode ainda dar certo.
+ */
+export async function processSendMessageJob(job: SendJob) {
+  try {
+    return await processSendMessageJobInner(job);
+  } catch (error) {
+    const real = job as Partial<Job<SendMessageJobData>>;
+    const attempts = real.opts?.attempts ?? 1;
+    const isFinal = (real.attemptsMade ?? 0) + 1 >= attempts;
+    if (isFinal && !job.data.messageId.startsWith("handoff-notify-")) {
+      const reason = sanitizeEvolutionError(0, (error as Error)?.message ?? "erro desconhecido").replace(/^Evolution API send error 0: ?/, "");
+      try { await markMessageSendFailed(getAdminClient(), job.data.messageId, reason); }
+      catch (markError) { console.error(`Failed to mark send failure for message ${job.data.messageId}:`, (markError as Error)?.message); }
+    }
+    throw error;
+  }
+}
+
+async function processSendMessageJobInner(job: SendJob) {
   const { messageId, instanceId, phone, content, mediaUrl, audioBase64, caption, storedAudioRef, storedMediaRef, mediaFileName, mediaMime, mediaKind } = job.data;
 
   const db = getAdminClient();
