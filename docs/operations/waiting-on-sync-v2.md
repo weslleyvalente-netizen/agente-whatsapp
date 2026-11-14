@@ -33,6 +33,24 @@ A migração `20261114120000_waiting_on_sync_shadow.sql` é **opcional** e aditi
 ## Pontos de entrada
 Conclusão de tarefa (`/tasks/:id/complete`), resposta do cliente (webhook), mensagem do vendedor pelo celular (webhook `fromMe`) e pelo painel (`sendPanelMessage`, depois de enfileirar o envio). Todos best-effort: nunca lançam nem bloqueiam a operação principal.
 
+## Mensagem ACEITA pela Evolution × mensagem ENTREGUE ao WhatsApp
+São coisas diferentes, e a sincronização usa a primeira:
+| Momento | O que significa | Onde fica registrado |
+|---|---|---|
+| Enfileirada | O CRM gravou a mensagem e colocou o envio na fila. Pode falhar. | linha em `messages`, sem `evolution_message_id` |
+| **Aceita pela Evolution** | A Evolution respondeu OK ao `sendText` e devolveu o id da mensagem (`key.id`). A mensagem entrou no WhatsApp; ainda **não** há garantia de que chegou ao celular do cliente. | `messages.evolution_message_id` preenchido |
+| Entregue | O WhatsApp confirmou a chegada ao aparelho do cliente (avisos `MESSAGES_UPDATE` do webhook). | `messages.delivered_at` (e `read_at` quando lida) |
+- **`waiting_on` muda na aceitação** (worker de envio, depois do OK da Evolution), não na entrega: a entrega pode demorar horas (cliente sem internet) e, para efeito comercial, a bola já está com o cliente. Antes da aceitação (enfileirada) nada muda.
+- Risco aceito: uma mensagem aceita pode nunca ser entregue (cliente bloqueou, número inválido, aparelho desligado). O campo fica "aguardando cliente" e o cutucar, quando ativo, cobra o vendedor. Uma refinação futura é sinalizar "aceita e não entregue em X h" usando `delivered_at`.
+- **Falha definitiva de envio** (esgotou as tentativas): a mensagem recebe `send_failed_at` (#98), **nada** é sincronizado e o campo não muda.
+
+## Migração SQL do modo sombra: procedimento
+- **O pipeline NÃO aplica migrações.** O CI (`.github/workflows/ci.yml`) só faz build e testes; o deploy do EasyPanel só constrói e publica as imagens. Migrações são aplicadas **manualmente** no Supabase do CRM (SQL Editor), como nas migrações anteriores do projeto (ver `docs/financing-mock.md`).
+- Arquivo: `supabase/migrations/20261114120000_waiting_on_sync_shadow.sql`. É **aditiva e idempotente** (`CREATE TABLE/INDEX IF NOT EXISTS`), não altera tabelas existentes e liga RLS sem políticas (só o service role lê e escreve).
+- **Opcional e sem ordem obrigatória:** o código tolera a ausência da tabela (cai para uma linha de log `waiting-on-sync[shadow]`). Aplicar antes de ligar `waiting_on_sync_mode = "shadow"` para ter o relatório em SQL.
+- Passos: (1) colar o arquivo no SQL Editor e executar; (2) conferir `select count(*) from public.waiting_on_sync_shadow;` (deve ser 0); (3) só então ligar `shadow`.
+- Reversão: `drop table public.waiting_on_sync_shadow;` (contém apenas decisões simuladas; nenhum dado de negócio depende dela).
+
 ## Relatório do modo sombra (somente leitura)
 ```sql
 -- Decisões por regra e quantas ainda coincidem com o estado atual do negócio
