@@ -211,7 +211,13 @@ export function resolveOpportunityAutoLink(openOpportunityIds: string[]): string
 // Any human-authored message (manual inbox reply or a Task follow-up, both
 // role "human_agent") ends the automatic 1h/23h cadence for that
 // conversation until the AI speaks in it again.
-export function shouldConsiderAutomaticFollowup(latestMessageRole: string | null): boolean {
+// A última mensagem da IA que FALHOU ao enviar (metadata.send_failed_at) nunca chegou ao cliente: não há "silêncio do cliente" a cobrar
+// e o follow-up seria a primeira coisa que ele recebe. Mensagem não entregue não conta como resposta entregue.
+export function shouldConsiderAutomaticFollowup(
+  latestMessageRole: string | null,
+  latestMessageMetadata?: object | null,
+): boolean {
+  if ((latestMessageMetadata as { send_failed_at?: unknown } | null | undefined)?.send_failed_at) return false;
   return latestMessageRole === "agent";
 }
 

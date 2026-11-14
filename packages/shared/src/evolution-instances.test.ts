@@ -23,10 +23,10 @@ describe("rankSendInstances", () => {
   it("sem agente ativo, conectando ou fechada: nunca", () => {
     expect(rankSendInstances([c("x", "2026-01-01T00:00:00Z", "open", false), c("y", "2026-01-01T00:00:00Z", "connecting"), POS])).toEqual([]);
   });
-  it("Evolution inalcançável (todas unknown): tenta as desconhecidas como último recurso, marcadas não verificadas", () => {
-    expect(rankSendInstances([c("a", "2026-08-01T00:00:00Z", "unknown"), c("b", "2026-07-01T00:00:00Z", "unknown")])).toEqual([{ name: "b", verified: false }, { name: "a", verified: false }]);
+  it("Evolution inalcançável (todas unknown): NENHUMA é tentada (sem conexão comprovada não se envia aviso interno)", () => {
+    expect(rankSendInstances([c("a", "2026-08-01T00:00:00Z", "unknown"), c("b", "2026-07-01T00:00:00Z", "unknown")])).toEqual([]);
   });
-  it("uma aberta + uma desconhecida: só a aberta (a desconhecida não rouba a vez)", () => {
+  it("uma aberta + uma desconhecida: só a aberta", () => {
     expect(rankSendInstances([c("a", "2026-01-01T00:00:00Z", "unknown"), WES])).toEqual([{ name: "weslley", verified: true }]);
   });
   it("describeInstanceStates não traz número nem chave", () => { expect(describeInstanceStates([POS, WES])).toBe("Pos venda=close, weslley=open"); });

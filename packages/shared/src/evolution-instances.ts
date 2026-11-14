@@ -1,7 +1,8 @@
 // Seleção da instância Evolution que envia AVISOS INTERNOS (digest de leads sem resposta, alertas do monitor de saúde).
 // NÃO é usada para escolher a instância das conversas comerciais: cada conversa continua presa à sua `evolution_instance_id`.
-// Regra: só instâncias com agente ativo E comprovadamente conectadas (estado consultado na própria Evolution; o status gravado no
-// banco não é confiável). Se a Evolution não puder ser consultada, as de estado desconhecido entram como último recurso.
+// Regra: só instâncias com agente ativo E comprovadamente conectadas (estado "open" consultado na própria Evolution; o status gravado
+// no banco não é confiável). Estado desconhecido (consulta falhou) NUNCA é tentado: sem conexão comprovada, o aviso não sai por essa
+// instância. O aviso é retentado na varredura seguinte (digest, a cada 5 min) e o monitor de saúde tem o push como canal independente.
 
 export type LiveState = "open" | "connecting" | "close" | "unknown";
 
@@ -11,7 +12,7 @@ export interface InstanceCandidate {
   activeAgent: boolean;
   liveState: LiveState;
 }
-export interface RankedInstance { name: string; verified: boolean }
+export interface RankedInstance { name: string; verified: true }
 
 /** Converte a resposta de /instance/connectionState em estado (formatos `{instance:{state}}` ou `{state}`). Qualquer outra coisa = unknown. */
 export function normalizeConnectionState(raw: unknown): LiveState {
@@ -23,9 +24,8 @@ export function normalizeConnectionState(raw: unknown): LiveState {
 
 /**
  * Ordem de tentativa para um aviso interno:
- * 1) instâncias abertas (a preferida primeiro; depois a MAIS ANTIGA primeiro: a principal, não a recém-criada);
- * 2) se nenhuma está aberta mas há estado desconhecido (Evolution inalcançável), as desconhecidas, mesma ordem, como último recurso;
- * instâncias fechadas ou conectando nunca entram.
+ * Só instâncias abertas, a preferida primeiro e depois a MAIS ANTIGA primeiro (a principal, não a recém-criada).
+ * Fechada, conectando ou de estado desconhecido nunca entra.
  */
 export function rankSendInstances(candidates: InstanceCandidate[], opts: { preferred?: string | null } = {}): RankedInstance[] {
   const active = candidates.filter((c) => c.activeAgent);
@@ -34,9 +34,7 @@ export function rankSendInstances(candidates: InstanceCandidate[], opts: { prefe
     const pb = opts.preferred && b.name === opts.preferred ? 0 : 1;
     return pa - pb || a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name);
   });
-  const open = order(active.filter((c) => c.liveState === "open"));
-  if (open.length) return open.map((c) => ({ name: c.name, verified: true }));
-  return order(active.filter((c) => c.liveState === "unknown")).map((c) => ({ name: c.name, verified: false }));
+  return order(active.filter((c) => c.liveState === "open")).map((c) => ({ name: c.name, verified: true as const }));
 }
 
 /** Descrição curta e segura (sem número, sem chave) dos estados, para logs e mensagens de erro. */

@@ -2,7 +2,7 @@
 
 ## O que mudou
 - **Avisos internos** (resumo de leads sem resposta e alertas do monitor de saúde) saem só por instância **comprovadamente conectada**: o estado é consultado na própria Evolution (`/instance/connectionState`), não no status gravado no banco (que não é confiável: já mostrou `disconnected` para a instância conectada).
-- Ordem: instâncias abertas, a mais antiga primeiro (a principal). Fechada ou conectando nunca entra. Se a Evolution não responde (estado desconhecido), as instâncias com agente ativo entram como último recurso.
+- Ordem: instâncias abertas, a mais antiga primeiro (a principal). Fechada, conectando ou de **estado desconhecido** (a consulta falhou) nunca entra: sem conexão comprovada o aviso não sai por essa instância. O digest é retentado na varredura seguinte (5 min) e o monitor de saúde tem o push como canal independente.
 - Recusa explícita da Evolution (ex.: HTTP 400) passa para a próxima instância conectada. Timeout ou erro de rede **para** (a requisição pode ter saído): nunca duplica o aviso.
 - **Não muda a instância das conversas comerciais**: cada conversa continua presa à sua `evolution_instance_id`. Nenhuma conversa, instância, conexão, credencial ou configuração é alterada.
 - O erro de envio passa a registrar instância, status HTTP e a mensagem da Evolution, **sem chaves, URLs nem telefones**.
@@ -10,7 +10,7 @@
 
 ## Mensagens que falham não contam mais como entregues
 - Quando a **última tentativa** de envio falha, a mensagem (já gravada ao enfileirar) recebe `metadata.send_failed_at` e `metadata.send_error`.
-- Mensagem marcada **não** conta como resposta em: varredura de leads sem resposta, aposentadoria de tarefas de silêncio, "última mensagem nossa" da recuperação, follow-up automático de conversa parada e follow-up de baixa intenção.
+- Mensagem marcada **não** conta como resposta em: varredura de leads sem resposta, aposentadoria de tarefas de silêncio, "última mensagem nossa" da recuperação, follow-up automático de conversa parada (nos dois pontos de checagem, via `shouldConsiderAutomaticFollowup`) e follow-up de baixa intenção.
 - Sem migração: reaproveita a chave `send_failed_at` que o áudio/anexo do vendedor já usava.
 
 ## Achados da investigação (14/11/2026)
@@ -22,3 +22,10 @@
 ## Reversão e implantação
 - Sem migração e sem nova configuração. Reverter = reimplantar o commit anterior.
 - Depois do deploy: o log do digest mostra `alert sent via instance <nome>`; sem `digest failed`; `health-monitor` nomeia a instância desconectada.
+
+## Isolamento do roteamento comercial (travado por testes)
+- O envio de conversa usa **sempre** `job.instanceId` (a instância gravada na conversa), mesmo que esteja desconectada; não consulta estado nem troca de instância.
+- Um teste varre o código da API e do worker e falha se `rankSendInstances`, `deliverViaConnectedInstance` ou `fetchConnectionState` aparecerem fora do digest e do monitor de saúde.
+
+## Lacuna conhecida (proposta separada)
+Não existe alerta para mensagem comercial que esgotou as tentativas de envio. A varredura de leads sem resposta não cobre o caso quando a IA já processou a mensagem (`ai_processed`). Ver a proposta no corpo da PR.

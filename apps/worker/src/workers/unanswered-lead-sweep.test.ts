@@ -461,10 +461,16 @@ describe("sendEvolutionAlert: instância conectada e falhas definitivas (liberam
       const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
       expect(err).not.toBeInstanceOf(DefinitiveSendError); expect(sendCalls()).toEqual(["a"]);
     });
-    it("Evolution inalcançável (estado desconhecido): ainda tenta, como último recurso, a mais antiga", async () => {
+    it("Evolution inalcançável (estado desconhecido): NÃO tenta nenhuma instância; erro definitivo (as chaves são liberadas e a varredura seguinte retenta)", async () => {
       fetchMock.mockImplementation(async (url: string) => { if (String(url).includes("connectionState")) throw new Error("down"); return { ok: true, status: 201 }; });
-      await sendEvolutionAlert("o", "1", "t");
-      expect(sendCalls()).toEqual(["weslley"]);
+      const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+      expect(err).toBeInstanceOf(DefinitiveSendError); expect(err.message).toContain("nenhuma instância conectada"); expect(err.message).toContain("weslley=unknown");
+      expect(sendCalls()).toEqual([]);
+    });
+    it("estado ilegível (resposta sem JSON) também não conta como conectada", async () => {
+      fetchMock.mockImplementation(async (url: string) => String(url).includes("connectionState") ? { ok: true, status: 200 } : { ok: true, status: 201 });
+      await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+      expect(sendCalls()).toEqual([]);
     });
   });
 });

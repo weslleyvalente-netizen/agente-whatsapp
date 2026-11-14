@@ -492,3 +492,43 @@ describe("falha de envio: a mensagem deixa de contar como entregue", () => {
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
   });
 });
+
+describe("roteamento das conversas comerciais NÃO usa a seleção de instância dos avisos internos", () => {
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getAdminClient.mockImplementation(() => ({}));
+  });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("envia SEMPRE pela instância gravada na conversa (job.instanceId), mesmo desconectada; nunca consulta estado nem troca de instância", async () => {
+    // A instância da conversa ("Pos venda") está desconectada e existe outra conectada: o envio comercial NÃO a substitui.
+    getInstanceById.mockImplementation(async (_db: unknown, id: string) => (id === "inst-pos-venda" ? { instance_name: "Pos venda" } : { instance_name: "weslley" }));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => JSON.stringify({ response: { message: ["Connection Closed"] } }), json: async () => ({}) });
+    global.fetch = fetchMock as never;
+    const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-pos-venda", phone: "5562900000000", content: "oi", organizationId: "org-1" };
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+    expect(getInstanceById).toHaveBeenCalledWith(expect.anything(), "inst-pos-venda");
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls).toEqual(["https://evolution.test/message/sendText/Pos venda"]); // uma chamada, na instância da conversa
+    expect(urls.some((u) => u.includes("connectionState") || u.includes("fetchInstances") || u.includes("weslley"))).toBe(false);
+  });
+
+  it("o código de envio comercial e de roteamento não referencia a seleção de avisos (varredura de fonte)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const roots = [fileURLToPath(new URL("..", import.meta.url)), fileURLToPath(new URL("../../../api/src", import.meta.url))];
+    const allowed = new Set(["unanswered-lead-sweep.ts", "health-monitor.ts"]); // únicos usos permitidos: avisos internos
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) { if (name !== "node_modules" && name !== "dist") walk(full); continue; }
+        if (!name.endsWith(".ts") || name.endsWith(".test.ts") || allowed.has(name)) continue;
+        if (/rankSendInstances|deliverViaConnectedInstance|fetchConnectionState/.test(readFileSync(full, "utf8"))) offenders.push(full);
+      }
+    };
+    roots.forEach(walk);
+    expect(offenders).toEqual([]);
+  });
+});
