@@ -5,6 +5,7 @@ import {
   updateTaskSchema,
   rescheduleTaskSchema,
   cancelTaskSchema,
+  completeTaskSchema,
   sendTaskFollowupSchema,
   updateConversationQualificationSchema,
   DEFAULT_TASK_FOLLOWUP_CONFIG,
@@ -203,6 +204,10 @@ export default async function taskRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Params: { taskId: string } }>("/tasks/:taskId/complete", async (request, reply) => {
+    const parseResult = completeTaskSchema.safeParse(request.body ?? {});
+    if (!parseResult.success) {
+      return reply.status(400).send({ error: parseResult.error.issues });
+    }
     const db = getAdminClient();
     const existing = await getTaskById(db, request.params.taskId);
     const membership = request.user.memberships.find(
@@ -210,9 +215,16 @@ export default async function taskRoutes(app: FastifyInstance) {
     );
     if (!membership) return reply.status(403).send({ error: "Access denied" });
 
-    const completed = await completeTask(db, request.params.taskId, { type: "human", id: request.user.id });
+    let completed;
+    try {
+      completed = await completeTask(db, request.params.taskId, { type: "human", id: request.user.id }, parseResult.data.note ?? null, parseResult.data.pendency_type ?? null);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("A tarefa não tem a pendência")) return reply.status(409).send({ error: error.message });
+      throw error;
+    }
     await clearStaleNextAction(db, existing);
-    await syncWaitingOnAfterHumanCompletion(db, existing); // só com waiting_on_sync_enabled; nunca lança
+    // Concluída de verdade (não só uma pendência): outras obrigações abertas na mesma tarefa mantêm a bola onde está.
+    if (completed.status === "completed") await syncWaitingOnAfterHumanCompletion(db, existing); // só com waiting_on_sync_enabled; nunca lança
     return completed;
   });
 
@@ -233,7 +245,8 @@ export default async function taskRoutes(app: FastifyInstance) {
       db,
       request.params.taskId,
       { type: "human", id: request.user.id },
-      parseResult.data.note ?? null
+      parseResult.data.note ?? null,
+      parseResult.data.pendency_type ?? null
     );
     await clearStaleNextAction(db, existing);
     return task;
@@ -257,7 +270,8 @@ export default async function taskRoutes(app: FastifyInstance) {
       request.params.taskId,
       { type: "human", id: request.user.id },
       parseResult.data.due_date,
-      parseResult.data.due_time ?? null
+      parseResult.data.due_time ?? null,
+      parseResult.data.pendency_type ?? null
     );
     return task;
   });

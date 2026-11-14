@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@aula-agente/database";
-import { updateTask, addTaskEvent, getOpenTasksByConversation } from "@aula-agente/database";
+import { updateTask, addTaskEvent, getOpenTasksByConversation, closeSinglePendency, reschedulePendency } from "@aula-agente/database";
 import { TASK_TYPE_LABELS } from "@aula-agente/shared";
 import type { Task, TaskType, TaskPriority, TaskAssigneeType } from "@aula-agente/shared";
 
@@ -12,8 +12,12 @@ export async function completeTask(
   db: SupabaseClient,
   taskId: string,
   actor: Actor,
-  note: string | null = null
+  note: string | null = null,
+  pendencyType: TaskType | null = null
 ): Promise<Task> {
+  // Tarefa consolidada com várias pendências: concluir encerra UMA (a principal, ou a escolhida) e as outras continuam abertas.
+  const partial = await closeSinglePendency(db, taskId, { actor, note, pendencyType });
+  if (partial) return partial;
   const task = await updateTask(db, taskId, { status: "completed", completed_at: new Date().toISOString() });
   await addTaskEvent(db, {
     task_id: taskId,
@@ -76,8 +80,11 @@ export async function cancelTask(
   db: SupabaseClient,
   taskId: string,
   actor: Actor,
-  note: string | null = null
+  note: string | null = null,
+  pendencyType: TaskType | null = null
 ): Promise<Task> {
+  const partial = await closeSinglePendency(db, taskId, { actor, note: note ?? "Pendência cancelada manualmente.", pendencyType });
+  if (partial) return partial;
   const task = await updateTask(db, taskId, { status: "cancelled" });
   await addTaskEvent(db, {
     task_id: taskId,
@@ -95,8 +102,14 @@ export async function rescheduleTask(
   taskId: string,
   actor: Actor,
   dueDate: string,
-  dueTime: string | null = null
+  dueTime: string | null = null,
+  pendencyType: TaskType | null = null
 ): Promise<Task> {
+  const partial = await reschedulePendency(db, taskId, { dueDate, dueTime, pendencyType });
+  if (partial) {
+    await addTaskEvent(db, { task_id: taskId, organization_id: partial.organization_id, event_type: "rescheduled", note: `Pendência reagendada para ${dueDate}`, created_by_type: actor.type, created_by_id: actor.id });
+    return partial;
+  }
   const task = await updateTask(db, taskId, { status: "rescheduled", due_date: dueDate, due_time: dueTime });
   await addTaskEvent(db, {
     task_id: taskId,

@@ -8,7 +8,7 @@ import {
   claimPushDedupe, completeNudgeTask, createTaskWithDedup, getAdminClient, getLastConversationMessage, getLastCustomerMessage, getMessageText, hasFrozenContact,
   hasPushSubscription, hasSellerMessageAfter, isPushConfigured, listContactIdsWithOpenOpportunity, listCurrentMemberIds, listCustomerNudgeOrganizations,
   listNudgeTasksByConversation, listOpenNudgeTasks, listOpenOpportunitiesForNudge, listOpenOpportunityIds, listRecentConversationsForContacts,
-  releasePushDedupe, recordNudgeTouch, sendPushToUser,
+  releasePushDedupe, recordNudgeTouch, sendPushToUser, type SupabaseClient,
   type NudgeConversation, type NudgeMessage, type NudgeOpportunity, type NudgeOrganization, type NudgeTaskRef, type OpenNudgeTask, type PushPayload,
 } from "@aula-agente/database";
 
@@ -238,8 +238,7 @@ async function pushToOwner(deps: NudgeDeps, organizationId: string, userId: stri
   }
 }
 
-export function buildRealDeps(): NudgeDeps {
-  const db = getAdminClient();
+export function buildRealDeps(db: SupabaseClient = getAdminClient(), overrides: Partial<NudgeDeps> = {}): NudgeDeps {
   return {
     listOrganizations: () => listCustomerNudgeOrganizations(db),
     listOpenOpportunities: (orgId) => listOpenOpportunitiesForNudge(db, orgId),
@@ -278,6 +277,7 @@ export function buildRealDeps(): NudgeDeps {
     releasePushDedupe: (keys) => releasePushDedupe(db, keys),
     sendPush: async (orgId, userId, payload) => (await sendPushToUser(db, userId, payload, { organizationId: orgId })).sent,
     log: console,
+    ...overrides,
   };
 }
 

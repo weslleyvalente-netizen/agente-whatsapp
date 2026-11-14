@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { updateTask, addTaskEvent, getOpenTasksByConversation } = vi.hoisted(() => ({
+const { updateTask, addTaskEvent, getOpenTasksByConversation, closeSinglePendency, reschedulePendency } = vi.hoisted(() => ({
   updateTask: vi.fn(),
   addTaskEvent: vi.fn(),
   getOpenTasksByConversation: vi.fn(),
+  closeSinglePendency: vi.fn(),
+  reschedulePendency: vi.fn(),
 }));
 
-vi.mock("@aula-agente/database", () => ({ updateTask, addTaskEvent, getOpenTasksByConversation }));
+vi.mock("@aula-agente/database", () => ({ updateTask, addTaskEvent, getOpenTasksByConversation, closeSinglePendency, reschedulePendency }));
 
-import { handleConversationTakeover } from "./task.service.js";
+import { handleConversationTakeover, completeTask, cancelTask, rescheduleTask } from "./task.service.js";
 
 const pendingTask1 = { id: "task-1", organization_id: "org-1", status: "pending" };
 const pendingTask2 = { id: "task-2", organization_id: "org-1", status: "pending" };
@@ -143,5 +145,35 @@ describe("handleConversationTakeover", () => {
       );
       expect(updateTask).not.toHaveBeenCalledWith({}, "task-x", expect.objectContaining({ status: "completed" }));
     });
+  });
+});
+
+describe("encerramento manual de tarefa consolidada", () => {
+  const actor = { type: "human" as const, id: "user-1" };
+  beforeEach(() => vi.resetAllMocks());
+
+  it("concluir: com várias pendências encerra só uma e NÃO conclui a tarefa", async () => {
+    closeSinglePendency.mockResolvedValue({ id: "t1", status: "pending", organization_id: "org-1" });
+    const r = await completeTask({} as any, "t1", actor, "ok", "customer_nudge");
+    expect(closeSinglePendency).toHaveBeenCalledWith({}, "t1", { actor, note: "ok", pendencyType: "customer_nudge" });
+    expect(r.status).toBe("pending");
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+  it("concluir: tarefa simples (ou última pendência) conclui a tarefa inteira, como antes", async () => {
+    closeSinglePendency.mockResolvedValue(null);
+    updateTask.mockResolvedValue({ id: "t1", status: "completed", organization_id: "org-1" });
+    const r = await completeTask({} as any, "t1", actor);
+    expect(updateTask).toHaveBeenCalledWith({}, "t1", expect.objectContaining({ status: "completed" }));
+    expect(addTaskEvent).toHaveBeenCalledWith({}, expect.objectContaining({ event_type: "completed", created_by_id: "user-1" }));
+    expect(r.status).toBe("completed");
+  });
+  it("cancelar e reagendar seguem a mesma regra: uma pendência por vez", async () => {
+    closeSinglePendency.mockResolvedValue({ id: "t1", status: "pending", organization_id: "org-1" });
+    await cancelTask({} as any, "t1", actor, null, "customer_nudge");
+    expect(updateTask).not.toHaveBeenCalled();
+    reschedulePendency.mockResolvedValue({ id: "t1", status: "rescheduled", organization_id: "org-1" });
+    await rescheduleTask({} as any, "t1", actor, "2026-11-20", null);
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(addTaskEvent).toHaveBeenCalledWith({}, expect.objectContaining({ event_type: "rescheduled" }));
   });
 });

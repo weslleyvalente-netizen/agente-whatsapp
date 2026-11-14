@@ -231,7 +231,8 @@ export async function resolveAwaitingCustomerPendency(
   resolvedType: TaskType,
   note: string,
   conflictAttempt=0,
-  resolvedBefore?: string
+  resolvedBefore?: string,
+  actor: { type: TaskCreatedByType; id: string | null } = { type: "ai", id: null }
 ): Promise<{ taskCompleted: boolean }> {
   const task = await getTaskById(client, taskId);
   if (task.organization_id !== organizationId || !OPEN_TASK_STATUSES.includes(task.status)) return { taskCompleted: false };
@@ -254,14 +255,14 @@ export async function resolveAwaitingCustomerPendency(
       due_time: primary.due_time,
       consolidated_pendencies: remaining,
     },task.updated_at);
-    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore);throw error;}
+    }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore,actor);throw error;}
     await addTaskEvent(client, {
       task_id: taskId,
       organization_id: organizationId,
       event_type: "consolidated_pendency_resolved",
       note,
-      created_by_type: "ai",
-      created_by_id: null,
+      created_by_type: actor.type,
+      created_by_id: actor.id,
     });
     return { taskCompleted: false };
   }
@@ -271,16 +272,67 @@ export async function resolveAwaitingCustomerPendency(
     completed_at: new Date().toISOString(),
     consolidated_pendencies: [],
   },task.updated_at);
-  }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore);throw error;}
+  }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return resolveAwaitingCustomerPendency(client,organizationId,taskId,resolvedType,note,conflictAttempt+1,resolvedBefore,actor);throw error;}
   await addTaskEvent(client, {
     task_id: taskId,
     organization_id: organizationId,
     event_type: "completed",
     note,
-    created_by_type: "ai",
-    created_by_id: null,
+    created_by_type: actor.type,
+    created_by_id: actor.id,
   });
   return { taskCompleted: true };
+}
+
+/**
+ * Encerramento MANUAL (concluir/cancelar) de uma tarefa consolidada: encerra só UMA pendência.
+ * `pendencyType` escolhe qual; sem ele vale a pendência principal (a que a tarefa exibe). As demais continuam abertas.
+ * Devolve a tarefa atualizada, ou `null` quando não há o que separar (tarefa sem pendências consolidadas ou com uma só):
+ * nesse caso o chamador segue o fluxo antigo (a tarefa inteira). Pendência pedida e inexistente → erro (não adivinha outra).
+ */
+export async function closeSinglePendency(
+  client: SupabaseClient,
+  taskId: string,
+  input: { actor: { type: TaskCreatedByType; id: string | null }; note: string | null; pendencyType?: TaskType | null }
+): Promise<Task | null> {
+  const task = await getTaskById(client, taskId);
+  if (!OPEN_TASK_STATUSES.includes(task.status)) return null;
+  const pendencies = task.consolidated_pendencies ?? [];
+  if (pendencies.length <= 1) return null;
+  let target: TaskType;
+  if (input.pendencyType) {
+    if (!pendencies.some((p) => p.type === input.pendencyType)) throw new Error(`A tarefa não tem a pendência ${input.pendencyType}.`);
+    target = input.pendencyType;
+  } else {
+    target = pendencies.some((p) => p.type === task.type) ? task.type : pickPrimaryPendency(pendencies)!.type;
+  }
+  await resolveAwaitingCustomerPendency(client, task.organization_id, taskId, target, input.note ?? `Pendência ${target} encerrada manualmente.`, 0, undefined, input.actor);
+  return getTaskById(client, taskId);
+}
+
+/**
+ * Reagendamento manual de uma tarefa consolidada: muda o prazo só da pendência principal (ou da escolhida);
+ * o prazo da tarefa continua sendo o mais próximo entre as pendências. Devolve `null` se não há pendências a separar.
+ */
+export async function reschedulePendency(
+  client: SupabaseClient,
+  taskId: string,
+  input: { dueDate: string; dueTime: string | null; pendencyType?: TaskType | null }
+): Promise<Task | null> {
+  const task = await getTaskById(client, taskId);
+  if (!OPEN_TASK_STATUSES.includes(task.status)) return null;
+  const pendencies = task.consolidated_pendencies ?? [];
+  if (pendencies.length <= 1) return null;
+  const target = input.pendencyType ?? (pendencies.some((p) => p.type === task.type) ? task.type : pickPrimaryPendency(pendencies)!.type);
+  if (!pendencies.some((p) => p.type === target)) throw new Error(`A tarefa não tem a pendência ${target}.`);
+  const next = pendencies.map((p) => (p.type === target ? { ...p, due_date: input.dueDate, due_time: input.dueTime } : p));
+  const primary = pickPrimaryPendency(next)!;
+  return updateTask(client, taskId, {
+    status: "rescheduled",
+    due_date: earliestDueDate(next)!,
+    due_time: primary.due_time,
+    consolidated_pendencies: next,
+  }, task.updated_at);
 }
 
 // Alertas de "cliente parado" (e o lembrete "Cutucar cliente"): a premissa deles ("sem mensagem de nenhum lado") deixa de valer quando o cliente responde.

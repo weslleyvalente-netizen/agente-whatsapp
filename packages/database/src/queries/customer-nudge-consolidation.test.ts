@@ -208,3 +208,61 @@ describe("vendedor falou: encerra só o cutucar, preservando as outras obrigaç�
     expect(tables.tasks[0].status).toBe("pending");
   });
 });
+
+// ---- Encerramento manual de tarefa consolidada: uma pendência por vez ----
+import { closeSinglePendency, reschedulePendency } from "./tasks.js";
+import { retireSilenceTask } from "./silence-retirement.js";
+
+describe("encerramento manual de tarefa consolidada", () => {
+  const consolidated = () => task({
+    type: "return_customer", due_date: "2026-11-13",
+    consolidated_pendencies: [pend("return_customer", { priority: "high", due_date: "2026-11-13" }), pend("customer_nudge", { due_date: "2026-11-16" }), pend("stalled_negotiation", { due_date: "2026-11-18" })],
+  });
+  const human = { type: "human" as const, id: "marina" };
+
+  it("concluir sem escolher encerra só a pendência principal; as outras seguem abertas e a tarefa continua aberta", async () => {
+    const { client, tables } = makeFakeClient({ tasks: [consolidated()] });
+    const r = await closeSinglePendency(client, "t1", { actor: human, note: null });
+    expect(r!.status).toBe("pending");
+    expect(r!.consolidated_pendencies.map((p) => p.type).sort()).toEqual(["customer_nudge", "stalled_negotiation"]);
+    expect(r!.type).toBe("customer_nudge"); // a próxima principal, com prazo recalculado
+    expect(r!.due_date).toBe("2026-11-16");
+    expect(tables.task_events.at(-1)).toMatchObject({ event_type: "consolidated_pendency_resolved", created_by_type: "human", created_by_id: "marina" });
+  });
+  it("com pendency_type encerra exatamente a escolhida", async () => {
+    const { client } = makeFakeClient({ tasks: [consolidated()] });
+    const r = await closeSinglePendency(client, "t1", { actor: human, note: "ok", pendencyType: "customer_nudge" });
+    expect(r!.consolidated_pendencies.map((p) => p.type).sort()).toEqual(["return_customer", "stalled_negotiation"]);
+    expect(r!.status).toBe("pending");
+  });
+  it("pendência inexistente: erro, nada é alterado", async () => {
+    const { client, tables } = makeFakeClient({ tasks: [consolidated()] });
+    await expect(closeSinglePendency(client, "t1", { actor: human, note: null, pendencyType: "bank_analysis" as any })).rejects.toThrow(/não tem a pendência/);
+    expect(tables.tasks[0].consolidated_pendencies).toHaveLength(3);
+  });
+  it("última pendência restante: a tarefa é concluída; tarefa simples devolve null (fluxo antigo)", async () => {
+    const one = task({ consolidated_pendencies: [pend("return_customer")] });
+    const { client } = makeFakeClient({ tasks: [one] });
+    expect(await closeSinglePendency(client, "t1", { actor: human, note: null })).toBeNull();
+    const two = task({ consolidated_pendencies: [pend("return_customer"), pend("customer_nudge")] });
+    const f = makeFakeClient({ tasks: [two] });
+    await closeSinglePendency(f.client, "t1", { actor: human, note: null });
+    const last = await closeSinglePendency(f.client, "t1", { actor: human, note: null });
+    expect(last).toBeNull(); // sobrou uma só: o chamador conclui a tarefa inteira
+  });
+  it("reagendar mexe só no prazo da pendência principal; prazo da tarefa segue o mais próximo", async () => {
+    const { client } = makeFakeClient({ tasks: [consolidated()] });
+    const r = await reschedulePendency(client, "t1", { dueDate: "2026-11-20", dueTime: null });
+    expect(r!.status).toBe("rescheduled");
+    const byType = Object.fromEntries(r!.consolidated_pendencies.map((p) => [p.type, p.due_date]));
+    expect(byType).toEqual({ return_customer: "2026-11-20", customer_nudge: "2026-11-16", stalled_negotiation: "2026-11-18" });
+    expect(r!.due_date).toBe("2026-11-16");
+  });
+  it("aposentar silêncio numa tarefa com outras pendências remove só a de silêncio", async () => {
+    const t = task({ type: "customer_unresponsive", created_by_type: "ai", consolidated_pendencies: [pend("customer_unresponsive"), pend("return_customer", { priority: "high" })] });
+    const { client, tables } = makeFakeClient({ tasks: [t] });
+    expect(await retireSilenceTask(client, ORG, t as any, "sem resposta")).toBe(true);
+    expect(tables.tasks[0].status).toBe("pending");
+    expect(tables.tasks[0].consolidated_pendencies.map((p: Row) => p.type)).toEqual(["return_customer"]);
+  });
+});
