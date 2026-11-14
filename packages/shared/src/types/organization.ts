@@ -78,6 +78,8 @@ export interface OrganizationSettings {
   customer_nudge_max_new_per_run?: number;
   // Sincroniza "Aguardando"/próxima ação só quando a mudança de responsabilidade é comprovada. Só === true liga.
   waiting_on_sync_enabled?: boolean;
+  /** "off" (padrão) | "shadow" (só registra o que faria) | "on". Quando ausente, `waiting_on_sync_enabled === true` equivale a "on". */
+  waiting_on_sync_mode?: "off" | "shadow" | "on";
   // Botão "Sugerir mensagem" no card do funil (primeiro atendimento e follow-up, texto gerado por IA e editado pelo vendedor). Desligado por padrão: só === true liga.
   seller_message_suggestion_enabled?: boolean;
   max_documents: number;

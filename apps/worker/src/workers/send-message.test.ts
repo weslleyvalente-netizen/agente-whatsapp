@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, findOpenTask, resolvePendency } = vi.hoisted(() => ({
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, findOpenTask, resolvePendency, syncSeller } = vi.hoisted(() => ({
+  syncSeller: vi.fn().mockResolvedValue("no_change"),
   findOpenTask: vi.fn().mockResolvedValue(null), resolvePendency: vi.fn().mockResolvedValue({ taskCompleted: false }),
   markMessageSendFailed: vi.fn().mockResolvedValue(true),
   createSignedUrl: vi.fn(),
@@ -14,7 +15,7 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageCon
 vi.mock("@aula-agente/database", () => ({
   shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
-  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, findOpenTaskWithPendencyType: findOpenTask, resolveAwaitingCustomerPendency: resolvePendency, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
+  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, syncWaitingOnAfterSellerMessage: syncSeller, findOpenTaskWithPendencyType: findOpenTask, resolveAwaitingCustomerPendency: resolvePendency, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
 const notifyMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sent: 1, skipped: [] }));
 vi.mock("../lib/send-failure-alert.js", () => ({ notifySendFailure: notifyMock }));
@@ -607,6 +608,51 @@ describe("reenvio bem-sucedido encerra a pendência 'Mensagem não enviada' (só
   });
   it("falha ao encerrar nunca derruba o envio", async () => {
     global.fetch = ok() as never; resolvePendency.mockRejectedValueOnce(new Error("db down"));
+    await expect(processSendMessageJob({ data } as never)).resolves.toBeUndefined();
+  });
+});
+
+describe("waiting_on só é sincronizado DEPOIS do envio confirmado (mensagem do vendedor pelo painel)", () => {
+  const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-1", phone: "5562900000000", content: "entrada R$ 8.000, 56x R$ 535", organizationId: "org-1" };
+  const ok = () => vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "EVO-1" } }), text: async () => "" });
+  const fail = () => vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({}), text: async () => "{}" });
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getInstanceById.mockResolvedValue({ instance_name: "weslley" }); getAdminClient.mockImplementation(() => ({}));
+    vi.mocked(database.getConversationById).mockResolvedValue({ id: "conv-1", contact_id: "ct-1" } as never);
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "human_agent", content: "entrada R$ 8.000, 56x R$ 535", media_type: null, created_at: "2026-11-14T10:00:00Z", metadata: null } as never);
+    syncSeller.mockClear(); markMessageSendFailed.mockClear();
+  });
+  afterEach(() => { global.fetch = originalFetch; vi.mocked(database.getMessageById).mockResolvedValue(null as never); });
+
+  it("envio aceito pela Evolution: sincroniza com contato, texto e id da mensagem", async () => {
+    global.fetch = ok() as never;
+    await processSendMessageJob({ data } as never);
+    expect(syncSeller).toHaveBeenCalledTimes(1);
+    expect(syncSeller).toHaveBeenCalledWith(expect.anything(), { organizationId: "org-1", contactId: "ct-1", role: "human_agent", content: "entrada R$ 8.000, 56x R$ 535", mediaType: null, messageId: "msg-1" });
+  });
+  it("envio que FALHA (qualquer tentativa) NÃO sincroniza: o negócio não muda para uma mensagem que não saiu", async () => {
+    global.fetch = fail() as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(syncSeller).not.toHaveBeenCalled();
+    expect(markMessageSendFailed).toHaveBeenCalledTimes(1); // só a tentativa final marca (PR #98)
+  });
+  it("mensagem da IA (agent) e aviso interno não sincronizam", async () => {
+    global.fetch = ok() as never;
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "agent", content: "oi", media_type: null, created_at: "2026-11-14T10:00:00Z", metadata: null } as never);
+    await processSendMessageJob({ data } as never);
+    await processSendMessageJob({ data: { ...data, messageId: "handoff-notify-1" } } as never);
+    expect(syncSeller).not.toHaveBeenCalled();
+  });
+  it("anexo do vendedor: passa o tipo da mídia (documento é proposta)", async () => {
+    global.fetch = ok() as never;
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "human_agent", content: "Segue a simulação", media_type: "document", created_at: "2026-11-14T10:00:00Z", metadata: null } as never);
+    await processSendMessageJob({ data } as never);
+    expect(syncSeller).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ mediaType: "document", content: "Segue a simulação" }));
+  });
+  it("falha da própria sincronização nunca derruba o envio", async () => {
+    global.fetch = ok() as never; syncSeller.mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data } as never)).resolves.toBeUndefined();
   });
 });

@@ -245,6 +245,9 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
       params.noAutoRetry || audio || attachment ? { attempts: 1 } : undefined
     );
 
+    // waiting_on NÃO é sincronizado aqui: a mensagem só foi enfileirada. A sincronização acontece no worker de envio, depois que a
+    // Evolution aceitou a mensagem (send-message.ts); se o envio falhar, nada muda no negócio.
+
     return { message, instanceId: instance.id };
   } catch (err) {
     if (!audio && !attachment) throw err;

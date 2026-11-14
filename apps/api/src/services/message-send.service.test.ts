@@ -96,6 +96,14 @@ describe("sendPanelMessage", () => {
     );
   });
 
+  it("NÃO sincroniza waiting_on ao enfileirar (isso só acontece no worker, depois do envio confirmado)", async () => {
+    await sendPanelMessage({ conversation: { ...baseConversation, contact_id: "ct-1" }, content: "entrada R$ 8.000, 56x R$ 535", actorUserId: "user-1" });
+    expect(enqueueSendMessage).toHaveBeenCalledTimes(1);
+    const { readFileSync } = await import("node:fs"); const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "src/services/message-send.service.ts"), "utf8");
+    expect(src).not.toMatch(/syncWaitingOn/);
+  });
+
   it("does not set assigned_to or re-reassign when takeover was already active", async () => {
     await sendPanelMessage({
       conversation: { ...baseConversation, is_human_takeover: true },

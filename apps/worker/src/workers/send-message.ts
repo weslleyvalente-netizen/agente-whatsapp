@@ -5,7 +5,7 @@ import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, pars
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { notifySendFailure, type SendFailureDeps } from "../lib/send-failure-alert.js";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, syncWaitingOnAfterSellerMessage, createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -313,6 +313,19 @@ async function processSendMessageJobInner(job: SendJob) {
   try { if(!internalNotification)await syncSalesPipeline(db,job.data.organizationId,job.data.conversationId,messageId); } catch(error) { console.error("Pipeline sync failed after send",messageId,error); }
   // Envio aceito: encerra a tarefa "Mensagem não enviada" desta conversa criada antes desta mensagem (reenvio bem-sucedido).
   if (!internalNotification && (recorded?.role === "agent" || recorded?.role === "human_agent")) await resolveSendFailureTask(db, job.data, recorded.created_at);
+  // Envio CONFIRMADO (a Evolution aceitou a mensagem): só agora a mensagem do vendedor pode mudar "Aguardando"/próxima ação
+  // (proposta ou pergunta => cliente; promessa => equipe). Se o envio falhar, nada disto roda e o negócio não muda. Nunca lança.
+  if (!internalNotification && recorded?.role === "human_agent") {
+    try {
+      const conversation = await getConversationById(db, job.data.conversationId);
+      await syncWaitingOnAfterSellerMessage(db, {
+        organizationId: job.data.organizationId, contactId: conversation.contact_id, role: "human_agent",
+        content: recorded.content ?? content ?? null,
+        mediaType: recorded.media_type ?? (storedAudioRef ? "audio" : mediaKind ?? null),
+        messageId,
+      });
+    } catch (error) { console.error("waiting_on sync failed after send", messageId, (error as Error)?.message); }
+  }
   console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
 }
 

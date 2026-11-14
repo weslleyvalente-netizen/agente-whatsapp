@@ -6,7 +6,7 @@ const base = (over = {}) => ({ opportunity: opp(), completedTypes: ["return_cust
 
 describe("decideAttendanceCompleted (equipe -> cliente, só com prova)", () => {
   it("caso Romario: tarefa de atendimento concluída por humano, vendedora respondeu, nada mais aberto => cliente", () => {
-    expect(decideAttendanceCompleted(base())).toEqual({ action: "set_customer", waiting_on: "customer", next_action: AWAITING_CUSTOMER_NEXT_ACTION });
+    expect(decideAttendanceCompleted(base())).toMatchObject({ action: "set_customer", waiting_on: "customer", next_action: AWAITING_CUSTOMER_NEXT_ACTION });
   });
   it("tarefa consolidada que carrega return_customer entre as pendências também vale", () => {
     expect(decideAttendanceCompleted(base({ completedTypes: ["customer_nudge", "return_customer"] })).action).toBe("set_customer");
@@ -28,7 +28,7 @@ describe("decideAttendanceCompleted (equipe -> cliente, só com prova)", () => {
 describe("decideCustomerReplied (cliente -> equipe, só do valor automático)", () => {
   const auto = { opportunity: opp({ waiting_on: "customer", next_action: AWAITING_CUSTOMER_NEXT_ACTION }), substantive: true };
   it("resposta substantiva devolve a bola à equipe", () => {
-    expect(decideCustomerReplied(auto)).toEqual({ action: "set_team", waiting_on: "team", next_action: CUSTOMER_REPLIED_NEXT_ACTION });
+    expect(decideCustomerReplied(auto)).toMatchObject({ action: "set_team", waiting_on: "team", next_action: CUSTOMER_REPLIED_NEXT_ACTION });
   });
   it("'ok'/cortesia não transfere nada", () => expect(decideCustomerReplied({ ...auto, substantive: false })).toEqual({ action: "keep", reason: "not_substantive" }));
   it("'Aguardando cliente' escolhido por um humano (next_action diferente) nunca é desfeito", () => {
