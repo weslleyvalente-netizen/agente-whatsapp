@@ -54,8 +54,6 @@ vi.mock("./lead-human-message.js", async (importOriginal) => {
   return { trackFirstHumanMessage: vi.fn(actual.trackFirstHumanMessage) };
 });
 import { trackFirstHumanMessage } from "./lead-human-message.js";
-const syncSeller = vi.hoisted(() => vi.fn().mockResolvedValue("no_change"));
-vi.mock("./waiting-on-sync.js", () => ({ syncWaitingOnAfterSellerMessage: syncSeller }));
 vi.mock("./task.service.js", () => ({ handleConversationTakeover }));
 vi.mock("../lib/queue.js", () => ({ enqueueSendMessage }));
 
@@ -98,15 +96,12 @@ describe("sendPanelMessage", () => {
     );
   });
 
-  it("depois de enfileirar o envio, avisa a sincronização de waiting_on (mensagem do vendedor pelo painel)", async () => {
+  it("NÃO sincroniza waiting_on ao enfileirar (isso só acontece no worker, depois do envio confirmado)", async () => {
     await sendPanelMessage({ conversation: { ...baseConversation, contact_id: "ct-1" }, content: "entrada R$ 8.000, 56x R$ 535", actorUserId: "user-1" });
-    expect(syncSeller).toHaveBeenCalledTimes(1);
-    expect(syncSeller).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ organizationId: "org-1", contactId: "ct-1", role: "human_agent", content: "entrada R$ 8.000, 56x R$ 535", messageId: "msg-1" }));
-  });
-  it("se o envio falhar antes de enfileirar, a sincronização NÃO é chamada", async () => {
-    enqueueSendMessage.mockRejectedValueOnce(new Error("redis down"));
-    await expect(sendPanelMessage({ conversation: baseConversation, content: "oi", actorUserId: "user-1" })).rejects.toThrow("redis down");
-    expect(syncSeller).not.toHaveBeenCalled();
+    expect(enqueueSendMessage).toHaveBeenCalledTimes(1);
+    const { readFileSync } = await import("node:fs"); const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "src/services/message-send.service.ts"), "utf8");
+    expect(src).not.toMatch(/syncWaitingOn/);
   });
 
   it("does not set assigned_to or re-reassign when takeover was already active", async () => {

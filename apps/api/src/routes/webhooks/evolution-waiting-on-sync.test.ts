@@ -26,6 +26,7 @@ vi.mock("@aula-agente/database", () => ({
   findPendingOutboundMessages: async () => [],
   setMessageEvolutionId: async () => undefined,
 }));
+vi.mock("../../services/waiting-on-sync.js", () => ({ syncWaitingOnAfterSellerMessage: (...a: unknown[]) => syncSeller(...a), syncWaitingOnAfterCustomerReply: vi.fn() }));
 
 const ensureConversation = vi.fn();
 vi.mock("../../services/conversation.service.js", () => ({
@@ -38,7 +39,6 @@ vi.mock("../../services/message.service.js", () => ({
 }));
 
 const syncSeller = vi.fn().mockResolvedValue("no_change");
-vi.mock("../../services/waiting-on-sync.js", () => ({ syncWaitingOnAfterSellerMessage: (...a: unknown[]) => syncSeller(...a), syncWaitingOnAfterCustomerReply: vi.fn() }));
 
 const handleConversationTakeover = vi.fn();
 vi.mock("../../services/task.service.js", () => ({

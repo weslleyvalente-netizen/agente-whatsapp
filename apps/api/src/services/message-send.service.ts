@@ -21,7 +21,6 @@ import { saveMessage } from "./message.service.js";
 import { handleConversationTakeover } from "./task.service.js";
 import { enqueueSendMessage } from "../lib/queue.js";
 import { trackFirstHumanMessage } from "./lead-human-message.js";
-import { syncWaitingOnAfterSellerMessage } from "./waiting-on-sync.js";
 
 export interface SendPanelMessageParams {
   conversation: Conversation;
@@ -246,11 +245,8 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
       params.noAutoRetry || audio || attachment ? { attempts: 1 } : undefined
     );
 
-    // O vendedor respondeu pelo painel: mesma regra do celular (modo off/shadow/on; nunca lança).
-    await syncWaitingOnAfterSellerMessage(db, {
-      organizationId: conversation.organization_id, contactId: conversation.contact_id, role: "human_agent", content,
-      mediaType: audio ? "audio" : attachment ? attachment.kind : null, messageId: message.id,
-    });
+    // waiting_on NÃO é sincronizado aqui: a mensagem só foi enfileirada. A sincronização acontece no worker de envio, depois que a
+    // Evolution aceitou a mensagem (send-message.ts); se o envio falhar, nada muda no negócio.
 
     return { message, instanceId: instance.id };
   } catch (err) {

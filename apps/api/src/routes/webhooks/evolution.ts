@@ -29,6 +29,7 @@ import {
   applyMessageDeliveryStatus,
   mergeMessageMetadata,
 } from "@aula-agente/database";
+import { syncWaitingOnAfterCustomerReply, syncWaitingOnAfterSellerMessage } from "../../services/waiting-on-sync.js";
 import { CHAT_MEDIA_MAX_BYTES, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
@@ -38,7 +39,6 @@ import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.se
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
-import { syncWaitingOnAfterCustomerReply, syncWaitingOnAfterSellerMessage } from "../../services/waiting-on-sync.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { recordAdTouch } from "../../services/lead-ad-touch.service.js";
 import { runWithTimeout } from "../../lib/with-timeout.js";

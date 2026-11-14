@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { AWAITING_CUSTOMER_NEXT_ACTION, CUSTOMER_REPLIED_NEXT_ACTION, HANDOFF_AUTO_NEXT_ACTION } from "@aula-agente/shared";
-import { syncWaitingOnAfterCustomerReply, syncWaitingOnAfterHumanCompletion, syncWaitingOnAfterSellerMessage } from "./waiting-on-sync.js";
+import { syncWaitingOnAfterCustomerReply, syncWaitingOnAfterHumanCompletion, syncWaitingOnAfterSellerMessage } from "../queries/waiting-on-sync.js";
+import { createRealSchemaDb } from "./real-schema-db.js";
 
 // ESQUEMA REAL: as migrações de supabase/migrations (inclusive a da tabela de sombra) num Postgres embutido, com as constraints de produção.
-const REAL_SCHEMA_DB = "../../../../packages/database/src/sql/real-schema-db.ts"; // import dinâmico: o tsc da API não segue arquivos fora do rootDir
 let pg: { query<T = any>(sql: string, p?: unknown[]): Promise<{ rows: T[] }> }; let db: any; let org: string; let seq = 0;
 const one = async (sql: string, p: unknown[] = []) => (await pg.query(sql, p)).rows[0] as any;
 const setSettings = (s: object) => pg.query("update organizations set settings=$2::jsonb where id=$1", [org, JSON.stringify(s)]);
@@ -18,7 +18,6 @@ async function deal(over: { stage?: string; waiting_on?: string; next_action?: s
 const state = (id: string) => one("select waiting_on, next_action from opportunities where id=$1", [id]);
 
 beforeAll(async () => {
-  const { createRealSchemaDb } = await import(/* @vite-ignore */ REAL_SCHEMA_DB);
   const env = await createRealSchemaDb(); pg = env.pg; db = env.client;
   expect(env.failedMigrations).toEqual([]);
   org = (await one("insert into organizations(name, slug, settings) values ('MT','mt','{}') returning id")).id;

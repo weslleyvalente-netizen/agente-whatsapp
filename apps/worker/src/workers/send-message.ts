@@ -4,7 +4,7 @@ import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef, sanitizeEvolutionError } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, syncWaitingOnAfterSellerMessage, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -256,6 +256,19 @@ async function processSendMessageJobInner(job: SendJob) {
   }
 
   try { if(!internalNotification)await syncSalesPipeline(db,job.data.organizationId,job.data.conversationId,messageId); } catch(error) { console.error("Pipeline sync failed after send",messageId,error); }
+  // Envio CONFIRMADO (a Evolution aceitou a mensagem): só agora a mensagem do vendedor pode mudar "Aguardando"/próxima ação
+  // (proposta ou pergunta => cliente; promessa => equipe). Se o envio falhar, nada disto roda e o negócio não muda. Nunca lança.
+  if (!internalNotification && recorded?.role === "human_agent") {
+    try {
+      const conversation = await getConversationById(db, job.data.conversationId);
+      await syncWaitingOnAfterSellerMessage(db, {
+        organizationId: job.data.organizationId, contactId: conversation.contact_id, role: "human_agent",
+        content: recorded.content ?? content ?? null,
+        mediaType: recorded.media_type ?? (storedAudioRef ? "audio" : mediaKind ?? null),
+        messageId,
+      });
+    } catch (error) { console.error("waiting_on sync failed after send", messageId, (error as Error)?.message); }
+  }
   console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
 }
 
