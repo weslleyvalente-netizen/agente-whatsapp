@@ -10,8 +10,22 @@ Quando a **última tentativa** falha e a marca é gravada **pela primeira vez**,
 - **rajada** (3 ou mais falhas na organização em 15 min): os gestores recebem UM aviso agregado ("N mensagens não foram enviadas nos últimos 15 min (instância X)"), com link para as Configurações.
 - Deduplicação por conversa e por janela de 30 min (`push_notification_log`). Contato sem nome aparece como "um cliente". O aviso **nunca** inclui o texto da mensagem, telefone ou chaves.
 
+## Canal persistente (sem depender de push)
+Opt-in separado: `send_failure_tasks_enabled === true` cria (ou atualiza, com dedupe por contato) a tarefa **"Mensagem não enviada"** (prioridade alta, hoje), atribuída ao responsável da conversa; sem responsável fica sem atribuição (fila dos gestores). Com a consolidação ligada entra como pendência na tarefa aberta do negócio. A tarefa **se encerra sozinha** quando um envio posterior (um reenvio) é aceito na conversa; só a pendência desta falha, nunca as outras obrigações. O tipo não entra no follow-up automático nem conta como sinal comercial.
+
+## Cobertura verificada em 14/11 (leitura)
+- Vendedores com push ativo: Marina (2 assinaturas) e Márcio (3), com centenas de avisos push registrados na última semana, o último em 14/11.
+- **O dono (único owner/admin) não tem nenhuma assinatura push ativa**: os avisos para gestores não chegariam a ninguém por push.
+- 34% das conversas ativas (92 de 271 em 14 dias) não têm responsável na conversa; para elas o aviso vai a gestores. Por isso existe o canal persistente.
+
 ## Ativação
-Opt-in: `organizations.settings.send_failure_alerts_enabled === true` **e** `push_notifications_enabled === true`. Sem as duas, nada acontece. Sem migração.
+- Push: `send_failure_alerts_enabled === true` **e** `push_notifications_enabled === true`.
+- Tarefa persistente: `send_failure_tasks_enabled === true`.
+- Sem as chaves, nada acontece. Sem migração.
+
+## Mensagens antigas e deduplicação
+- **Idade:** falha de mensagem criada há mais de 120 min nunca alerta (reprocessamento de fila, backlog depois de uma queda). O alerta só dispara na última tentativa de um job em execução e só na primeira marcação.
+- **Dedupe do push:** 1 aviso por conversa e usuário a cada **10 min** (uma falha posterior, depois da janela, avisa de novo). O agregado é 1 por 30 min e instância, mas **a cada 5 falhas a mais** avisa de novo. Nada fica escondido: a tarefa persistente registra a falha mesmo quando o push foi suprimido.
 
 ## Segurança
 Nunca lança (falha no alerta não esconde o erro do envio); push que não entrega libera a chave para nova tentativa; erros no log saem sem telefones; reprocessar uma falha já marcada não repete o aviso.

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed } = vi.hoisted(() => ({
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, findOpenTask, resolvePendency } = vi.hoisted(() => ({
+  findOpenTask: vi.fn().mockResolvedValue(null), resolvePendency: vi.fn().mockResolvedValue({ taskCompleted: false }),
   markMessageSendFailed: vi.fn().mockResolvedValue(true),
   createSignedUrl: vi.fn(),
   getAdminClient: vi.fn(),
@@ -13,7 +14,7 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageCon
 vi.mock("@aula-agente/database", () => ({
   shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
-  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
+  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, findOpenTaskWithPendencyType: findOpenTask, resolveAwaitingCustomerPendency: resolvePendency, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
 const notifyMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sent: 1, skipped: [] }));
 vi.mock("../lib/send-failure-alert.js", () => ({ notifySendFailure: notifyMock }));
@@ -551,7 +552,7 @@ describe("alerta de falha definitiva de envio (vendedor e gestores)", () => {
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
     expect(notifyMock).toHaveBeenCalledTimes(1);
-    expect(notifyMock.mock.calls[0][1]).toEqual({ organizationId: "org-1", conversationId: "conv-1", messageId: "msg-1", senderRole: "human_agent", contactName: "Romario", instanceName: "weslley", assigneeId: "marina" });
+    expect(notifyMock.mock.calls[0][1]).toEqual({ organizationId: "org-1", conversationId: "conv-1", contactId: "ct-1", messageId: "msg-1", messageCreatedAt: "2026-11-14T10:00:00Z", senderRole: "human_agent", contactName: "Romario", instanceName: "weslley", assigneeId: "marina" });
   });
   it("com retry pendente NÃO avisa (ainda pode dar certo)", async () => {
     global.fetch = failing() as never;
@@ -575,5 +576,37 @@ describe("alerta de falha definitiva de envio (vendedor e gestores)", () => {
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
     vi.mocked(database.getConversationById).mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+  });
+});
+
+describe("reenvio bem-sucedido encerra a pendência 'Mensagem não enviada' (só a criada ANTES dele)", () => {
+  const data = { conversationId: "conv-1", messageId: "msg-2", instanceId: "inst-1", phone: "5562900000000", content: "reenvio", organizationId: "org-1" };
+  const ok = () => vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "E2" } }), text: async () => "" });
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getInstanceById.mockResolvedValue({ instance_name: "weslley" }); getAdminClient.mockImplementation(() => ({}));
+    vi.mocked(database.getConversationById).mockResolvedValue({ id: "conv-1", contact_id: "ct-1" } as never);
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-2", role: "human_agent", content: "reenvio", media_type: null, created_at: "2026-11-16T15:10:00Z", metadata: null } as never);
+    findOpenTask.mockReset().mockResolvedValue({ id: "task-9" }); resolvePendency.mockReset().mockResolvedValue({ taskCompleted: true });
+  });
+  afterEach(() => { global.fetch = originalFetch; vi.mocked(database.getMessageById).mockResolvedValue(null as never); });
+
+  it("envio aceito: encerra a pendência message_send_failed do contato com corte no horário da mensagem enviada", async () => {
+    global.fetch = ok() as never;
+    await processSendMessageJob({ data } as never);
+    expect(findOpenTask).toHaveBeenCalledWith(expect.anything(), "org-1", "ct-1", "message_send_failed");
+    expect(resolvePendency).toHaveBeenCalledWith(expect.anything(), "org-1", "task-9", "message_send_failed", expect.stringContaining("reenviada"), 0, "2026-11-16T15:10:00Z");
+  });
+  it("sem tarefa aberta: nada a encerrar; envio que falha: não encerra nada", async () => {
+    global.fetch = ok() as never; findOpenTask.mockResolvedValue(null);
+    await processSendMessageJob({ data } as never); expect(resolvePendency).not.toHaveBeenCalled();
+    findOpenTask.mockResolvedValue({ id: "task-9" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => "{}", json: async () => ({}) }) as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(resolvePendency).not.toHaveBeenCalled();
+  });
+  it("falha ao encerrar nunca derruba o envio", async () => {
+    global.fetch = ok() as never; resolvePendency.mockRejectedValueOnce(new Error("db down"));
+    await expect(processSendMessageJob({ data } as never)).resolves.toBeUndefined();
   });
 });

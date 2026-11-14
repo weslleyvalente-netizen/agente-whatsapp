@@ -5,7 +5,7 @@ import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, pars
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { notifySendFailure, type SendFailureDeps } from "../lib/send-failure-alert.js";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -122,8 +122,31 @@ export function realSendFailureDeps(db: ReturnType<typeof getAdminClient>): Send
     claim: (key, userId) => claimPushDedupe(db, key, userId),
     release: (keys) => releasePushDedupe(db, keys),
     sendPush: async (orgId, userId, payload) => (await sendPushToUser(db, userId, payload, { organizationId: orgId })).sent,
+    createTask: async (ctx, text) => {
+      await createTaskWithDedup(db, {
+        organization_id: ctx.organizationId, contact_id: ctx.contactId, conversation_id: ctx.conversationId, opportunity_id: null,
+        type: "message_send_failed", description: text.description, reason: text.reason, priority: "high",
+        due_date: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
+        created_by_type: "ai", created_by_id: null,
+        ...(ctx.assigneeId ? { assignee_type: "human" as const, assignee_id: ctx.assigneeId, assign_on_merge: true } : {}),
+      });
+    },
     log: console,
   };
+}
+
+/**
+ * Um envio posterior deu certo na conversa: a tarefa/pendência "Mensagem não enviada" criada ANTES dele já foi atendida
+ * (o vendedor reenviou). Só encerra a pendência desta falha; nunca outras obrigações da tarefa consolidada. Nunca lança.
+ */
+async function resolveSendFailureTask(db: ReturnType<typeof getAdminClient>, data: SendMessageJobData, sentMessageCreatedAt: string | undefined) {
+  if (!sentMessageCreatedAt) return;
+  try {
+    const conversation = await getConversationById(db, data.conversationId);
+    const task = await findOpenTaskWithPendencyType(db, data.organizationId, (conversation as { contact_id: string }).contact_id, "message_send_failed");
+    if (!task) return;
+    await resolveAwaitingCustomerPendency(db, data.organizationId, task.id, "message_send_failed", "Mensagem reenviada com sucesso: falha de envio atendida.", 0, sentMessageCreatedAt);
+  } catch (err) { console.error("send-failure task resolve failed:", (err as Error)?.message); }
 }
 
 /** Avisa vendedor/gestores da falha definitiva (opt-in). Nunca lança. */
@@ -133,7 +156,8 @@ async function alertSendFailure(db: ReturnType<typeof getAdminClient>, data: Sen
     let instanceName: string | null = null;
     try { instanceName = (await getInstanceById(db, data.instanceId)).instance_name ?? null; } catch { /* nome é só informativo */ }
     await notifySendFailure(realSendFailureDeps(db), {
-      organizationId: data.organizationId, conversationId: data.conversationId, messageId: data.messageId, senderRole: recorded?.role ?? "agent",
+      organizationId: data.organizationId, conversationId: data.conversationId, contactId: (conversation as { contact_id: string }).contact_id,
+      messageId: data.messageId, messageCreatedAt: recorded?.created_at ?? null, senderRole: recorded?.role ?? "agent",
       contactName: (conversation as { wa_contacts?: { name?: string | null } }).wa_contacts?.name ?? null, instanceName,
       assigneeId: (conversation as { assigned_to?: string | null }).assigned_to ?? null,
     });
@@ -287,6 +311,8 @@ async function processSendMessageJobInner(job: SendJob) {
   }
 
   try { if(!internalNotification)await syncSalesPipeline(db,job.data.organizationId,job.data.conversationId,messageId); } catch(error) { console.error("Pipeline sync failed after send",messageId,error); }
+  // Envio aceito: encerra a tarefa "Mensagem não enviada" desta conversa criada antes desta mensagem (reenvio bem-sucedido).
+  if (!internalNotification && (recorded?.role === "agent" || recorded?.role === "human_agent")) await resolveSendFailureTask(db, job.data, recorded.created_at);
   console.log(`Sent message to ${phone} via instance ${instance.instance_name}`);
 }
 

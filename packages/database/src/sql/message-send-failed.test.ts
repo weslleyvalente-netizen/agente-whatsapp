@@ -4,6 +4,7 @@ import { markMessageSendFailed } from "../queries/messages.js";
 import { hasOutboundMessageAfter } from "../queries/unanswered-leads.js";
 import { countRecentSendFailures } from "../queries/messages.js";
 import { listManagerUserIds } from "../queries/push.js";
+import { createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency } from "../queries/tasks.js";
 
 // Esquema REAL (migrações aplicadas): mensagem nossa que falhou ao enviar NÃO conta como resposta entregue.
 // Caso real: conversa do lead de "Pos venda" (13/11): 2 mensagens da MarIAna sem evolution_message_id e sem entrega.
@@ -70,5 +71,23 @@ describe("mensagem que falhou ao enviar", () => {
     const owner = await mk("owner"); const admin = await mk("admin"); const agent = await mk("agent");
     const managers = await listManagerUserIds(db, org);
     expect(managers).toEqual(expect.arrayContaining([owner, admin])); expect(managers).not.toContain(agent);
+  });
+
+  it("tarefa 'message_send_failed' no esquema real: cria com dedupe por contato, é achada pela pendência e só encerra com reenvio POSTERIOR", async () => {
+    const ct = (await one("insert into wa_contacts(organization_id, phone) values ($1,'5562911111111') returning id", [org])).id as string;
+    const input = { organization_id: org, contact_id: ct, conversation_id: conv, opportunity_id: null, type: "message_send_failed" as const, description: "A mensagem NÃO foi entregue", reason: "Falha definitiva", priority: "high" as const,
+      due_date: "2026-11-16", created_by_type: "ai" as const, created_by_id: null };
+    const first = await createTaskWithDedup(db, input);
+    const again = await createTaskWithDedup(db, { ...input, description: "outra falha" });
+    expect(again.task.id).toBe(first.task.id); // dedupe: uma tarefa por contato
+    const found = await findOpenTaskWithPendencyType(db, org, ct, "message_send_failed");
+    expect(found?.id).toBe(first.task.id);
+    const createdAt = (await one("select created_at from tasks where id=$1", [first.task.id])).created_at as string;
+    // um envio ANTERIOR à tarefa não a encerra
+    await resolveAwaitingCustomerPendency(db, org, first.task.id, "message_send_failed", "x", 0, new Date(Date.parse(createdAt) - 60_000).toISOString());
+    expect((await one("select status from tasks where id=$1", [first.task.id])).status).toBe("pending");
+    // um reenvio POSTERIOR a encerra
+    await resolveAwaitingCustomerPendency(db, org, first.task.id, "message_send_failed", "Mensagem reenviada com sucesso", 0, new Date(Date.parse(createdAt) + 60_000).toISOString());
+    expect((await one("select status from tasks where id=$1", [first.task.id])).status).toBe("completed");
   });
 });
