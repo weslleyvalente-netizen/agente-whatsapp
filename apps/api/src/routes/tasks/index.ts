@@ -11,6 +11,7 @@ import {
   DEFAULT_TASK_FOLLOWUP_CONFIG,
 } from "@aula-agente/shared";
 import type { SupabaseClient } from "@aula-agente/database";
+import { syncWaitingOnAfterHumanCompletion } from "../../services/waiting-on-sync.js";
 import {
   getAdminClient,
   createTaskWithDedup,
@@ -28,7 +29,7 @@ import {
 } from "@aula-agente/database";
 import { canViewLead } from "../../lib/lead-access.js";
 import { clearStaleNextAction } from "../../services/clear-stale-next-action.js";
-import { syncWaitingOnAfterHumanCompletion } from "../../services/waiting-on-sync.js";
+
 import { resolveApiKey, generateTaskFollowupSuggestion } from "@aula-agente/agent-runtime";
 import {
   completeTask,
