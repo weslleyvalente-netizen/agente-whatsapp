@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BURST_THRESHOLD, buildAlertPayload, buildTaskText, CONVERSATION_BUCKET_MIN, MAX_ALERT_AGE_MIN, notifySendFailure, planSendFailureAlerts, type SendFailureContext, type SendFailureDeps } from "./send-failure-alert.js";
+import { BURST_THRESHOLD, buildAlertPayload, buildTaskText, CONVERSATION_BUCKET_MIN, MAX_ALERT_AGE_MIN, MAX_TASK_AGE_HOURS, notifySendFailure, planSendFailureAlerts, type SendFailureContext, type SendFailureDeps } from "./send-failure-alert.js";
 
 const NOW = new Date("2026-11-16T15:00:00Z");
 const ctx = (over: Partial<SendFailureContext> = {}): SendFailureContext => ({ organizationId: "org", conversationId: "conv-1", contactId: "ct-1", messageId: "m1", messageCreatedAt: new Date(NOW.getTime() - 60_000).toISOString(), senderRole: "human_agent", contactName: "Romario", instanceName: "weslley", assigneeId: "marina", ...over });
@@ -92,13 +92,26 @@ describe("notifySendFailure", () => {
     expect(buildAlertPayload("seller", ctx(), 1).body).not.toMatch(/entrada|R\$|parcela/);
   });
 
-  it("NUNCA alerta mensagem antiga (reprocessamento de fila ou backlog depois de uma queda)", async () => {
-    const x = deps({ settings: { send_failure_alerts_enabled: true, push_notifications_enabled: true, send_failure_tasks_enabled: true }, tasks: [] });
+  it("mensagem antiga (> 120 min) NÃO gera push, mas a tarefa persistente ainda é criada (falha relevante precisa de recuperação)", async () => {
+    const tasks: any[] = [];
+    const x = deps({ settings: { send_failure_alerts_enabled: true, push_notifications_enabled: true, send_failure_tasks_enabled: true }, tasks });
     const old = new Date(NOW.getTime() - (MAX_ALERT_AGE_MIN + 1) * 60_000).toISOString();
-    expect(await notifySendFailure(x.d, ctx({ messageCreatedAt: old }), NOW)).toEqual({ sent: 0, tasks: 0, skipped: ["too_old"] });
-    expect(x.sent).toHaveLength(0);
+    expect(await notifySendFailure(x.d, ctx({ messageCreatedAt: old }), NOW)).toEqual({ sent: 0, tasks: 1, skipped: ["stale_no_push"] });
+    expect(x.sent).toHaveLength(0); expect(tasks).toHaveLength(1);
     const fresh = new Date(NOW.getTime() - (MAX_ALERT_AGE_MIN - 1) * 60_000).toISOString();
     expect((await notifySendFailure(x.d, ctx({ messageCreatedAt: fresh }), NOW)).sent).toBe(1);
+  });
+  it("só com push ligado, mensagem antiga não faz nada (sem enxurrada)", async () => {
+    const x = deps({ settings: { send_failure_alerts_enabled: true, push_notifications_enabled: true }, tasks: [] });
+    const old = new Date(NOW.getTime() - (MAX_ALERT_AGE_MIN + 1) * 60_000).toISOString();
+    expect(await notifySendFailure(x.d, ctx({ messageCreatedAt: old }), NOW)).toEqual({ sent: 0, tasks: 0, skipped: ["stale_no_push"] });
+  });
+  it("além de 72 h nem a tarefa é criada (backlog antigo demais)", async () => {
+    const tasks: any[] = [];
+    const x = deps({ settings: { send_failure_tasks_enabled: true }, tasks });
+    const ancient = new Date(NOW.getTime() - (MAX_TASK_AGE_HOURS * 60 + 1) * 60_000).toISOString();
+    expect(await notifySendFailure(x.d, ctx({ messageCreatedAt: ancient }), NOW)).toEqual({ sent: 0, tasks: 0, skipped: ["too_old"] });
+    expect(tasks).toHaveLength(0);
   });
 });
 

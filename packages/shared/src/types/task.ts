@@ -49,10 +49,14 @@ export interface Task {
 // the source of truth once consolidation is on, so a pendency resolved
 // individually (e.g. awaiting_customer_cpf, item 3) can leave the task
 // open with whatever else is still pending, instead of closing it outright.
+export interface FailedMessageRef { message_id: string; conversation_id: string; failed_at: string }
+
 export interface TaskPendency {
   freeze_opportunity_id?: string;
   /** Só no "Cutucar cliente": a conversa do negócio à qual a pendência se refere (a tarefa consolidada pode ser de outra conversa do mesmo negócio). */
   conversation_id?: string | null;
+  /** Só em "Mensagem não enviada": cada mensagem que falhou (id, conversa, hora). É a referência que permite encerrar só com reenvio DAQUELA mensagem. */
+  failed_messages?: FailedMessageRef[];
   type: TaskType;
   description: string;
   reason: string | null;

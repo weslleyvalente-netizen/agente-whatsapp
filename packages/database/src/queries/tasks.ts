@@ -7,6 +7,7 @@ import type {
   TaskPendency,
   TaskCreatedByType,
   TaskAssigneeType,
+  FailedMessageRef,
 } from "@aula-agente/shared";
 import {
   TASK_TYPE_LABELS,
@@ -18,6 +19,7 @@ import {
   pickPrimaryPendency,
   earliestDueDate,
   buildConsolidatedDescription,
+  mergeSendFailures,
 } from "@aula-agente/shared";
 import { getQualificationByConversationId } from "./conversation-qualification.js";
 import { getOrganizationById } from "./organizations.js";
@@ -595,6 +597,8 @@ export interface CreateTaskWithDedupInput {
    * a pendência vai para quem é dono do negócio hoje, e não para quem abriu a tarefa antes (ex.: troca de vendedor).
    */
   assign_on_merge?: boolean;
+  /** Só `message_send_failed`: a mensagem que falhou, para a pendência poder ser encerrada só com o reenvio dela. */
+  failed_message?: FailedMessageRef;
 }
 
 // Best-effort: a settings-fetch failure (or an environment where
@@ -627,6 +631,7 @@ function toPendency(input: CreateTaskWithDedupInput): TaskPendency {
     added_by_type: input.created_by_type,
     added_by_id: input.created_by_id,
     ...(input.type === "customer_nudge" && input.conversation_id ? { conversation_id: input.conversation_id } : {}),
+    ...(input.type === "message_send_failed" && input.failed_message ? { failed_messages: [input.failed_message] } : {}),
   };
 }
 
@@ -731,9 +736,14 @@ export async function createTaskWithDedup(
 
   if (decision.action === "update") {
     let task:Task;
+    // Falha de envio: a atualização do "mesmo tipo" não pode apagar as referências das falhas anteriores.
+    const refreshed = input.type === "message_send_failed"
+      ? mergeSendFailures(existing?.consolidated_pendencies?.find((p) => p.type === input.type), toPendency(input))
+      : toPendency(input);
     try { task=await updateTask(client, decision.taskId, {
       ...decision.changes,
-      consolidated_pendencies: [toPendency(input)],
+      ...(input.type === "message_send_failed" ? { description: refreshed.description } : {}),
+      consolidated_pendencies: [refreshed],
     },existing?.updated_at);
     }catch(error){if(error instanceof TaskWriteConflict && conflictAttempt<3)return createTaskWithDedup(client,input,conflictAttempt+1);throw error;}
     await addTaskEvent(client, {
@@ -812,4 +822,64 @@ export async function createTaskWithDedup(
   }
 
   return { task, wasUpdated: false };
+}
+
+
+// ---- "Mensagem não enviada": encerramento só com evidência de recuperação DAQUELA mensagem ----
+
+const normText = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+export interface AcceptedOutbound { id: string; conversation_id: string; content: string | null; media_type: string | null; metadata: Record<string, unknown> | null; created_at: string }
+interface FailedRow { id: string; content: string | null; media_type: string | null; created_at: string }
+
+/**
+ * A mensagem aceita pela Evolution recupera a falha `failed`? Só com evidência específica:
+ *  1. é a MESMA mensagem (reprocessada/reenviada pela mesma linha); ou
+ *  2. foi reenviada explicitamente a partir dela (metadata.resend_of); ou
+ *  3. é um reenvio do mesmo conteúdo na mesma conversa, depois da falha (mesmo texto e mesmo tipo de mídia; texto vazio nunca basta).
+ * Qualquer outra mensagem posterior (um "bom dia", outra resposta) NÃO recupera a falha.
+ */
+export function isRecoveryOf(accepted: AcceptedOutbound, failed: FailedRow): boolean {
+  if (accepted.id === failed.id) return true;
+  if (accepted.metadata?.resend_of === failed.id) return true;
+  const text = normText(failed.content);
+  if (!text || Date.parse(accepted.created_at) <= Date.parse(failed.created_at)) return false;
+  return normText(accepted.content) === text && (accepted.media_type ?? null) === (failed.media_type ?? null);
+}
+
+/**
+ * Uma mensagem foi aceita na conversa: encerra, nas tarefas abertas do contato, só as falhas que ela de fato recupera
+ * (mesma conversa + evidência). Sobrando falhas (outras mensagens ou conversas), a pendência continua aberta com elas.
+ * Tarefa sem referência das mensagens (anterior a este controle) nunca é encerrada aqui: só manualmente. Devolve quantas falhas recuperou.
+ */
+export async function recoverSendFailures(client: SupabaseClient, organizationId: string, contactId: string, accepted: AcceptedOutbound, attempt = 0): Promise<number> {
+  const tasks = await getOpenTasksByContact(client, organizationId, contactId);
+  let recoveredTotal = 0;
+  for (const task of tasks) {
+    const pendency = (task.consolidated_pendencies ?? []).find((p) => p.type === "message_send_failed");
+    const refs = (pendency?.failed_messages ?? []).filter((f) => f.conversation_id === accepted.conversation_id);
+    if (!pendency || !refs.length) continue;
+    const { data, error } = await client.from("messages").select("id, content, media_type, created_at").in("id", refs.map((r) => r.message_id)).eq("conversation_id", accepted.conversation_id);
+    if (error) throw error;
+    const rows = new Map(((data ?? []) as FailedRow[]).map((r) => [r.id, r]));
+    const recovered = new Set(refs.filter((r) => { const row = rows.get(r.message_id); return !!row && isRecoveryOf(accepted, row); }).map((r) => r.message_id));
+    if (!recovered.size) continue;
+    const remaining: FailedMessageRef[] = (pendency.failed_messages ?? []).filter((f) => !recovered.has(f.message_id));
+    const note = `Reenvio detectado (${recovered.size} mensagem(ns) recuperada(s) na conversa): falha de envio atendida.`;
+    try {
+      if (!remaining.length) {
+        await resolveAwaitingCustomerPendency(client, organizationId, task.id, "message_send_failed", note);
+      } else {
+        const next = (task.consolidated_pendencies ?? []).map((p) => (p.type === "message_send_failed" ? mergeSendFailures(undefined, { ...p, failed_messages: remaining }) : p));
+        const primary = pickPrimaryPendency(next)!;
+        await updateTask(client, task.id, { type: primary.type, title: TASK_TYPE_LABELS[primary.type], description: buildConsolidatedDescription(next), reason: primary.reason, priority: primary.priority, due_date: earliestDueDate(next)!, due_time: primary.due_time, consolidated_pendencies: next }, task.updated_at);
+        await addTaskEvent(client, { task_id: task.id, organization_id: organizationId, event_type: "consolidated_pendency_resolved", note: `${note} Ainda há ${remaining.length} não recuperada(s).`, created_by_type: "ai", created_by_id: null });
+      }
+      recoveredTotal += recovered.size;
+    } catch (e) {
+      if (e instanceof TaskWriteConflict && attempt < 3) return recoveredTotal + await recoverSendFailures(client, organizationId, contactId, accepted, attempt + 1);
+      throw e;
+    }
+  }
+  return recoveredTotal;
 }

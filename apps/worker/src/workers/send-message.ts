@@ -5,7 +5,7 @@ import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, pars
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { notifySendFailure, type SendFailureDeps } from "../lib/send-failure-alert.js";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, syncWaitingOnAfterSellerMessage, createTaskWithDedup, findOpenTaskWithPendencyType, resolveAwaitingCustomerPendency, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, syncWaitingOnAfterSellerMessage, createTaskWithDedup, recoverSendFailures, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -128,7 +128,9 @@ export function realSendFailureDeps(db: ReturnType<typeof getAdminClient>): Send
         type: "message_send_failed", description: text.description, reason: text.reason, priority: "high",
         due_date: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
         created_by_type: "ai", created_by_id: null,
-        ...(ctx.assigneeId ? { assignee_type: "human" as const, assignee_id: ctx.assigneeId, assign_on_merge: true } : {}),
+        // Sem responsável: fica SEM responsável (fila dos gestores), nunca "da IA" (o card mostraria "Helena").
+        ...(ctx.assigneeId ? { assignee_type: "human" as const, assignee_id: ctx.assigneeId, assign_on_merge: true } : { assignee_type: null, assignee_id: null }),
+        failed_message: { message_id: ctx.messageId, conversation_id: ctx.conversationId, failed_at: new Date().toISOString() },
       });
     },
     log: console,
@@ -136,16 +138,15 @@ export function realSendFailureDeps(db: ReturnType<typeof getAdminClient>): Send
 }
 
 /**
- * Um envio posterior deu certo na conversa: a tarefa/pendência "Mensagem não enviada" criada ANTES dele já foi atendida
- * (o vendedor reenviou). Só encerra a pendência desta falha; nunca outras obrigações da tarefa consolidada. Nunca lança.
+ * Um envio foi aceito na conversa: encerra só as falhas "Mensagem não enviada" que ele de fato RECUPERA (a mesma mensagem reprocessada,
+ * um reenvio explícito ou o mesmo conteúdo reenviado depois, na mesma conversa). Uma mensagem qualquer posterior não encerra nada.
+ * Nunca mexe em outras pendências da tarefa consolidada. Nunca lança.
  */
-async function resolveSendFailureTask(db: ReturnType<typeof getAdminClient>, data: SendMessageJobData, sentMessageCreatedAt: string | undefined) {
-  if (!sentMessageCreatedAt) return;
+async function resolveSendFailureTask(db: ReturnType<typeof getAdminClient>, data: SendMessageJobData, accepted: { id: string; content?: string | null; media_type?: string | null; metadata?: object | null; created_at: string }) {
   try {
     const conversation = await getConversationById(db, data.conversationId);
-    const task = await findOpenTaskWithPendencyType(db, data.organizationId, (conversation as { contact_id: string }).contact_id, "message_send_failed");
-    if (!task) return;
-    await resolveAwaitingCustomerPendency(db, data.organizationId, task.id, "message_send_failed", "Mensagem reenviada com sucesso: falha de envio atendida.", 0, sentMessageCreatedAt);
+    await recoverSendFailures(db, data.organizationId, (conversation as { contact_id: string }).contact_id,
+      { id: accepted.id, conversation_id: data.conversationId, content: accepted.content ?? null, media_type: accepted.media_type ?? null, metadata: (accepted.metadata as Record<string, unknown> | null) ?? null, created_at: accepted.created_at });
   } catch (err) { console.error("send-failure task resolve failed:", (err as Error)?.message); }
 }
 
@@ -312,7 +313,7 @@ async function processSendMessageJobInner(job: SendJob) {
 
   try { if(!internalNotification)await syncSalesPipeline(db,job.data.organizationId,job.data.conversationId,messageId); } catch(error) { console.error("Pipeline sync failed after send",messageId,error); }
   // Envio aceito: encerra a tarefa "Mensagem não enviada" desta conversa criada antes desta mensagem (reenvio bem-sucedido).
-  if (!internalNotification && (recorded?.role === "agent" || recorded?.role === "human_agent")) await resolveSendFailureTask(db, job.data, recorded.created_at);
+  if (!internalNotification && (recorded?.role === "agent" || recorded?.role === "human_agent")) await resolveSendFailureTask(db, job.data, recorded);
   // Envio CONFIRMADO (a Evolution aceitou a mensagem): só agora a mensagem do vendedor pode mudar "Aguardando"/próxima ação
   // (proposta ou pergunta => cliente; promessa => equipe). Se o envio falhar, nada disto roda e o negócio não muda. Nunca lança.
   if (!internalNotification && recorded?.role === "human_agent") {
