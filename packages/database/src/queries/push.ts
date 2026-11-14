@@ -74,6 +74,13 @@ export async function listCurrentMemberIds(db: SupabaseClient, organizationId: s
   return new Set(((data ?? []) as Array<{ user_id: string }>).map(m => m.user_id));
 }
 
+/** Gestores da organização (owner e admin): quem recebe o alerta agregado. */
+export async function listManagerUserIds(db: SupabaseClient, organizationId: string): Promise<string[]> {
+  const { data, error } = await db.from("organization_members").select("user_id").eq("organization_id", organizationId).in("role", ["owner", "admin"]);
+  if (error) throw error;
+  return ((data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+}
+
 /** O usuário tem ao menos uma assinatura push nesta organização? (decide se o aviso pode ir por push.) */
 export async function hasPushSubscription(db: SupabaseClient, organizationId: string, userId: string): Promise<boolean> {
   const { count, error } = await db.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("user_id", userId);

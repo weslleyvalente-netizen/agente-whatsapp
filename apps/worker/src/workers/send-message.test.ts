@@ -15,6 +15,8 @@ vi.mock("@aula-agente/database", () => ({
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
   hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
+const notifyMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sent: 1, skipped: [] }));
+vi.mock("../lib/send-failure-alert.js", () => ({ notifySendFailure: notifyMock }));
 import * as database from "@aula-agente/database";
 import { processSendMessageJob } from "./send-message.js";
 
@@ -530,5 +532,48 @@ describe("roteamento das conversas comerciais NÃO usa a seleção de instância
     };
     roots.forEach(walk);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("alerta de falha definitiva de envio (vendedor e gestores)", () => {
+  const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-1", phone: "5562900000000", content: "oi", organizationId: "org-1" };
+  const failing = () => vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => "{}", json: async () => ({}) });
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getInstanceById.mockResolvedValue({ instance_name: "weslley" }); getAdminClient.mockImplementation(() => ({}));
+    vi.mocked(database.getConversationById).mockResolvedValue({ id: "conv-1", contact_id: "ct-1", assigned_to: "marina", wa_contacts: { name: "Romario" } } as never);
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "human_agent", content: "oi", media_type: null, created_at: "2026-11-14T10:00:00Z", metadata: null } as never);
+    markMessageSendFailed.mockReset().mockResolvedValue(true); notifyMock.mockClear();
+  });
+  afterEach(() => { global.fetch = originalFetch; vi.mocked(database.getMessageById).mockResolvedValue(null as never); });
+
+  it("falha DEFINITIVA (última tentativa): avisa com cliente, responsável, instância e papel do remetente", async () => {
+    global.fetch = failing() as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(notifyMock.mock.calls[0][1]).toEqual({ organizationId: "org-1", conversationId: "conv-1", messageId: "msg-1", senderRole: "human_agent", contactName: "Romario", instanceName: "weslley", assigneeId: "marina" });
+  });
+  it("com retry pendente NÃO avisa (ainda pode dar certo)", async () => {
+    global.fetch = failing() as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(notifyMock).not.toHaveBeenCalled();
+  });
+  it("falha já marcada antes (reprocesso) não repete o aviso; aviso interno nunca avisa", async () => {
+    global.fetch = failing() as never; markMessageSendFailed.mockResolvedValue(false);
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    markMessageSendFailed.mockResolvedValue(true);
+    await expect(processSendMessageJob({ data: { ...data, messageId: "handoff-notify-1" }, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(notifyMock).not.toHaveBeenCalled();
+  });
+  it("envio bem-sucedido não avisa", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "E1" } }), text: async () => "" }) as never;
+    await processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never);
+    expect(notifyMock).not.toHaveBeenCalled();
+  });
+  it("falha do próprio alerta (ou do contexto) nunca esconde o erro do envio", async () => {
+    global.fetch = failing() as never; notifyMock.mockRejectedValueOnce(new Error("push down"));
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+    vi.mocked(database.getConversationById).mockRejectedValueOnce(new Error("db down"));
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
   });
 });

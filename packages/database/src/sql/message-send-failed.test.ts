@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createRealSchemaDb } from "./real-schema-db.js";
 import { markMessageSendFailed } from "../queries/messages.js";
 import { hasOutboundMessageAfter } from "../queries/unanswered-leads.js";
+import { countRecentSendFailures } from "../queries/messages.js";
+import { listManagerUserIds } from "../queries/push.js";
 
 // Esquema REAL (migrações aplicadas): mensagem nossa que falhou ao enviar NÃO conta como resposta entregue.
 // Caso real: conversa do lead de "Pos venda" (13/11): 2 mensagens da MarIAna sem evolution_message_id e sem entrega.
@@ -51,5 +53,22 @@ describe("mensagem que falhou ao enviar", () => {
     expect(await hasOutboundMessageAfter(db, c2, "2026-11-13T13:27:18Z")).toBe(false); // agora o lead volta a ser "sem resposta"
     await add("human_agent", "2026-11-13T21:00:00Z", "H1");
     expect(await hasOutboundMessageAfter(db, c2, "2026-11-13T13:27:18Z")).toBe(true);
+  });
+
+  it("countRecentSendFailures: conta só falhas definitivas da janela (esquema real)", async () => {
+    const fresh = await addMsg("agent", "2026-11-14T10:00:00Z"); await markMessageSendFailed(db, fresh, "Evolution API send error 400");
+    const noFail = await addMsg("agent", "2026-11-14T10:01:00Z", { evo: "OK-1" }); void noFail;
+    const old = await addMsg("agent", "2026-11-14T10:02:00Z", { meta: { send_failed_at: "2026-11-01T10:00:00.000Z" } }); void old;
+    expect(await countRecentSendFailures(db, org, "2026-11-10T00:00:00.000Z")).toBeGreaterThanOrEqual(1);
+    const before = await countRecentSendFailures(db, org, "2099-01-01T00:00:00.000Z");
+    expect(before).toBe(0); // janela no futuro: nenhuma
+    const inWindow = await countRecentSendFailures(db, org, new Date(Date.now() - 60_000).toISOString());
+    expect(inWindow).toBeGreaterThanOrEqual(1); // a marca recém-gravada usa o horário atual
+  });
+  it("listManagerUserIds: só owner e admin da organização", async () => {
+    const mk = async (role: string) => { const id = (await one("insert into auth.users(id, email) values (gen_random_uuid(), $1) returning id", [`${role}-${Math.random()}@x`])).id; await pg.query("insert into organization_members(organization_id, user_id, role) values ($1,$2,$3)", [org, id, role]); return id as string; };
+    const owner = await mk("owner"); const admin = await mk("admin"); const agent = await mk("agent");
+    const managers = await listManagerUserIds(db, org);
+    expect(managers).toEqual(expect.arrayContaining([owner, admin])); expect(managers).not.toContain(agent);
   });
 });

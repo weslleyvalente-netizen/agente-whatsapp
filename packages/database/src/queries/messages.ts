@@ -84,6 +84,14 @@ export async function markMessageSendFailed(client: SupabaseClient, id: string, 
   return true;
 }
 
+/** Quantas mensagens da organização tiveram falha DEFINITIVA de envio desde `sinceISO` (metadata.send_failed_at). */
+export async function countRecentSendFailures(client: SupabaseClient, organizationId: string, sinceISO: string): Promise<number> {
+  const { count, error } = await client.from("messages").select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId).gte("metadata->>send_failed_at", sinceISO);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 // Backfills the real Evolution message id onto a row saved at send time
 // with evolution_message_id: null (see apps/worker/src/workers/send-message.ts).
 // Without this, the echo of our own outbound message that comes back through
