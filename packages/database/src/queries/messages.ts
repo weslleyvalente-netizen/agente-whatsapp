@@ -66,6 +66,24 @@ export async function updateMessageContent(client: SupabaseClient, id: string, c
   if (error) throw error;
 }
 
+/**
+ * Marca uma mensagem NOSSA (agent/human_agent) cujo envio falhou de forma definitiva: ela nunca chegou ao WhatsApp.
+ * Grava `metadata.send_failed_at` (mesma chave do áudio/anexo do vendedor) e `metadata.send_error` (já sem segredos).
+ * Mensagens marcadas NÃO contam como resposta entregue (varredura de leads sem resposta, aposentadoria de silêncio,
+ * follow-ups). Idempotente: a primeira marca vence. Só atua em mensagem que ainda não tem id da Evolution.
+ */
+export async function markMessageSendFailed(client: SupabaseClient, id: string, sendError: string): Promise<boolean> {
+  const { data, error } = await client.from("messages").select("id, evolution_message_id, metadata").eq("id", id).maybeSingle();
+  if (error) throw error;
+  const row = data as { evolution_message_id: string | null; metadata: Record<string, unknown> | null } | null;
+  if (!row || row.evolution_message_id || row.metadata?.send_failed_at) return false;
+  const { error: upErr } = await client.from("messages")
+    .update({ metadata: { ...(row.metadata ?? {}), send_failed_at: new Date().toISOString(), send_error: sendError.slice(0, 300) } })
+    .eq("id", id).is("evolution_message_id", null);
+  if (upErr) throw upErr;
+  return true;
+}
+
 // Backfills the real Evolution message id onto a row saved at send time
 // with evolution_message_id: null (see apps/worker/src/workers/send-message.ts).
 // Without this, the echo of our own outbound message that comes back through
@@ -302,7 +320,7 @@ export async function getLastOutboundAtForPhone(
   const convIds = (convs ?? []).map((c: { id: string }) => c.id);
   if (convIds.length === 0) return null;
   const { data, error } = await client
-    .from("messages").select("created_at").in("conversation_id", convIds).in("role", ["agent", "human_agent"])
+    .from("messages").select("created_at").in("conversation_id", convIds).in("role", ["agent", "human_agent"]).is("metadata->>send_failed_at", null)
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   return (data as { created_at: string } | null)?.created_at ?? null;

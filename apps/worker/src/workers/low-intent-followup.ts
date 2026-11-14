@@ -36,7 +36,7 @@ export async function runLowIntentFollowup(db: ReturnType<typeof getAdminClient>
   if(!isWithinBusinessHours(now,window.start,window.end)) return true;
   const history: Message[]=await readAll(()=>db.from("messages").select("role,created_at,metadata,evolution_message_id").eq("organization_id",org.id).eq("conversation_id",conversationId).gte("created_at",anchor).order("created_at"));
   const original=history.filter(m=>m.role==="agent" && !m.metadata?.low_intent_followup).at(-1);
-  if(!original || !org.settings.sales_low_intent_cadence_started_at || original.created_at < org.settings.sales_low_intent_cadence_started_at) return true;
+  if(!original || original.metadata?.send_failed_at || !org.settings.sales_low_intent_cadence_started_at || original.created_at < org.settings.sales_low_intent_cadence_started_at) return true;
   const closing=validateClosingSettings(org.settings.sales_low_intent_closing_message,org.settings.sales_low_intent_final_delay_hours);
   const originalTime=new Date(original.created_at).getTime();
   const attempts=history.filter(m=>m.metadata?.low_intent_followup?.anchor === anchor).map(m=>({stage:m.metadata!.low_intent_followup!.stage,confirmed:!!m.evolution_message_id,sentAtHours:(new Date(m.metadata?.low_intent_followup?.confirmed_at ?? m.created_at).getTime()-originalTime)/3600000}));

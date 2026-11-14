@@ -369,13 +369,22 @@ describe("aviso ao vendedor dono (push) e segundo estágio ao dono da loja", () 
   });
 });
 
-describe("sendEvolutionAlert: falhas antes do HTTP são definitivas (liberam as chaves)", () => {
+describe("sendEvolutionAlert: instância conectada e falhas definitivas (liberam as chaves)", () => {
   const env = { ...process.env };
   const fetchMock = vi.fn();
+  // GET /instance/connectionState/<nome> devolve o estado dado; POST /message/sendText/<nome> usa `send`.
+  const evo = (states: Record<string, string>, send: (name: string) => unknown = () => ({ ok: true, status: 201 })) => {
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+      const name = decodeURIComponent(url.split("/").pop()!);
+      if (url.includes("/instance/connectionState/")) return { ok: true, status: 200, json: async () => ({ instance: { state: states[name] ?? "close" } }) };
+      return send(name);
+    });
+  };
+  const sendCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("/message/sendText/")).map(([u]) => decodeURIComponent(String(u).split("/").pop()!));
   beforeEach(() => {
     process.env.EVOLUTION_API_URL = "http://evo"; process.env.EVOLUTION_API_KEY = "k";
-    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "inst", active_agent_id: "a" }]);
-    vi.stubGlobal("fetch", fetchMock); fetchMock.mockReset();
+    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "inst", active_agent_id: "a", created_at: "2026-07-01T00:00:00Z" }]);
+    vi.stubGlobal("fetch", fetchMock); fetchMock.mockReset(); evo({ inst: "open" });
   });
   afterEach(() => { process.env = { ...env }; vi.unstubAllGlobals(); });
 
@@ -385,7 +394,7 @@ describe("sendEvolutionAlert: falhas antes do HTTP são definitivas (liberam as 
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("sem instância ativa", async () => {
-    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "i", active_agent_id: null }]);
+    db.getInstancesByOrganization.mockResolvedValue([{ instance_name: "i", active_agent_id: null, created_at: "2026-07-01T00:00:00Z" }]);
     await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -395,14 +404,73 @@ describe("sendEvolutionAlert: falhas antes do HTTP são definitivas (liberam as 
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("HTTP 500 é definitivo; timeout/rede é ambíguo (erro comum)", async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+    evo({ inst: "open" }, () => ({ ok: false, status: 500, text: async () => "" }));
     await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
-    fetchMock.mockRejectedValue(new Error("The operation was aborted due to timeout"));
+    evo({ inst: "open" }, () => { throw new Error("The operation was aborted due to timeout"); });
     const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
     expect(err).toBeInstanceOf(Error); expect(err).not.toBeInstanceOf(DefinitiveSendError);
   });
   it("sucesso", async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 201 });
     await expect(sendEvolutionAlert("o", "1", "t")).resolves.toBeUndefined();
+    expect(sendCalls()).toEqual(["inst"]);
+  });
+
+  describe("incidente de 14/11: duas instâncias, a mais nova desconectada", () => {
+    beforeEach(() => {
+      db.getInstancesByOrganization.mockResolvedValue([
+        { instance_name: "Pos venda", active_agent_id: "a", created_at: "2026-11-09T17:40:36Z" },
+        { instance_name: "weslley", active_agent_id: "a", created_at: "2026-07-20T14:34:10Z" },
+      ]);
+    });
+    it("envia pela conectada (weslley) e NUNCA toca a desconectada", async () => {
+      evo({ "Pos venda": "close", weslley: "open" });
+      await sendEvolutionAlert("o", "5562900000000", "t");
+      expect(sendCalls()).toEqual(["weslley"]);
+    });
+    it("ordem do banco irrelevante: o estado real manda, não o status gravado", async () => {
+      db.getInstancesByOrganization.mockResolvedValue([
+        { instance_name: "weslley", active_agent_id: "a", created_at: "2026-07-20T14:34:10Z", status: "disconnected" },
+        { instance_name: "Pos venda", active_agent_id: "a", created_at: "2026-11-09T17:40:36Z", status: "connected" },
+      ]);
+      evo({ "Pos venda": "close", weslley: "open" });
+      await sendEvolutionAlert("o", "1", "t");
+      expect(sendCalls()).toEqual(["weslley"]);
+    });
+    it("nenhuma conectada: erro definitivo claro, sem nenhum envio", async () => {
+      evo({ "Pos venda": "close", weslley: "close" });
+      const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+      expect(err).toBeInstanceOf(DefinitiveSendError); expect(err.message).toContain("nenhuma instância conectada"); expect(err.message).toContain("Pos venda=close");
+      expect(sendCalls()).toEqual([]);
+    });
+    it("a conectada recusa (400): tenta a próxima conectada; mensagem de erro traz instância e motivo, sem segredos nem telefone", async () => {
+      db.getInstancesByOrganization.mockResolvedValue([
+        { instance_name: "a", active_agent_id: "x", created_at: "2026-07-01T00:00:00Z" }, { instance_name: "b", active_agent_id: "x", created_at: "2026-08-01T00:00:00Z" },
+      ]);
+      evo({ a: "open", b: "open" }, (name) => name === "a" ? { ok: false, status: 400, text: async () => JSON.stringify({ response: { message: ["Connection Closed"] } }) + " apikey: SEGREDO123 5562996188374" } : { ok: true, status: 201 });
+      await sendEvolutionAlert("o", "1", "t");
+      expect(sendCalls()).toEqual(["a", "b"]);
+      evo({ a: "open", b: "open" }, () => ({ ok: false, status: 400, text: async () => "apikey: SEGREDO123 para 5562996188374" }));
+      const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+      expect(err).toBeInstanceOf(DefinitiveSendError); expect(err.message).toContain("[a]"); expect(err.message).toContain("[b]"); expect(err.message).not.toMatch(/SEGREDO123|5562996188374/);
+    });
+    it("timeout na primeira conectada: NÃO tenta a segunda (evita duplicar o aviso)", async () => {
+      db.getInstancesByOrganization.mockResolvedValue([
+        { instance_name: "a", active_agent_id: "x", created_at: "2026-07-01T00:00:00Z" }, { instance_name: "b", active_agent_id: "x", created_at: "2026-08-01T00:00:00Z" },
+      ]);
+      evo({ a: "open", b: "open" }, () => { throw new Error("timeout"); });
+      const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+      expect(err).not.toBeInstanceOf(DefinitiveSendError); expect(sendCalls()).toEqual(["a"]);
+    });
+    it("Evolution inalcançável (estado desconhecido): NÃO tenta nenhuma instância; erro definitivo (as chaves são liberadas e a varredura seguinte retenta)", async () => {
+      fetchMock.mockImplementation(async (url: string) => { if (String(url).includes("connectionState")) throw new Error("down"); return { ok: true, status: 201 }; });
+      const err = await sendEvolutionAlert("o", "1", "t").catch((e) => e);
+      expect(err).toBeInstanceOf(DefinitiveSendError); expect(err.message).toContain("nenhuma instância conectada"); expect(err.message).toContain("weslley=unknown");
+      expect(sendCalls()).toEqual([]);
+    });
+    it("estado ilegível (resposta sem JSON) também não conta como conectada", async () => {
+      fetchMock.mockImplementation(async (url: string) => String(url).includes("connectionState") ? { ok: true, status: 200 } : { ok: true, status: 201 });
+      await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
+      expect(sendCalls()).toEqual([]);
+    });
   });
 });

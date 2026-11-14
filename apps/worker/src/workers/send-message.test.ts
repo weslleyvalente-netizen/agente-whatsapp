@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl } = vi.hoisted(() => ({
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed } = vi.hoisted(() => ({
+  markMessageSendFailed: vi.fn().mockResolvedValue(true),
   createSignedUrl: vi.fn(),
   getAdminClient: vi.fn(),
   updateMessageContent: vi.fn().mockResolvedValue(undefined),
@@ -12,7 +13,7 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageCon
 vi.mock("@aula-agente/database", () => ({
   shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
-  hasFrozenContact: vi.fn().mockResolvedValue(false), getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
+  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
 import * as database from "@aula-agente/database";
 import { processSendMessageJob } from "./send-message.js";
@@ -448,4 +449,86 @@ it("mantém aviso interno requestHuman com identificador sintético",async()=>{
  expect(global.fetch).toHaveBeenCalledTimes(1);
  vi.mocked(database.getMessageById).mockReset().mockResolvedValue(null);global.fetch=originalFetch;
 
+});
+
+describe("falha de envio: a mensagem deixa de contar como entregue", () => {
+  const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-1", phone: "5562996188374", content: "oi", organizationId: "org-1" };
+  const failing = (status = 400, body: unknown = { response: { message: ["Connection Closed"] } }) =>
+    vi.fn().mockResolvedValue({ ok: false, status, text: async () => JSON.stringify(body) + " apikey: SEGREDO123 5562996188374", json: async () => body });
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getInstanceById.mockResolvedValue({ instance_name: "Pos venda" });
+    getAdminClient.mockImplementation(() => ({})); markMessageSendFailed.mockClear();
+  });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("última tentativa falhou: marca como não enviada com o motivo (sem chave nem telefone) e repassa o erro", async () => {
+    global.fetch = failing() as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+    expect(markMessageSendFailed).toHaveBeenCalledTimes(1);
+    const [, id, reason] = markMessageSendFailed.mock.calls[0];
+    expect(id).toBe("msg-1"); expect(reason).toContain("400"); expect(reason).toContain("Connection Closed");
+    expect(reason).not.toMatch(/SEGREDO123|5562996188374/);
+  });
+  it("com retry pendente NÃO marca (ainda pode dar certo)", async () => {
+    global.fetch = failing() as never;
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(markMessageSendFailed).not.toHaveBeenCalled();
+  });
+  it("o erro lançado também não vaza chave nem telefone (aparece no log do BullMQ)", async () => {
+    global.fetch = failing() as never;
+    const err = await processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never).catch((e) => e);
+    expect(String(err.message)).not.toMatch(/SEGREDO123|5562996188374/);
+  });
+  it("sucesso não marca; aviso interno (handoff-notify) nunca marca", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "E1" } }), text: async () => "" }) as never;
+    await processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never);
+    global.fetch = failing() as never;
+    await expect(processSendMessageJob({ data: { ...data, messageId: "handoff-notify-1" }, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
+    expect(markMessageSendFailed).not.toHaveBeenCalled();
+  });
+  it("falha ao gravar a marca não esconde o erro original", async () => {
+    global.fetch = failing() as never; markMessageSendFailed.mockRejectedValueOnce(new Error("db down"));
+    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+  });
+});
+
+describe("roteamento das conversas comerciais NÃO usa a seleção de instância dos avisos internos", () => {
+  beforeEach(() => {
+    process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
+    getAdminClient.mockImplementation(() => ({}));
+  });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("envia SEMPRE pela instância gravada na conversa (job.instanceId), mesmo desconectada; nunca consulta estado nem troca de instância", async () => {
+    // A instância da conversa ("Pos venda") está desconectada e existe outra conectada: o envio comercial NÃO a substitui.
+    getInstanceById.mockImplementation(async (_db: unknown, id: string) => (id === "inst-pos-venda" ? { instance_name: "Pos venda" } : { instance_name: "weslley" }));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => JSON.stringify({ response: { message: ["Connection Closed"] } }), json: async () => ({}) });
+    global.fetch = fetchMock as never;
+    const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-pos-venda", phone: "5562900000000", content: "oi", organizationId: "org-1" };
+    await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
+    expect(getInstanceById).toHaveBeenCalledWith(expect.anything(), "inst-pos-venda");
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls).toEqual(["https://evolution.test/message/sendText/Pos venda"]); // uma chamada, na instância da conversa
+    expect(urls.some((u) => u.includes("connectionState") || u.includes("fetchInstances") || u.includes("weslley"))).toBe(false);
+  });
+
+  it("o código de envio comercial e de roteamento não referencia a seleção de avisos (varredura de fonte)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const roots = [fileURLToPath(new URL("..", import.meta.url)), fileURLToPath(new URL("../../../api/src", import.meta.url))];
+    const allowed = new Set(["unanswered-lead-sweep.ts", "health-monitor.ts"]); // únicos usos permitidos: avisos internos
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) { if (name !== "node_modules" && name !== "dist") walk(full); continue; }
+        if (!name.endsWith(".ts") || name.endsWith(".test.ts") || allowed.has(name)) continue;
+        if (/rankSendInstances|deliverViaConnectedInstance|fetchConnectionState/.test(readFileSync(full, "utf8"))) offenders.push(full);
+      }
+    };
+    roots.forEach(walk);
+    expect(offenders).toEqual([]);
+  });
 });

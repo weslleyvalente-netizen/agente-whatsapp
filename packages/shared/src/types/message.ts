@@ -22,8 +22,10 @@ export interface MessageMetadata {
   source?: "task_followup" | "automatic_followup" | "seller_audio" | "seller_attachment";
   // Estado da mídia (imagem/vídeo/documento) guardada no Storage.
   media?: { status: "stored" | "too_large" | "failed"; file_name?: string; mime_type?: string; size_bytes?: number };
-  // Envio do áudio do vendedor falhou (ISO).
+  // O envio falhou de forma definitiva (ISO): a mensagem nunca chegou ao WhatsApp. Vale para qualquer mensagem nossa.
   send_failed_at?: string;
+  // Motivo resumido do envio que falhou (status HTTP e mensagem da Evolution, sem chaves nem telefones).
+  send_error?: string;
   task_id?: string;
   audio_transcribed_at?: string;
   low_intent_followup?: { anchor: string; stage: 1 | 2 | 3; confirmed_at?: string };

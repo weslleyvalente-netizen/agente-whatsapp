@@ -268,7 +268,8 @@ export function startStaleConversationFollowupWorker() {
               // last message tells us whether Helena is the one waiting.
               const lastMessages = await getRecentMessages(db, conversation.id, 1);
               const lastMessage = lastMessages[0];
-              if (!shouldConsiderAutomaticFollowup(lastMessage?.role ?? null)) continue;
+              // Mensagem da IA que falhou ao enviar (send_failed_at) não conta como resposta entregue: não há "silêncio do cliente" a cobrar.
+              if (!shouldConsiderAutomaticFollowup(lastMessage?.role ?? null, lastMessage?.metadata)) continue;
 
               // Correction #2: anchor the two windows to when the customer
               // actually went quiet, not to last_message_at (which Helena's
@@ -398,7 +399,7 @@ export function startStaleConversationFollowupWorker() {
 
                 const latestMessages = await getRecentMessages(db, conversation.id, 1);
                 const latestMessage = latestMessages[0];
-                if (!shouldConsiderAutomaticFollowup(latestMessage?.role ?? null)) continue;
+                if (!shouldConsiderAutomaticFollowup(latestMessage?.role ?? null, latestMessage?.metadata)) continue;
 
                 const phone = fullConversation.wa_contacts?.phone;
                 if (!phone) {

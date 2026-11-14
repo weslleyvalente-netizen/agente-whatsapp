@@ -1,8 +1,11 @@
 import { probeRedis } from "../lib/redis-probe.js";
-import { isBusinessOpen, resolveBusinessCalendar } from "@aula-agente/shared";
+import {
+  isBusinessOpen, resolveBusinessCalendar, deliverViaConnectedInstance, describeInstanceStates, EvolutionRejectedError, fetchInstanceOwners, findDuplicateOwners,
+  normalizeConnectionState, rankSendInstances, sanitizeEvolutionError, type InstanceCandidate,
+} from "@aula-agente/shared";
 import type { BusinessCalendar } from "@aula-agente/shared";
 import { getAdminClient, getAllOrganizations, getInstancesByOrganization, sendPushToUser } from "@aula-agente/database";
-import { getInstanceStatus, sendText } from "./evolution.service.js";
+import { EvolutionHttpError, getInstanceStatus, sendText } from "./evolution.service.js";
 
 // Alerta de silêncio. Roda no processo da API (setInterval) e guarda o estado em memória:
 // se o Redis cair, o worker cai junto, então nada aqui pode depender de fila nem de Redis
@@ -31,6 +34,8 @@ export interface HealthInputs {
   historicalAvgInWindow: number;
   redis: RedisState;
   evolution: EvolutionState;
+  /** Nomes das instâncias que não estão abertas (só informativo, vai na mensagem do alerta). */
+  evolutionDetail?: string[];
 }
 
 export interface HealthAlert { code: AlertCode; message: string }
@@ -49,7 +54,7 @@ export function decideHealth(i: HealthInputs): HealthDecision {
       alerts.push({ code: "silence", message: `Sem mensagens de clientes ${ago}${hint}` });
     }
     if (i.redis === "down") alerts.push({ code: "redis", message: "Redis fora do ar ou lento (a fila de mensagens pode estar parada)" });
-    if (i.evolution === "disconnected") alerts.push({ code: "evolution", message: "WhatsApp (Evolution) desconectado" });
+    if (i.evolution === "disconnected") alerts.push({ code: "evolution", message: `WhatsApp (Evolution) desconectado${i.evolutionDetail?.length ? `: ${i.evolutionDetail.join(", ")}` : ""}` });
     else if (i.evolution === "unknown") alerts.push({ code: "evolution", message: "Não foi possível consultar o estado do WhatsApp (Evolution)" });
   }
   return { status: alerts.length ? "warning" : "ok", alerts, reasons: alerts.map((a) => a.message) };
@@ -94,6 +99,10 @@ export interface HealthDeps {
   historicalAvgInWindow(organizationId: string, now: Date): Promise<number>;
   pingRedis(): Promise<RedisState>;
   evolutionState(organizationId: string): Promise<EvolutionState>;
+  /** Opcional: instâncias com agente ativo que NÃO estão abertas (para nomear no alerta). */
+  disconnectedInstances?(organizationId: string): Promise<string[]>;
+  /** Opcional: grupos de instâncias que reportam o MESMO número (pareamento duplicado). */
+  duplicateNumberInstances?(organizationId: string): Promise<string[][]>;
   sendWhatsApp(organizationId: string, phone: string, text: string): Promise<void>;
   // Push para owners/admins da organização. Canal independente do WhatsApp.
   sendPush(organizationId: string, text: { title: string; body: string }): Promise<void>;
@@ -115,6 +124,7 @@ function clock(now: Date, timeZone: string): string {
   }
 }
 
+const loggedDuplicateGroups = new Set<string>();
 const snapshots = new Map<string, HealthSnapshot>();
 const notifyStates = new Map<string, NotifyState>();
 export const getSnapshot = (organizationId: string) => snapshots.get(organizationId);
@@ -134,9 +144,19 @@ export async function evaluateOrganization(
     deps.evolutionState(ctx.organizationId).catch((): EvolutionState => "unknown"),
   ]);
   const openThroughout = isOpenThroughout(now, calendar);
+  const evolutionDetail = evolution === "disconnected" && deps.disconnectedInstances
+    ? await deps.disconnectedInstances(ctx.organizationId).catch((): string[] => []) : [];
+  if (deps.duplicateNumberInstances) {
+    const groups = await deps.duplicateNumberInstances(ctx.organizationId).catch((): string[][] => []);
+    const key = `${ctx.organizationId}|${groups.map((g) => [...g].sort().join("+")).sort().join(";")}`;
+    if (groups.length && !loggedDuplicateGroups.has(key)) {
+      loggedDuplicateGroups.add(key);
+      deps.log.error({ organizationId: ctx.organizationId, instances: groups }, "health-monitor: instâncias Evolution com o MESMO número de WhatsApp (pareamento duplicado)");
+    }
+  }
   const decision = decideHealth({
     now, businessOpenThroughout: openThroughout,
-    lastCustomerMessageAt: last, historicalAvgInWindow: avg, redis, evolution,
+    lastCustomerMessageAt: last, historicalAvgInWindow: avg, redis, evolution, evolutionDetail,
   });
   const snapshot: HealthSnapshot = {
     status: decision.status, reasons: decision.reasons,
@@ -184,7 +204,16 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 async function activeInstances(organizationId: string) {
   const list = await getInstancesByOrganization(getAdminClient(), organizationId);
-  return (list as Array<{ instance_name: string; active_agent_id: string | null }>).filter((i) => i.active_agent_id);
+  return (list as Array<{ instance_name: string; active_agent_id: string | null; created_at: string }>).filter((i) => i.active_agent_id);
+}
+
+/** Estado REAL de cada instância com agente ativo, consultado na Evolution (o status gravado no banco não é confiável). */
+async function liveCandidates(organizationId: string): Promise<InstanceCandidate[]> {
+  const instances = await activeInstances(organizationId);
+  return Promise.all(instances.map(async (i) => ({
+    name: i.instance_name, createdAt: i.created_at ?? "", activeAgent: true,
+    liveState: await withTimeout(getInstanceStatus(i.instance_name), 8000).then(normalizeConnectionState, () => "unknown" as const),
+  })));
 }
 
 export const defaultDeps: HealthDeps = {
@@ -215,20 +244,32 @@ export const defaultDeps: HealthDeps = {
     return (await probeRedis()) ? "ok" : "down";
   },
   async evolutionState(organizationId) {
-    const instances = await activeInstances(organizationId);
-    if (instances.length === 0) return "connected"; // nada para monitorar
-    let allOpen = true;
-    for (const i of instances) {
-      const status = await withTimeout(getInstanceStatus(i.instance_name), 8000);
-      if (status?.instance?.state !== "open") allOpen = false;
-    }
-    return allOpen ? "connected" : "disconnected";
+    const live = await liveCandidates(organizationId);
+    if (live.length === 0) return "connected"; // nada para monitorar
+    if (live.every((c) => c.liveState === "unknown")) return "unknown";
+    return live.every((c) => c.liveState === "open") ? "connected" : "disconnected";
+  },
+  async disconnectedInstances(organizationId) {
+    return (await liveCandidates(organizationId)).filter((c) => c.liveState !== "open").map((c) => `${c.name} (${c.liveState === "unknown" ? "sem resposta" : c.liveState === "close" ? "desconectada" : c.liveState})`);
+  },
+  async duplicateNumberInstances(organizationId) {
+    if (!process.env.EVOLUTION_API_URL || !process.env.EVOLUTION_API_KEY) return [];
+    const mine = new Set((await activeInstances(organizationId)).map((i) => i.instance_name));
+    const owners = (await fetchInstanceOwners({ baseUrl: process.env.EVOLUTION_API_URL, apiKey: process.env.EVOLUTION_API_KEY })).filter((o) => mine.has(o.name));
+    return findDuplicateOwners(owners);
   },
   async sendWhatsApp(organizationId, phone, text) {
     // Direto pela Evolution, de propósito: a fila send-message depende do Redis, que pode ser a causa do alerta.
-    const [instance] = await activeInstances(organizationId);
-    if (!instance) throw new Error("no active instance");
-    await sendText(instance.instance_name, { number: phone, text });
+    // Só por instância comprovadamente conectada (a mais nova pode estar desconectada). Não muda a instância das conversas comerciais.
+    const live = await liveCandidates(organizationId);
+    await deliverViaConnectedInstance(rankSendInstances(live), async (name) => {
+      try { await sendText(name, { number: phone, text }); }
+      catch (err) {
+        // Recusa explícita da Evolution (nada entregue) passa para a próxima; timeout/rede é ambíguo e para.
+        if (err instanceof EvolutionHttpError) throw new EvolutionRejectedError(err.status, `[${name}] ${sanitizeEvolutionError(err.status, err.body)}`);
+        throw err;
+      }
+    }, describeInstanceStates(live));
   },
   async sendPush(organizationId, text) {
     const db = getAdminClient();

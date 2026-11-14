@@ -359,4 +359,15 @@ describe("shouldConsiderAutomaticFollowup", () => {
   it("does not consider it when there is no message yet", () => {
     expect(shouldConsiderAutomaticFollowup(null)).toBe(false);
   });
+
+  it("não conta como resposta entregue a mensagem da IA que falhou ao enviar (send_failed_at)", () => {
+    expect(shouldConsiderAutomaticFollowup("agent", { send_failed_at: "2026-11-13T19:47:20Z" })).toBe(false);
+    expect(shouldConsiderAutomaticFollowup("agent", { send_failed_at: "2026-11-13T19:47:20Z", send_error: "Evolution API send error 400" })).toBe(false);
+  });
+
+  it("mensagem da IA com metadata sem falha continua elegível", () => {
+    expect(shouldConsiderAutomaticFollowup("agent", {})).toBe(true);
+    expect(shouldConsiderAutomaticFollowup("agent", null)).toBe(true);
+    expect(shouldConsiderAutomaticFollowup("agent", { model: "x" })).toBe(true);
+  });
 });

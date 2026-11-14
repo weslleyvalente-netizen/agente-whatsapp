@@ -9,7 +9,12 @@ vi.mock("@aula-agente/database", () => ({
   }),
   getAllOrganizations: vi.fn(), getInstancesByOrganization: vi.fn(), sendPushToUser: pushMock,
 }));
-vi.mock("./evolution.service.js", () => ({ getInstanceStatus: vi.fn(), sendText: vi.fn() }));
+const evo = vi.hoisted(() => {
+  class EvolutionHttpError extends Error { constructor(public status: number, public body: string) { super(`Evolution API error ${status}: ${body}`); this.name = "EvolutionHttpError"; } }
+  return { EvolutionHttpError, getInstanceStatus: vi.fn(), sendText: vi.fn() };
+});
+vi.mock("./evolution.service.js", () => evo);
+import * as dbMock from "@aula-agente/database";
 
 import {
   defaultDeps, decideHealth, planNotifications, newNotifyState, evaluateOrganization, resetHealthMonitorState, getSnapshot,
@@ -276,5 +281,61 @@ describe("defaultDeps.sendPush", () => {
     pushMock.mockRejectedValueOnce(new Error("x")).mockResolvedValueOnce({ sent: 1, removed: 0, failed: 0 });
     await expect(defaultDeps.sendPush("org", { title: "T", body: "B" })).resolves.toBeUndefined();
     expect(pushMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe("seleção da instância Evolution (incidente de 14/11: 'Pos venda' desconectada era escolhida)", () => {
+  const instances = [
+    { instance_name: "Pos venda", active_agent_id: "a", created_at: "2026-11-09T17:40:36Z" },
+    { instance_name: "weslley", active_agent_id: "a", created_at: "2026-07-20T14:34:10Z" },
+  ];
+  const states = (m: Record<string, string>) => evo.getInstanceStatus.mockImplementation(async (n: string) => ({ instance: { state: m[n] ?? "close" } }));
+  beforeEach(() => { vi.mocked(dbMock.getInstancesByOrganization).mockResolvedValue(instances as never); evo.getInstanceStatus.mockReset(); evo.sendText.mockReset().mockResolvedValue({}); });
+
+  it("WhatsApp do alerta sai pela instância conectada, nunca pela desconectada", async () => {
+    states({ "Pos venda": "close", weslley: "open" });
+    await defaultDeps.sendWhatsApp("org", "5562900000000", "oi");
+    expect(evo.sendText).toHaveBeenCalledTimes(1);
+    expect(evo.sendText.mock.calls[0][0]).toBe("weslley");
+  });
+  it("nenhuma conectada: erro claro e nenhum envio", async () => {
+    states({ "Pos venda": "close", weslley: "close" });
+    await expect(defaultDeps.sendWhatsApp("org", "1", "x")).rejects.toThrow(/nenhuma instância conectada/);
+    expect(evo.sendText).not.toHaveBeenCalled();
+  });
+  it("recusa 400 da primeira conectada passa para a próxima; erro sem segredo nem telefone", async () => {
+    vi.mocked(dbMock.getInstancesByOrganization).mockResolvedValue([{ instance_name: "a", active_agent_id: "x", created_at: "2026-07-01T00:00:00Z" }, { instance_name: "b", active_agent_id: "x", created_at: "2026-08-01T00:00:00Z" }] as never);
+    states({ a: "open", b: "open" });
+    evo.sendText.mockRejectedValueOnce(new evo.EvolutionHttpError(400, "apikey: SEGREDO 5562996188374")).mockResolvedValueOnce({});
+    await defaultDeps.sendWhatsApp("org", "5562996188374", "x");
+    expect(evo.sendText.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
+    evo.sendText.mockReset().mockRejectedValue(new evo.EvolutionHttpError(400, "apikey: SEGREDO 5562996188374"));
+    const err = await defaultDeps.sendWhatsApp("org", "5562996188374", "x").catch((e) => e);
+    expect(String(err.message)).not.toMatch(/SEGREDO|5562996188374/);
+  });
+  it("evolutionState usa o estado REAL: desconectada = disconnected; todas abertas = connected; nenhuma resposta = unknown", async () => {
+    states({ "Pos venda": "close", weslley: "open" });
+    expect(await defaultDeps.evolutionState("org")).toBe("disconnected");
+    states({ "Pos venda": "open", weslley: "open" });
+    expect(await defaultDeps.evolutionState("org")).toBe("connected");
+    evo.getInstanceStatus.mockRejectedValue(new Error("down"));
+    expect(await defaultDeps.evolutionState("org")).toBe("unknown");
+  });
+  it("o alerta nomeia a instância desconectada", async () => {
+    states({ "Pos venda": "close", weslley: "open" });
+    expect(await defaultDeps.disconnectedInstances!("org")).toEqual(["Pos venda (desconectada)"]);
+    expect(decideHealth(base({ evolution: "disconnected", evolutionDetail: ["Pos venda (desconectada)"] })).reasons).toContain("WhatsApp (Evolution) desconectado: Pos venda (desconectada)");
+    expect(decideHealth(base({ evolution: "disconnected" })).reasons).toContain("WhatsApp (Evolution) desconectado");
+  });
+  it("número duplicado entre instâncias é registrado uma única vez, sem expor o número", async () => {
+    resetHealthMonitorState();
+    const log = { error: vi.fn() };
+    const deps = { lastCustomerMessageAt: async () => null, historicalAvgInWindow: async () => 0, pingRedis: async () => "ok" as const, evolutionState: async () => "connected" as const,
+      duplicateNumberInstances: async () => [["Pos venda", "weslley"]], sendWhatsApp: async () => {}, sendPush: async () => {}, log } as HealthDeps;
+    await evaluateOrganization(deps, { organizationId: "org-dup", settings: {} }, { notify: false });
+    await evaluateOrganization(deps, { organizationId: "org-dup", settings: {} }, { notify: false });
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(log.error.mock.calls[0])).toContain("Pos venda"); expect(JSON.stringify(log.error.mock.calls[0])).not.toMatch(/\d{8,}/);
   });
 });
