@@ -23,6 +23,10 @@ describe("low intent followup",()=>{
  it("does not advance after an unconfirmed delivery",async()=>{
   await runLowIntentFollowup(db([{role:"agent",created_at:anchor,metadata:null},{role:"agent",evolution_message_id:null,metadata:{low_intent_followup:{anchor,stage:1}}}]) as any,org as any,"c",anchor,new Date("2026-10-02T09:00Z"));expect(m.add).not.toHaveBeenCalled();
  });
+ it("não cobra um cliente que nunca recebeu a nossa primeira resposta (envio falhou)",async()=>{
+  const handled=await runLowIntentFollowup(db([{role:"agent",created_at:anchor,metadata:{send_failed_at:"2026-10-01T10:00:05Z",send_error:"Evolution API send error 400"}}]) as any,org as any,"c",anchor,new Date("2026-10-01T11:00Z"));
+  expect(handled).toBe(true);expect(m.add).not.toHaveBeenCalled();expect(m.createMessage).not.toHaveBeenCalled();
+ });
  it("keeps human handoffs and advanced deals in their existing flow",async()=>{
   m.getOpenHandoffEvent.mockResolvedValue({id:"handoff"});expect(await runLowIntentFollowup(db() as any,org as any,"c",anchor,new Date())).toBe(false);expect(m.add).not.toHaveBeenCalled();
   m.getOpenHandoffEvent.mockResolvedValue(null);expect(await runLowIntentFollowup(db([],[{status:"open",stage:"membership",waiting_on:null}]) as any,org as any,"c",anchor,new Date())).toBe(false);

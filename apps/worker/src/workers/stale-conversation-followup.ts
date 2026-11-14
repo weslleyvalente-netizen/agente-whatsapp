@@ -269,6 +269,8 @@ export function startStaleConversationFollowupWorker() {
               const lastMessages = await getRecentMessages(db, conversation.id, 1);
               const lastMessage = lastMessages[0];
               if (!shouldConsiderAutomaticFollowup(lastMessage?.role ?? null)) continue;
+              // A última mensagem nossa falhou ao enviar: o cliente nunca a recebeu, então não há "silêncio do cliente" para cobrar.
+              if ((lastMessage?.metadata as Record<string, unknown> | null | undefined)?.send_failed_at) continue;
 
               // Correction #2: anchor the two windows to when the customer
               // actually went quiet, not to last_message_at (which Helena's

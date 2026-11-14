@@ -88,7 +88,7 @@ export async function listStaleUnprocessedRouted(db: SupabaseClient, organizatio
 /** Existe resposta nossa (IA, humano ou sistema) na conversa depois do instante informado? */
 export async function hasOutboundMessageAfter(db: SupabaseClient, conversationId: string, afterIso: string): Promise<boolean> {
   const { count, error } = await db.from("messages").select("id", { count: "exact", head: true })
-    .eq("conversation_id", conversationId).in("role", ["agent", "human_agent", "system"]).gt("created_at", afterIso);
+    .eq("conversation_id", conversationId).in("role", ["agent", "human_agent", "system"]).is("metadata->>send_failed_at", null).gt("created_at", afterIso);
   if (error) throw error;
   return (count ?? 0) > 0;
 }

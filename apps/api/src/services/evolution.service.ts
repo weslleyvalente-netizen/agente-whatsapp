@@ -6,6 +6,11 @@ interface SendTextPayload {
   text: string;
 }
 
+/** Resposta não-OK da Evolution: a requisição chegou e foi recusada (diferente de timeout/rede). Mantém a mensagem antiga. */
+export class EvolutionHttpError extends Error {
+  constructor(public readonly status: number, public readonly body: string) { super(`Evolution API error ${status}: ${body}`); this.name = "EvolutionHttpError"; }
+}
+
 async function evolutionFetch(path: string, options: RequestInit = {}) {
   const response = await fetch(`${EVOLUTION_API_URL}${path}`, {
     ...options,
@@ -18,7 +23,7 @@ async function evolutionFetch(path: string, options: RequestInit = {}) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Evolution API error ${response.status}: ${body}`);
+    throw new EvolutionHttpError(response.status, body);
   }
 
   return response.json();
