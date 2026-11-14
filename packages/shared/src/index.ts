@@ -60,3 +60,4 @@ export * from "./chat-media.js";
 
 export * from "./sla-nudge.js";
 export * from "./attachment.js";
+export * from "./waiting-on-sync.js";

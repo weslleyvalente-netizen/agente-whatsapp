@@ -1,6 +1,6 @@
 import type {SupabaseClient} from "@supabase/supabase-js";
 import type {SilenceRetirementInput,Task} from "@aula-agente/shared";
-import {OPEN_TASK_STATUSES,addTaskEvent} from "./tasks.js";
+import {OPEN_TASK_STATUSES,addTaskEvent,resolveAwaitingCustomerPendency} from "./tasks.js";
 
 export type SilenceRetirementCandidate = Omit<SilenceRetirementInput,"now"|"days"> & {rawTask: Task};
 
@@ -34,6 +34,11 @@ export async function getSilenceRetirementCandidates(db: SupabaseClient, organiz
 
 /** No deletes: cancels with a recorded reason. The updated_at compare-and-set preserves a task a human touched meanwhile. */
 export async function retireSilenceTask(db: SupabaseClient, organizationId: string, task: Task, reason: string): Promise<boolean> {
+ // Tarefa consolidada com outras obrigações: aposenta só a pendência de silêncio; o resto continua aberto.
+ if ((task.consolidated_pendencies ?? []).some(p => p.type !== "customer_unresponsive")) {
+  await resolveAwaitingCustomerPendency(db, organizationId, task.id, "customer_unresponsive", JSON.stringify({source: "silence_auto_retire", reason}));
+  return true;
+ }
  const {data, error} = await db.from("tasks").update({status: "cancelled", consolidated_pendencies: []}).eq("organization_id", organizationId).eq("id", task.id).eq("updated_at", task.updated_at).in("status", OPEN_TASK_STATUSES).select("id").maybeSingle();
  if (error) throw error;
  if (!data) return false;

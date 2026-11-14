@@ -65,6 +65,15 @@ export interface OrganizationSettings {
   unanswered_lead_sweep_enabled?: boolean;
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.
   customer_nudge_enabled?: boolean;
+  // "Cutucar cliente" com a consolidação de tarefas por negócio ligada: o lembrete vira UMA pendência na tarefa consolidada do negócio.
+  // Só === true liga; sem ele, org com consolidação ligada continua sem cutucar (comportamento anterior, sem disparo na implantação).
+  customer_nudge_consolidated_enabled?: boolean;
+  // Linha de corte (ISO) da ativação gradual: só conta mensagem do vendedor enviada a partir dela. Ausente = sem corte.
+  customer_nudge_baseline_at?: string;
+  // Teto de pendências novas por execução (a cada 30 min). Ausente = 25.
+  customer_nudge_max_new_per_run?: number;
+  // Sincroniza "Aguardando"/próxima ação só quando a mudança de responsabilidade é comprovada. Só === true liga.
+  waiting_on_sync_enabled?: boolean;
   // Botão "Sugerir mensagem" no card do funil (primeiro atendimento e follow-up, texto gerado por IA e editado pelo vendedor). Desligado por padrão: só === true liga.
   seller_message_suggestion_enabled?: boolean;
   max_documents: number;

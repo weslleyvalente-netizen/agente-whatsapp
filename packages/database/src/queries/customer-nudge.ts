@@ -88,25 +88,76 @@ export async function getMessageText(db: SupabaseClient, organizationId: string,
 
 export interface NudgeTaskRef { id: string; status: string; createdAt: string; completedAt: string | null }
 
-/** Todas as tarefas customer_nudge da conversa (abertas ou não): conta os toques e acha a aberta. */
+const OPEN_STATUSES = ["pending", "in_progress", "rescheduled"];
+export const NUDGE_TOUCH_EVENT = "customer_nudge_touch";
+/** Marca gravada na nota do evento de toque: liga o toque à CONVERSA (a tarefa consolidada pode ser de outra conversa do negócio). */
+export const nudgeTouchNote = (conversationId: string, touch: number) => `Cutucar cliente — toque ${touch} de 3 (nudge-conv:${conversationId})`;
+
+/** Instante em que a pendência "customer_nudge" entrou na tarefa; sem lista consolidada, a própria criação da tarefa (tarefa legada do tipo). */
+function nudgeAddedAt(task: { type: string; created_at: string; consolidated_pendencies?: Array<{ type: string; added_at: string }> | null }): string | null {
+  const own = (task.consolidated_pendencies ?? []).find((p) => p.type === "customer_nudge");
+  if (own) return own.added_at;
+  return task.type === "customer_nudge" ? task.created_at : null;
+}
+
+/**
+ * Toques já feitos na conversa (cada item = um toque), em DUAS fontes, sem contar duas vezes:
+ * 1) eventos `customer_nudge_touch` — sobrevivem à pendência ser removida da tarefa consolidada;
+ * 2) tarefas legadas do tipo customer_nudge criadas antes dos eventos existirem (sem evento próprio).
+ */
 export async function listNudgeTasksByConversation(db: SupabaseClient, organizationId: string, conversationId: string): Promise<NudgeTaskRef[]> {
-  const { data, error } = await db.from("tasks").select("id, status, created_at, completed_at")
+  const { data: tasks, error } = await db.from("tasks").select("id, status, created_at, completed_at")
     .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("type", "customer_nudge");
   if (error) throw error;
-  return ((data ?? []) as any[]).map((r) => ({ id: r.id, status: r.status, createdAt: r.created_at, completedAt: r.completed_at ?? null }));
+  const { data: events, error: evErr } = await db.from("task_events").select("task_id, created_at")
+    .eq("organization_id", organizationId).eq("event_type", NUDGE_TOUCH_EVENT).like("note", `%nudge-conv:${conversationId}%`);
+  if (evErr) throw evErr;
+  const evRows = (events ?? []) as Array<{ task_id: string; created_at: string }>;
+  const withEvent = new Set(evRows.map((e) => e.task_id));
+  const legacy = ((tasks ?? []) as any[]).filter((r) => !withEvent.has(r.id))
+    .map((r): NudgeTaskRef => ({ id: r.id, status: r.status, createdAt: r.created_at, completedAt: r.completed_at ?? null }));
+  // Evento de tarefa que ainda é do tipo customer_nudge: herda status/conclusão dela (o intervalo entre toques e o "aberto" seguem como antes).
+  const typedById = new Map(((tasks ?? []) as any[]).map((r) => [r.id, r]));
+  const fromEvents = evRows.map((e, i): NudgeTaskRef => {
+    const own = typedById.get(e.task_id);
+    return { id: `${e.task_id}#${i}`, status: own?.status ?? "completed", createdAt: e.created_at, completedAt: own?.completed_at ?? null };
+  });
+  return [...legacy, ...fromEvents];
+}
+
+/** Registra o toque na tarefa que o carrega (nova ou consolidada). Fonte da contagem de toques; não depende da pendência continuar na lista. */
+export async function recordNudgeTouch(db: SupabaseClient, organizationId: string, taskId: string, conversationId: string, touch: number): Promise<void> {
+  const { error } = await db.from("task_events").insert({
+    task_id: taskId, organization_id: organizationId, event_type: NUDGE_TOUCH_EVENT, note: nudgeTouchNote(conversationId, touch), created_by_type: "ai", created_by_id: null,
+  });
+  if (error) throw error;
 }
 
 export interface OpenNudgeTask { id: string; conversationId: string | null; contactId: string; opportunityId: string | null; createdAt: string }
 
-/** Tarefas customer_nudge abertas da organização (candidatas à resolução automática). */
+/**
+ * Tarefas abertas que carregam um "Cutucar cliente": do tipo customer_nudge OU com a pendência dentro da lista consolidada
+ * (com a consolidação ligada o tipo da tarefa vira o da pendência principal). `createdAt` = quando a PENDÊNCIA entrou.
+ */
 export async function listOpenNudgeTasks(db: SupabaseClient, organizationId: string): Promise<OpenNudgeTask[]> {
-  const rows = await fetchAllPages<any>(async (from, to) => {
-    const { data, error } = await db.from("tasks").select("id, conversation_id, contact_id, opportunity_id, created_at")
-      .eq("organization_id", organizationId).eq("type", "customer_nudge").in("status", ["pending", "in_progress", "rescheduled"]).order("id").range(from, to);
+  const select = "id, type, conversation_id, contact_id, opportunity_id, created_at, consolidated_pendencies";
+  const typed = await fetchAllPages<any>(async (from, to) => {
+    const { data, error } = await db.from("tasks").select(select)
+      .eq("organization_id", organizationId).eq("type", "customer_nudge").in("status", OPEN_STATUSES).order("id").range(from, to);
     if (error) throw error;
     return (data ?? []) as any[];
   });
-  return rows.map((r) => ({ id: r.id, conversationId: r.conversation_id ?? null, contactId: r.contact_id, opportunityId: r.opportunity_id ?? null, createdAt: r.created_at }));
+  const grouped = await fetchAllPages<any>(async (from, to) => {
+    const { data, error } = await db.from("tasks").select(select)
+      .eq("organization_id", organizationId).filter("consolidated_pendencies", "cs", JSON.stringify([{ type: "customer_nudge" }])).in("status", OPEN_STATUSES).order("id").range(from, to);
+    if (error) throw error;
+    return (data ?? []) as any[];
+  });
+  const byId = new Map<string, any>();
+  for (const r of [...typed, ...grouped]) byId.set(r.id, r);
+  return [...byId.values()].map((r) => ({
+    id: r.id, conversationId: ((r.consolidated_pendencies ?? []) as Array<{ type: string; conversation_id?: string | null }>).find((p) => p.type === "customer_nudge")?.conversation_id ?? r.conversation_id ?? null, contactId: r.contact_id, opportunityId: r.opportunity_id ?? null, createdAt: nudgeAddedAt(r) ?? r.created_at,
+  }));
 }
 
 /** Dos ids de negócio informados, quais seguem abertos. */
@@ -145,18 +196,18 @@ export async function completeNudgeTask(db: SupabaseClient, organizationId: stri
 }
 
 /**
- * O vendedor acabou de falar com o cliente: conclui na hora os lembretes "Cutucar cliente" abertos desta conversa
- * (o worker faz o mesmo a cada 30 min, como rede de segurança). Devolve quantos concluiu.
+ * O vendedor acabou de falar com o cliente: encerra na hora APENAS a pendência "Cutucar cliente" desta conversa
+ * (as demais obrigações da tarefa consolidada continuam abertas). O worker faz o mesmo a cada 30 min, como rede de segurança.
+ * Só encerra pendência criada ANTES da mensagem. Devolve quantas encerrou.
  */
 export async function completeNudgeTasksOnSellerMessage(db: SupabaseClient, organizationId: string, conversationId: string, atIso: string): Promise<number> {
-  const { data, error } = await db.from("tasks").select("id")
-    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("type", "customer_nudge")
-    .in("status", ["pending", "in_progress", "rescheduled"]).lt("created_at", atIso);
-  if (error) throw error;
+  const open = (await listOpenNudgeTasks(db, organizationId)).filter((t) => t.conversationId === conversationId && Date.parse(t.createdAt) < Date.parse(atIso));
   let done = 0;
-  for (const t of (data ?? []) as Array<{ id: string }>) {
-    try { await completeNudgeTask(db, organizationId, t.id, "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa)."); done++; }
-    catch (err) { console.error(`completeNudgeTasksOnSellerMessage: task ${t.id} failed:`, err); }
+  for (const t of open) {
+    try {
+      await resolveAwaitingCustomerPendency(db, organizationId, t.id, "customer_nudge", "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa).", 0, atIso);
+      done++;
+    } catch (err) { console.error(`completeNudgeTasksOnSellerMessage: task ${t.id} failed:`, err); }
   }
   return done;
 }

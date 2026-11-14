@@ -172,6 +172,16 @@ export function addBusinessMinutes(start: Date, minutes: number, calendar: Busin
   throw new Error("Calendário comercial sem janelas abertas.");
 }
 
+/** Duração (min) do dia útil mais longo do calendário: a régua de "1 dia útil" da escada do cutucar (seg–sex 07:30–18:00 = 630, não 600). */
+export function businessDayMinutes(calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): number {
+  let best = 0;
+  for (const day of WEEKDAYS) {
+    const total = (calendar.weekly[day] ?? []).reduce((sum, w) => sum + (minutesOf(w.end) - minutesOf(w.start)), 0);
+    if (total > best) best = total;
+  }
+  return best;
+}
+
 function validWindow(w: unknown): w is BusinessWindow {
   if (!w || typeof w !== "object") return false;
   const { start, end } = w as Record<string, unknown>;

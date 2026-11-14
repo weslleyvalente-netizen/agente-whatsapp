@@ -45,12 +45,20 @@ export const updateTaskSchema = z
     assigneeRefineMessage
   );
 
+// Tarefa consolidada: qual pendência encerrar/reagendar (omitido = a principal, a que a tarefa exibe).
+export const completeTaskSchema = z.object({
+  pendency_type: z.enum(TASK_TYPES).optional(),
+  note: z.string().max(2000).nullable().optional(),
+});
+
 export const rescheduleTaskSchema = z.object({
+  pendency_type: z.enum(TASK_TYPES).optional(),
   due_date: dateSchema,
   due_time: timeSchema.nullable().optional(),
 });
 
 export const cancelTaskSchema = z.object({
+  pendency_type: z.enum(TASK_TYPES).optional(),
   note: z.string().max(2000).nullable().optional(),
 });
 
