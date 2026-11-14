@@ -75,6 +75,7 @@ export type TaskEventType =
   | "opportunity_auto_linked"
   | "consolidated_pendency_added"
   | "consolidated_pendency_resolved"
+  | "customer_nudge_touch"
   | "libera_cred_resumption_created"
   | "libera_cred_resumption_escalated"
   | "libera_cred_resumption_suggest_lost"

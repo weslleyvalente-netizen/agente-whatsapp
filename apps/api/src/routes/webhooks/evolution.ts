@@ -38,6 +38,7 @@ import { invalidateSalesWorkspaceCache } from "../../services/sales-workspace.se
 import { handleConversationTakeover } from "../../services/task.service.js";
 import { enqueueProcessMessage, enqueueStoreCustomerAudio, enqueueStoreChatMedia, enqueueFetchProfilePicture } from "../../lib/queue.js";
 import { trackFirstHumanMessage } from "../../services/lead-human-message.js";
+import { syncWaitingOnAfterCustomerReply } from "../../services/waiting-on-sync.js";
 import { recordLeadOrigin } from "../../services/lead-origin.service.js";
 import { recordAdTouch } from "../../services/lead-ad-touch.service.js";
 import { runWithTimeout } from "../../lib/with-timeout.js";
@@ -682,6 +683,8 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       } catch (err) {
         request.log.error({ err, conversationId: conversation.id }, "Failed to resolve unresponsive tasks after customer reply");
       }
+      // "Aguardando cliente" posto pela regra de sincronização volta para a equipe quando o cliente responde (flag-gated; nunca lança).
+      await syncWaitingOnAfterCustomerReply(getAdminClient(), { organizationId, contactId: contact.id, role: message.role, content: message.content ?? null });
 
       // "Modo noite": takeover that came from the AI's own requestHuman, still
       // unanswered by a human, while the store is closed -> the AI keeps

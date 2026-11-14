@@ -27,6 +27,7 @@ import {
 } from "@aula-agente/database";
 import { canViewLead } from "../../lib/lead-access.js";
 import { clearStaleNextAction } from "../../services/clear-stale-next-action.js";
+import { syncWaitingOnAfterHumanCompletion } from "../../services/waiting-on-sync.js";
 import { resolveApiKey, generateTaskFollowupSuggestion } from "@aula-agente/agent-runtime";
 import {
   completeTask,
@@ -211,6 +212,7 @@ export default async function taskRoutes(app: FastifyInstance) {
 
     const completed = await completeTask(db, request.params.taskId, { type: "human", id: request.user.id });
     await clearStaleNextAction(db, existing);
+    await syncWaitingOnAfterHumanCompletion(db, existing); // só com waiting_on_sync_enabled; nunca lança
     return completed;
   });
 

@@ -527,6 +527,11 @@ export interface CreateTaskWithDedupInput {
   created_by_id: string | null;
   assignee_type?: TaskAssigneeType | null;
   assignee_id?: string | null;
+  /**
+   * Ao agrupar numa tarefa consolidada já aberta, passa o responsável para `assignee_id` (humano) quando ele difere:
+   * a pendência vai para quem é dono do negócio hoje, e não para quem abriu a tarefa antes (ex.: troca de vendedor).
+   */
+  assign_on_merge?: boolean;
 }
 
 // Best-effort: a settings-fetch failure (or an environment where
@@ -582,7 +587,7 @@ export async function createTaskWithDedup(
   client: SupabaseClient,
   input: CreateTaskWithDedupInput,
   conflictAttempt=0
-): Promise<{ task: Task; wasUpdated: boolean }> {
+): Promise<{ task: Task; wasUpdated: boolean; pendencyAdded?: boolean }> {
   const { autoLinkEnabled, consolidationEnabled } = await getTaskConsolidationSettings(
     client,
     input.organization_id
@@ -610,9 +615,14 @@ export async function createTaskWithDedup(
     const merged = upsertPendency(currentPendencies, toPendency(input));
     const primary = pickPrimaryPendency(merged)!;
     const primaryChanged = primary.type !== existing.type;
+    // Pendência nova (tipo ainda não estava na lista) x refresh de uma do mesmo tipo: quem chama conta só as novas.
+    const pendencyAdded = !currentPendencies.some((p) => p.type === input.type);
+    const reassign = input.assign_on_merge === true && input.assignee_type === "human" && !!input.assignee_id
+      && (existing.assignee_type !== "human" || existing.assignee_id !== input.assignee_id);
 
     let task:Task;
     try { task=await updateTask(client, existing.id, {
+      ...(reassign ? { assignee_type: "human" as const, assignee_id: input.assignee_id! } : {}),
       type: primary.type,
       title: TASK_TYPE_LABELS[primary.type],
       description: buildConsolidatedDescription(merged),
@@ -636,7 +646,17 @@ export async function createTaskWithDedup(
       created_by_type: input.created_by_type,
       created_by_id: input.created_by_id,
     });
-    return { task, wasUpdated: true };
+    if (reassign) {
+      await addTaskEvent(client, {
+        task_id: task.id,
+        organization_id: input.organization_id,
+        event_type: "assigned",
+        note: `Responsável ajustado para o dono atual do negócio ao agrupar ${TASK_TYPE_LABELS[input.type]}.`,
+        created_by_type: input.created_by_type,
+        created_by_id: input.created_by_id,
+      });
+    }
+    return { task, wasUpdated: true, pendencyAdded };
   }
 
   const decision = resolveTaskDedupAction(existing, {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BUSINESS_CALENDAR, type BusinessCalendar } from "./business-calendar.js";
-import { buildCustomerNudgeTask, decideCustomerNudge, DIA_UTIL, type CustomerNudgeInput } from "./customer-nudge.js";
+import { businessDayMinutes } from "./business-calendar.js";
+import { buildCustomerNudgeTask, customerNudgeIntervalMinutes, customerNudgeLadderMinutes, decideCustomerNudge, DIA_UTIL, type CustomerNudgeInput } from "./customer-nudge.js";
 
 // Caso Erica: vendedora falou quinta 29/10/2026 14:55 (BRT = UTC-3); 31/10 sábado; 02/11 segunda (Finados).
 const SENT = new Date("2026-10-29T17:55:00Z");
@@ -113,5 +114,53 @@ describe("buildCustomerNudgeTask", () => {
     expect(t.priority).toBe("high");
     expect(t.description).toContain("toque 3 de 3");
     expect(t.description).toContain("Se não houver retorno, considere encerrar ou marcar o negócio como perdido.");
+  });
+});
+
+// Calendário REAL da Moto e Trilha: seg–sex 07:30–18:00 (630 min), sábado 08:00–12:00.
+const MOTO: BusinessCalendar = {
+  timeZone: "America/Sao_Paulo", closedDates: ["2026-11-20"], closedPeriods: [],
+  weekly: { mon: [{ start: "07:30", end: "18:00" }], tue: [{ start: "07:30", end: "18:00" }], wed: [{ start: "07:30", end: "18:00" }], thu: [{ start: "07:30", end: "18:00" }], fri: [{ start: "07:30", end: "18:00" }], sat: [{ start: "08:00", end: "12:00" }] },
+};
+
+describe("calendário real da organização (dia útil = o dia mais longo do calendário, não 600 fixos)", () => {
+  it("businessDayMinutes: padrão 600; Moto e Trilha 630", () => {
+    expect(businessDayMinutes(DEFAULT_BUSINESS_CALENDAR)).toBe(600); expect(businessDayMinutes(MOTO)).toBe(630);
+  });
+  it("escada e intervalo escalam com o calendário", () => {
+    expect(customerNudgeLadderMinutes(MOTO)).toEqual([630, 1890, 4410]); expect(customerNudgeIntervalMinutes(MOTO)).toEqual([0, 1260, 2520]);
+    expect(customerNudgeLadderMinutes(DEFAULT_BUSINESS_CALENDAR)).toEqual([600, 1800, 4200]);
+  });
+  const sentRomario = new Date("2026-11-13T20:33:58.791Z"); // sexta 17:33 BRT
+  const romario = (iso: string) => decideCustomerNudge(base({ calendar: MOTO, lastSellerMessageAt: sentRomario, now: new Date(iso), todayISODate: iso.slice(0, 10) }));
+  it("caso Romario: sexta 17:33 BRT (27 min na sexta + 240 min no sábado + 363 na segunda) => toque 1 vence segunda 16/11 13:34 BRT", () => {
+    expect(romario("2026-11-14T14:00:00Z")).toEqual(skip("not_due_yet")); // sábado 11:00 BRT, aberto mas ainda não venceu
+    expect(romario("2026-11-16T16:33:00Z")).toEqual(skip("not_due_yet"));
+    expect(romario("2026-11-16T16:34:00Z")).toMatchObject({ action: "create", touch: 1 });
+  });
+  it("domingo e fora do expediente: nunca cria", () => {
+    expect(romario("2026-11-15T15:00:00Z")).toEqual(skip("outside_business_hours")); // domingo
+    expect(romario("2026-11-14T16:00:00Z")).toEqual(skip("outside_business_hours")); // sábado 13:00 BRT, após o fechamento
+  });
+  it("feriado do calendário (sexta 20/11) empurra o prazo: quinta 17:00 BRT => segunda 23/11 13:00 BRT", () => {
+    const sent = new Date("2026-11-19T20:00:00Z");
+    const d = (iso: string) => decideCustomerNudge(base({ calendar: MOTO, lastSellerMessageAt: sent, now: new Date(iso), todayISODate: iso.slice(0, 10) }));
+    expect(d("2026-11-20T15:00:00Z")).toEqual(skip("outside_business_hours")); // sexta fechada
+    expect(d("2026-11-23T15:59:00Z")).toEqual(skip("not_due_yet"));
+    expect(d("2026-11-23T16:00:00Z")).toMatchObject({ action: "create" });
+  });
+});
+
+describe("linha de corte da ativação gradual (sem disparo retroativo)", () => {
+  const sent = new Date("2026-10-29T17:55:00Z");
+  it("mensagem do vendedor antes do corte: histórico, não cobra", () => {
+    expect(decideCustomerNudge(base({ baselineAt: new Date("2026-10-30T00:00:00Z") }))).toEqual(skip("before_baseline"));
+  });
+  it("mensagem exatamente no corte ou depois: regra normal", () => {
+    expect(decideCustomerNudge(base({ baselineAt: sent, now: new Date("2026-10-30T17:55:00Z") }))).toMatchObject({ action: "create" });
+  });
+  it("sem corte: regra normal", () => expect(decideCustomerNudge(base({ baselineAt: null }))).toMatchObject({ action: "create" }));
+  it("o corte vem antes do 'too_old' (histórico antigo é explicado pelo corte)", () => {
+    expect(decideCustomerNudge(base({ baselineAt: new Date("2026-11-30T00:00:00Z"), now: new Date("2026-11-20T18:00:00Z") }))).toEqual(skip("before_baseline"));
   });
 });

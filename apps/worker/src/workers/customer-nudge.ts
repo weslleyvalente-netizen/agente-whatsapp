@@ -8,7 +8,7 @@ import {
   claimPushDedupe, completeNudgeTask, createTaskWithDedup, getAdminClient, getLastConversationMessage, getLastCustomerMessage, getMessageText, hasFrozenContact,
   hasPushSubscription, hasSellerMessageAfter, isPushConfigured, listContactIdsWithOpenOpportunity, listCurrentMemberIds, listCustomerNudgeOrganizations,
   listNudgeTasksByConversation, listOpenNudgeTasks, listOpenOpportunitiesForNudge, listOpenOpportunityIds, listRecentConversationsForContacts,
-  releasePushDedupe, sendPushToUser,
+  releasePushDedupe, recordNudgeTouch, sendPushToUser,
   type NudgeConversation, type NudgeMessage, type NudgeOpportunity, type NudgeOrganization, type NudgeTaskRef, type OpenNudgeTask, type PushPayload,
 } from "@aula-agente/database";
 
@@ -42,7 +42,10 @@ export interface NudgeDeps {
   isMember(organizationId: string, userId: string): Promise<boolean>;
   nudgeTasks(organizationId: string, conversationId: string): Promise<NudgeTaskRef[]>;
   isFrozen(organizationId: string, contactId: string): Promise<boolean>;
-  createTask(input: { organizationId: string; contactId: string; conversationId: string; opportunityId: string; ownerId: string; description: string; reason: string; priority: "normal" | "high"; dueDate: string }): Promise<{ id: string; wasUpdated: boolean }>;
+  /** `pendencyAdded`: com a consolidação ligada, o cutucar entrou como pendência numa tarefa já aberta do negócio (não é "tarefa já aberta"). */
+  createTask(input: { organizationId: string; contactId: string; conversationId: string; opportunityId: string; ownerId: string; description: string; reason: string; priority: "normal" | "high"; dueDate: string }): Promise<{ id: string; wasUpdated: boolean; pendencyAdded?: boolean }>;
+  /** Registra o toque (evento na tarefa que o carrega): a contagem de toques não depende da pendência continuar na lista consolidada. */
+  recordTouch(organizationId: string, taskId: string, conversationId: string, touch: number): Promise<void>;
   contactName(organizationId: string, contactId: string): Promise<string | null>;
   // Resolução automática
   listOpenNudgeTasks(organizationId: string): Promise<OpenNudgeTask[]>;
@@ -58,9 +61,16 @@ export interface NudgeDeps {
   log: { info(msg: string): void; error(msg: string): void };
 }
 
-export interface NudgeSummary { organizations: number; created: number; resolved: number; pushed: number; errors: number; skipped: Record<string, number> }
+export interface NudgeSummary {
+  organizations: number;
+  /** Negócios abertos vistos / conversas avaliadas (chegaram a olhar a última mensagem) / pendências criadas (`created`, das quais `grouped` entraram numa tarefa consolidada já aberta). */
+  opportunities: number; evaluated: number; created: number; grouped: number; resolved: number; pushed: number; errors: number;
+  /** Bloqueios por motivo (regra: not_due_yet, waiting_on_us, frozen, before_baseline…; ambiente: consolidation_not_activated, run_cap…). */
+  skipped: Record<string, number>;
+}
 
-export const nudgePushDedupeKey = (taskId: string) => `nudge:${taskId}`;
+/** Um push por TOQUE: numa tarefa consolidada o mesmo taskId carrega vários toques ao longo do tempo. */
+export const nudgePushDedupeKey = (taskId: string, touch?: number) => (touch === undefined ? `nudge:${taskId}` : `nudge:${taskId}:${touch}`);
 const errText = (e: unknown) => String((e as { message?: string } | null)?.message ?? e).replace(/\d{8,}/g, "***").slice(0, 200);
 
 /**
@@ -73,7 +83,7 @@ function pickOpportunity(list: NudgeOpportunity[]): NudgeOpportunity {
 }
 
 export async function runCustomerNudge(deps: NudgeDeps, now = new Date()): Promise<NudgeSummary> {
-  const summary: NudgeSummary = { organizations: 0, created: 0, resolved: 0, pushed: 0, errors: 0, skipped: {} };
+  const summary: NudgeSummary = { organizations: 0, opportunities: 0, evaluated: 0, created: 0, grouped: 0, resolved: 0, pushed: 0, errors: 0, skipped: {} };
   const skip = (reason: string) => { summary.skipped[reason] = (summary.skipped[reason] ?? 0) + 1; };
 
   let orgs: NudgeOrganization[];
@@ -83,22 +93,31 @@ export async function runCustomerNudge(deps: NudgeDeps, now = new Date()): Promi
 
   for (const org of orgs) {
     summary.organizations++;
-    const settings = org.settings as { business_calendar?: unknown; push_notifications_enabled?: unknown; task_consolidation_by_opportunity_enabled?: unknown };
+    const settings = org.settings as {
+      business_calendar?: unknown; push_notifications_enabled?: unknown; task_consolidation_by_opportunity_enabled?: unknown;
+      customer_nudge_consolidated_enabled?: unknown; customer_nudge_baseline_at?: unknown; customer_nudge_max_new_per_run?: unknown;
+    };
     const calendar = resolveBusinessCalendar(settings.business_calendar);
     try { summary.resolved += await resolveNudgeTasks(deps, org.id); }
     catch (err) { summary.errors++; deps.log.error(`customer-nudge: org ${org.id} auto-resolve failed (${errText(err)})`); }
-    // Consolidação por negócio funde tarefas (o tipo principal muda): a contagem de toques e a resolução deixariam de enxergar o cutucar.
-    if (settings.task_consolidation_by_opportunity_enabled === true) {
-      skip("consolidation_enabled");
-      deps.log.error(`customer-nudge: org ${org.id} skipped — task_consolidation_by_opportunity_enabled está ligada; o cutucar não cria tarefas nessa configuração`);
+    // Consolidação por negócio ligada: o cutucar entra como UMA pendência na tarefa consolidada do negócio (mesmo motor, sem tarefa paralela).
+    // Ativação explícita (=== true): sem ela a organização continua sem cutucar, exatamente como antes — nada dispara na implantação.
+    const consolidating = settings.task_consolidation_by_opportunity_enabled === true;
+    if (consolidating && settings.customer_nudge_consolidated_enabled !== true) {
+      skip("consolidation_not_activated");
+      deps.log.error(`customer-nudge: org ${org.id} skipped — consolidação de tarefas ligada e customer_nudge_consolidated_enabled !== true; o cutucar não cria pendências nessa configuração`);
       continue;
     }
+    const baselineMs = typeof settings.customer_nudge_baseline_at === "string" ? Date.parse(settings.customer_nudge_baseline_at) : NaN;
+    const baselineAt = Number.isFinite(baselineMs) ? new Date(baselineMs) : null;
+    const cap = Number.isInteger(settings.customer_nudge_max_new_per_run) && (settings.customer_nudge_max_new_per_run as number) >= 1
+      ? Math.min(settings.customer_nudge_max_new_per_run as number, 100) : CUSTOMER_NUDGE_MAX_NEW_PER_RUN;
     // Só cria/avisa dentro do expediente, para a tarefa aparecer de manhã.
     if (!isBusinessOpen(now, calendar)) { skip("outside_business_hours"); continue; }
-    try { await createNudgeTasks(deps, org.id, calendar, settings.push_notifications_enabled === true, now, summary, skip); }
+    try { await createNudgeTasks(deps, org.id, calendar, settings.push_notifications_enabled === true, now, summary, skip, { baselineAt, cap }); }
     catch (err) { summary.errors++; deps.log.error(`customer-nudge: org ${org.id} failed (${errText(err)})`); }
   }
-  deps.log.info(`customer-nudge: orgs=${summary.organizations} created=${summary.created} resolved=${summary.resolved} pushed=${summary.pushed} errors=${summary.errors} skipped=${JSON.stringify(summary.skipped)}`);
+  deps.log.info(`customer-nudge: orgs=${summary.organizations} opps=${summary.opportunities} evaluated=${summary.evaluated} created=${summary.created} grouped=${summary.grouped} resolved=${summary.resolved} pushed=${summary.pushed} errors=${summary.errors} skipped=${JSON.stringify(summary.skipped)}`);
   return summary;
 }
 
@@ -127,8 +146,10 @@ async function resolveNudgeTasks(deps: NudgeDeps, organizationId: string): Promi
 
 async function createNudgeTasks(
   deps: NudgeDeps, organizationId: string, calendar: BusinessCalendar, pushEnabled: boolean, now: Date, summary: NudgeSummary, skip: (r: string) => void,
+  opts: { baselineAt: Date | null; cap: number } = { baselineAt: null, cap: CUSTOMER_NUDGE_MAX_NEW_PER_RUN },
 ) {
   const opps = await deps.listOpenOpportunities(organizationId);
+  summary.opportunities += opps.length;
   const byContact = new Map<string, NudgeOpportunity[]>();
   for (const o of opps) { const list = byContact.get(o.contactId); if (list) list.push(o); else byContact.set(o.contactId, [o]); }
   if (!byContact.size) return;
@@ -145,8 +166,9 @@ async function createNudgeTasks(
   const memberCache = new Map<string, boolean>();
 
   for (const conv of convs) {
-    if (createdNow >= CUSTOMER_NUDGE_MAX_NEW_PER_RUN) { skip("run_cap"); break; }
+    if (createdNow >= opts.cap) { skip("run_cap"); break; }
     try {
+      summary.evaluated++;
       const last = await deps.lastMessage(organizationId, conv.id);
       // Só o vendedor falando por último conta (mensagem da IA, "agent", não é vendedor).
       if (!last || last.role !== "human_agent") { skip("not_seller_last"); continue; }
@@ -165,7 +187,7 @@ async function createNudgeTasks(
       const lastNudgeAt = cycleTasks.length && lastNudgeMs > 0 ? new Date(lastNudgeMs).toISOString() : null;
       const facts = {
         now, calendar, lastSellerMessageAt: new Date(last.createdAt), priorTouches, lastNudgeAt, ownerId,
-        hasOpenTask: openOppIds.has(opp.id) || openContactIds.has(conv.contactId) || tasks.some((t) => OPEN_STATUSES.includes(t.status)), frozen: false,
+        baselineAt: opts.baselineAt, hasOpenTask: openOppIds.has(opp.id) || openContactIds.has(conv.contactId) || tasks.some((t) => OPEN_STATUSES.includes(t.status)), frozen: false,
         opportunity: { waiting_on: opp.waitingOn, waiting_on_until: opp.waitingOnUntil }, todayISODate, customerRefused: false,
       };
       // Primeira passada barata; congelado e encerramento só são consultados quando a tarefa sairia.
@@ -179,15 +201,19 @@ async function createNudgeTasks(
       if (decision.action === "skip") { skip(decision.reason); continue; }
 
       const text = buildCustomerNudgeTask(decision.touch, decision.ladderDays);
-      const { id: taskId, wasUpdated } = await deps.createTask({
+      const { id: taskId, wasUpdated, pendencyAdded } = await deps.createTask({
         organizationId, contactId: conv.contactId, conversationId: conv.id, opportunityId: opp.id, ownerId: ownerId!,
         description: text.description, reason: text.reason, priority: text.priority, dueDate: todayISODate,
       });
-      if (wasUpdated) { skip("task_already_open"); continue; }
+      // wasUpdated sem pendência nova = já existia o mesmo cutucar aberto (refresh). Com consolidação, pendencyAdded=true é criação.
+      if (wasUpdated && pendencyAdded !== true) { skip("task_already_open"); continue; }
       createdNow++; summary.created++;
+      if (wasUpdated) summary.grouped++;
+      try { await deps.recordTouch(organizationId, taskId, conv.id, decision.touch); }
+      catch (err) { summary.errors++; deps.log.error(`customer-nudge: touch not recorded task ${taskId} conv ${conv.id} (${errText(err)})`); }
       openOppIds.add(opp.id);
       deps.log.info(`customer-nudge: task ${taskId} org ${organizationId} conv ${conv.id} touch ${decision.touch}`);
-      if (pushEnabled && await pushToOwner(deps, organizationId, ownerId!, conv, taskId)) summary.pushed++;
+      if (pushEnabled && await pushToOwner(deps, organizationId, ownerId!, conv, taskId, decision.touch)) summary.pushed++;
     } catch (err) {
       summary.errors++;
       deps.log.error(`customer-nudge: conv ${conv.id} failed (${errText(err)})`);
@@ -196,8 +222,8 @@ async function createNudgeTasks(
 }
 
 /** Push "Cutucar cliente" ao vendedor dono; qualquer falha é registrada e nunca derruba a execução. */
-async function pushToOwner(deps: NudgeDeps, organizationId: string, userId: string, conv: NudgeConversation, taskId: string): Promise<boolean> {
-  const key = nudgePushDedupeKey(taskId);
+async function pushToOwner(deps: NudgeDeps, organizationId: string, userId: string, conv: NudgeConversation, taskId: string, touch: number): Promise<boolean> {
+  const key = nudgePushDedupeKey(taskId, touch);
   try {
     if (!(await deps.canReceivePush(organizationId, userId))) return false;
     if (!(await deps.claimPushDedupe(key, userId))) return false;
@@ -225,18 +251,19 @@ export function buildRealDeps(): NudgeDeps {
     nudgeTasks: (orgId, conversationId) => listNudgeTasksByConversation(db, orgId, conversationId),
     isFrozen: (orgId, contactId) => hasFrozenContact(db, orgId, contactId, true),
     createTask: async (i) => {
-      const { task, wasUpdated } = await createTaskWithDedup(db, {
+      const { task, wasUpdated, pendencyAdded } = await createTaskWithDedup(db, {
         organization_id: i.organizationId, contact_id: i.contactId, conversation_id: i.conversationId, opportunity_id: i.opportunityId,
         type: "customer_nudge", description: i.description, reason: i.reason, priority: i.priority, due_date: i.dueDate,
-        created_by_type: "ai", created_by_id: null, assignee_type: "human", assignee_id: i.ownerId,
+        created_by_type: "ai", created_by_id: null, assignee_type: "human", assignee_id: i.ownerId, assign_on_merge: true,
       });
-      return { id: task.id, wasUpdated };
+      return { id: task.id, wasUpdated, pendencyAdded };
     },
     contactName: async (orgId, contactId) => {
       const { data, error } = await db.from("wa_contacts").select("name").eq("organization_id", orgId).eq("id", contactId).maybeSingle();
       if (error) throw error;
       return (data as { name: string | null } | null)?.name ?? null;
     },
+    recordTouch: (orgId, taskId, conversationId, touch) => recordNudgeTouch(db, orgId, taskId, conversationId, touch),
     listOpenNudgeTasks: (orgId) => listOpenNudgeTasks(db, orgId),
     openOpportunityIds: (orgId, ids) => listOpenOpportunityIds(db, orgId, ids),
     contactsWithOpenOpportunity: (orgId, contactIds) => listContactIdsWithOpenOpportunity(db, orgId, contactIds),

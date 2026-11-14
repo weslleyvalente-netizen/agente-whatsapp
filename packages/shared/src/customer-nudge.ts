@@ -1,4 +1,4 @@
-import { addBusinessMinutes, isBusinessOpen, type BusinessCalendar } from "./business-calendar.js";
+import { addBusinessMinutes, businessDayMinutes, isBusinessOpen, type BusinessCalendar } from "./business-calendar.js";
 import { decideFollowupGate } from "./task-helpers.js";
 
 // Regra "Cutucar cliente": o vendedor falou por último (proposta, simulação...) e o cliente sumiu.
@@ -15,6 +15,18 @@ export const CUSTOMER_NUDGE_LADDER_DAYS = [1, 3, 7] as const;
  */
 export const CUSTOMER_NUDGE_INTERVAL_MINUTES = [0, 2 * DIA_UTIL, 4 * DIA_UTIL] as const;
 export const CUSTOMER_NUDGE_MAX_TOUCHES = CUSTOMER_NUDGE_LADDER_MINUTES.length;
+/**
+ * Escada e intervalo na régua REAL do calendário da organização (dia útil mais longo da semana), não em 600 fixos:
+ * com seg–sex 07:30–18:00 um dia útil tem 630 min. Calendário padrão (08:00–18:00) continua dando 600.
+ */
+export function customerNudgeLadderMinutes(calendar: BusinessCalendar): number[] {
+  const day = businessDayMinutes(calendar) || DIA_UTIL;
+  return CUSTOMER_NUDGE_LADDER_DAYS.map((d) => d * day);
+}
+export function customerNudgeIntervalMinutes(calendar: BusinessCalendar): number[] {
+  const day = businessDayMinutes(calendar) || DIA_UTIL;
+  return [0, 2 * day, 4 * day];
+}
 /** Anti-enxurrada: só olha conversas cuja última mensagem do vendedor tem até 14 dias. */
 export const CUSTOMER_NUDGE_MAX_AGE_MS = 14 * 24 * 60 * 60_000;
 /** Anti-enxurrada: no máximo 25 tarefas novas por organização por execução. */
@@ -22,7 +34,7 @@ export const CUSTOMER_NUDGE_MAX_NEW_PER_RUN = 25;
 
 export type CustomerNudgeSkipReason =
   | "no_owner" | "too_old" | "outside_business_hours" | "max_touches" | "open_task" | "frozen"
-  | "waiting_scheduled" | "waiting_on_us" | "customer_refused" | "not_due_yet" | "nudge_interval";
+  | "waiting_scheduled" | "waiting_on_us" | "customer_refused" | "not_due_yet" | "nudge_interval" | "before_baseline";
 
 export interface CustomerNudgeInput {
   now: Date;
@@ -42,6 +54,11 @@ export interface CustomerNudgeInput {
   opportunity: { waiting_on: string | null; waiting_on_until: string | null } | null;
   /** Data de hoje (YYYY-MM-DD) no fuso do calendário, para o gate de retorno combinado. */
   todayISODate: string;
+  /**
+   * Linha de corte da ativação gradual: mensagens do vendedor anteriores a ela são histórico e NÃO geram cobrança
+   * (nunca há disparo retroativo na implantação). Sem corte (null/undefined), vale a regra normal.
+   */
+  baselineAt?: Date | null;
   /** A última mensagem do cliente antes da do vendedor é uma recusa explícita (só recusa pula; "ok/obrigado" seguido de silêncio é cutucado). */
   customerRefused: boolean;
 }
@@ -58,16 +75,17 @@ export type CustomerNudgeDecision =
 export function decideCustomerNudge(i: CustomerNudgeInput): CustomerNudgeDecision {
   const skip = (reason: CustomerNudgeSkipReason): CustomerNudgeDecision => ({ action: "skip", reason });
   if (!i.ownerId) return skip("no_owner");
+  if (i.baselineAt && i.lastSellerMessageAt.getTime() < i.baselineAt.getTime()) return skip("before_baseline");
   if (i.now.getTime() - i.lastSellerMessageAt.getTime() > CUSTOMER_NUDGE_MAX_AGE_MS) return skip("too_old");
   // Só avisa dentro do expediente, para a tarefa aparecer de manhã para o vendedor.
   if (!isBusinessOpen(i.now, i.calendar)) return skip("outside_business_hours");
   if (i.priorTouches >= CUSTOMER_NUDGE_MAX_TOUCHES) return skip("max_touches");
   if (i.hasOpenTask) return skip("open_task");
-  const dueAt = addBusinessMinutes(i.lastSellerMessageAt, CUSTOMER_NUDGE_LADDER_MINUTES[Math.max(0, i.priorTouches)], i.calendar);
+  const dueAt = addBusinessMinutes(i.lastSellerMessageAt, customerNudgeLadderMinutes(i.calendar)[Math.max(0, i.priorTouches)], i.calendar);
   if (i.now.getTime() < dueAt.getTime()) return skip("not_due_yet");
   // Intervalo desde o toque anterior (além do silêncio desde a última mensagem do vendedor): ambos precisam valer.
   if (i.priorTouches > 0 && i.lastNudgeAt) {
-    const intervalDueAt = addBusinessMinutes(new Date(i.lastNudgeAt), CUSTOMER_NUDGE_INTERVAL_MINUTES[Math.min(i.priorTouches, CUSTOMER_NUDGE_INTERVAL_MINUTES.length - 1)], i.calendar);
+    const intervalDueAt = addBusinessMinutes(new Date(i.lastNudgeAt), customerNudgeIntervalMinutes(i.calendar)[Math.min(i.priorTouches, CUSTOMER_NUDGE_MAX_TOUCHES - 1)], i.calendar);
     if (i.now.getTime() < intervalDueAt.getTime()) return skip("nudge_interval");
   }
   if (i.frozen) return skip("frozen");
