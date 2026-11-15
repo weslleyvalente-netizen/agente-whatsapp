@@ -7,7 +7,7 @@ import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue
 import {
   claimPushDedupe, getAckContext, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
   hasOutboundMessageAfter, hasPushSubscription, isPushConfigured, listCurrentMemberIds, listLatestInboundMessages, listStaleUnprocessedRouted,
-  listUnansweredSweepOrganizations, releasePushDedupe, sendPushToUser,
+  listUnansweredSweepOrganizations, releasePushDedupe, sendPushToUser, reconcileUnreportedSendFailures,
   type PushPayload, type SweepOrganization, type UnansweredCandidate,
 } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -372,6 +372,8 @@ export function buildRealDeps(): SweepDeps {
 export function startUnansweredLeadSweepWorker() {
   const worker = new Worker(QUEUE_NAMES.UNANSWERED_LEAD_SWEEP, async () => {
     await runUnansweredLeadSweep(buildRealDeps());
+    // Rede de segurança das falhas definitivas de envio sem aviso/tarefa (só orgs com as duas flags; sem flag = nenhuma consulta de mensagens).
+    try { await reconcileUnreportedSendFailures(getAdminClient()); } catch (err) { console.error("send-failure reconcile failed:", (err as Error)?.message); }
   }, { connection: getRedisConnection(), concurrency: 1 });
   getUnansweredLeadSweepQueue().upsertJobScheduler("unanswered-lead-sweep-scheduler", { every: SWEEP_EVERY_MS }, { name: "sweep-unanswered-leads" });
   worker.on("failed", (job, err) => console.error(`Unanswered-lead-sweep job ${job?.id} failed:`, err.message));

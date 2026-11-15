@@ -48,5 +48,13 @@ Resumo diário de falhas para o gestor, ação "reenviar" no inbox e a varredura
 ## Aceite na primeira ativação
 Ligar em horário comercial; conferir que o vendedor responsável recebe 1 aviso por conversa, que não há duplicatas na janela e que o aviso agregado só aparece com 3+ falhas.
 
-## Escopo conhecido (NÃO coberto por esta PR)
-O caminho de envio **pela API** (`apps/api/src/services/message-send.service.ts`: anexos e áudios do vendedor no inbox) marca `send_failed_at` quando falha, e o inbox mostra "falhou" ao vendedor, mas **não aciona push nem tarefa "Mensagem não enviada"**. A proteção desta PR cobre os envios que passam pelo worker `send-message` (resposta da IA, follow-ups, mensagens de texto/mídia do painel). Correção proposta em PR separada: chamar o mesmo alerta (`alertSendFailure`, com a referência da mensagem) no ponto onde a API marca `send_failed_at`, atrás das mesmas flags.
+## Todos os caminhos de envio passam pelo mesmo registro (PR da API)
+Worker (`send-message`), API do inbox (texto, áudio e anexo, em `message-send.service.ts`) e a varredura de segurança chamam **`reportSendFailure`** (`packages/database/src/queries/send-failure-report.ts`):
+- **Uma vez por mensagem:** a reivindicação é atômica (`metadata.send_failure_reported_at`). Retry, reprocesso e chamadas simultâneas não repetem aviso nem tarefa. Mensagem que já tem id da Evolution (entregue) nunca é reivindicada.
+- **Referência preservada:** a tarefa guarda `failed_messages` (mensagem, conversa, hora). Falhas simultâneas que criem duas tarefas do mesmo contato são convergidas numa só (a mais antiga fica; referências somadas; a duplicada é cancelada; tarefa com outra obrigação nunca é cancelada).
+- **Lacuna corrigida no worker:** áudio/anexo do vendedor já chegam marcados (`markSellerAudioFailed`) e antes isso calava o alerta. Agora são reportados.
+- **Texto da API que falha antes de enfileirar:** antes ficava sem marca (parecia enviado). Agora é marcado e reportado.
+- **Nada se perde:** se os canais estão desligados ou a tarefa falha, a reivindicação é devolvida. A varredura (`reconcileUnreportedSendFailures`, a cada 5 min junto da varredura de leads sem resposta) refaz as falhas das últimas 72 h sem relato. Só roda em organizações com `send_failure_tasks_enabled` **e** `send_failure_reconcile_enabled`. Sem as flags, nenhuma consulta de mensagens.
+- **Ao ligar a varredura:** falhas marcadas nas últimas 72 h e sem relato (inclusive as de antes do deploy) viram tarefas silenciosas (sem push se tiverem mais de 120 min). Ligue por último e confira a fila.
+
+Recuperação continua só por evidência (ver acima). Áudio/anexo (conteúdo `[audio]`/`[imagem]`) só fecham por id, `resend_of` ou confirmação manual.

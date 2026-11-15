@@ -821,6 +821,14 @@ export async function createTaskWithDedup(
     });
   }
 
+  if (input.type === "message_send_failed") {
+    // Falhas simultâneas (processos diferentes) podem ter criado duas tarefas: converge numa só, sem perder referências.
+    try {
+      const keptId = await convergeSendFailureTasks(client, input.organization_id, input.contact_id);
+      if (keptId && keptId !== task.id) return { task: await getTaskById(client, keptId), wasUpdated: true };
+    } catch (err) { console.error("send-failure task convergence failed:", (err as Error)?.message); }
+  }
+
   return { task, wasUpdated: false };
 }
 
@@ -903,4 +911,41 @@ export async function recoverSendFailures(client: SupabaseClient, organizationId
     }
   }
   return recoveredTotal;
+}
+
+/**
+ * Sem índice único, duas falhas simultâneas do mesmo contato podem criar duas tarefas "Mensagem não enviada" abertas.
+ * Converge: a mais antiga fica; as demais (que só carregam esta pendência) têm as referências somadas a ela e são canceladas.
+ * Idempotente e seguro contra corrida (trava otimista; quem chega depois só repete uniões e cancelamentos condicionais).
+ * Devolve o id da tarefa que ficou (ou null se não havia nenhuma).
+ */
+export async function convergeSendFailureTasks(client: SupabaseClient, organizationId: string, contactId: string, attempt = 0): Promise<string | null> {
+  const open = (await getOpenTasksByContact(client, organizationId, contactId))
+    .filter((t) => (t.consolidated_pendencies ?? []).some((p) => p.type === "message_send_failed"))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+  if (!open.length) return null;
+  const keep = open[0];
+  for (const dup of open.slice(1)) {
+    const dupPendencies = dup.consolidated_pendencies ?? [];
+    if (dupPendencies.length !== 1) continue; // tem outras obrigações: não mexe
+    try {
+      const fresh = await getTaskById(client, keep.id);
+      if (!OPEN_TASK_STATUSES.includes(fresh.status)) return keep.id;
+      const keepPendencies = fresh.consolidated_pendencies ?? [];
+      const merged = mergeSendFailures(keepPendencies.find((p) => p.type === "message_send_failed"), dupPendencies[0]);
+      const next = keepPendencies.map((p) => (p.type === "message_send_failed" ? merged : p));
+      await updateTask(client, keep.id, { description: buildConsolidatedDescription(next), consolidated_pendencies: next }, fresh.updated_at);
+      const { data: cancelled, error } = await client.from("tasks").update({ status: "cancelled", consolidated_pendencies: [] })
+        .eq("organization_id", organizationId).eq("id", dup.id).eq("updated_at", dup.updated_at).in("status", OPEN_TASK_STATUSES).select("id");
+      if (error) throw error;
+      if ((cancelled as unknown[] | null)?.length) {
+        await addTaskEvent(client, { task_id: keep.id, organization_id: organizationId, event_type: "consolidated_pendency_added", note: "Falhas de envio simultâneas agrupadas nesta tarefa (referências preservadas).", created_by_type: "ai", created_by_id: null });
+        await addTaskEvent(client, { task_id: dup.id, organization_id: organizationId, event_type: "cancelled", note: "Duplicada: agrupada na tarefa de falha de envio mais antiga do contato.", created_by_type: "ai", created_by_id: null });
+      }
+    } catch (e) {
+      if (e instanceof TaskWriteConflict && attempt < 3) return convergeSendFailureTasks(client, organizationId, contactId, attempt + 1);
+      throw e;
+    }
+  }
+  return keep.id;
 }

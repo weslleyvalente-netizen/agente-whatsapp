@@ -3,9 +3,8 @@ import {syncSalesPipeline} from "@aula-agente/database";
 import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef, sanitizeEvolutionError } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
-import { notifySendFailure, type SendFailureDeps } from "../lib/send-failure-alert.js";
 import { getRedisConnection } from "@aula-agente/queue";
-import { shouldCancelPreFreezeAgentMessage, markMessageSendFailed, createTaskWithDedup, recoverSendFailures, getOrganizationById, countRecentSendFailures, listManagerUserIds, hasPushSubscription, isPushConfigured, claimPushDedupe, releasePushDedupe, sendPushToUser, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
+import { shouldCancelPreFreezeAgentMessage, reportSendFailure, recoverSendFailures, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
 // key.id — capturing it here and backfilling it onto the row saved at
@@ -113,30 +112,6 @@ async function markSellerAudioFailed(db: ReturnType<typeof getAdminClient>, mess
 
 type SendJob = Job<SendMessageJobData> | { data: SendMessageJobData };
 
-export function realSendFailureDeps(db: ReturnType<typeof getAdminClient>): SendFailureDeps {
-  return {
-    settings: async (orgId) => (await getOrganizationById(db, orgId)).settings ?? {},
-    managerIds: (orgId) => listManagerUserIds(db, orgId),
-    countRecentFailures: (orgId, since) => countRecentSendFailures(db, orgId, since),
-    canReceivePush: async (orgId, userId) => isPushConfigured() && hasPushSubscription(db, orgId, userId),
-    claim: (key, userId) => claimPushDedupe(db, key, userId),
-    release: (keys) => releasePushDedupe(db, keys),
-    sendPush: async (orgId, userId, payload) => (await sendPushToUser(db, userId, payload, { organizationId: orgId })).sent,
-    createTask: async (ctx, text) => {
-      await createTaskWithDedup(db, {
-        organization_id: ctx.organizationId, contact_id: ctx.contactId, conversation_id: ctx.conversationId, opportunity_id: null,
-        type: "message_send_failed", description: text.description, reason: text.reason, priority: "high",
-        due_date: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
-        created_by_type: "ai", created_by_id: null,
-        // Sem responsável: fica SEM responsável (fila dos gestores), nunca "da IA" (o card mostraria "Helena").
-        ...(ctx.assigneeId ? { assignee_type: "human" as const, assignee_id: ctx.assigneeId, assign_on_merge: true } : { assignee_type: null, assignee_id: null }),
-        failed_message: { message_id: ctx.messageId, conversation_id: ctx.conversationId, failed_at: new Date().toISOString() },
-      });
-    },
-    log: console,
-  };
-}
-
 /**
  * Um envio foi aceito na conversa: encerra só as falhas "Mensagem não enviada" que ele de fato RECUPERA (a mesma mensagem reprocessada,
  * um reenvio explícito ou o mesmo conteúdo reenviado depois, na mesma conversa). Uma mensagem qualquer posterior não encerra nada.
@@ -148,21 +123,6 @@ async function resolveSendFailureTask(db: ReturnType<typeof getAdminClient>, dat
     await recoverSendFailures(db, data.organizationId, (conversation as { contact_id: string }).contact_id,
       { id: accepted.id, conversation_id: data.conversationId, content: accepted.content ?? null, media_type: accepted.media_type ?? null, metadata: (accepted.metadata as Record<string, unknown> | null) ?? null, created_at: accepted.created_at });
   } catch (err) { console.error("send-failure task resolve failed:", (err as Error)?.message); }
-}
-
-/** Avisa vendedor/gestores da falha definitiva (opt-in). Nunca lança. */
-async function alertSendFailure(db: ReturnType<typeof getAdminClient>, data: SendMessageJobData) {
-  try {
-    const [conversation, recorded] = await Promise.all([getConversationById(db, data.conversationId), getMessageById(db, data.messageId)]);
-    let instanceName: string | null = null;
-    try { instanceName = (await getInstanceById(db, data.instanceId)).instance_name ?? null; } catch { /* nome é só informativo */ }
-    await notifySendFailure(realSendFailureDeps(db), {
-      organizationId: data.organizationId, conversationId: data.conversationId, contactId: (conversation as { contact_id: string }).contact_id,
-      messageId: data.messageId, messageCreatedAt: recorded?.created_at ?? null, senderRole: recorded?.role ?? "agent",
-      contactName: (conversation as { wa_contacts?: { name?: string | null } }).wa_contacts?.name ?? null, instanceName,
-      assigneeId: (conversation as { assigned_to?: string | null }).assigned_to ?? null,
-    });
-  } catch (err) { console.error("send-failure-alert: could not build context:", (err as Error)?.message); }
 }
 
 /**
@@ -181,8 +141,9 @@ export async function processSendMessageJob(job: SendJob) {
       const reason = sanitizeEvolutionError(0, (error as Error)?.message ?? "erro desconhecido").replace(/^Evolution API send error 0: ?/, "");
       try {
         const db = getAdminClient();
-        // Só alerta quando ESTA chamada marcou a falha (primeira vez): reprocessar não repete o aviso.
-        if (await markMessageSendFailed(db, job.data.messageId, reason)) await alertSendFailure(db, job.data);
+        // Ponto único: marca (se ainda não estiver), avisa e cria a tarefa UMA vez por mensagem. Cobre também áudio/anexo do vendedor,
+        // que já chegam marcados por markSellerAudioFailed (antes isso silenciava o alerta).
+        await reportSendFailure(db, { messageId: job.data.messageId, reason });
       } catch (markError) { console.error(`Failed to mark send failure for message ${job.data.messageId}:`, (markError as Error)?.message); }
     }
     throw error;

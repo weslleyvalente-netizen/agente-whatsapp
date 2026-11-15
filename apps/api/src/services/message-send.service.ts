@@ -7,6 +7,8 @@ import {
   markFirstHumanReply,
   setMessageMediaUrlIfEmpty,
   updateMessageContent,
+  reportSendFailure,
+  sanitizeSendError,
 } from "@aula-agente/database";
 import {
   CUSTOMER_AUDIO_BUCKET,
@@ -247,16 +249,23 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
 
     return { message, instanceId: instance.id };
   } catch (err) {
-    if (!audio && !attachment) throw err;
-    console.error(`Failed to send seller ${audio ? "audio" : "attachment"} for conversation ${conversation.id}:`, err);
-    try {
-      await updateMessageContent(db, message.id, content, {
-        ...(metadata ?? {}),
-        send_failed_at: new Date().toISOString(),
-      } as Message["metadata"]);
-    } catch (markErr) {
-      console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
+    // A mensagem já foi gravada e NUNCA chegou ao worker/Evolution: é falha definitiva. Marca (send_failed_at), avisa e cria a tarefa
+    // persistente com a referência desta mensagem, UMA vez (mesmo ponto único do worker). Nunca lança nem troca o erro original.
+    // Texto, áudio e anexo: antes só áudio/anexo eram marcados e nenhum gerava aviso/tarefa.
+    if (audio || attachment) {
+      console.error(`Failed to send seller ${audio ? "audio" : "attachment"} for conversation ${conversation.id}:`, err);
+      try {
+        await updateMessageContent(db, message.id, content, {
+          ...(metadata ?? {}),
+          send_failed_at: new Date().toISOString(),
+        } as Message["metadata"]);
+      } catch (markErr) {
+        console.error(`Failed to mark send_failed_at for message ${message.id}:`, markErr);
+      }
     }
+    try { await reportSendFailure(db, { messageId: message.id, reason: sanitizeSendError(err) }); }
+    catch (reportErr) { console.error(`Failed to report send failure for message ${message.id}:`, reportErr); }
+    if (!audio && !attachment) throw err;
     if (attachment) throw new SellerAttachmentSendError("Falha ao enviar o anexo", uploaded);
     throw new SellerAudioSendError("Falha ao enviar o áudio", uploaded);
   }
