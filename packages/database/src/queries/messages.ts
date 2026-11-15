@@ -84,6 +84,14 @@ export async function markMessageSendFailed(client: SupabaseClient, id: string, 
   return true;
 }
 
+/** Quantas mensagens da organização tiveram falha DEFINITIVA de envio desde `sinceISO` (metadata.send_failed_at). */
+export async function countRecentSendFailures(client: SupabaseClient, organizationId: string, sinceISO: string): Promise<number> {
+  const { count, error } = await client.from("messages").select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId).gte("metadata->>send_failed_at", sinceISO);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 // Backfills the real Evolution message id onto a row saved at send time
 // with evolution_message_id: null (see apps/worker/src/workers/send-message.ts).
 // Without this, the echo of our own outbound message that comes back through
@@ -101,13 +109,24 @@ export async function setMessageEvolutionId(
     .single();
   if (error) throw error;
   const message=data as Message;
-  if(message.metadata?.low_intent_followup && !message.metadata.low_intent_followup.confirmed_at){
-    const metadata={...message.metadata,low_intent_followup:{...message.metadata.low_intent_followup,confirmed_at:new Date().toISOString()}};
-    const {data:confirmed,error:confirmationError}=await client.from("messages").update({metadata}).eq("id",id).select().single();
-    if(confirmationError)throw confirmationError;
-    return confirmed as Message;
+  // Ajustes de metadata numa única escrita extra (o caminho normal continua sendo um só update):
+  // - se estava marcada como falha (send_failed_at) e a Evolution agora a aceitou, ela FOI entregue: a marca sai (inbox e
+  //   consultas voltam a tratá-la como enviada) e fica send_recovered_at como rastro;
+  // - cadência de baixa intenção: registra o primeiro instante confirmado.
+  let metadata: Record<string, any> | null = null;
+  const current = (message.metadata ?? null) as Record<string, any> | null;
+  if (current?.send_failed_at) {
+    const { send_failed_at: _f, send_error: _e, ...rest } = current;
+    metadata = { ...rest, send_recovered_at: new Date().toISOString() };
   }
-  return message;
+  const base = metadata ?? current;
+  if (base?.low_intent_followup && !base.low_intent_followup.confirmed_at) {
+    metadata = { ...base, low_intent_followup: { ...base.low_intent_followup, confirmed_at: new Date().toISOString() } };
+  }
+  if (!metadata) return message;
+  const { data: updated, error: metaError } = await client.from("messages").update({ metadata }).eq("id", id).select().single();
+  if (metaError) throw metaError;
+  return updated as Message;
 }
 
 export async function getMessageById(client: SupabaseClient, id: string) {

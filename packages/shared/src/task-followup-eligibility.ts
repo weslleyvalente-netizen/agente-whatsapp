@@ -5,6 +5,7 @@ import type { TaskType } from "./types/task.js";
 // update_quote (internal actions, no message to the customer) and "other"
 // (too ambiguous to assume it's customer-facing).
 // customer_nudge também fica de fora: é lembrete ao vendedor (ele mesmo cutuca); a IA não manda nada ao cliente.
+// message_send_failed idem: é alerta operacional ("a mensagem não saiu"); nunca dispara follow-up automático ao cliente.
 export const TASK_FOLLOWUP_ELIGIBLE_TYPES: readonly TaskType[] = [
   "return_customer",
   "request_documents",

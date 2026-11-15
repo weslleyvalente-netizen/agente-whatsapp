@@ -35,6 +35,7 @@ export const TASK_TYPES = [
   "stalled_negotiation",
   "libera_cred_resumption",
   "customer_nudge",
+  "message_send_failed",
   "other",
 ] as const;
 
@@ -55,6 +56,7 @@ export const TASK_TYPE_LABELS: Record<(typeof TASK_TYPES)[number], string> = {
   stalled_negotiation: "Negociação sem conclusão",
   libera_cred_resumption: "Retomada LiberaCred",
   customer_nudge: "Cutucar cliente",
+  message_send_failed: "Mensagem não enviada",
   other: "Outro",
 };
 
@@ -62,9 +64,9 @@ export const TASK_TYPE_LABELS: Record<(typeof TASK_TYPES)[number], string> = {
 // the stale-conversation safety net (only fires when one of these exists)
 // and by isHotLead (a task only counts as a "hot lead" when its type is in
 // this set). "other", "customer_unresponsive" and "customer_nudge" are deliberately
-// excluded: none is proof of intent on its own (nudge is only a reminder to the seller).
+// excluded: none is proof of intent on its own (nudge is only a reminder to the seller; message_send_failed is an operational alert).
 export const OPPORTUNITY_SIGNAL_TASK_TYPES: Array<(typeof TASK_TYPES)[number]> = TASK_TYPES.filter(
-  (type) => type !== "other" && type !== "customer_unresponsive" && type !== "customer_nudge"
+  (type) => type !== "other" && type !== "customer_unresponsive" && type !== "customer_nudge" && type !== "message_send_failed"
 );
 
 export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;

@@ -61,6 +61,10 @@ export interface OrganizationSettings {
   seller_isolation_enabled?: boolean;
   // Notificações push (PWA) para vendedores. Desligado por padrão (ausente = desligado).
   push_notifications_enabled?: boolean;
+  /** Alerta push (vendedor + gestores) quando uma mensagem comercial esgota as tentativas de envio. Opt-in: só com `true` (e com push ligado). */
+  send_failure_alerts_enabled?: boolean;
+  /** Cria também uma tarefa persistente no CRM ("Mensagem não enviada") para o responsável/gestores, sem depender de push. Opt-in. */
+  send_failure_tasks_enabled?: boolean;
   // Varredura de cliente sem resposta: reenvia à IA a última mensagem que ficou sem resposta e avisa o responsável. Desligado por padrão.
   unanswered_lead_sweep_enabled?: boolean;
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.

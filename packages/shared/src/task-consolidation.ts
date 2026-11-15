@@ -1,4 +1,4 @@
-import type { TaskPendency } from "./types/task.js";
+import type { FailedMessageRef, TaskPendency } from "./types/task.js";
 import type { TaskPriority, TaskType } from "./types/task.js";
 import { TASK_TYPE_LABELS } from "./constants.js";
 
@@ -11,6 +11,8 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { urgent: 0, high: 1, normal
 export function upsertPendency(pendencies: TaskPendency[], next: TaskPendency): TaskPendency[] {
   if(pendencies.some(p=>p.type===next.type && p.freeze_opportunity_id))return [...pendencies];
   const withoutType = pendencies.filter((p) => p.type !== next.type);
+  // "Mensagem não enviada": a pendência nova NÃO apaga as referências das falhas anteriores (várias falhas, várias conversas do contato).
+  if (next.type === "message_send_failed") return [...withoutType, mergeSendFailures(pendencies.find((p) => p.type === next.type), next)];
   return [...withoutType, next];
 }
 
@@ -48,4 +50,14 @@ export function buildConsolidatedDescription(pendencies: TaskPendency[]): string
 
   const restList = rest.map((p) => `${TASK_TYPE_LABELS[p.type]} (${p.description})`).join("; ");
   return `${primary.description} Também em aberto: ${restList}.`;
+}
+
+/** Junta as falhas já registradas com a nova (sem duplicar por mensagem) e reescreve o texto com a contagem real. */
+export function mergeSendFailures(previous: TaskPendency | undefined, next: TaskPendency): TaskPendency {
+  const byId = new Map<string, FailedMessageRef>();
+  for (const f of [...(previous?.failed_messages ?? []), ...(next.failed_messages ?? [])]) if (!byId.has(f.message_id)) byId.set(f.message_id, f);
+  const failed = [...byId.values()];
+  if (failed.length <= 1) return { ...next, failed_messages: failed };
+  const conversations = new Set(failed.map((f) => f.conversation_id)).size;
+  return { ...next, failed_messages: failed, description: `${failed.length} mensagens NÃO foram entregues${conversations > 1 ? ` (${conversations} conversas do mesmo contato)` : ""}. Abra a conversa, verifique a conexão do WhatsApp e reenvie.` };
 }
