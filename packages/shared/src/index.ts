@@ -62,3 +62,4 @@ export * from "./sla-nudge.js";
 export * from "./attachment.js";
 export * from "./waiting-on-sync.js";
 export * from "./evolution-instances.js";
+export * from "./send-failure-alert.js";

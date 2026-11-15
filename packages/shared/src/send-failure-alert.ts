@@ -1,4 +1,4 @@
-import { funnelConversationHref } from "@aula-agente/shared";
+import { funnelConversationHref } from "./funnel-link.js";
 
 // Alerta de FALHA DEFINITIVA de envio comercial: a mensagem esgotou as tentativas e nunca chegou ao cliente.
 // Quem recebe: o vendedor responsável pela conversa e, se não houver, os gestores; os gestores também recebem um aviso agregado quando

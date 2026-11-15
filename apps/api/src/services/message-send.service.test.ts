@@ -15,10 +15,12 @@ const {
   upload,
   remove,
   fakeDb,
+  reportSendFailure,
 } = vi.hoisted(() => {
   const upload = vi.fn().mockResolvedValue({ error: null });
   const remove = vi.fn().mockResolvedValue({ error: null });
   return {
+  reportSendFailure: vi.fn().mockResolvedValue({ claim: "claimed", result: null }),
   fakeDb: { storage: { from: vi.fn(() => ({ upload, remove })) } },
   remove,
   setMessageMediaUrlIfEmpty: vi.fn().mockResolvedValue(true),
@@ -47,6 +49,8 @@ vi.mock("@aula-agente/database", () => ({
   getOpenHandoffEvent,
   markFirstHumanReply,
   recordHumanMessage,
+  reportSendFailure,
+  sanitizeSendError: (e: unknown) => String((e as Error)?.message ?? e),
 }));
 // Espião sobre a implementação real: verifica a chamada e também o filtro de origem humana de verdade.
 vi.mock("./lead-human-message.js", async (importOriginal) => {
@@ -413,5 +417,53 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
     expect(result.message.id).toBe("msg-1");
     expect(enqueueSendMessage).toHaveBeenCalled();
     log.mockRestore();
+  });
+});
+
+describe("sendPanelMessage — falha definitiva no caminho da API vira pendência de recuperação", () => {
+  const conversation = { id: "conv-1", organization_id: "org-1", evolution_instance_id: "inst-1", is_human_takeover: false, wa_contacts: { phone: "5562900000000" } } as never;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getInstanceById.mockResolvedValue({ id: "inst-1" });
+    reportSendFailure.mockResolvedValue({ claim: "claimed", result: null });
+    enqueueSendMessage.mockResolvedValue(undefined);
+    upload.mockResolvedValue({ error: null });
+    setMessageMediaUrlIfEmpty.mockResolvedValue(true);
+  });
+  const save = (id: string) => saveMessage.mockResolvedValueOnce({ id, role: "human_agent", conversation_id: "conv-1" });
+
+  it("texto: falha ao enfileirar registra a falha (antes ficava sem marca, aviso e tarefa) e propaga o erro original", async () => {
+    save("m-text"); enqueueSendMessage.mockRejectedValueOnce(new Error("redis down"));
+    await expect(sendPanelMessage({ conversation, content: "Segue a proposta de 90 mil", actorUserId: "u1" })).rejects.toThrow("redis down");
+    expect(reportSendFailure).toHaveBeenCalledTimes(1);
+    expect(reportSendFailure).toHaveBeenCalledWith(fakeDb, { messageId: "m-text", reason: "redis down" });
+  });
+  it("áudio: marca send_failed_at E registra a falha uma vez", async () => {
+    save("m-audio"); enqueueSendMessage.mockRejectedValueOnce(new Error("redis down"));
+    await expect(sendPanelMessage({ conversation, content: "", actorUserId: "u1", audio: { buffer: Buffer.from("a"), extension: "webm" } })).rejects.toBeInstanceOf(SellerAudioSendError);
+    expect(updateMessageContent).toHaveBeenCalled();
+    expect(reportSendFailure).toHaveBeenCalledTimes(1);
+    expect(reportSendFailure.mock.calls[0][1]).toMatchObject({ messageId: "m-audio" });
+  });
+  it("anexo: falha no upload registra a falha com a mensagem do anexo", async () => {
+    save("m-file"); upload.mockResolvedValueOnce({ error: new Error("storage down") });
+    await expect(sendPanelMessage({ conversation, content: "", actorUserId: "u1", attachment: { buffer: Buffer.from("x"), kind: "image", mime: "image/png", extension: "png", fileName: "a.png" } })).rejects.toBeInstanceOf(SellerAttachmentSendError);
+    expect(reportSendFailure.mock.calls[0][1]).toMatchObject({ messageId: "m-file" });
+  });
+  it("envio enfileirado com sucesso NÃO registra falha (o worker decide se a Evolution recusar)", async () => {
+    save("m-ok");
+    await sendPanelMessage({ conversation, content: "oi", actorUserId: "u1" });
+    expect(reportSendFailure).not.toHaveBeenCalled();
+  });
+  it("tentativas seguidas e falhas simultâneas: cada mensagem é registrada uma vez, com a sua própria referência", async () => {
+    enqueueSendMessage.mockRejectedValue(new Error("redis down"));
+    save("m-1"); save("m-2"); save("m-3");
+    await Promise.allSettled([1, 2, 3].map((i) => sendPanelMessage({ conversation, content: `mensagem ${i}`, actorUserId: "u1" })));
+    expect(reportSendFailure.mock.calls.map((c) => (c[1] as { messageId: string }).messageId).sort()).toEqual(["m-1", "m-2", "m-3"]);
+    enqueueSendMessage.mockReset().mockResolvedValue(undefined);
+  });
+  it("o registro nunca troca o erro original (mesmo que ele próprio falhe)", async () => {
+    save("m-x"); enqueueSendMessage.mockRejectedValueOnce(new Error("redis down")); reportSendFailure.mockRejectedValueOnce(new Error("db down"));
+    await expect(sendPanelMessage({ conversation, content: "oi", actorUserId: "u1" })).rejects.toThrow("redis down");
   });
 });

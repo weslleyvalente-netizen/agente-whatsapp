@@ -65,6 +65,8 @@ export interface OrganizationSettings {
   send_failure_alerts_enabled?: boolean;
   /** Cria também uma tarefa persistente no CRM ("Mensagem não enviada") para o responsável/gestores, sem depender de push. Opt-in. */
   send_failure_tasks_enabled?: boolean;
+  /** Varredura periódica: falhas definitivas das últimas 72 h que ainda não geraram aviso/tarefa (queda no meio do caminho, tarefa que falhou, flags ligadas depois). Exige send_failure_tasks_enabled. Opt-in. */
+  send_failure_reconcile_enabled?: boolean;
   // Varredura de cliente sem resposta: reenvia à IA a última mensagem que ficou sem resposta e avisa o responsável. Desligado por padrão.
   unanswered_lead_sweep_enabled?: boolean;
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.

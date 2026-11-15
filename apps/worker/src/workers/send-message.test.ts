@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, markMessageSendFailed, resolvePendency, createTaskDedup } = vi.hoisted(() => ({
+const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, download, createSignedUrl, reportSendFailure, resolvePendency, createTaskDedup } = vi.hoisted(() => ({
   resolvePendency: vi.fn().mockResolvedValue(0), createTaskDedup: vi.fn().mockResolvedValue({}),
-  markMessageSendFailed: vi.fn().mockResolvedValue(true),
+  reportSendFailure: vi.fn().mockResolvedValue({ claim: "claimed", result: null }),
   createSignedUrl: vi.fn(),
   getAdminClient: vi.fn(),
   updateMessageContent: vi.fn().mockResolvedValue(undefined),
@@ -14,10 +14,8 @@ const { getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageCon
 vi.mock("@aula-agente/database", () => ({
   shouldCancelPreFreezeAgentMessage:vi.fn().mockResolvedValue(false),
   syncSalesPipeline: vi.fn().mockResolvedValue(null),
-  hasFrozenContact: vi.fn().mockResolvedValue(false), markMessageSendFailed, recoverSendFailures: resolvePendency, createTaskWithDedup: createTaskDedup, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
+  hasFrozenContact: vi.fn().mockResolvedValue(false), reportSendFailure, recoverSendFailures: resolvePendency, createTaskWithDedup: createTaskDedup, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent, getMessageById: vi.fn().mockResolvedValue(null), getConversationById: vi.fn() }));
 
-const notifyMock = vi.hoisted(() => vi.fn().mockResolvedValue({ sent: 1, skipped: [] }));
-vi.mock("../lib/send-failure-alert.js", () => ({ notifySendFailure: notifyMock }));
 import * as database from "@aula-agente/database";
 import { processSendMessageJob } from "./send-message.js";
 
@@ -461,22 +459,22 @@ describe("falha de envio: a mensagem deixa de contar como entregue", () => {
   beforeEach(() => {
     process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
     getInstanceById.mockResolvedValue({ instance_name: "Pos venda" });
-    getAdminClient.mockImplementation(() => ({})); markMessageSendFailed.mockClear();
+    getAdminClient.mockImplementation(() => ({})); reportSendFailure.mockClear();
   });
   afterEach(() => { global.fetch = originalFetch; });
 
   it("última tentativa falhou: marca como não enviada com o motivo (sem chave nem telefone) e repassa o erro", async () => {
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
-    expect(markMessageSendFailed).toHaveBeenCalledTimes(1);
-    const [, id, reason] = markMessageSendFailed.mock.calls[0];
+    expect(reportSendFailure).toHaveBeenCalledTimes(1);
+    const [, { messageId: id, reason }] = reportSendFailure.mock.calls[0];
     expect(id).toBe("msg-1"); expect(reason).toContain("400"); expect(reason).toContain("Connection Closed");
     expect(reason).not.toMatch(/SEGREDO123|5562996188374/);
   });
   it("com retry pendente NÃO marca (ainda pode dar certo)", async () => {
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
-    expect(markMessageSendFailed).not.toHaveBeenCalled();
+    expect(reportSendFailure).not.toHaveBeenCalled();
   });
   it("o erro lançado também não vaza chave nem telefone (aparece no log do BullMQ)", async () => {
     global.fetch = failing() as never;
@@ -488,10 +486,10 @@ describe("falha de envio: a mensagem deixa de contar como entregue", () => {
     await processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never);
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data: { ...data, messageId: "handoff-notify-1" }, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
-    expect(markMessageSendFailed).not.toHaveBeenCalled();
+    expect(reportSendFailure).not.toHaveBeenCalled();
   });
   it("falha ao gravar a marca não esconde o erro original", async () => {
-    global.fetch = failing() as never; markMessageSendFailed.mockRejectedValueOnce(new Error("db down"));
+    global.fetch = failing() as never; reportSendFailure.mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
   });
 });
@@ -536,45 +534,43 @@ describe("roteamento das conversas comerciais NÃO usa a seleção de instância
   });
 });
 
-describe("alerta de falha definitiva de envio (vendedor e gestores)", () => {
+describe("falha definitiva de envio é registrada pelo ponto único (marca + aviso + tarefa)", () => {
   const data = { conversationId: "conv-1", messageId: "msg-1", instanceId: "inst-1", phone: "5562900000000", content: "oi", organizationId: "org-1" };
   const failing = () => vi.fn().mockResolvedValue({ ok: false, status: 400, text: async () => "{}", json: async () => ({}) });
   beforeEach(() => {
     process.env.EVOLUTION_API_URL = "https://evolution.test"; process.env.EVOLUTION_API_KEY = "test-key";
     getInstanceById.mockResolvedValue({ instance_name: "weslley" }); getAdminClient.mockImplementation(() => ({}));
-    vi.mocked(database.getConversationById).mockResolvedValue({ id: "conv-1", contact_id: "ct-1", assigned_to: "marina", wa_contacts: { name: "Romario" } } as never);
-    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "human_agent", content: "oi", media_type: null, created_at: "2026-11-14T10:00:00Z", metadata: null } as never);
-    markMessageSendFailed.mockReset().mockResolvedValue(true); notifyMock.mockClear();
+    reportSendFailure.mockReset().mockResolvedValue({ claim: "claimed", result: null });
   });
-  afterEach(() => { global.fetch = originalFetch; vi.mocked(database.getMessageById).mockResolvedValue(null as never); });
+  afterEach(() => { global.fetch = originalFetch; });
 
-  it("falha DEFINITIVA (última tentativa): avisa com cliente, responsável, instância e papel do remetente", async () => {
+  it("falha DEFINITIVA (última tentativa): chama o registro único uma vez, com a mensagem e o motivo", async () => {
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
-    expect(notifyMock).toHaveBeenCalledTimes(1);
-    expect(notifyMock.mock.calls[0][1]).toEqual({ organizationId: "org-1", conversationId: "conv-1", contactId: "ct-1", messageId: "msg-1", messageCreatedAt: "2026-11-14T10:00:00Z", senderRole: "human_agent", contactName: "Romario", instanceName: "weslley", assigneeId: "marina" });
+    expect(reportSendFailure).toHaveBeenCalledTimes(1);
+    expect(reportSendFailure.mock.calls[0][1]).toMatchObject({ messageId: "msg-1" });
   });
-  it("com retry pendente NÃO avisa (ainda pode dar certo)", async () => {
+  it("com retry pendente NÃO registra (ainda pode dar certo); aviso interno nunca registra", async () => {
     global.fetch = failing() as never;
     await expect(processSendMessageJob({ data, attemptsMade: 0, opts: { attempts: 3 } } as never)).rejects.toThrow();
-    expect(notifyMock).not.toHaveBeenCalled();
-  });
-  it("falha já marcada antes (reprocesso) não repete o aviso; aviso interno nunca avisa", async () => {
-    global.fetch = failing() as never; markMessageSendFailed.mockResolvedValue(false);
-    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
-    markMessageSendFailed.mockResolvedValue(true);
     await expect(processSendMessageJob({ data: { ...data, messageId: "handoff-notify-1" }, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow();
-    expect(notifyMock).not.toHaveBeenCalled();
+    expect(reportSendFailure).not.toHaveBeenCalled();
   });
-  it("envio bem-sucedido não avisa", async () => {
+  it("envio bem-sucedido não registra", async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ key: { id: "E1" } }), text: async () => "" }) as never;
     await processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never);
-    expect(notifyMock).not.toHaveBeenCalled();
+    expect(reportSendFailure).not.toHaveBeenCalled();
   });
-  it("falha do próprio alerta (ou do contexto) nunca esconde o erro do envio", async () => {
-    global.fetch = failing() as never; notifyMock.mockRejectedValueOnce(new Error("push down"));
-    await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
-    vi.mocked(database.getConversationById).mockRejectedValueOnce(new Error("db down"));
+  it("áudio/anexo do vendedor (já marcados por markSellerAudioFailed) TAMBÉM são registrados: antes o alerta ficava mudo", async () => {
+    global.fetch = failing() as never;
+    vi.mocked(database.getMessageById).mockResolvedValue({ id: "msg-1", role: "human_agent", content: "[audio]", organization_id: "org-1", conversation_id: "conv-1", media_type: "audio", created_at: "2026-11-14T10:00:00Z", metadata: { source: "seller_audio", send_failed_at: "2026-11-14T10:00:01Z" } } as never);
+    download.mockResolvedValue({ data: { arrayBuffer: async () => new ArrayBuffer(4) }, error: null });
+    getAdminClient.mockImplementation(() => ({ storage: { from: () => ({ download }) } }));
+    await expect(processSendMessageJob({ data: { ...data, storedAudioRef: "customer-audio/org-1/conv-1/msg-1.webm" }, attemptsMade: 0, opts: { attempts: 1 } } as never)).rejects.toThrow();
+    expect(reportSendFailure).toHaveBeenCalledTimes(1);
+  });
+  it("falha do próprio registro nunca esconde o erro do envio", async () => {
+    global.fetch = failing() as never; reportSendFailure.mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data, attemptsMade: 2, opts: { attempts: 3 } } as never)).rejects.toThrow(/400/);
   });
 });
@@ -605,22 +601,5 @@ describe("envio aceito aciona a recuperação por EVIDÊNCIA da falha 'Mensagem 
   it("falha ao recuperar nunca derruba o envio", async () => {
     global.fetch = ok() as never; resolvePendency.mockRejectedValueOnce(new Error("db down"));
     await expect(processSendMessageJob({ data } as never)).resolves.toBeUndefined();
-  });
-});
-
-describe("tarefa 'Mensagem não enviada' criada pela falha definitiva", () => {
-  const ctx = { organizationId: "org-1", conversationId: "conv-9", contactId: "ct-9", messageId: "msg-9", messageCreatedAt: null, senderRole: "human_agent", contactName: "Ana", instanceName: "weslley", assigneeId: null };
-  const text = { description: "d", reason: "r" };
-  beforeEach(() => createTaskDedup.mockClear());
-  it("guarda a referência da mensagem e da conversa; sem responsável fica SEM responsável (não 'da IA')", async () => {
-    const { realSendFailureDeps } = await import("./send-message.js");
-    await realSendFailureDeps({} as never).createTask(ctx as never, text);
-    const input = createTaskDedup.mock.calls[0][1];
-    expect(input).toMatchObject({ type: "message_send_failed", conversation_id: "conv-9", assignee_type: null, assignee_id: null, failed_message: { message_id: "msg-9", conversation_id: "conv-9" } });
-  });
-  it("com responsável: atribui ao vendedor e leva a pendência junto na consolidação", async () => {
-    const { realSendFailureDeps } = await import("./send-message.js");
-    await realSendFailureDeps({} as never).createTask({ ...ctx, assigneeId: "marina" } as never, text);
-    expect(createTaskDedup.mock.calls[0][1]).toMatchObject({ assignee_type: "human", assignee_id: "marina", assign_on_merge: true, failed_message: { message_id: "msg-9" } });
   });
 });
