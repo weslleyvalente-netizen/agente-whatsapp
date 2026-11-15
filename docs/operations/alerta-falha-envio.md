@@ -15,7 +15,14 @@ Opt-in separado: `send_failure_tasks_enabled === true` cria (ou atualiza, com de
 
 ### Referência da falha e encerramento
 Cada falha guarda na pendência `failed_messages: [{message_id, conversation_id, failed_at}]`. Falhas seguidas (mesma conversa ou várias conversas do contato) **somam referências**, não se sobrescrevem; o texto passa a dizer "N mensagens".
-O encerramento **automático** só ocorre quando uma mensagem aceita pela Evolution é **evidência de recuperação daquela mensagem**, na **mesma conversa**: (1) é a mesma mensagem reprocessada; (2) tem `metadata.resend_of` apontando para ela; ou (3) é um reenvio do mesmo texto e mesmo tipo de mídia, depois da falha (texto vazio nunca basta). Um "bom dia" ou outra resposta qualquer **não** encerra nada; outra conversa do mesmo contato também não. Se só parte das mensagens foi recuperada, a pendência continua com as restantes.
+O encerramento **automático** só ocorre quando uma mensagem aceita pela Evolution é **evidência de recuperação daquela mensagem**, na **mesma conversa**:
+1. **Evidência forte (preferida):** é a mesma mensagem reprocessada, ou tem `metadata.resend_of` apontando para ela. Não depende de prazo nem de texto.
+2. **Evidência por conteúdo (fraca, com salvaguardas):** mesmo texto e mesma mídia, **até 2 h depois** da falha, texto com **24+ caracteres**, e a mensagem aceita **não é automática** (follow-up, cadência de baixa intenção, encerramento de anúncio). Um envio recupera **no máximo uma** falha por conteúdo. Mensagem comercial padronizada repetida mais tarde, texto curto ("Bom dia!") e mídia sem legenda **não** encerram nada.
+
+Um "bom dia" ou outra resposta qualquer **não** encerra; outra conversa do mesmo contato também não. Se só parte das mensagens foi recuperada, a pendência continua com as restantes. Hoje nenhuma tela grava `resend_of`: um botão "Reenviar" que o grave é a evolução natural (fora desta PR).
+
+**Mesma mensagem recuperada:** se a mensagem marcada com `send_failed_at` é depois aceita (a mesma linha reprocessada pelo worker; o eco do webhook não a recupera, porque mensagens marcadas como falha ficam fora do pareamento de eco), `setMessageEvolutionId` remove `send_failed_at`/`send_error` e grava `metadata.send_recovered_at`. O inbox volta a mostrar ✓/✓✓, e as consultas (resposta entregue, contagem de falhas, silêncio) a tratam como enviada.
+
 **Manual:** o vendedor conclui a tarefa (ou, em tarefa consolidada, usa **"Confirmar reenvio"** no painel, que encerra só esta pendência). Se o vendedor reescrever a mensagem com outro texto, o encerramento é manual.
 
 ## Cobertura verificada em 14/11 (leitura)
@@ -40,3 +47,6 @@ Resumo diário de falhas para o gestor, ação "reenviar" no inbox e a varredura
 
 ## Aceite na primeira ativação
 Ligar em horário comercial; conferir que o vendedor responsável recebe 1 aviso por conversa, que não há duplicatas na janela e que o aviso agregado só aparece com 3+ falhas.
+
+## Escopo conhecido (NÃO coberto por esta PR)
+O caminho de envio **pela API** (`apps/api/src/services/message-send.service.ts`: anexos e áudios do vendedor no inbox) marca `send_failed_at` quando falha, e o inbox mostra "falhou" ao vendedor, mas **não aciona push nem tarefa "Mensagem não enviada"**. A proteção desta PR cobre os envios que passam pelo worker `send-message` (resposta da IA, follow-ups, mensagens de texto/mídia do painel). Correção proposta em PR separada: chamar o mesmo alerta (`alertSendFailure`, com a referência da mensagem) no ponto onde a API marca `send_failed_at`, atrás das mesmas flags.

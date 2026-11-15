@@ -26,6 +26,10 @@ export interface MessageMetadata {
   send_failed_at?: string;
   // Motivo resumido do envio que falhou (status HTTP e mensagem da Evolution, sem chaves nem telefones).
   send_error?: string;
+  // A mesma mensagem marcada como falha foi depois aceita pela Evolution (reenvio): a marca de falha sai e este rastro fica (ISO).
+  send_recovered_at?: string;
+  // Reenvio explícito: id da mensagem que falhou e que esta mensagem substitui (evidência de recuperação).
+  resend_of?: string;
   task_id?: string;
   audio_transcribed_at?: string;
   low_intent_followup?: { anchor: string; stage: 1 | 2 | 3; confirmed_at?: string };
