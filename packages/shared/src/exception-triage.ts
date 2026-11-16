@@ -135,8 +135,13 @@ export interface AlertPlanInput {
   exceptionAt: Date;
   now: Date;
   calendar: BusinessCalendar;
-  /** Estágios já registrados no livro (qualquer canal, inclusive "pulado"). */
+  /**
+   * Estágios já registrados no livro PARA ESTE DESTINATÁRIO e que contam para o modo atual
+   * (modo shadow: linhas de canal "shadow"; modo on: push/e-mail/"pulado", nunca "shadow"). O chamador filtra; o planejador não adivinha.
+   */
   recordedStages: number[];
+  /** Estágios que este destinatário pode receber (ex.: vendedor não recebe o crítico). Ausente = todos. */
+  eligibleStages?: readonly ExceptionAlertStage[];
   /** Resolução válida (evento resolved_* OU a exceção deixou de estar aberta). */
   resolved: boolean;
   /** Ativação da funcionalidade: exceções criadas antes NUNCA geram aviso (sem retroativo). Ausente = nada é enviado. */
@@ -164,8 +169,9 @@ export function planExceptionAlerts(i: AlertPlanInput): AlertPlan {
   if (!i.activatedAt) return none("not_activated");
   if (i.exceptionAt.getTime() < i.activatedAt.getTime()) return none("before_activation");
   const recorded = new Set(i.recordedStages);
+  const eligible = new Set<number>(i.eligibleStages ?? EXCEPTION_ALERT_STAGES);
   const due = EXCEPTION_ALERT_STAGES
-    .filter(stage => !recorded.has(stage))
+    .filter(stage => eligible.has(stage) && !recorded.has(stage))
     .map(stage => ({ stage, dueAt: exceptionAlertDueAt(i.exceptionAt, stage, i.calendar) }))
     .filter(x => x.dueAt.getTime() <= i.now.getTime());
   if (!due.length) return none("nothing_due");
@@ -178,6 +184,70 @@ export function exceptionAlertRecipients(stage: ExceptionAlertStage, managerIds:
   const set = new Set<string>(managerIds);
   if (stage !== 60) for (const id of repUserIds) set.add(id);
   return [...set];
+}
+
+/** Estágios que cada tipo de destinatário recebe: gestor todos; vendedor 0/15/30 (o crítico é só do gestor). */
+export function recipientEligibleStages(isManagerRecipient: boolean): readonly ExceptionAlertStage[] {
+  return isManagerRecipient ? EXCEPTION_ALERT_STAGES : EXCEPTION_ALERT_STAGES.filter(s => s !== 60);
+}
+
+// ---------- Encerramento "sem ação necessária" com cliente aguardando ----------
+
+/** Únicas justificativas aceitas para encerrar sem ação enquanto o cliente espera (lista fechada, auditável). */
+export const NO_ACTION_WAITING_JUSTIFICATIONS = [
+  "cliente_atendido_fora_do_crm", "cliente_pediu_para_aguardar", "contato_invalido_ou_duplicado", "cliente_desistiu",
+] as const;
+export type NoActionWaitingJustification = (typeof NO_ACTION_WAITING_JUSTIFICATIONS)[number];
+export const NO_ACTION_WAITING_LABELS: Record<NoActionWaitingJustification, string> = {
+  cliente_atendido_fora_do_crm: "Cliente já atendido fora do CRM (telefone/presencial)",
+  cliente_pediu_para_aguardar: "Cliente pediu para aguardar",
+  contato_invalido_ou_duplicado: "Contato inválido ou duplicado",
+  cliente_desistiu: "Cliente desistiu",
+};
+/** Nota mínima (caracteres, sem espaços nas pontas) exigida junto da justificativa. */
+export const MIN_WAITING_JUSTIFICATION_NOTE = 20;
+
+export type NoActionCheck = { ok: true; note: string } | { ok: false; code: "client_waiting" | "note_too_short"; message: string };
+
+/**
+ * Regra de segurança: "Sem ação necessária" NUNCA fecha uma exceção com cliente aguardando sem justificativa da lista fechada
+ * E nota de pelo menos 20 caracteres. A justificativa vai gravada na nota do evento (append-only). Sem cliente aguardando, vale só a nota obrigatória.
+ */
+export function checkNoActionClosure(i: { clientWaiting: boolean; justification?: string | null; note?: string | null }): NoActionCheck {
+  const note = (i.note ?? "").trim();
+  if (!i.clientWaiting) return note ? { ok: true, note } : { ok: false, code: "note_too_short", message: "Informe a nota para encerrar sem ação." };
+  const j = (NO_ACTION_WAITING_JUSTIFICATIONS as readonly string[]).includes(i.justification ?? "") ? (i.justification as NoActionWaitingJustification) : null;
+  if (!j) return { ok: false, code: "client_waiting", message: "O cliente ainda está aguardando: escolha uma justificativa válida ou reconheça/confirme quem assumiu." };
+  if (note.length < MIN_WAITING_JUSTIFICATION_NOTE) return { ok: false, code: "note_too_short", message: `Explique em pelo menos ${MIN_WAITING_JUSTIFICATION_NOTE} caracteres por que não há ação com o cliente aguardando.` };
+  return { ok: true, note: `[cliente aguardando: ${j}] ${note}` };
+}
+
+// ---------- Prontidão para ativar alertas ----------
+
+export type AlertReadinessProblem = "push_not_configured" | "no_recipients" | "recipient_not_member" | "recipient_not_admin" | "recipient_without_device" | "no_valid_manager";
+export interface AlertReadinessFacts {
+  pushConfigured: boolean;
+  recipients: Array<{ userId: string; memberRole: string | null; pushDevices: number }>;
+}
+export interface AlertReadiness { ready: boolean; validManagerCount: number; problems: AlertReadinessProblem[] }
+
+/**
+ * Alertas críticos só podem sair se existir pelo menos UM destinatário administrativo (owner/admin) que seja membro atual
+ * E tenha ao menos um aparelho push cadastrado, com o push configurado no servidor. Fonte única para o worker e o painel.
+ */
+export function evaluateAlertReadiness(f: AlertReadinessFacts): AlertReadiness {
+  const problems = new Set<AlertReadinessProblem>();
+  if (!f.pushConfigured) problems.add("push_not_configured");
+  if (!f.recipients.length) problems.add("no_recipients");
+  let valid = 0;
+  for (const r of f.recipients) {
+    if (!r.memberRole) { problems.add("recipient_not_member"); continue; }
+    if (r.memberRole !== "owner" && r.memberRole !== "admin") { problems.add("recipient_not_admin"); continue; }
+    if (r.pushDevices < 1) { problems.add("recipient_without_device"); continue; }
+    valid++;
+  }
+  if (valid === 0 && f.recipients.length > 0) problems.add("no_valid_manager");
+  return { ready: f.pushConfigured && valid > 0, validManagerCount: valid, problems: [...problems] };
 }
 
 export interface ExceptionAlertMessage { title: string; body: string; severity: "info" | "warning" | "critical"; url: string }

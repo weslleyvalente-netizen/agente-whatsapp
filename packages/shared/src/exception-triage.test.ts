@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BUSINESS_CALENDAR, type BusinessCalendar } from "./business-calendar.js";
 import {
   isClosingAcknowledgement, buildExceptionAlertMessage, classifyHumanReply, classifyTriage, exceptionAlertDueAt, exceptionAlertRecipients, isResolutionEvent, planExceptionAlerts,
+  checkNoActionClosure, evaluateAlertReadiness, recipientEligibleStages, NO_ACTION_WAITING_JUSTIFICATIONS, MIN_WAITING_JUSTIFICATION_NOTE,
   type AlertPlanInput, type TriageInput,
 } from "./exception-triage.js";
 
@@ -177,5 +178,77 @@ describe("cortesia de encerramento não conta como cliente esperando (casos reai
     const r = classifyTriage(base({ kind: "alert", anchorAt: "2026-10-29T12:00:00Z", flaggedAt: "2026-10-29T13:00:00Z", humanReplies: [{ content: "nesse contato pra falar com o financeiro", at: "2026-10-29T12:32:00Z" }], lastMessage: { role: "contact", at: "2026-10-29T12:32:30Z", content: "Obrigada" } }));
     expect(r.clientWaiting).toBe(false);
     expect(r.group).toBe("respondida");
+  });
+});
+
+// ---------- Correções da revisão do PR #102 ----------
+
+describe("planExceptionAlerts: elegibilidade por destinatário (item 1)", () => {
+  const base = { mode: "on" as const, exceptionAt: at("2026-11-16T14:00:00Z"), now: at("2026-11-16T15:30:00Z"), calendar: CAL, recordedStages: [] as number[], resolved: false, activatedAt: at("2026-11-16T09:00:00Z") };
+  it("vendedor (sem o 60) com tudo devido recebe o 30, nunca o crítico", () => {
+    const p = planExceptionAlerts({ ...base, eligibleStages: recipientEligibleStages(false) });
+    expect(p.send?.stage).toBe(30);
+    expect(p.skip).toEqual([0, 15]);
+  });
+  it("gestor recebe o 60", () => {
+    expect(planExceptionAlerts({ ...base, eligibleStages: recipientEligibleStages(true) }).send?.stage).toBe(60);
+  });
+  it("o que já foi registrado PARA O DESTINATÁRIO é descontado; o dos outros não importa", () => {
+    expect(planExceptionAlerts({ ...base, now: at("2026-11-16T14:15:00Z"), recordedStages: [0] }).send?.stage).toBe(15);
+    expect(planExceptionAlerts({ ...base, now: at("2026-11-16T14:15:00Z"), recordedStages: [] }).send?.stage).toBe(15);
+  });
+  it("recipientEligibleStages: gestor [0,15,30,60]; vendedor [0,15,30]", () => {
+    expect(recipientEligibleStages(true)).toEqual([0, 15, 30, 60]);
+    expect(recipientEligibleStages(false)).toEqual([0, 15, 30]);
+  });
+});
+
+describe("checkNoActionClosure: 'sem ação' com cliente aguardando (item 4)", () => {
+  const LONG = "Cliente atendido por telefone na loja hoje";
+  it("cliente NÃO aguardando: basta a nota", () => {
+    expect(checkNoActionClosure({ clientWaiting: false, note: "duplicado" })).toEqual({ ok: true, note: "duplicado" });
+    expect(checkNoActionClosure({ clientWaiting: false, note: "  " })).toMatchObject({ ok: false, code: "note_too_short" });
+  });
+  it("cliente aguardando sem justificativa: recusa", () => {
+    expect(checkNoActionClosure({ clientWaiting: true, note: LONG })).toMatchObject({ ok: false, code: "client_waiting" });
+    expect(checkNoActionClosure({ clientWaiting: true, justification: "porque sim", note: LONG })).toMatchObject({ ok: false, code: "client_waiting" });
+    expect(checkNoActionClosure({ clientWaiting: true, justification: null, note: LONG })).toMatchObject({ ok: false, code: "client_waiting" });
+  });
+  it("justificativa da lista mas nota curta: recusa", () => {
+    expect(checkNoActionClosure({ clientWaiting: true, justification: "cliente_desistiu", note: "x".repeat(MIN_WAITING_JUSTIFICATION_NOTE - 1) })).toMatchObject({ ok: false, code: "note_too_short" });
+    // espaços nas pontas não contam
+    expect(checkNoActionClosure({ clientWaiting: true, justification: "cliente_desistiu", note: `  ${"x".repeat(MIN_WAITING_JUSTIFICATION_NOTE - 1)}  ` })).toMatchObject({ ok: false });
+  });
+  it.each(NO_ACTION_WAITING_JUSTIFICATIONS)("justificativa %s + nota suficiente: aceita e grava a justificativa na nota", j => {
+    expect(checkNoActionClosure({ clientWaiting: true, justification: j, note: LONG })).toEqual({ ok: true, note: `[cliente aguardando: ${j}] ${LONG}` });
+  });
+});
+
+describe("evaluateAlertReadiness: destinatário administrativo e canal funcional (item 5)", () => {
+  const ok = { userId: "g", memberRole: "owner", pushDevices: 1 };
+  it("pronto: push configurado + gestor membro (owner/admin) com aparelho", () => {
+    expect(evaluateAlertReadiness({ pushConfigured: true, recipients: [ok] })).toEqual({ ready: true, validManagerCount: 1, problems: [] });
+    expect(evaluateAlertReadiness({ pushConfigured: true, recipients: [{ ...ok, memberRole: "admin" }] }).ready).toBe(true);
+  });
+  it("sem destinatários", () => {
+    expect(evaluateAlertReadiness({ pushConfigured: true, recipients: [] })).toMatchObject({ ready: false, problems: ["no_recipients"] });
+  });
+  it("push não configurado no servidor", () => {
+    expect(evaluateAlertReadiness({ pushConfigured: false, recipients: [ok] })).toMatchObject({ ready: false, problems: ["push_not_configured"] });
+  });
+  it("destinatário sem aparelho", () => {
+    const r = evaluateAlertReadiness({ pushConfigured: true, recipients: [{ ...ok, pushDevices: 0 }] });
+    expect(r.ready).toBe(false);
+    expect(r.problems).toEqual(expect.arrayContaining(["recipient_without_device", "no_valid_manager"]));
+  });
+  it("destinatário que saiu da organização ou é só vendedor não conta", () => {
+    expect(evaluateAlertReadiness({ pushConfigured: true, recipients: [{ ...ok, memberRole: null }] }).problems).toEqual(expect.arrayContaining(["recipient_not_member", "no_valid_manager"]));
+    expect(evaluateAlertReadiness({ pushConfigured: true, recipients: [{ ...ok, memberRole: "agent" }] }).problems).toEqual(expect.arrayContaining(["recipient_not_admin", "no_valid_manager"]));
+  });
+  it("um gestor válido basta mesmo com outro destinatário inválido na lista (mas o problema é reportado)", () => {
+    const r = evaluateAlertReadiness({ pushConfigured: true, recipients: [ok, { userId: "v", memberRole: "agent", pushDevices: 3 }] });
+    expect(r.ready).toBe(true);
+    expect(r.validManagerCount).toBe(1);
+    expect(r.problems).toContain("recipient_not_admin");
   });
 });

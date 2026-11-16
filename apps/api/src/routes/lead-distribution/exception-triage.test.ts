@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   getAdminClient: vi.fn(() => ({})), getOrganizationById: vi.fn(), loadTriageItems: vi.fn(), recordExceptionEvent: vi.fn(),
+  isPushConfigured: vi.fn(() => true), loadAlertReadinessRecipients: vi.fn(async () => [{ userId: "g", memberRole: "owner", pushDevices: 1 }]),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
@@ -92,5 +93,82 @@ describe("POST /exception-events/:assignmentId", () => {
     expect((await post("owner", { kind: "resolved_no_action", note: "x" })).statusCode).toBe(409);
     m.recordExceptionEvent.mockRejectedValueOnce(new Error("Informe o vendedor que assumiu"));
     expect((await post("owner", { kind: "resolved_confirmed" })).statusCode).toBe(400);
+  });
+});
+
+describe("4) 'Sem ação necessária' com cliente aguardando", () => {
+  const url = `/organizations/${ORG}/exception-events/${ASG}`;
+  const post = async (payload: unknown) => (await app("owner")).inject({ method: "POST", url, payload: payload as object });
+  const waiting = () => m.loadTriageItems.mockResolvedValue([item()]);
+  const notWaiting = () => m.loadTriageItems.mockResolvedValue([item({ triage: { ...item().triage, clientWaiting: false, group: "respondida", state: "respondida_sem_aceite" } })]);
+  const LONG = "Falei com o cliente por telefone e ele já fechou com a loja";
+
+  it("cliente aguardando e sem justificativa: 409 e NADA é gravado", async () => {
+    waiting();
+    const res = await post({ kind: "resolved_no_action", note: LONG });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("client_waiting");
+    expect(m.recordExceptionEvent).not.toHaveBeenCalled();
+  });
+  it("justificativa fora da lista fechada: 400 pelo schema, nada gravado", async () => {
+    waiting();
+    const res = await post({ kind: "resolved_no_action", note: LONG, waitingJustification: "qualquer_coisa" });
+    expect(res.statusCode).toBe(400);
+    expect(m.recordExceptionEvent).not.toHaveBeenCalled();
+  });
+  it("justificativa válida mas nota curta: 409", async () => {
+    waiting();
+    const res = await post({ kind: "resolved_no_action", note: "ok", waitingJustification: "cliente_desistiu" });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("note_too_short");
+    expect(m.recordExceptionEvent).not.toHaveBeenCalled();
+  });
+  it("justificativa válida + nota de 20+ caracteres: grava, com a justificativa dentro da nota auditável", async () => {
+    waiting();
+    const res = await post({ kind: "resolved_no_action", note: LONG, waitingJustification: "cliente_atendido_fora_do_crm" });
+    expect(res.statusCode).toBe(200);
+    expect(m.recordExceptionEvent.mock.calls[0][1].note).toBe(`[cliente aguardando: cliente_atendido_fora_do_crm] ${LONG}`);
+  });
+  it("sem cliente aguardando: a regra antiga (só nota) continua valendo", async () => {
+    notWaiting();
+    const res = await post({ kind: "resolved_no_action", note: "contato duplicado" });
+    expect(res.statusCode).toBe(200);
+    expect(m.recordExceptionEvent.mock.calls[0][1].note).toBe("contato duplicado");
+  });
+  it("o estado é relido no servidor: tela dizia 'não aguardando', mas o cliente escreveu depois => bloqueia", async () => {
+    waiting(); // estado atual no servidor
+    const res = await post({ kind: "resolved_no_action", note: LONG });
+    expect(res.statusCode).toBe(409);
+  });
+  it("reconhecer e confirmar quem assumiu NÃO são bloqueados pelo cliente aguardando", async () => {
+    waiting();
+    expect((await post({ kind: "acknowledged" })).statusCode).toBe(200);
+    expect((await post({ kind: "resolved_confirmed", repId: REP })).statusCode).toBe(200);
+    expect(m.loadTriageItems).not.toHaveBeenCalled();
+  });
+});
+
+describe("5) prontidão exposta no painel", () => {
+  const url = `/organizations/${ORG}/exception-triage`;
+  it("modo shadow/on: devolve a prontidão calculada (ok)", async () => {
+    const body = (await (await app("owner")).inject({ method: "GET", url })).json();
+    expect(body.readiness).toMatchObject({ ready: true, validManagerCount: 1, problems: [] });
+  });
+  it("sem destinatário administrativo ou sem aparelho: ready=false com os motivos", async () => {
+    m.loadAlertReadinessRecipients.mockResolvedValueOnce([{ userId: "g", memberRole: "owner", pushDevices: 0 }]);
+    const body = (await (await app("owner")).inject({ method: "GET", url })).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.problems).toContain("recipient_without_device");
+  });
+  it("falha ao verificar vira null (a tela mostra 'não foi possível verificar'), sem derrubar o painel", async () => {
+    m.loadAlertReadinessRecipients.mockRejectedValueOnce(new Error("db"));
+    const res = await (await app("owner")).inject({ method: "GET", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().readiness).toBeNull();
+  });
+  it("modo off: não consulta a prontidão", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { exception_triage_panel_enabled: true } });
+    await (await app("owner")).inject({ method: "GET", url });
+    expect(m.loadAlertReadinessRecipients).not.toHaveBeenCalled();
   });
 });

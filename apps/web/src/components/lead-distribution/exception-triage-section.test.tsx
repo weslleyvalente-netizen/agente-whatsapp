@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { durationLabel, triageRowView, type TriageResponse, type TriageRowDTO } from "@/lib/exception-triage-view";
+import { durationLabel, readinessNotice, triageRowView, type TriageResponse, type TriageRowDTO } from "@/lib/exception-triage-view";
 import { ExceptionTriageSection, type ExceptionTriageSectionProps } from "./exception-triage-section";
 
 const row = (over: Partial<TriageRowDTO> = {}): TriageRowDTO => ({
@@ -72,5 +72,30 @@ describe("modelo de visão", () => {
   it("triageRowView: ações por tipo", () => {
     expect(triageRowView(row())).toMatchObject({ canActOnException: true, canNudgeSeller: false, badge: "Exceção" });
     expect(triageRowView(row({ kind: "alert" }))).toMatchObject({ canActOnException: false, canNudgeSeller: true, badge: "Atribuição pendente" });
+  });
+});
+
+describe("correções da revisão: cliente aguardando e prontidão", () => {
+  it("cliente aguardando: mostra a justificativa (lista fechada) e o botão 'Sem ação necessária' nasce desabilitado", () => {
+    const out = html(props({ enabled: true, urgent: [row({ clientWaiting: true })] }));
+    expect(out).toContain("Justificativa (cliente ainda aguardando)");
+    expect(out).toContain("Cliente já atendido fora do CRM");
+    expect(out).toContain("pelo menos 20 caracteres");
+    expect(out).toMatch(/<button[^>]*disabled[^>]*>Sem ação necessária<\/button>/);
+  });
+  it("sem cliente aguardando: não pede justificativa", () => {
+    const out = html(props({ enabled: true, answered: [row({ group: "respondida", state: "respondida_sem_aceite", clientWaiting: false, needsOwnerConfirmation: true })] }));
+    expect(out).not.toContain("Justificativa (cliente ainda aguardando)");
+  });
+  it("aviso de prontidão: some com off ou pronto; aparece com o motivo quando não pronto", () => {
+    expect(readinessNotice("off", { ready: false, validManagerCount: 0, problems: ["no_recipients"] })).toBeNull();
+    expect(readinessNotice("on", { ready: true, validManagerCount: 1, problems: [] })).toBeNull();
+    expect(readinessNotice("shadow", { ready: false, validManagerCount: 0, problems: ["recipient_without_device", "no_valid_manager"] })).toMatch(/NÃO prontos.*aparelho.*Não ative o modo on/);
+    expect(readinessNotice("on", { ready: false, validManagerCount: 0, problems: ["push_not_configured"] })).toMatch(/Nenhum alerta está sendo enviado/);
+    expect(readinessNotice("shadow", null)).toMatch(/Não foi possível verificar/);
+  });
+  it("o painel exibe o aviso de prontidão", () => {
+    const out = html(props({ enabled: true, alertsMode: "shadow", readiness: { ready: false, validManagerCount: 0, problems: ["no_recipients"] }, urgent: [row()] }));
+    expect(out).toContain("Alertas NÃO prontos");
   });
 });

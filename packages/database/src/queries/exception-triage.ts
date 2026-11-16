@@ -128,11 +128,22 @@ export interface AlertLedgerClaim {
   recipientUserId: string | null; mode: "shadow" | "on"; detail?: Record<string, unknown>;
 }
 
-/** Estágios já registrados por exceção (qualquer canal, inclusive "pulado" e "shadow"): é o que impede reenvio. */
-export async function listRecordedAlertStages(db: SupabaseClient, assignmentIds: string[]): Promise<Map<string, number[]>> {
-  const rows = await selectIn<{ assignment_id: string; stage: number }>(db, "exception_alert_ledger", "assignment_id, stage", "assignment_id", assignmentIds);
-  const out = new Map<string, number[]>();
-  for (const r of rows) out.set(r.assignment_id, [...new Set([...(out.get(r.assignment_id) ?? []), r.stage])]);
+export interface RecordedAlertSlot { stage: number; channel: string; recipientUserId: string | null; status: string }
+
+/**
+ * Linhas do livro por exceção, com destinatário e canal. O worker decide por DESTINATÁRIO o que já foi registrado
+ * (quem não recebeu continua elegível) e por modo (linhas "shadow" não contam quando o modo é "on").
+ */
+export async function listRecordedAlertSlots(db: SupabaseClient, assignmentIds: string[]): Promise<Map<string, RecordedAlertSlot[]>> {
+  const rows = await selectIn<{ assignment_id: string; stage: number; channel: string; recipient_user_id: string | null; status: string }>(
+    db, "exception_alert_ledger", "assignment_id, stage, channel, recipient_user_id, status", "assignment_id", assignmentIds,
+  );
+  const out = new Map<string, RecordedAlertSlot[]>();
+  for (const r of rows) {
+    const list = out.get(r.assignment_id) ?? [];
+    list.push({ stage: r.stage, channel: r.channel, recipientUserId: r.recipient_user_id, status: r.status });
+    out.set(r.assignment_id, list);
+  }
   return out;
 }
 
@@ -158,6 +169,17 @@ export async function finishAlertSlot(db: SupabaseClient, id: number, status: "s
   if (error) throw error;
 }
 
+/**
+ * Marca "vou chamar o push agora" ANTES do envio. Devolve false se a reserva não está mais 'claimed' ou já foi marcada
+ * (então NÃO se envia). Depois desta marca, uma reserva sem confirmação nunca é reenviada (ver releaseStaleAlertClaims).
+ */
+export async function markAlertSending(db: SupabaseClient, id: number, now: Date = new Date()): Promise<boolean> {
+  const { data, error } = await db.from("exception_alert_ledger").update({ send_started_at: now.toISOString() })
+    .eq("id", id).eq("status", "claimed").is("send_started_at", null).select("id");
+  if (error) throw error;
+  return (data ?? []).length === 1;
+}
+
 /** Falha de envio: solta a reserva para a próxima varredura tentar de novo (nada foi entregue, então não há duplicata). */
 export async function releaseAlertSlot(db: SupabaseClient, id: number): Promise<void> {
   const { error } = await db.from("exception_alert_ledger").delete().eq("id", id).eq("status", "claimed");
@@ -171,10 +193,35 @@ export async function listAlertRecipientIds(db: SupabaseClient, organizationId: 
   return ((data ?? []) as Array<{ user_id: string }>).map(r => r.user_id);
 }
 
-/** Reservas de envio presas (processo caiu entre reservar e enviar): soltas depois de `olderThanMs` para o próximo ciclo reenviar. Nunca mexe em 'sent'/'skipped'. */
-export async function releaseStaleAlertClaims(db: SupabaseClient, olderThanMs: number, now: Date = new Date()): Promise<number> {
-  const { data, error } = await db.from("exception_alert_ledger").delete().eq("status", "claimed").eq("mode", "on")
-    .lt("created_at", new Date(now.getTime() - olderThanMs).toISOString()).select("id");
-  if (error) throw error;
-  return (data ?? []).length;
+/**
+ * Reservas presas depois de `olderThanMs`:
+ *  - SEM `send_started_at` (caiu antes de chamar o push): apagadas, o próximo ciclo reenvia com segurança;
+ *  - COM `send_started_at` (o push pode ter saído; a confirmação no banco falhou): viram 'skipped' com motivo `unconfirmed_send`
+ *    e NÃO são reenviadas (preferimos um aviso possivelmente já entregue a um duplicado; o estágio seguinte da escada continua valendo).
+ * Nunca toca 'sent'/'skipped'.
+ */
+export async function releaseStaleAlertClaims(db: SupabaseClient, olderThanMs: number, now: Date = new Date()): Promise<{ released: number; unconfirmed: number }> {
+  const cutoff = new Date(now.getTime() - olderThanMs).toISOString();
+  const released = await db.from("exception_alert_ledger").delete().eq("status", "claimed").eq("mode", "on").is("send_started_at", null).lt("created_at", cutoff).select("id");
+  if (released.error) throw released.error;
+  const unconfirmed = await db.from("exception_alert_ledger").update({ status: "skipped", detail: { reason: "unconfirmed_send" } })
+    .eq("status", "claimed").eq("mode", "on").not("send_started_at", "is", null).lt("send_started_at", cutoff).select("id");
+  if (unconfirmed.error) throw unconfirmed.error;
+  return { released: (released.data ?? []).length, unconfirmed: (unconfirmed.data ?? []).length };
+}
+
+/** Fatos para a prontidão (só leitura): destinatários explícitos, papel de membro atual e nº de aparelhos push. */
+export async function loadAlertReadinessRecipients(db: SupabaseClient, organizationId: string): Promise<Array<{ userId: string; memberRole: string | null; pushDevices: number }>> {
+  const ids = await listAlertRecipientIds(db, organizationId);
+  if (!ids.length) return [];
+  const [members, subs] = await Promise.all([
+    db.from("organization_members").select("user_id, role").eq("organization_id", organizationId).in("user_id", ids),
+    db.from("push_subscriptions").select("user_id").eq("organization_id", organizationId).in("user_id", ids),
+  ]);
+  if (members.error) throw members.error;
+  if (subs.error) throw subs.error;
+  const roleById = new Map(((members.data ?? []) as Array<{ user_id: string; role: string }>).map(m => [m.user_id, m.role]));
+  const devices = new Map<string, number>();
+  for (const s of (subs.data ?? []) as Array<{ user_id: string }>) devices.set(s.user_id, (devices.get(s.user_id) ?? 0) + 1);
+  return ids.map(userId => ({ userId, memberRole: roleById.get(userId) ?? null, pushDevices: devices.get(userId) ?? 0 }));
 }

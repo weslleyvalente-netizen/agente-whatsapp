@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { contactDisplayName, EXCEPTION_EVENT_KINDS, funnelConversationHref, resolveBusinessCalendar } from "@aula-agente/shared";
-import { getAdminClient, getOrganizationById, loadTriageItems, recordExceptionEvent } from "@aula-agente/database";
+import {
+  checkNoActionClosure, contactDisplayName, evaluateAlertReadiness, EXCEPTION_EVENT_KINDS, funnelConversationHref, NO_ACTION_WAITING_JUSTIFICATIONS, resolveBusinessCalendar,
+} from "@aula-agente/shared";
+import { getAdminClient, getOrganizationById, isPushConfigured, loadAlertReadinessRecipients, loadTriageItems, recordExceptionEvent } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { isManager } from "../../lib/lead-visibility.js";
 
@@ -13,6 +15,8 @@ const bodySchema = z.object({
   kind: z.enum(EXCEPTION_EVENT_KINDS),
   note: z.string().trim().max(500).optional(),
   repId: uuid.optional(),
+  // Obrigatória (lista fechada) para encerrar "sem ação" enquanto o cliente ainda aguarda.
+  waitingJustification: z.enum(NO_ACTION_WAITING_JUSTIFICATIONS).optional(),
 });
 
 export default async function exceptionTriageRoutes(app: FastifyInstance) {
@@ -52,9 +56,17 @@ export default async function exceptionTriageRoutes(app: FastifyInstance) {
       events: i.events.map(e => ({ kind: e.kind, at: e.created_at, repId: e.rep_id, note: e.note })),
     }));
     const by = (g: string) => rows.filter(r => r.group === g);
+    const alertsMode = org.settings.exception_alerts_mode ?? "off";
+    // Prontidão (só leitura): destinatário administrativo válido + aparelho push + push configurado. null = não foi possível verificar.
+    let readiness: ReturnType<typeof evaluateAlertReadiness> | null = null;
+    if (alertsMode !== "off") {
+      try { readiness = evaluateAlertReadiness({ pushConfigured: isPushConfigured(), recipients: await loadAlertReadinessRecipients(db, organizationId) }); }
+      catch { readiness = null; }
+    }
     return {
       enabled: true,
-      alertsMode: org.settings.exception_alerts_mode ?? "off",
+      alertsMode,
+      readiness,
       urgent: by("urgente"), answered: by("respondida"), obsolete: by("obsoleta"),
     };
   });
@@ -69,8 +81,18 @@ export default async function exceptionTriageRoutes(app: FastifyInstance) {
     const db = getAdminClient();
     const org = await getOrganizationById(db, organizationId);
     if (org.settings.exception_triage_panel_enabled !== true) return reply.status(404).send({ error: "Recurso desativado" });
+    let note = body.data.note ?? null;
+    if (body.data.kind === "resolved_no_action") {
+      // Regra de segurança: não encerra "sem ação" com cliente aguardando sem justificativa da lista fechada + nota de 20+ caracteres.
+      // O estado é relido agora (não confia no que a tela mostrava), para pegar o cliente que escreveu depois do carregamento.
+      const calendar = resolveBusinessCalendar(org.settings.business_calendar);
+      const current = (await loadTriageItems(db, organizationId, calendar, new Date())).find(i => i.assignment.id === assignmentId);
+      const check = checkNoActionClosure({ clientWaiting: current?.triage.clientWaiting === true, justification: body.data.waitingJustification, note });
+      if (!check.ok) return reply.status(409).send({ error: check.message, code: check.code });
+      note = check.note;
+    }
     try {
-      const id = await recordExceptionEvent(db, { organizationId, assignmentId, kind: body.data.kind, actorUserId: request.user.id, note: body.data.note ?? null, repId: body.data.repId ?? null });
+      const id = await recordExceptionEvent(db, { organizationId, assignmentId, kind: body.data.kind, actorUserId: request.user.id, note, repId: body.data.repId ?? null });
       return { id };
     } catch (err) {
       const message = (err as { message?: string }).message ?? "Não foi possível registrar";

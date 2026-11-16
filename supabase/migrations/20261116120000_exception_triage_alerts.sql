@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS public.exception_alert_ledger (
   -- só metadados operacionais (estágio, atraso, motivo): NUNCA nome, telefone ou texto de cliente.
   detail jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
+  -- Marcado ANTES de chamar o push: reserva com esta marca e sem confirmação = envio incerto (nunca reenviar; ver releaseStaleAlertClaims).
+  send_started_at timestamptz,
   sent_at timestamptz
 );
 CREATE UNIQUE INDEX IF NOT EXISTS exception_alert_ledger_unique

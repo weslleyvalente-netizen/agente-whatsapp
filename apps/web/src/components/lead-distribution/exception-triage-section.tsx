@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
-import type { SalesRep } from "@aula-agente/shared";
+import { checkNoActionClosure, NO_ACTION_WAITING_JUSTIFICATIONS, NO_ACTION_WAITING_LABELS, type SalesRep } from "@aula-agente/shared";
 import { Button } from "@/components/ui/button";
 import {
-  FOOTNOTE, GROUP_HINTS, GROUP_TITLES, totalCount, triageRowView, type TriageGroupKey, type TriageResponse, type TriageRowDTO,
+  FOOTNOTE, GROUP_HINTS, GROUP_TITLES, readinessNotice, totalCount, triageRowView, type TriageGroupKey, type TriageResponse, type TriageRowDTO,
 } from "@/lib/exception-triage-view";
 
 export interface ExceptionTriageSectionProps {
@@ -13,7 +13,7 @@ export interface ExceptionTriageSectionProps {
   notice: { kind: "error" | "info"; text: string } | null;
   onAcknowledge: (id: string) => void;
   onConfirm: (id: string, repId: string, note: string) => void;
-  onNoAction: (id: string, note: string) => void;
+  onNoAction: (id: string, note: string, waitingJustification?: string) => void;
   onNudgeSeller: (id: string) => void;
 }
 
@@ -21,6 +21,9 @@ function Row({ row, group, reps, busy, onAcknowledge, onConfirm, onNoAction, onN
   const v = triageRowView(row);
   const [repId, setRepId] = useState("");
   const [note, setNote] = useState("");
+  const [justification, setJustification] = useState("");
+  // Cliente ainda aguardando: só encerra "sem ação" com justificativa da lista fechada + nota de 20+ caracteres (o servidor confere de novo).
+  const noAction = checkNoActionClosure({ clientWaiting: row.clientWaiting, justification: justification || null, note });
   return (
     <div className="mt-3 rounded-lg border bg-background p-3" data-testid={`triage-row-${row.id}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -39,10 +42,19 @@ function Row({ row, group, reps, busy, onAcknowledge, onConfirm, onNoAction, onN
             <option value="">Quem assumiu…</option>
             {reps.map(r => <option key={r.id} value={r.id}>{r.display_name}</option>)}
           </select>
+          {row.clientWaiting && (
+            <select aria-label="Justificativa (cliente ainda aguardando)" className="rounded border bg-background p-1 text-sm" value={justification} onChange={e => setJustification(e.target.value)}>
+              <option value="">Justificativa (cliente aguardando)…</option>
+              {NO_ACTION_WAITING_JUSTIFICATIONS.map(j => <option key={j} value={j}>{NO_ACTION_WAITING_LABELS[j]}</option>)}
+            </select>
+          )}
           <input aria-label="Nota" className="rounded border bg-background p-1 text-sm" placeholder="Nota (opcional; obrigatória sem ação)" value={note} onChange={e => setNote(e.target.value)} />
           <Button size="sm" disabled={busy[row.id] || !repId} onClick={() => onConfirm(row.id, repId, note)}>Confirmar quem assumiu</Button>
-          <Button size="sm" variant="outline" disabled={busy[row.id] || !note.trim()} onClick={() => onNoAction(row.id, note)}>Sem ação necessária</Button>
+          <Button size="sm" variant="outline" disabled={busy[row.id] || !noAction.ok} onClick={() => onNoAction(row.id, note, justification || undefined)}>Sem ação necessária</Button>
         </div>
+      )}
+      {group !== "obsolete" && v.canActOnException && row.clientWaiting && (
+        <p className="mt-1 text-xs text-muted-foreground">Cliente ainda aguardando: “Sem ação necessária” exige justificativa e nota de pelo menos 20 caracteres.</p>
       )}
       {group !== "obsolete" && v.canNudgeSeller && (
         <div className="mt-2"><Button size="sm" variant="outline" disabled={busy[row.id]} onClick={() => onNudgeSeller(row.id)}>Cutucar vendedor</Button></div>
@@ -58,6 +70,7 @@ export function ExceptionTriageSection(props: ExceptionTriageSectionProps) {
   return (
     <section aria-label="Exceções de SLA" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
       <h2 className="font-medium">Exceções de SLA <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{totalCount(data)}</span></h2>
+      {readinessNotice(data.alertsMode, data.readiness) && <p role="alert" className="mt-1 text-xs font-medium text-destructive">{readinessNotice(data.alertsMode, data.readiness)}</p>}
       {data.alertsMode === "shadow" && <p className="text-xs text-muted-foreground">Avisos em modo sombra: registrados, nada é enviado.</p>}
       {notice && (notice.kind === "error" ? <p role="alert" className="mt-2 text-destructive">{notice.text}</p> : <p role="status" className="mt-2 text-muted-foreground">{notice.text}</p>)}
       {totalCount(data) === 0 && <p className="mt-1 text-muted-foreground">Nenhuma exceção no momento.</p>}

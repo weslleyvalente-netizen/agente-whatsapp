@@ -23,9 +23,13 @@ export interface TriageRowDTO {
   events: Array<{ kind: string; at: string; repId: string | null; note: string | null }>;
 }
 
+export interface AlertReadinessDTO { ready: boolean; validManagerCount: number; problems: string[] }
+
 export interface TriageResponse {
   enabled: boolean;
   alertsMode?: "off" | "shadow" | "on";
+  /** Prontidão dos alertas (só quando o modo não é off). null = não foi possível verificar. */
+  readiness?: AlertReadinessDTO | null;
   urgent?: TriageRowDTO[];
   answered?: TriageRowDTO[];
   obsolete?: TriageRowDTO[];
@@ -79,4 +83,23 @@ export function triageRowView(r: TriageRowDTO): TriageRowView {
 
 export function totalCount(d: TriageResponse): number {
   return (d.urgent?.length ?? 0) + (d.answered?.length ?? 0) + (d.obsolete?.length ?? 0);
+}
+
+const READINESS_PROBLEMS: Record<string, string> = {
+  push_not_configured: "o push não está configurado no servidor",
+  no_recipients: "nenhum destinatário administrativo cadastrado",
+  recipient_not_member: "um destinatário não é mais membro da organização",
+  recipient_not_admin: "um destinatário não é administrador (owner/admin)",
+  recipient_without_device: "um destinatário administrativo não tem aparelho com push",
+  no_valid_manager: "nenhum gestor válido com aparelho cadastrado",
+};
+
+/** Aviso do painel sobre a prontidão dos alertas; null quando não há o que avisar (modo off ou tudo pronto). */
+export function readinessNotice(mode: TriageResponse["alertsMode"], readiness: TriageResponse["readiness"]): string | null {
+  if (!mode || mode === "off") return null;
+  if (readiness === null) return "Não foi possível verificar se os alertas estão prontos para ativar.";
+  if (!readiness || readiness.ready) return null;
+  const why = [...new Set(readiness.problems.map(p => READINESS_PROBLEMS[p] ?? p))].join("; ");
+  const effect = mode === "on" ? "Nenhum alerta está sendo enviado" : "Não ative o modo on";
+  return `Alertas NÃO prontos: ${why}. ${effect} até corrigir.`;
 }

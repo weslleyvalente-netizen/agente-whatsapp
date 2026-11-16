@@ -61,7 +61,7 @@ export function ExceptionTriagePanel() {
       data={data} reps={reps} busy={busy} notice={notice}
       onAcknowledge={id => post(id, { kind: "acknowledged" }, "Exceção reconhecida.")}
       onConfirm={(id, repId, note) => post(id, { kind: "resolved_confirmed", repId, note: note || undefined }, "Registrado: quem assumiu foi confirmado.")}
-      onNoAction={(id, note) => post(id, { kind: "resolved_no_action", note }, "Registrado: sem ação necessária.")}
+      onNoAction={(id, note, waitingJustification) => post(id, { kind: "resolved_no_action", note, ...(waitingJustification ? { waitingJustification } : {}) }, "Registrado: sem ação necessária.")}
       onNudgeSeller={nudgeSeller}
     />
   );
