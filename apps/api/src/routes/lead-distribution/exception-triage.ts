@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   checkNoActionClosure, contactDisplayName, evaluateAlertReadiness, EXCEPTION_EVENT_KINDS, funnelConversationHref, NO_ACTION_WAITING_JUSTIFICATIONS, resolveBusinessCalendar,
 } from "@aula-agente/shared";
-import { getAdminClient, getOrganizationById, isPushConfigured, loadAlertReadinessRecipients, loadTriageItems, recordExceptionEvent } from "@aula-agente/database";
+import { countUnconfirmedAlerts, getAdminClient, getOrganizationById, isPushConfigured, loadAlertReadinessRecipients, loadTriageItems, recordExceptionEvent } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { isManager } from "../../lib/lead-visibility.js";
 
@@ -63,10 +63,14 @@ export default async function exceptionTriageRoutes(app: FastifyInstance) {
       try { readiness = evaluateAlertReadiness({ pushConfigured: isPushConfigured(), recipients: await loadAlertReadinessRecipients(db, organizationId) }); }
       catch { readiness = null; }
     }
+    // Monitor: reservas com resultado DESCONHECIDO (push pode ter sido entregue ou nunca começado) nas últimas 24 h. null = não foi possível contar.
+    let unconfirmedAlerts24h: number | null = null;
+    if (alertsMode !== "off") { try { unconfirmedAlerts24h = await countUnconfirmedAlerts(db, organizationId, new Date(Date.now() - 24 * 3600_000)); } catch { unconfirmedAlerts24h = null; } }
     return {
       enabled: true,
       alertsMode,
       readiness,
+      unconfirmedAlerts24h,
       urgent: by("urgente"), answered: by("respondida"), obsolete: by("obsoleta"),
     };
   });

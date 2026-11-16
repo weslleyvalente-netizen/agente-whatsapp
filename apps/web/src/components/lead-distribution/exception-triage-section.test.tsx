@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { durationLabel, readinessNotice, triageRowView, type TriageResponse, type TriageRowDTO } from "@/lib/exception-triage-view";
+import { durationLabel, readinessNotice, triageRowView, unconfirmedNotice, type TriageResponse, type TriageRowDTO } from "@/lib/exception-triage-view";
 import { ExceptionTriageSection, type ExceptionTriageSectionProps } from "./exception-triage-section";
 
 const row = (over: Partial<TriageRowDTO> = {}): TriageRowDTO => ({
@@ -97,5 +97,15 @@ describe("correções da revisão: cliente aguardando e prontidão", () => {
   it("o painel exibe o aviso de prontidão", () => {
     const out = html(props({ enabled: true, alertsMode: "shadow", readiness: { ready: false, validManagerCount: 0, problems: ["no_recipients"] }, urgent: [row()] }));
     expect(out).toContain("Alertas NÃO prontos");
+  });
+});
+
+describe("monitor de resultado desconhecido", () => {
+  it("sem ocorrências não mostra nada; com ocorrências mostra a contagem sem afirmar entrega nem falha", () => {
+    expect(unconfirmedNotice(0)).toBeNull();
+    expect(unconfirmedNotice(null)).toBeNull();
+    const n = unconfirmedNotice(3)!;
+    expect(n).toMatch(/3 aviso\(s\).*resultado desconhecido.*entregues ou nunca/);
+    expect(html(props({ enabled: true, alertsMode: "on", unconfirmedAlerts24h: 3, urgent: [row()] }))).toContain("resultado desconhecido");
   });
 });

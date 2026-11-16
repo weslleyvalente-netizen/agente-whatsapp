@@ -200,14 +200,28 @@ export async function listAlertRecipientIds(db: SupabaseClient, organizationId: 
  *    e NÃO são reenviadas (preferimos um aviso possivelmente já entregue a um duplicado; o estágio seguinte da escada continua valendo).
  * Nunca toca 'sent'/'skipped'.
  */
-export async function releaseStaleAlertClaims(db: SupabaseClient, olderThanMs: number, now: Date = new Date()): Promise<{ released: number; unconfirmed: number }> {
+export interface UnconfirmedAlertRow { id: number; assignmentId: string; stage: number }
+export async function releaseStaleAlertClaims(
+  db: SupabaseClient, olderThanMs: number, now: Date = new Date(),
+): Promise<{ released: number; unconfirmed: number; unconfirmedRows: UnconfirmedAlertRow[] }> {
   const cutoff = new Date(now.getTime() - olderThanMs).toISOString();
   const released = await db.from("exception_alert_ledger").delete().eq("status", "claimed").eq("mode", "on").is("send_started_at", null).lt("created_at", cutoff).select("id");
   if (released.error) throw released.error;
   const unconfirmed = await db.from("exception_alert_ledger").update({ status: "skipped", detail: { reason: "unconfirmed_send" } })
-    .eq("status", "claimed").eq("mode", "on").not("send_started_at", "is", null).lt("send_started_at", cutoff).select("id");
+    .eq("status", "claimed").eq("mode", "on").not("send_started_at", "is", null).lt("send_started_at", cutoff).select("id, assignment_id, stage");
   if (unconfirmed.error) throw unconfirmed.error;
-  return { released: (released.data ?? []).length, unconfirmed: (unconfirmed.data ?? []).length };
+  const unconfirmedRows = ((unconfirmed.data ?? []) as Array<{ id: number; assignment_id: string; stage: number }>).map(r => ({ id: r.id, assignmentId: r.assignment_id, stage: r.stage }));
+  return { released: (released.data ?? []).length, unconfirmed: unconfirmedRows.length, unconfirmedRows };
+}
+
+/**
+ * Monitor: quantas reservas terminaram com resultado DESCONHECIDO (`unconfirmed_send`) desde `since`. O número não diz se o push foi
+ * entregue ou nunca começou; serve para alertar quando passa a ser frequente (problema de rede/banco/provedor).
+ */
+export async function countUnconfirmedAlerts(db: SupabaseClient, organizationId: string, since: Date): Promise<number> {
+  const { data, error } = await db.from("exception_alert_ledger").select("detail").eq("organization_id", organizationId).eq("status", "skipped").gte("created_at", since.toISOString());
+  if (error) throw error;
+  return ((data ?? []) as Array<{ detail: { reason?: string } | null }>).filter(r => r.detail?.reason === "unconfirmed_send").length;
 }
 
 /** Fatos para a prontidão (só leitura): destinatários explícitos, papel de membro atual e nº de aparelhos push. */

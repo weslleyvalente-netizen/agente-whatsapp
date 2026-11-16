@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   getAdminClient: vi.fn(() => ({})), getOrganizationById: vi.fn(), loadTriageItems: vi.fn(), recordExceptionEvent: vi.fn(),
-  isPushConfigured: vi.fn(() => true), loadAlertReadinessRecipients: vi.fn(async () => [{ userId: "g", memberRole: "owner", pushDevices: 1 }]),
+  isPushConfigured: vi.fn(() => true), countUnconfirmedAlerts: vi.fn(async () => 0), loadAlertReadinessRecipients: vi.fn(async () => [{ userId: "g", memberRole: "owner", pushDevices: 1 }]),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
@@ -170,5 +170,24 @@ describe("5) prontidão exposta no painel", () => {
     m.getOrganizationById.mockResolvedValue({ settings: { exception_triage_panel_enabled: true } });
     await (await app("owner")).inject({ method: "GET", url });
     expect(m.loadAlertReadinessRecipients).not.toHaveBeenCalled();
+  });
+});
+
+describe("monitor: avisos com resultado desconhecido", () => {
+  const url = `/organizations/${ORG}/exception-triage`;
+  it("expõe a contagem das últimas 24 h quando o modo não é off", async () => {
+    m.countUnconfirmedAlerts.mockResolvedValueOnce(4);
+    const body = (await (await app("owner")).inject({ method: "GET", url })).json();
+    expect(body.unconfirmedAlerts24h).toBe(4);
+    const since = (m.countUnconfirmedAlerts.mock.calls as unknown as Array<[unknown, string, Date]>)[0][2];
+    expect(Date.now() - since.getTime()).toBeGreaterThan(23.9 * 3600_000);
+  });
+  it("falha na contagem vira null sem derrubar o painel; modo off não consulta", async () => {
+    m.countUnconfirmedAlerts.mockRejectedValueOnce(new Error("db"));
+    expect((await (await app("owner")).inject({ method: "GET", url })).json().unconfirmedAlerts24h).toBeNull();
+    m.getOrganizationById.mockResolvedValue({ settings: { exception_triage_panel_enabled: true } });
+    m.countUnconfirmedAlerts.mockClear();
+    await (await app("owner")).inject({ method: "GET", url });
+    expect(m.countUnconfirmedAlerts).not.toHaveBeenCalled();
   });
 });

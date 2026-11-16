@@ -3,7 +3,7 @@ import { useState } from "react";
 import { checkNoActionClosure, NO_ACTION_WAITING_JUSTIFICATIONS, NO_ACTION_WAITING_LABELS, type SalesRep } from "@aula-agente/shared";
 import { Button } from "@/components/ui/button";
 import {
-  FOOTNOTE, GROUP_HINTS, GROUP_TITLES, readinessNotice, totalCount, triageRowView, type TriageGroupKey, type TriageResponse, type TriageRowDTO,
+  FOOTNOTE, GROUP_HINTS, GROUP_TITLES, readinessNotice, totalCount, unconfirmedNotice, triageRowView, type TriageGroupKey, type TriageResponse, type TriageRowDTO,
 } from "@/lib/exception-triage-view";
 
 export interface ExceptionTriageSectionProps {
@@ -71,6 +71,7 @@ export function ExceptionTriageSection(props: ExceptionTriageSectionProps) {
     <section aria-label="Exceções de SLA" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
       <h2 className="font-medium">Exceções de SLA <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{totalCount(data)}</span></h2>
       {readinessNotice(data.alertsMode, data.readiness) && <p role="alert" className="mt-1 text-xs font-medium text-destructive">{readinessNotice(data.alertsMode, data.readiness)}</p>}
+      {unconfirmedNotice(data.unconfirmedAlerts24h) && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{unconfirmedNotice(data.unconfirmedAlerts24h)}</p>}
       {data.alertsMode === "shadow" && <p className="text-xs text-muted-foreground">Avisos em modo sombra: registrados, nada é enviado.</p>}
       {notice && (notice.kind === "error" ? <p role="alert" className="mt-2 text-destructive">{notice.text}</p> : <p role="status" className="mt-2 text-muted-foreground">{notice.text}</p>)}
       {totalCount(data) === 0 && <p className="mt-1 text-muted-foreground">Nenhuma exceção no momento.</p>}

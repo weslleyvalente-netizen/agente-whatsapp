@@ -6,7 +6,7 @@ import { inMinutes } from "./harness.js";
 import { ALL_ON, NEW_MIGRATIONS, seedLead, seedWorld, setupHandoffDb, type Db } from "./handoff-fixture.js";
 import { postgrestLite } from "./real-schema-db.js";
 import {
-  claimAlertSlot, finishAlertSlot, listAlertRecipientIds, listRecordedAlertSlots, loadAlertReadinessRecipients, loadTriageItems, markAlertSending, recordExceptionEvent, releaseAlertSlot, releaseStaleAlertClaims,
+  claimAlertSlot, countUnconfirmedAlerts, finishAlertSlot, listAlertRecipientIds, listRecordedAlertSlots, loadAlertReadinessRecipients, loadTriageItems, markAlertSending, recordExceptionEvent, releaseAlertSlot, releaseStaleAlertClaims,
 } from "../queries/exception-triage.js";
 
 const MIGRATION = "20261116120000_exception_triage_alerts.sql";
@@ -173,7 +173,7 @@ describe("livro de alertas (idempotência)", () => {
     const c = (await claimAlertSlot(client, { ...base, recipientUserId: e.reps["Marina"].userId }))!;
     await finishAlertSlot(client, c.id, "sent");
     await q("update public.exception_alert_ledger set created_at = now() - interval '10 minutes'");
-    expect(await releaseStaleAlertClaims(client, 5 * 60_000)).toEqual({ released: 1, unconfirmed: 0 });
+    expect(await releaseStaleAlertClaims(client, 5 * 60_000)).toEqual({ released: 1, unconfirmed: 0, unconfirmedRows: [] });
     expect((await q("select status from public.exception_alert_ledger"))).toEqual([{ status: "sent" }]);
   });
   it("marca 'enviando' é atômica e única; reserva MARCADA e presa vira 'skipped' (unconfirmed_send) e NUNCA é apagada para reenvio", async () => {
@@ -185,7 +185,10 @@ describe("livro de alertas (idempotência)", () => {
     expect(await markAlertSending(client, sent.id)).toBe(false); // segunda marca recusada: ninguém envia duas vezes pela mesma reserva
     // push saiu (marcada), confirmação no banco nunca aconteceu; a outra caiu antes de enviar
     await q("update public.exception_alert_ledger set created_at = now() - interval '10 minutes', send_started_at = case when id = $1 then now() - interval '10 minutes' else null end", [sent.id]);
-    expect(await releaseStaleAlertClaims(client, 5 * 60_000)).toEqual({ released: 1, unconfirmed: 1 });
+    const swept = await releaseStaleAlertClaims(client, 5 * 60_000);
+    expect(swept).toEqual({ released: 1, unconfirmed: 1, unconfirmedRows: [{ id: sent.id, assignmentId: e.exception, stage: 0 }] });
+    expect(await countUnconfirmedAlerts(client, e.org, new Date(Date.now() - 3600_000))).toBe(1);
+    expect(await countUnconfirmedAlerts(client, e.org, new Date(Date.now() + 3600_000))).toBe(0);
     const rows = await q("select id, status, detail from public.exception_alert_ledger order by id");
     expect(rows).toEqual([{ id: sent.id, status: "skipped", detail: { reason: "unconfirmed_send" } }]);
     void crashedBeforePush;
@@ -196,7 +199,7 @@ describe("livro de alertas (idempotência)", () => {
     const e = await realException();
     const a = (await claimAlertSlot(client, { organizationId: e.org, assignmentId: e.exception, stage: 0, channel: "push", mode: "on", recipientUserId: e.def }))!;
     await markAlertSending(client, a.id);
-    expect(await releaseStaleAlertClaims(client, 5 * 60_000)).toEqual({ released: 0, unconfirmed: 0 });
+    expect(await releaseStaleAlertClaims(client, 5 * 60_000)).toEqual({ released: 0, unconfirmed: 0, unconfirmedRows: [] });
     expect((await q("select status from public.exception_alert_ledger"))).toEqual([{ status: "claimed" }]);
   });
   it("shadow e push do mesmo destinatário/estágio coexistem (a sombra não ocupa o slot do envio real)", async () => {

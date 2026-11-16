@@ -30,6 +30,8 @@ export interface TriageResponse {
   alertsMode?: "off" | "shadow" | "on";
   /** Prontidão dos alertas (só quando o modo não é off). null = não foi possível verificar. */
   readiness?: AlertReadinessDTO | null;
+  /** Avisos das últimas 24 h com resultado desconhecido (push pode ter sido entregue ou nunca começado). */
+  unconfirmedAlerts24h?: number | null;
   urgent?: TriageRowDTO[];
   answered?: TriageRowDTO[];
   obsolete?: TriageRowDTO[];
@@ -102,4 +104,10 @@ export function readinessNotice(mode: TriageResponse["alertsMode"], readiness: T
   const why = [...new Set(readiness.problems.map(p => READINESS_PROBLEMS[p] ?? p))].join("; ");
   const effect = mode === "on" ? "Nenhum alerta está sendo enviado" : "Não ative o modo on";
   return `Alertas NÃO prontos: ${why}. ${effect} até corrigir.`;
+}
+
+/** Aviso de monitor: só aparece quando houve resultado desconhecido. Não afirma que o push foi entregue nem que falhou. */
+export function unconfirmedNotice(count: number | null | undefined): string | null {
+  if (!count || count < 1) return null;
+  return `${count} aviso(s) nas últimas 24 h ficaram com resultado desconhecido (podem ter sido entregues ou nunca terem começado) e não serão reenviados. Se isso se repetir, verifique a rede, o banco e o provedor de push.`;
 }

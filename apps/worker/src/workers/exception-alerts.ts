@@ -22,8 +22,13 @@ import {
 export const SWEEP_EVERY_MS = 60_000;
 export const STALE_CLAIM_MS = 5 * 60_000;
 export const FINISH_ATTEMPTS = 3;
+export const UNCONFIRMED_WARNING = "exception-alerts: AVISO resultado DESCONHECIDO: o push pode ter sido entregue OU nunca ter começado. Reserva convertida em unconfirmed_send; este estágio NÃO será reenviado ao destinatário";
 
-type PushOutcome = "sent" | "no_device" | "unconfigured" | "failed";
+/**
+ * "failed" = há EVIDÊNCIA de que nada foi entregue (provedor rejeitou com 4xx, DNS/recusa de conexão, erro antes de enviar): libera para nova tentativa.
+ * "unknown" = o envio pode ter sido aceito (timeout, conexão derrubada, 5xx, resposta perdida, exceção sem forma conhecida): a reserva é PRESERVADA e nunca reenviada.
+ */
+type PushOutcome = "sent" | "no_device" | "unconfigured" | "failed" | "unknown";
 
 export interface ExceptionAlertDeps {
   now(): Date;
@@ -40,10 +45,10 @@ export interface ExceptionAlertDeps {
   markSending(id: number): Promise<boolean>;
   finish(id: number, status: "sent" | "skipped", detail?: Record<string, unknown>): Promise<void>;
   release(id: number): Promise<void>;
-  releaseStale(): Promise<{ released: number; unconfirmed: number }>;
+  releaseStale(): Promise<{ released: number; unconfirmed: number; unconfirmedRows?: Array<{ id: number; assignmentId: string; stage: number }> }>;
   sendPush(organizationId: string, userId: string, message: ExceptionAlertMessage, tag: string): Promise<PushOutcome>;
   sleep(ms: number): Promise<void>;
-  log: { info(...a: unknown[]): void; error(...a: unknown[]): void };
+  log: { info(...a: unknown[]): void; warn(...a: unknown[]): void; error(...a: unknown[]): void };
 }
 
 export interface ExceptionAlertSummary {
@@ -56,13 +61,24 @@ export function countsForMode(mode: "shadow" | "on", slot: RecordedAlertSlot): b
   return mode === "shadow" ? slot.channel === "shadow" : slot.channel !== "shadow";
 }
 
+/** Traduz o resultado por aparelho em um desfecho único por destinatário. Exportada para o ensaio usar a MESMA regra do código real. */
+export function pushResultToOutcome(r: { sent: number; failed: number; ambiguous?: number; skipped?: boolean }): PushOutcome {
+  if (r.skipped) return "unconfigured";
+  if (r.sent > 0) return "sent"; // ao menos um aparelho aceitou: não se repete (falha parcial não gera reenvio)
+  if ((r.ambiguous ?? 0) > 0) return "unknown"; // nenhum confirmou e algum pode ter aceitado
+  return r.failed > 0 ? "failed" : "no_device";
+}
+
 export async function runExceptionAlertsOnce(deps: ExceptionAlertDeps): Promise<ExceptionAlertSummary> {
   const summary: ExceptionAlertSummary = { organizations: 0, evaluated: 0, sent: 0, shadowed: 0, skipped: 0, noRecipients: 0, released: 0, unconfirmed: 0, notReady: 0, failed: 0 };
   let orgs: Awaited<ReturnType<ExceptionAlertDeps["listOrganizations"]>>;
   try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error("exception-alerts: falha ao listar organizações", (err as Error)?.name); return summary; }
   const enabled = orgs.filter(o => o.settings.exception_alerts_mode === "shadow" || o.settings.exception_alerts_mode === "on");
   if (!enabled.length) return summary;
-  try { const r = await deps.releaseStale(); summary.released = r.released; summary.unconfirmed = r.unconfirmed; } catch (err) { deps.log.error("exception-alerts: falha ao soltar reservas antigas", (err as Error)?.name); }
+  try {
+    const r = await deps.releaseStale(); summary.released = r.released; summary.unconfirmed = r.unconfirmed;
+    for (const row of r.unconfirmedRows ?? []) deps.log.warn(UNCONFIRMED_WARNING, { ledgerId: row.id, assignmentId: row.assignmentId, stage: row.stage, origin: "stale_sweep" });
+  } catch (err) { deps.log.error("exception-alerts: falha ao soltar reservas antigas", (err as Error)?.name); }
 
   for (const org of enabled) {
     summary.organizations++;
@@ -162,7 +178,8 @@ async function sendOne(
   if (!marked) { try { await deps.release(claimed.id); } catch { /* a reserva sem marca é solta pela varredura de reservas antigas */ } return; }
 
   let outcome: PushOutcome;
-  try { outcome = await deps.sendPush(x.organizationId, x.userId, x.message, `exception-${x.assignmentId}-${x.stage}`); } catch { outcome = "failed"; }
+  // Exceção que escapa do envio não prova que nada saiu: tratada como resultado desconhecido (reserva preservada).
+  try { outcome = await deps.sendPush(x.organizationId, x.userId, x.message, `exception-${x.assignmentId}-${x.stage}`); } catch { outcome = "unknown"; }
 
   if (outcome === "failed" || outcome === "unconfigured") {
     // Nada foi entregue: solta para a próxima varredura tentar de novo. Se a soltura falhar, a reserva marcada vira 'unconfirmed_send' (nunca duplica).
@@ -170,17 +187,18 @@ async function sendOne(
     return;
   }
   const status = outcome === "sent" ? "sent" : "skipped";
-  const detail = outcome === "sent" ? x.detail : { ...x.detail, reason: outcome };
+  const detail = outcome === "sent" ? x.detail : outcome === "unknown" ? { ...x.detail, reason: "unconfirmed_send", cause: "provider_result_unknown" } : { ...x.detail, reason: outcome };
+  if (outcome === "unknown") deps.log.warn(UNCONFIRMED_WARNING, { ledgerId: claimed.id, assignmentId: x.assignmentId, stage: x.stage, origin: "send_result" });
   for (let attempt = 1; attempt <= FINISH_ATTEMPTS; attempt++) {
     try {
       await deps.finish(claimed.id, status, detail);
-      if (outcome === "sent") summary.sent++; else summary.skipped++;
+      if (outcome === "sent") summary.sent++; else if (outcome === "unknown") summary.unconfirmed++; else summary.skipped++;
       return;
     } catch (err) {
       if (attempt === FINISH_ATTEMPTS) {
         // O push saiu, mas o banco não confirmou: a reserva fica marcada e NUNCA é reenviada.
         summary.unconfirmed++;
-        deps.log.error("exception-alerts: push enviado sem confirmação no livro (não será reenviado)", x.organizationId, claimed.id, (err as Error)?.name);
+        deps.log.error("exception-alerts: resultado do push sem confirmação no livro, desconhecido ou entregue (não será reenviado)", x.organizationId, claimed.id, (err as Error)?.name);
         return;
       }
       await deps.sleep(200 * attempt);
@@ -213,10 +231,10 @@ export function defaultExceptionAlertDeps(overrides: Partial<ExceptionAlertDeps>
     releaseStale: () => releaseStaleAlertClaims(db, STALE_CLAIM_MS),
     sendPush: async (orgId, userId, message, tag) => {
       if (!isPushConfigured()) return "unconfigured";
-      const r = await sendPushToUser(db, userId, { title: message.title, body: message.body, url: message.url, tag }, { organizationId: orgId });
-      if (r.skipped) return "unconfigured";
-      if (r.sent > 0) return "sent";
-      return r.failed > 0 ? "failed" : "no_device";
+      let r;
+      // sendPushToUser só lança ao LER as assinaturas (antes de qualquer envio): evidência de que nada saiu.
+      try { r = await sendPushToUser(db, userId, { title: message.title, body: message.body, url: message.url, tag }, { organizationId: orgId }); } catch { return "failed"; }
+      return pushResultToOutcome(r);
     },
     sleep: ms => new Promise(r => setTimeout(r, ms)),
     log: console,

@@ -20,7 +20,7 @@ function item(id: string, over: { assignedAt?: string; resolved?: boolean } = {}
   };
 }
 
-interface World { ledger: Map<string, { id: number; status: string; channel: string; stage: number; user: string | null; mode: string; sendStarted: boolean }>; finishFailures: number; markFails: boolean; readinessOverride: Partial<{ pushConfigured: boolean; recipients: Array<{ userId: string; memberRole: string | null; pushDevices: number }> }>; pushes: Array<{ user: string; title: string; tag: string }>; mode: ExceptionAlertsMode; now: Date; items: TriageItem[]; failPush: boolean; failFor?: Set<string>; log: string[] }
+interface World { ledger: Map<string, { id: number; status: string; channel: string; stage: number; user: string | null; mode: string; sendStarted: boolean }>; finishFailures: number; markFails: boolean; readinessOverride: Partial<{ pushConfigured: boolean; recipients: Array<{ userId: string; memberRole: string | null; pushDevices: number }> }>; pushes: Array<{ user: string; title: string; tag: string }>; mode: ExceptionAlertsMode; now: Date; items: TriageItem[]; failPush: boolean; failFor?: Set<string>; unknownFor?: Set<string>; pushThrows?: boolean; log: string[]; warns: string[] }
 
 function makeDeps(w: World, settings: Record<string, unknown> = {}): ExceptionAlertDeps {
   let nextId = 1;
@@ -44,11 +44,11 @@ function makeDeps(w: World, settings: Record<string, unknown> = {}): ExceptionAl
     release: async id => { for (const [k, v] of w.ledger) if (v.id === id) w.ledger.delete(k); },
     releaseStale: async () => ({ released: 0, unconfirmed: 0 }),
     sleep: async () => {},
-    sendPush: async (_o, user, message, tag) => { if (w.failPush || w.failFor?.has(user)) throw new Error("boom"); w.pushes.push({ user, title: message.title, tag }); return "sent"; },
-    log: { info: (...a) => w.log.push(a.join(" ")), error: (...a) => w.log.push(`ERR ${a.join(" ")}`) },
+    sendPush: async (_o, user, message, tag) => { if (w.pushThrows) throw new Error("timeout ambíguo"); if (w.failPush || w.failFor?.has(user)) return "failed"; if (w.unknownFor?.has(user)) { w.pushes.push({ user, title: message.title, tag }); return "unknown"; } w.pushes.push({ user, title: message.title, tag }); return "sent"; },
+    log: { info: (...a) => w.log.push(a.join(" ")), warn: (...a) => w.warns.push(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ")), error: (...a) => w.log.push(`ERR ${a.join(" ")}`) },
   };
 }
-const world = (over: Partial<World> = {}): World => ({ ledger: new Map(), pushes: [], mode: "on", now: T0, items: [item("a")], failPush: false, log: [], finishFailures: 0, markFails: false, readinessOverride: {}, ...over });
+const world = (over: Partial<World> = {}): World => ({ ledger: new Map(), pushes: [], mode: "on", now: T0, items: [item("a")], failPush: false, log: [], warns: [], finishFailures: 0, markFails: false, readinessOverride: {}, ...over });
 
 describe("exception-alerts: segurança por padrão", () => {
   it("modo off/ausente: não consulta nada nem envia", async () => {
@@ -377,5 +377,72 @@ describe("5) prontidão: destinatário administrativo e canal funcional antes de
     expect(s.shadowed).toBe(3);
     expect(s.notReady).toBe(0);
     expect(claims.every(c => c?.ready === false)).toBe(true);
+  });
+});
+
+describe("C1) resultado ambíguo do push (resposta perdida / timeout)", () => {
+  it("exceção/timeout no envio: reserva PRESERVADA como unconfirmed_send, aviso 'desconhecido' e NENHUM reenvio nos ciclos seguintes", async () => {
+    const w = world({ pushThrows: true });
+    const d = makeDeps(w);
+    const s1 = await runExceptionAlertsOnce(d);
+    expect(s1.unconfirmed).toBe(3);
+    expect(s1.sent).toBe(0);
+    expect([...w.ledger.values()].map(v => `${v.status}`)).toEqual(["skipped", "skipped", "skipped"]);
+    expect(w.warns).toHaveLength(3);
+    expect(w.warns[0]).toMatch(/DESCONHECIDO.*entregue OU nunca ter começado/);
+    w.pushThrows = false;
+    const s2 = await runExceptionAlertsOnce(d); // provedor voltou: NÃO pode tentar de novo o mesmo destinatário/estágio
+    expect(s2.sent).toBe(0);
+    expect(w.pushes).toHaveLength(0);
+    expect(w.ledger.size).toBe(3);
+  });
+  it("resultado 'unknown' (nenhum aparelho confirmou e algum pode ter aceitado) também não reenvia, só para quem ficou ambíguo", async () => {
+    const w = world({ unknownFor: new Set(["marina"]) });
+    const d = makeDeps(w);
+    const s1 = await runExceptionAlertsOnce(d);
+    expect(s1).toMatchObject({ sent: 2, unconfirmed: 1 });
+    const s2 = await runExceptionAlertsOnce(d);
+    expect(s2.sent).toBe(0);
+    expect(w.pushes.filter(p => p.user === "marina")).toHaveLength(1); // a única entrega (já ocorrida no provedor) não se repete
+    expect([...w.ledger.values()].find(v => v.user === "marina")).toMatchObject({ status: "skipped" });
+  });
+  it("falha DEFINITIVA (evidência de que nada saiu) continua liberando a reserva para nova tentativa", async () => {
+    const w = world({ failFor: new Set(["marina"]) });
+    const d = makeDeps(w);
+    await runExceptionAlertsOnce(d);
+    expect([...w.ledger.values()].some(v => v.user === "marina")).toBe(false);
+    w.failFor = new Set();
+    const s2 = await runExceptionAlertsOnce(d);
+    expect(s2.sent).toBe(1);
+  });
+  it("o estágio seguinte da escada continua valendo depois de um resultado desconhecido", async () => {
+    const w = world({ pushThrows: true });
+    const d = makeDeps(w);
+    await runExceptionAlertsOnce(d);
+    w.pushThrows = false;
+    w.now = new Date(T0.getTime() + 15 * 60_000);
+    const s = await runExceptionAlertsOnce(d);
+    expect(s.sent).toBe(3);
+    expect(w.pushes.every(p => /Cobrança/.test(p.title))).toBe(true);
+    expect(w.pushes.map(p => p.user).sort()).toEqual(["gestor", "marcio", "marina"]);
+  });
+});
+
+describe("C1b/C2) observabilidade das reservas convertidas pela varredura", () => {
+  it("um aviso por reserva convertida (com id, exceção e estágio), mensagem de resultado desconhecido, e contagem no resumo", async () => {
+    const w = world();
+    const d = makeDeps(w);
+    d.releaseStale = async () => ({ released: 0, unconfirmed: 2, unconfirmedRows: [{ id: 7, assignmentId: "a", stage: 0 }, { id: 8, assignmentId: "a", stage: 15 }] });
+    const s = await runExceptionAlertsOnce(d);
+    expect(s.unconfirmed).toBe(2);
+    expect(w.warns.filter(x => /DESCONHECIDO/.test(x))).toHaveLength(2);
+    expect(w.warns[0]).toContain('"ledgerId":7');
+    expect(w.warns[1]).toContain('"stage":15');
+    expect(w.warns[0]).not.toMatch(/entregue\.|foi entregue ao/); // não afirma que foi entregue nem que falhou
+  });
+  it("sem reservas convertidas não há aviso", async () => {
+    const w = world();
+    await runExceptionAlertsOnce(makeDeps(w));
+    expect(w.warns).toEqual([]);
   });
 });
