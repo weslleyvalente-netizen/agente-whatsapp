@@ -10,7 +10,11 @@
 --
 -- Regras (as mesmas da fila na API; ver packages/shared/src/attention-queue.ts):
 --  * só mensagem com role 'human_agent' conta como atendimento humano; 'agent' (IA, follow-up automático) e 'system' não contam;
---  * mensagem humana que falhou no envio (metadata.send_failed_at) NÃO conta como resposta;
+--  * atendimento humano = mensagem human_agent COM envio aceito pela Evolution (evolution_message_id preenchido) e SEM metadata.send_failed_at.
+--    A linha que o CRM cria ao enfileirar o envio nasce com evolution_message_id nulo (o worker grava o id depois que a Evolution aceita;
+--    a resposta enviada pelo celular chega já com o id). Mensagem pendente, sem confirmação, ou que falhou NÃO conta como resposta.
+--    Pelo mesmo motivo a fila NÃO usa lead_assignments.first_human_message_at / status 'accepted' como prova de atendimento:
+--    o painel grava esses marcos ao ENFILEIRAR, antes do envio;
 --  * o cliente sai da fila quando existe resposta humana POSTERIOR à última mensagem dele (waiting_since só considera
 --    mensagens do cliente depois da última resposta humana);
 --  * conversa com dono (assigned_to) entra mesmo sem takeover, sem tarefa e sem negócio; sem dono só entra com takeover
@@ -44,7 +48,7 @@ AS $$
     JOIN public.wa_contacts w ON w.id = c.contact_id
     LEFT JOIN LATERAL (
       SELECT m.created_at FROM public.messages m
-      WHERE m.conversation_id = c.id AND m.role = 'human_agent' AND coalesce(m.metadata->>'send_failed_at', '') = ''
+      WHERE m.conversation_id = c.id AND m.role = 'human_agent' AND m.evolution_message_id IS NOT NULL AND coalesce(m.metadata->>'send_failed_at', '') = ''
       ORDER BY m.created_at DESC LIMIT 1
     ) h ON true
     CROSS JOIN LATERAL (
@@ -70,17 +74,23 @@ AS $$
     JOIN public.conversations c ON c.id = la.conversation_id
     JOIN public.wa_contacts w ON w.id = la.contact_id
     LEFT JOIN public.sales_reps sr ON sr.id = la.rep_id
-    WHERE la.organization_id = p_org AND la.first_human_message_at IS NULL
+    -- LATERAL ... LIMIT 1: uma sondagem por atribuição pelo índice (conversation_id, created_at); nunca varre `messages` inteira
+    LEFT JOIN LATERAL (
+      SELECT 1 AS ok FROM public.messages m
+      WHERE m.conversation_id = la.conversation_id AND m.role = 'human_agent' AND m.created_at >= la.assigned_at
+        AND m.evolution_message_id IS NOT NULL AND coalesce(m.metadata->>'send_failed_at', '') = ''
+      LIMIT 1
+    ) conf ON true
+    WHERE la.organization_id = p_org
       -- mesma janela da outra lista: a espera mostrada na tela conta desde handoff_at, então só entra o que chegou dentro de p_since
       AND la.handoff_at >= p_since
       AND (p_owner IS NULL OR sr.user_id = p_owner)
-      AND (la.status = 'pending' OR (la.status = 'exception' AND la.resolved_at IS NULL))
-      -- o campo first_human_message_at pode atrasar: uma resposta humana (que enviou) depois da atribuição também tira o lead da fila
-      AND NOT EXISTS (
-        SELECT 1 FROM public.messages m
-        WHERE m.conversation_id = la.conversation_id AND m.role = 'human_agent' AND m.created_at >= la.assigned_at
-          AND coalesce(m.metadata->>'send_failed_at', '') = ''
-      )
+      -- atribuição ativa sem atendimento: pendente, exceção sem resolver, ou aceita PELA MENSAGEM (first_message/phone_echo), cujo aceite foi gravado ao
+      -- enfileirar e só vale se o envio for confirmado (abaixo). Aceita pelo botão/admin continua fora da fila (sem mudança de regra).
+      AND (la.status = 'pending' OR (la.status = 'exception' AND la.resolved_at IS NULL)
+           OR (la.status = 'accepted' AND la.accepted_via IN ('first_message', 'phone_echo')))
+      -- sai da fila só com resposta humana CONFIRMADA (aceita pela Evolution, sem falha) depois da atribuição (conf, acima); first_human_message_at sozinho não prova envio
+      AND conf.ok IS NULL
     ORDER BY la.handoff_at ASC
     LIMIT p_limit
   );

@@ -92,13 +92,16 @@ async function seed(c, N) {
       'mensagem '||i||' '||md5(random()::text),
       c.last_message_at - (c.k - i) * interval '1 hour' * (0.5 + random() * 6)
     from (select cc.*, 5 + floor(power(random(),2) * 115)::int as k from public.conversations cc where cc.organization_id=$1) c cross join lateral generate_series(1, c.k) i`, [org]);
+  // ~97% das respostas humanas têm envio aceito pela Evolution (evolution_message_id); ~3% ficaram pendentes/sem confirmação
+  await q("update public.messages set evolution_message_id = md5(id::text) where role = 'human_agent' and random() < 0.97");
   // leads pendentes sem 1º atendimento (≈1% das conversas com dono) + aceitos (ruído)
   await q(`with pick as (select c.id conv, c.contact_id, c.assigned_to, c.last_message_at, row_number() over () rn from public.conversations c where c.organization_id=$1 and c.assigned_to is not null),
     h as (insert into public.handoff_events(organization_id, conversation_id, trigger_type, criado_por, handed_at) select $1, conv, 'request_human', 'ia', last_message_at - interval '2 hours' from pick returning id, conversation_id)
-    insert into public.lead_assignments(organization_id, chain_id, handoff_event_id, contact_id, conversation_id, rep_id, reason, status, assigned_at, handoff_at, strategy_version, accepted_at, first_human_message_at)
+    insert into public.lead_assignments(organization_id, chain_id, handoff_event_id, contact_id, conversation_id, rep_id, reason, status, assigned_at, handoff_at, strategy_version, accepted_at, first_human_message_at, accepted_via)
     select $1, gen_random_uuid(), h.id, p.contact_id, p.conv, (select r.id from public.sales_reps r where r.user_id=p.assigned_to), 'round_robin',
       case when p.rn % 50 = 0 then 'pending' else 'accepted' end, p.last_message_at - interval '2 hours', p.last_message_at - interval '2 hours', 'x',
-      case when p.rn % 50 = 0 then null else p.last_message_at - interval '1 hour' end, case when p.rn % 50 = 0 then null else p.last_message_at - interval '1 hour' end
+      case when p.rn % 50 = 0 then null else p.last_message_at - interval '1 hour' end, case when p.rn % 50 = 0 then null else p.last_message_at - interval '1 hour' end,
+      case when p.rn % 50 = 0 then null when p.rn % 3 = 0 then 'first_message' else 'button' end
     from pick p join h on h.conversation_id=p.conv`, [org]);
   await q("analyze"); await q("vacuum analyze public.messages");
   const cont = (await q(`select (select count(*) from public.conversations) conversas, (select count(*) from public.conversations where last_message_at >= now()-interval '30 days') conversas_30d,
@@ -204,12 +207,19 @@ async function runScale(N) {
   out.summary_ja_faz = sumOut; say("summary:", Object.keys(sumOut).join(" | "));
   // -------- correção: oráculo por força bruta (janelas, varrendo tudo) x a função --------
   const oracle = (await c.query(`
-    with m as (select conversation_id, role, created_at, (metadata->>'send_failed_at') failed from public.messages where created_at >= now() - interval '30 days'),
-    lh as (select conversation_id, max(created_at) filter (where role='human_agent' and coalesce(failed,'')='') h from m group by 1),
+    with m as (select conversation_id, role, created_at, (metadata->>'send_failed_at') failed, evolution_message_id evo from public.messages where created_at >= now() - interval '30 days'),
+    lh as (select conversation_id, max(created_at) filter (where role='human_agent' and evo is not null and coalesce(failed,'')='') h from m group by 1),
     w as (select m.conversation_id, min(m.created_at) waiting_since from m left join lh using (conversation_id) where m.role='contact' and (lh.h is null or m.created_at > lh.h) group by 1)
     select c.id from public.conversations c join w on w.conversation_id=c.id where c.status in ('open','waiting') and c.last_message_at >= now()-interval '30 days' and (c.assigned_to is not null or c.is_human_takeover) order by 1`)).rows.map((x) => x.id);
   const got = (await c.query(`select conversation_id from public.attention_queue_candidates('${s.org}', now()-interval '30 days', 100000, null) where kind='awaiting' order by 1`)).rows.map((x) => x.conversation_id);
-  out.correcao = { oraculo_forca_bruta: oracle.length, funcao: got.length, conjuntos_iguais: JSON.stringify(oracle) === JSON.stringify(got) };
+  // leads: oráculo por força bruta (pendente/exceção/aceito pela mensagem, na janela, sem resposta humana CONFIRMADA depois da atribuição)
+  const oracleLeads = (await c.query(`select la.conversation_id from public.lead_assignments la
+    where la.organization_id='${s.org}' and la.handoff_at >= now()-interval '30 days'
+      and (la.status='pending' or (la.status='exception' and la.resolved_at is null) or (la.status='accepted' and la.accepted_via in ('first_message','phone_echo')))
+      and not exists (select 1 from public.messages m where m.conversation_id=la.conversation_id and m.role='human_agent' and m.created_at >= la.assigned_at and m.evolution_message_id is not null and coalesce(m.metadata->>'send_failed_at','')='')
+    order by 1`)).rows.map((x) => x.conversation_id);
+  const gotLeads = (await c.query(`select conversation_id from public.attention_queue_candidates('${s.org}', now()-interval '30 days', 100000, null) where kind='new_lead' order by 1`)).rows.map((x) => x.conversation_id);
+  out.correcao = { oraculo_forca_bruta: oracle.length, funcao: got.length, conjuntos_iguais: JSON.stringify(oracle) === JSON.stringify(got), leads_oraculo: oracleLeads.length, leads_funcao: gotLeads.length, leads_iguais: JSON.stringify(oracleLeads) === JSON.stringify(gotLeads) };
   say("correção (oráculo x função):", JSON.stringify(out.correcao));
   // -------- EXPERIMENTO OPCIONAL (só no banco descartável): índice (conversation_id, role, created_at) para achar a última resposta humana sem ler a conversa inteira --------
   await c.query("set auto_explain.log_min_duration = -1");
