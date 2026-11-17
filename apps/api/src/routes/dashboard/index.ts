@@ -10,6 +10,7 @@ import {
   listSalesReps,
   getOpenTasksWithScoreInputs,
   getFollowupMetrics,
+  listAttentionCandidates,
   type OpenTaskWithScoreInputs,
 } from "@aula-agente/database";
 import {
@@ -19,6 +20,7 @@ import {
   computeTaskPriorityScore,
   resolveTaskBucket, getOperationalTaskDueDate,
   toISODateInTimeZone,
+  buildAttentionQueue,
   type Operation,
   type WaitingOn,
   type QualificationUrgency,
@@ -37,6 +39,8 @@ export function splitTodayList<T>(ranked: T[], limit: number): { items: T[]; res
 }
 
 const WINDOW_DAYS = 7;
+// Janela da fila "Precisam de resposta": conversas com mensagem nos últimos 30 dias.
+const NEEDS_REPLY_WINDOW_DAYS = 30;
 const MAX_URGENT = 20;
 
 interface DashboardConversationRow {
@@ -342,6 +346,31 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const ranked = buildTodayPriorityList(visibleRows, unansweredHandoffConversationIds, todayISODate, weights, Number.POSITIVE_INFINITY);
 
       return splitTodayList(ranked, org.settings.today_list_limit ?? TODAY_LIST_LIMIT);
+    }
+  );
+
+  // "Precisam de resposta" (somente leitura, atrás de needs_reply_queue_enabled): cliente aguardando resposta humana e lead
+  // sem primeiro atendimento. Não altera dono, rodízio nem dados. Regras em packages/shared/src/attention-queue.ts.
+  app.get<{ Params: { organizationId: string } }>(
+    "/organizations/:organizationId/dashboard/needs-reply",
+    async (request, reply) => {
+      const { organizationId } = request.params;
+      const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+
+      const db = getAdminClient();
+      const org = await getOrganizationById(db, organizationId);
+      if (org.settings.needs_reply_queue_enabled !== true) return { enabled: false };
+
+      const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
+      const sinceISO = new Date(Date.now() - NEEDS_REPLY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const [candidates, reps] = await Promise.all([
+        listAttentionCandidates(db, organizationId, sinceISO),
+        viewer.mode === "all" ? listSalesReps(db, organizationId) : Promise.resolve([] as Awaited<ReturnType<typeof listSalesReps>>),
+      ]);
+      const queue = buildAttentionQueue(candidates, { viewer });
+      const ownerNames = Object.fromEntries(reps.map((r) => [r.user_id, r.display_name]));
+      return { enabled: true, ownerNames, ...queue };
     }
   );
 

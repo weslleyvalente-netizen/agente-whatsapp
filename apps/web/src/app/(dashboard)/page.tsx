@@ -11,6 +11,7 @@ import { StatusLamp } from "@/components/ui/status-lamp";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { TASK_TYPE_LABELS, funnelConversationHref, type TaskType, type TaskPriority } from "@aula-agente/shared";
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
+import { NeedsReplyPanel, type NeedsReplyData } from "@/components/dashboard/needs-reply-panel";
 import type { TaskWithRelations } from "@/components/tasks/task-card";
 
 interface UrgentConversation {
@@ -108,6 +109,8 @@ export default function HomePage() {
   // acima (endpoints diferentes, não precisa bloquear um no outro).
   const [today, setToday] = useState<TodayItem[] | null>(null);
   const [reserveCount, setReserveCount] = useState(0);
+  // "Precisam de resposta": só existe com a flag needs_reply_queue_enabled; sem ela (ou em erro) o bloco "Tarefas urgentes" continua como era.
+  const [needsReply, setNeedsReply] = useState<NeedsReplyData | null>(null);
   const [actingTaskId, setActingTaskId] = useState<string | null>(null);
   const [followupItem, setFollowupItem] = useState<TodayItem | null>(null);
 
@@ -125,6 +128,9 @@ export default function HomePage() {
       .catch(() => setError("Não foi possível carregar o resumo."))
       .finally(() => setLoading(false));
     fetchToday();
+    apiFetch(`/organizations/${currentOrg.id}/dashboard/needs-reply`)
+      .then((data) => setNeedsReply(data?.enabled === true ? (data as NeedsReplyData) : null))
+      .catch(() => setNeedsReply(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrg]);
 
@@ -355,42 +361,46 @@ export default function HomePage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Tarefas urgentes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {summary.urgentConversations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhuma conversa esperando atenção.</p>
-          ) : (
-            <div className="divide-y divide-border">
-              {summary.urgentConversations.map((c) => (
-                <Link
-                  key={c.conversationId}
-                  href={funnelConversationHref(c.conversationId)}
-                  className="flex items-center gap-3 py-3 transition-colors hover:bg-accent/50"
-                >
-                  <Avatar>
-                    <AvatarFallback>
-                      {(c.contactName || c.contactPhone || "?")[0].toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{c.contactName || c.contactPhone || "?"}</p>
-                    <p className="truncate text-sm text-muted-foreground">{c.lastMessagePreview}</p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span className="tabular-data text-xs text-muted-foreground">
-                      {formatRelativeTime(c.lastMessageAt)}
-                    </span>
-                    <Badge variant="destructive">Urgente</Badge>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {needsReply ? (
+        <NeedsReplyPanel data={needsReply} />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tarefas urgentes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {summary.urgentConversations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma conversa esperando atenção.</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {summary.urgentConversations.map((c) => (
+                  <Link
+                    key={c.conversationId}
+                    href={funnelConversationHref(c.conversationId)}
+                    className="flex items-center gap-3 py-3 transition-colors hover:bg-accent/50"
+                  >
+                    <Avatar>
+                      <AvatarFallback>
+                        {(c.contactName || c.contactPhone || "?")[0].toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{c.contactName || c.contactPhone || "?"}</p>
+                      <p className="truncate text-sm text-muted-foreground">{c.lastMessagePreview}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="tabular-data text-xs text-muted-foreground">
+                        {formatRelativeTime(c.lastMessageAt)}
+                      </span>
+                      <Badge variant="destructive">Urgente</Badge>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {followupItem && currentOrg && (
         <TaskDetailPanel

@@ -69,6 +69,8 @@ export interface OrganizationSettings {
   send_failure_reconcile_enabled?: boolean;
   // Varredura de cliente sem resposta: reenvia à IA a última mensagem que ficou sem resposta e avisa o responsável. Desligado por padrão.
   unanswered_lead_sweep_enabled?: boolean;
+  /** Tela inicial "Precisam de resposta" (cliente aguardando resposta + lead sem primeiro atendimento). Opt-in: só `true` liga; ausente/false preserva o bloco "Tarefas urgentes". */
+  needs_reply_queue_enabled?: boolean;
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.
   customer_nudge_enabled?: boolean;
   // "Cutucar cliente" com a consolidação de tarefas por negócio ligada: o lembrete vira UMA pendência na tarefa consolidada do negócio.
