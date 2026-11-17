@@ -29,7 +29,12 @@ export interface AttentionItem {
   waitingMinutes: number;
 }
 
-export interface AttentionList { items: AttentionItem[]; total: number }
+/**
+ * `items`/`total`: casos de até 7 dias (mais antigo primeiro, no máximo `limit`).
+ * `older`: casos com mais de 7 dias (mais antigo primeiro, no máximo ATTENTION_OLDER_LIMIT), para a seção recolhível.
+ * Janela total continua a mesma (30 dias): total de comparação = `total + older.total`.
+ */
+export interface AttentionList { items: AttentionItem[]; total: number; older: { items: AttentionItem[]; total: number } }
 export interface AttentionLists { awaiting: AttentionList; newLeads: AttentionList }
 export interface AttentionQueue extends AttentionLists {
   /** Conversas e leads sem dono, só para quem tem permissão de ver (gestor). null para os demais. */
@@ -37,6 +42,10 @@ export interface AttentionQueue extends AttentionLists {
 }
 
 export const ATTENTION_LIST_LIMIT = 10;
+/** Mais antigo que isso vai para a seção recolhível "Mais de 7 dias". */
+export const ATTENTION_RECENT_DAYS = 7;
+/** Quantos casos antigos a seção recolhível lista (o contador mostra o total). */
+export const ATTENTION_OLDER_LIMIT = 50;
 
 /**
  * Cliente aguardando resposta humana? Cortesia ("obrigado", "ok") DEPOIS de um atendimento não reabre a fila;
@@ -65,13 +74,19 @@ const oldestFirst = (a: AttentionItem, b: AttentionItem) =>
 
 function toList(items: AttentionItem[], limit: number): AttentionList {
   const sorted = [...items].sort(oldestFirst);
-  return { items: sorted.slice(0, limit), total: sorted.length };
+  const cutoffMin = ATTENTION_RECENT_DAYS * 24 * 60;
+  const recent = sorted.filter((i) => i.waitingMinutes <= cutoffMin);
+  const older = sorted.filter((i) => i.waitingMinutes > cutoffMin);
+  return { items: recent.slice(0, limit), total: recent.length, older: { items: older.slice(0, ATTENTION_OLDER_LIMIT), total: older.length } };
 }
+
+/** Total da lista na janela inteira de 30 dias (até 7 dias + mais de 7 dias): é o número que a linha de base compara. */
+export const attentionListTotal = (l: AttentionList): number => l.total + l.older.total;
 
 /**
  * Monta as duas listas. Regras:
  *  - "Cliente aguardando resposta" tem prioridade: o mesmo cliente (contact_id) nunca aparece nas duas listas, nem duas vezes na mesma;
- *  - ordem do mais antigo para o mais recente em cada lista, com `waitingMinutes`;
+ *  - até 7 dias primeiro, do mais antigo para o mais recente; acima de 7 dias vão para `older` (seção recolhível), mesma ordem;
  *  - vendedor (mode "own") só vê o que é dele; sem dono só vai para `unowned` e só para gestor (mode "all").
  */
 export function buildAttentionQueue(

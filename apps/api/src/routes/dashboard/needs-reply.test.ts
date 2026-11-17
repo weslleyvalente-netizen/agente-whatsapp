@@ -52,4 +52,14 @@ describe("dashboard/needs-reply", () => {
     await get(); expect(m.listAttentionCandidates).toHaveBeenCalledTimes(1);
     expect(Object.keys(m).filter((k) => /^(update|insert|create|set|assign)/i.test(k))).toEqual([]);
   });
+  it("vendedor pede ao banco só o que é dele (p_owner = usuário); gestor pede tudo (null)", async () => {
+    await get(); expect(m.listAttentionCandidates.mock.calls[0].slice(3)).toEqual([200, "marina-user"]);
+    m.role.value = "admin"; await get(); expect(m.listAttentionCandidates.mock.calls[1].slice(3)).toEqual([200, null]);
+  });
+  it("casos de mais de 7 dias vão para 'older' sem sumir do total", async () => {
+    m.listAttentionCandidates.mockResolvedValue([row("novo", "marina-user"), row("velho", "marina-user", { waiting_since: ago(10 * 24 * 60) })]);
+    const j = (await get()).json();
+    expect(j.awaiting.items.map((i: any) => i.conversationId)).toEqual(["novo"]); expect(j.awaiting.total).toBe(1);
+    expect(j.awaiting.older.items.map((i: any) => i.conversationId)).toEqual(["velho"]); expect(j.awaiting.older.total).toBe(1);
+  });
 });

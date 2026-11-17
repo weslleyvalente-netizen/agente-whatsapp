@@ -94,16 +94,25 @@ describe("attention_queue_candidates", () => {
   it("só service_role executa; anon e authenticated não", async () => {
     await db.exec("GRANT SELECT ON ALL TABLES IN SCHEMA public TO service_role"); // no Supabase o service_role já lê as tabelas; o fixture mínimo não
     await db.exec("SET ROLE authenticated");
-    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10)", [org])).rejects.toThrow(/permission denied/i);
+    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10,null)", [org])).rejects.toThrow(/permission denied/i);
     await db.exec("RESET ROLE; SET ROLE anon");
-    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10)", [org])).rejects.toThrow(/permission denied/i);
+    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10,null)", [org])).rejects.toThrow(/permission denied/i);
     await db.exec("RESET ROLE; SET ROLE service_role");
-    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10)", [org])).resolves.toBeTruthy();
+    await expect(db.query("select * from public.attention_queue_candidates($1,now(),10,null)", [org])).resolves.toBeTruthy();
     await db.exec("RESET ROLE");
   });
   it("é somente leitura: não altera nenhuma tabela e não toca em rodízio", async () => {
     const { conversation } = await conv(); await msg(conversation, "contact", "preciso de ajuda", 90);
     const snap = async () => JSON.stringify([(await db.query("select count(*) from public.messages")).rows, (await db.query("select * from public.lead_distribution_state")).rows, (await db.query("select count(*) from public.lead_assignments")).rows]);
     const before = await snap(); await run(); expect(await snap()).toBe(before);
+  });
+  it("p_owner (vendedor) devolve só o que é dele; null (gestor) devolve tudo, inclusive sem dono", async () => {
+    const outro = await seedRep(db, org, "Márcio", 2);
+    const minha = await conv(); const dele = await conv({ assigned: outro.userId }); const livre = await conv({ assigned: null, takeover: true });
+    for (const c of [minha, dele, livre]) await msg(c.conversation, "contact", "preciso de ajuda com o valor", 90);
+    const forOwner = async (owner: string | null) => (await db.query<any>("select * from public.attention_queue_candidates($1,$2,200,$3)", [org, ago(30 * 24 * 60), owner])).rows;
+    expect(ids(await forOwner(marina.userId))).toEqual([minha.conversation]);
+    expect(ids(await forOwner(outro.userId))).toEqual([dele.conversation]);
+    expect(ids(await forOwner(null))).toEqual([minha.conversation, dele.conversation, livre.conversation].sort());
   });
 });

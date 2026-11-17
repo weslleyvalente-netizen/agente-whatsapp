@@ -2,7 +2,7 @@
 -- Duas listas: cliente aguardando resposta humana e lead sem primeiro atendimento.
 --
 -- NÃO ALTERA DADOS. Só cria uma função STABLE; nenhuma tabela, índice, coluna, dono ou rodízio é tocado.
--- Idempotente. Rollback: DROP FUNCTION IF EXISTS public.attention_queue_candidates(uuid, timestamptz, integer);
+-- Idempotente. Rollback: DROP FUNCTION IF EXISTS public.attention_queue_candidates(uuid, timestamptz, integer, uuid);
 --
 -- Cuidado com I/O (o projeto já recebeu aviso de Disk IO): a função só lê conversas recentes (índice
 -- idx_conversations_org_last_msg) e, por conversa, usa o índice idx_messages_conversation
@@ -15,7 +15,8 @@
 --    mensagens do cliente depois da última resposta humana);
 --  * conversa com dono (assigned_to) entra mesmo sem takeover, sem tarefa e sem negócio; sem dono só entra com takeover
 --    ligado (sem dono e sem takeover é conversa da IA, não de vendedor).
-CREATE OR REPLACE FUNCTION public.attention_queue_candidates(p_org uuid, p_since timestamptz, p_limit integer DEFAULT 200)
+-- p_owner: quando informado (vendedor), só devolve o que é DELE (mesma regra de visibilidade da API: dono = p_owner); NULL = tudo (gestor).
+CREATE OR REPLACE FUNCTION public.attention_queue_candidates(p_org uuid, p_since timestamptz, p_limit integer DEFAULT 200, p_owner uuid DEFAULT NULL)
 RETURNS TABLE (
   kind text,                    -- 'awaiting' | 'new_lead'
   conversation_id uuid,
@@ -46,12 +47,14 @@ AS $$
       SELECT min(m.created_at) AS waiting_since, max(m.created_at) AS last_contact_at,
              (array_agg(left(m.content, 200) ORDER BY m.created_at DESC))[1:5] AS contents
       FROM public.messages m
+      -- dois limites inferiores sobre a MESMA coluna (sem OR) para o índice (conversation_id, created_at) ler só o que veio depois da última resposta humana
       WHERE m.conversation_id = c.id AND m.role = 'contact' AND m.created_at >= p_since
-        AND (h.created_at IS NULL OR m.created_at > h.created_at)
+        AND m.created_at > coalesce(h.created_at, '-infinity'::timestamptz)
     ) u
     WHERE c.organization_id = p_org AND c.status IN ('open', 'waiting') AND c.last_message_at >= p_since
       AND u.waiting_since IS NOT NULL
       AND (c.assigned_to IS NOT NULL OR c.is_human_takeover)
+      AND (p_owner IS NULL OR c.assigned_to = p_owner)
     ORDER BY u.waiting_since ASC
     LIMIT p_limit
   )
@@ -64,6 +67,7 @@ AS $$
     JOIN public.wa_contacts w ON w.id = la.contact_id
     LEFT JOIN public.sales_reps sr ON sr.id = la.rep_id
     WHERE la.organization_id = p_org AND la.first_human_message_at IS NULL
+      AND (p_owner IS NULL OR sr.user_id = p_owner)
       AND (la.status = 'pending' OR (la.status = 'exception' AND la.resolved_at IS NULL))
       -- o campo first_human_message_at pode atrasar: uma resposta humana (que enviou) depois da atribuição também tira o lead da fila
       AND NOT EXISTS (
@@ -76,5 +80,5 @@ AS $$
   );
 $$;
 
-REVOKE ALL ON FUNCTION public.attention_queue_candidates(uuid, timestamptz, integer) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.attention_queue_candidates(uuid, timestamptz, integer) TO service_role;
+REVOKE ALL ON FUNCTION public.attention_queue_candidates(uuid, timestamptz, integer, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.attention_queue_candidates(uuid, timestamptz, integer, uuid) TO service_role;

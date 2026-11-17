@@ -365,7 +365,7 @@ export default async function dashboardRoutes(app: FastifyInstance) {
       const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
       const sinceISO = new Date(Date.now() - NEEDS_REPLY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
       const [candidates, reps] = await Promise.all([
-        listAttentionCandidates(db, organizationId, sinceISO),
+        listAttentionCandidates(db, organizationId, sinceISO, 200, viewer.mode === "own" ? viewer.userId : null),
         viewer.mode === "all" ? listSalesReps(db, organizationId) : Promise.resolve([] as Awaited<ReturnType<typeof listSalesReps>>),
       ]);
       const queue = buildAttentionQueue(candidates, { viewer });

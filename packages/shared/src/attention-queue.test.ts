@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAttentionQueue, isAwaitingHumanReply, formatWaiting, type AttentionCandidate } from "./attention-queue.js";
+import { attentionListTotal, buildAttentionQueue, isAwaitingHumanReply, formatWaiting, type AttentionCandidate } from "./attention-queue.js";
 
 const NOW = new Date("2026-11-17T12:00:00Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
@@ -69,5 +69,33 @@ describe("fila 'Precisam de resposta' (regra)", () => {
     const rows = Array.from({ length: 14 }, (_, i) => mk({ conversation_id: `k${i}`, waiting_since: ago(100 + i) }));
     const q = buildAttentionQueue(rows, { viewer: own(MARINA), now: NOW, limit: 10 });
     expect(q.awaiting.items).toHaveLength(10); expect(q.awaiting.total).toBe(14); expect(ids(q.awaiting)[0]).toBe("k13");
+  });
+  it("até 7 dias primeiro (mais antigo ao mais recente); acima de 7 dias vão para 'older', mesma ordem, com contador", () => {
+    const D = 24 * 60;
+    const rows = [
+      mk({ conversation_id: "r1", waiting_since: ago(6 * D) }), mk({ conversation_id: "r2", waiting_since: ago(60) }), mk({ conversation_id: "r3", waiting_since: ago(2 * D) }),
+      mk({ conversation_id: "o1", waiting_since: ago(25 * D) }), mk({ conversation_id: "o2", waiting_since: ago(8 * D) }), mk({ conversation_id: "o3", waiting_since: ago(7 * D + 1) }),
+    ];
+    const q = buildAttentionQueue(rows, { viewer: own(MARINA), now: NOW });
+    expect(ids(q.awaiting)).toEqual(["r1", "r3", "r2"]); expect(q.awaiting.total).toBe(3);
+    expect(ids(q.awaiting.older)).toEqual(["o1", "o2", "o3"]); expect(q.awaiting.older.total).toBe(3);
+    expect(attentionListTotal(q.awaiting)).toBe(6); // total da janela de 30 dias = o da linha de base
+  });
+  it("exatamente 7 dias ainda é 'até 7 dias'", () => {
+    const q = buildAttentionQueue([mk({ conversation_id: "limite", waiting_since: ago(7 * 24 * 60) })], { viewer: own(MARINA), now: NOW });
+    expect(ids(q.awaiting)).toEqual(["limite"]); expect(q.awaiting.older.total).toBe(0);
+  });
+  it("separar o antigo não muda o total: mesma entrada, mesmo total de antes (comparação do piloto)", () => {
+    const D = 24 * 60;
+    const rows = [...Array.from({ length: 5 }, (_, i) => mk({ conversation_id: `n${i}`, waiting_since: ago(60 + i) })), ...Array.from({ length: 4 }, (_, i) => mk({ conversation_id: `v${i}`, waiting_since: ago((10 + i) * D) })),
+      mk({ kind: "new_lead", conversation_id: "lv", had_human_reply: false, waiting_since: ago(20 * D) })];
+    const q = buildAttentionQueue(rows, { viewer: own(MARINA), now: NOW });
+    expect(attentionListTotal(q.awaiting)).toBe(9); expect(attentionListTotal(q.newLeads)).toBe(1); expect(q.newLeads.total).toBe(0);
+  });
+  it("sem dono (gestor) também separa os de mais de 7 dias; vendedor continua sem ver sem dono", () => {
+    const rows = [mk({ conversation_id: "sd-novo", owner_user_id: null, is_human_takeover: true, waiting_since: ago(30) }), mk({ conversation_id: "sd-velho", owner_user_id: null, is_human_takeover: true, waiting_since: ago(9 * 24 * 60) })];
+    const g = buildAttentionQueue(rows, { viewer: { mode: "all" }, now: NOW });
+    expect(ids(g.unowned!.awaiting)).toEqual(["sd-novo"]); expect(ids(g.unowned!.awaiting.older)).toEqual(["sd-velho"]);
+    expect(buildAttentionQueue(rows, { viewer: own(MARINA), now: NOW }).unowned).toBeNull();
   });
 });
