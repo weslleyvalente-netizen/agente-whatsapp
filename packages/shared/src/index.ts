@@ -24,6 +24,7 @@ export * from "./lead-ad-touch.js";
 export * from "./seller-message-suggestion.js";
 
 export * from "./sales-workspace.js";
+export * from "./attention-queue.js";
 export * from "./low-intent-cadence.js";
 
 export * from "./opportunity-search.js";
