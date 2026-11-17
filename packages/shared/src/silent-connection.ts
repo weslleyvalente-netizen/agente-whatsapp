@@ -84,3 +84,32 @@ export function hourOfWeekBrt(d: Date): number {
   const brt = new Date(d.getTime() - 3 * 3600_000);
   return brt.getUTCDay() * 24 + brt.getUTCHours();
 }
+
+/** Modo do alerta por organização: off (padrão), shadow (só registra o que enviaria) e on (registra e notifica). */
+export type SilentAlertMode = "off" | "shadow" | "on";
+export function resolveSilentAlertMode(settings: { silent_connection_alert_mode?: unknown } | null | undefined): SilentAlertMode {
+  const m = settings?.silent_connection_alert_mode;
+  return m === "shadow" || m === "on" ? m : "off";
+}
+
+export interface MonitorHealthInput {
+  now: Date;
+  /** Última observação do monitor de conexão (evolution_connection_observations). null = nunca houve. */
+  observation: { observedAt: Date; queryOk: boolean } | null;
+  /** Idade máxima aceitável da última observação (o monitor roda a cada 5 min). */
+  maxAgeMs: number;
+}
+export type MonitorHealth = { status: "ok" } | { status: "blind"; reason: "no_observation" | "stale_observation" | "evolution_query_failed"; ageMinutes: number | null };
+
+/**
+ * Saúde do PRÓPRIO monitoramento (condição distinta de "conexão muda"): sem observação, observação velha ou consulta à Evolution
+ * falhando = estamos cegos; não dá para afirmar que está tudo bem nem que está mudo.
+ */
+export function evaluateMonitorHealth(i: MonitorHealthInput): MonitorHealth {
+  if (!i.observation) return { status: "blind", reason: "no_observation", ageMinutes: null };
+  const age = i.now.getTime() - i.observation.observedAt.getTime();
+  const ageMinutes = Math.round(age / 60_000);
+  if (age > i.maxAgeMs) return { status: "blind", reason: "stale_observation", ageMinutes };
+  if (!i.observation.queryOk) return { status: "blind", reason: "evolution_query_failed", ageMinutes };
+  return { status: "ok" };
+}

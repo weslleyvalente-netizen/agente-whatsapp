@@ -1,40 +1,56 @@
-import { getAdminClient, getAllOrganizations, getInstancesByOrganization, listManagerUserIds, sendPushToUser } from "@aula-agente/database";
-import { DEFAULT_SILENCE_THRESHOLDS, decideAlertAction, evaluateSilentConnection, type SilenceEvaluation } from "@aula-agente/shared";
+import { getAdminClient, getAllOrganizations, getInstancesByOrganization, isPushConfigured, listManagerUserIds, hasPushSubscription, sendPushToUser } from "@aula-agente/database";
+import {
+  DEFAULT_SILENCE_THRESHOLDS, decideAlertAction, evaluateMonitorHealth, evaluateSilentConnection, resolveSilentAlertMode,
+  type SilenceEvaluation, type SilentAlertMode,
+} from "@aula-agente/shared";
 
-// Alerta de "conexão muda": a Evolution diz 'open', mas nenhuma mensagem de cliente chega. Roda no processo da API (setInterval),
-// só para organizações com settings.silent_connection_alert_enabled === true (desligado por padrão). Usa a observação do monitor
-// (evolution_connection_observations: estado e última recebida na Evolution) + a última mensagem de cliente no CRM + o volume
-// habitual da MESMA hora da semana nas últimas 4 semanas. Avisa gestores por PUSH (canal independente do WhatsApp afetado).
-// Um alerta aberto por instância (tabela silent_connection_alerts), repetição no máximo a cada 60 min, resolve sozinho quando volta.
-// NÃO envia mensagem de WhatsApp (verificação ativa com mensagem externa controlada fica para outra etapa, com autorização).
+// Alerta de "conexão muda": a Evolution diz 'open', mas nenhuma mensagem de cliente chega. Roda no processo da API (setInterval).
+// Modo por organização (settings.silent_connection_alert_mode): off (padrão) | shadow (só REGISTRA o que enviaria, sem notificar) | on.
+// "on" só notifica de verdade se houver canal comprovado (VAPID configurado e ao menos um gestor com push); sem isso roda como
+// shadow e registra a condição `push_not_ready`. Três condições distintas, cada uma com no máximo um alerta aberto por instância:
+//   silent_connection  Evolution 'open' sem receber além do habitual para a hora da semana;
+//   monitor_blind      o monitor não tem observação recente/válida (não dá para afirmar nada);
+//   push_not_ready     modo on pedido, mas sem gestor com push funcional.
+// Notificação sem duplicar em execuções concorrentes: quem notifica é quem VENCE uma gravação atômica (insert com índice único
+// parcial / update condicional); falha no push nunca apaga a evidência. Sem mensagem de WhatsApp (verificação ativa é outra etapa).
+// Opcional: SILENT_CONNECTION_HEARTBEAT_URL recebe um GET a cada ciclo saudável (monitor externo "dead-man's switch": se os pings
+// param, o serviço externo avisa que o PRÓPRIO monitoramento morreu). O ping não leva dados.
 
 export const SILENT_CYCLE_MS = 5 * 60 * 1000;
 export const MAX_OBSERVATION_AGE_MS = 15 * 60 * 1000;
 export const BASELINE_WEEKS = 4;
 export const REPEAT_MINUTES = 60;
 
+export type AlertKind = "silent_connection" | "monitor_blind" | "push_not_ready";
 interface Log { info(obj: unknown, msg: string): void; error(obj: unknown, msg: string): void }
 export interface OpenAlert { id: string; openedAt: Date; lastNotifiedAt: Date }
-export interface Observation { state: string | null; lastEvolutionAt: Date | null; observedAt: Date }
+export interface Observation { state: string | null; queryOk: boolean; lastEvolutionAt: Date | null; observedAt: Date }
+export interface PushReadiness { vapidConfigured: boolean; managers: number; managersWithPush: number }
+export const isPushReady = (r: PushReadiness) => r.vapidConfigured && r.managersWithPush > 0;
 
 export interface SilentDeps {
-  listOrganizations(): Promise<Array<{ id: string; settings: { silent_connection_alert_enabled?: boolean } }>>;
+  listOrganizations(): Promise<Array<{ id: string; settings: { silent_connection_alert_mode?: unknown } }>>;
   listInstances(organizationId: string): Promise<Array<{ id: string; instance_name: string }>>;
   latestObservation(organizationId: string, instanceName: string): Promise<Observation | null>;
   lastCrmInboundAt(organizationId: string, instanceId: string): Promise<Date | null>;
   baselinePerHour(organizationId: string, instanceId: string, now: Date): Promise<number | null>;
-  getOpenAlert(organizationId: string, instanceName: string): Promise<OpenAlert | null>;
-  openAlert(organizationId: string, instanceName: string, now: Date, evidence: Record<string, unknown>): Promise<void>;
-  touchAlert(id: string, now: Date, evidence: Record<string, unknown>): Promise<void>;
+  pushReadiness(organizationId: string): Promise<PushReadiness>;
+  getOpenAlert(organizationId: string, instanceName: string, kind: AlertKind, mode: SilentAlertMode): Promise<OpenAlert | null>;
+  /** true = ESTE processo abriu o alerta; false = outro processo abriu ao mesmo tempo (índice único): não notifica. */
+  openAlert(organizationId: string, instanceName: string, kind: AlertKind, mode: SilentAlertMode, now: Date, evidence: Record<string, unknown>): Promise<boolean>;
+  /** Atômico: só devolve true para UM processo se last_notified_at ainda for anterior ao limite. */
+  claimRepeat(id: string, now: Date, repeatMinutes: number, evidence: Record<string, unknown>): Promise<boolean>;
   resolveAlert(id: string, now: Date): Promise<void>;
   notifyManagers(organizationId: string, payload: { title: string; body: string; url: string; tag: string }): Promise<number>;
+  /** Monitor externo (opcional): chamado ao fim de um ciclo saudável. */
+  heartbeat?(): Promise<void>;
   log: Log;
 }
 
 const latest = (...ds: Array<Date | null | undefined>) => ds.filter((d): d is Date => !!d).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
 export function buildEvidence(ev: SilenceEvaluation, extra: { lastInboundAt: Date | null; lastCrmAt: Date | null; lastEvolutionAt: Date | null; state: string | null; baselinePerHour: number | null }) {
-  const iso = (d: Date | null) => (d ? d.toISOString() : null);
   return {
     evolution_state: extra.state, last_inbound_at: iso(extra.lastInboundAt), last_crm_inbound_at: iso(extra.lastCrmAt), last_evolution_inbound_at: iso(extra.lastEvolutionAt),
     silent_minutes: ev.silentMinutes === null ? null : Math.round(ev.silentMinutes), baseline_per_hour: extra.baselinePerHour,
@@ -42,48 +58,94 @@ export function buildEvidence(ev: SilenceEvaluation, extra: { lastInboundAt: Dat
   };
 }
 
+const MESSAGES: Record<AlertKind, (e: Record<string, unknown>) => { title: string; body: string }> = {
+  silent_connection: (e) => ({ title: "WhatsApp pode estar mudo", body: `A conexão aparece ativa, mas nenhuma mensagem de cliente chega há ${e.silent_minutes ?? "?"} min (habitual: ~${Math.round(Number(e.baseline_per_hour ?? 0))}/h). Confira o celular da loja e o CRM.` }),
+  monitor_blind: (e) => ({ title: "Monitoramento do WhatsApp sem dados", body: `O monitor da conexão não consegue confirmar o estado (${e.reason ?? "sem observação"}${e.age_minutes != null ? `, há ${e.age_minutes} min` : ""}). Verifique a API e a Evolution.` }),
+  push_not_ready: () => ({ title: "Alerta de conexão muda sem canal de aviso", body: "O modo 'on' foi pedido, mas nenhum gestor tem push ativo. O alerta roda só em modo sombra." }),
+};
+
+interface ApplyCtx { deps: SilentDeps; organizationId: string; instanceName: string; kind: AlertKind; effective: SilentAlertMode; now: Date }
+
+/** Aplica open/repeat/resolve de UMA condição. Grava primeiro (evidência + anti-duplicação), notifica só quem venceu a gravação. */
+async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open" | "repeat" | "resolve" | "none", evidence: Record<string, unknown>): Promise<void> {
+  const { deps, organizationId, instanceName, kind, effective, now } = c;
+  if (action === "none") return;
+  if (action === "resolve") { await deps.resolveAlert(open!.id, now); deps.log.info({ organizationId, instanceName, kind, mode: effective }, "silent-connection: condição resolvida"); return; }
+  const won = action === "open"
+    ? await deps.openAlert(organizationId, instanceName, kind, effective, now, evidence)
+    : await deps.claimRepeat(open!.id, now, REPEAT_MINUTES, evidence);
+  if (!won) { deps.log.info({ organizationId, instanceName, kind, action }, "silent-connection: outro processo já tratou esta condição (sem notificar de novo)"); return; }
+  if (effective === "shadow" || kind === "push_not_ready") {
+    deps.log.info({ organizationId, instanceName, kind, action, mode: "shadow", evidence }, "silent-connection: [SOMBRA] enviaria aviso aos gestores");
+    return;
+  }
+  try {
+    const m = MESSAGES[kind](evidence);
+    const sent = await deps.notifyManagers(organizationId, { ...m, url: "/", tag: `silent-connection-${kind}-${instanceName}` });
+    deps.log.info({ organizationId, instanceName, kind, action, pushSent: sent }, "silent-connection: aviso enviado");
+  } catch (err) { deps.log.error({ organizationId, instanceName, kind, errName: (err as Error)?.name }, "silent-connection: falha ao notificar (alerta gravado)"); }
+}
+
 export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new Date()): Promise<void> {
   let orgs: Awaited<ReturnType<SilentDeps["listOrganizations"]>>;
   try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); return; }
+  let anyEnabled = false;
   for (const org of orgs) {
-    if (org.settings?.silent_connection_alert_enabled !== true) continue;
+    const requested = resolveSilentAlertMode(org.settings);
+    if (requested === "off") continue;
+    anyEnabled = true;
+    // "on" só vale com canal comprovado; senão cai para sombra e registra a condição (não finge que avisa).
+    let effective: SilentAlertMode = requested;
+    if (requested === "on") {
+      let ready = false;
+      try { ready = isPushReady(await deps.pushReadiness(org.id)); } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao verificar o canal de push"); }
+      try {
+        const open = await deps.getOpenAlert(org.id, "*", "push_not_ready", "shadow");
+        const action = decideAlertAction(open ? { openedAt: open.openedAt, lastNotifiedAt: open.lastNotifiedAt } : null, { status: ready ? "ok" : "silent", silentMinutes: null, expectedInSilence: null, probabilityOfSilence: null, reason: ready ? "ok" : "no_manager_push" }, now, REPEAT_MINUTES);
+        await applyCondition({ deps, organizationId: org.id, instanceName: "*", kind: "push_not_ready", effective: "shadow", now }, open, action, { requested_mode: "on", reason: "no_manager_with_push_or_vapid_missing" });
+      } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao registrar push_not_ready"); }
+      if (!ready) effective = "shadow";
+    }
     let instances: Array<{ id: string; instance_name: string }>;
     try { instances = await deps.listInstances(org.id); } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: failed to list instances"); continue; }
     for (const inst of instances) {
+      const base = { deps, organizationId: org.id, instanceName: inst.instance_name, effective, now };
       try {
         const obs = await deps.latestObservation(org.id, inst.instance_name);
-        // Sem observação recente do monitor não dá para afirmar o estado da Evolution: não avalia (e não inventa alerta).
-        if (!obs || now.getTime() - obs.observedAt.getTime() > MAX_OBSERVATION_AGE_MS) {
-          deps.log.info({ organizationId: org.id, instanceName: inst.instance_name }, "silent-connection: observação do monitor ausente/desatualizada; ciclo ignorado");
-          continue;
-        }
+        // 1) Saúde do próprio monitor: cego = condição própria (não avalia "mudo" nem "tudo bem").
+        const health = evaluateMonitorHealth({ now, observation: obs ? { observedAt: obs.observedAt, queryOk: obs.queryOk } : null, maxAgeMs: MAX_OBSERVATION_AGE_MS });
+        const blindOpen = await deps.getOpenAlert(org.id, inst.instance_name, "monitor_blind", effective);
+        const blindEv = health.status === "blind" ? { reason: health.reason, age_minutes: health.ageMinutes } : {};
+        const blindAction = decideAlertAction(blindOpen ? { openedAt: blindOpen.openedAt, lastNotifiedAt: blindOpen.lastNotifiedAt } : null,
+          { status: health.status === "blind" ? "silent" : "ok", silentMinutes: null, expectedInSilence: null, probabilityOfSilence: null, reason: health.status }, now, REPEAT_MINUTES);
+        await applyCondition({ ...base, kind: "monitor_blind" }, blindOpen, blindAction, blindEv);
+        if (health.status === "blind" || !obs) { deps.log.info({ organizationId: org.id, instanceName: inst.instance_name, reason: health.status === "blind" ? health.reason : "no_observation" }, "silent-connection: monitor sem dados válidos; avaliação de mudez ignorada"); continue; }
+
+        // 2) Conexão muda.
         const crmAt = await deps.lastCrmInboundAt(org.id, inst.id);
         const lastInbound = latest(crmAt, obs.lastEvolutionAt);
         const baseline = await deps.baselinePerHour(org.id, inst.id, now);
         const ev = evaluateSilentConnection({ now, evolutionState: obs.state, lastInboundAt: lastInbound, baselinePerHour: baseline }, DEFAULT_SILENCE_THRESHOLDS);
-        const open = await deps.getOpenAlert(org.id, inst.instance_name);
+        const open = await deps.getOpenAlert(org.id, inst.instance_name, "silent_connection", effective);
         const action = decideAlertAction(open ? { openedAt: open.openedAt, lastNotifiedAt: open.lastNotifiedAt } : null, ev, now, REPEAT_MINUTES);
-        if (action === "none") continue;
-        const evidence = buildEvidence(ev, { lastInboundAt: lastInbound, lastCrmAt: crmAt, lastEvolutionAt: obs.lastEvolutionAt, state: obs.state, baselinePerHour: baseline });
-        if (action === "resolve") { await deps.resolveAlert(open!.id, now); deps.log.info({ organizationId: org.id, instanceName: inst.instance_name }, "silent-connection: alerta resolvido (voltou a receber)"); continue; }
-        // Grava primeiro (evidência e anti-repetição), notifica depois: falha no push nunca apaga a evidência nem causa reenvio em loop.
-        if (action === "open") await deps.openAlert(org.id, inst.instance_name, now, evidence); else await deps.touchAlert(open!.id, now, evidence);
-        const mins = evidence.silent_minutes ?? 0;
-        try {
-          const sent = await deps.notifyManagers(org.id, {
-            title: "WhatsApp pode estar mudo",
-            body: `A conexão aparece ativa, mas nenhuma mensagem de cliente chega há ${mins} min (habitual: ~${Math.round(baseline ?? 0)}/h). Confira o celular da loja e o CRM.`,
-            url: "/", tag: `silent-connection-${inst.instance_name}`,
-          });
-          deps.log.info({ organizationId: org.id, instanceName: inst.instance_name, action, silentMinutes: mins, pushSent: sent }, "silent-connection: alerta de conexão muda");
-        } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao notificar (alerta gravado)"); }
+        await applyCondition({ ...base, kind: "silent_connection" }, open, action, buildEvidence(ev, { lastInboundAt: lastInbound, lastCrmAt: crmAt, lastEvolutionAt: obs.lastEvolutionAt, state: obs.state, baselinePerHour: baseline }));
       } catch (err) { deps.log.error({ organizationId: org.id, instanceName: inst.instance_name, errName: (err as Error)?.name }, "silent-connection: avaliação falhou"); }
     }
   }
+  // Ciclo concluído sem travar: sinaliza ao monitor externo (só se alguma organização usa o alerta).
+  if (anyEnabled && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
+}
+
+/** GET sem dados para um monitor externo (ex.: serviço de heartbeat). Nunca lança; timeout curto. */
+export async function pingHeartbeat(url: string, fetchImpl: typeof fetch = fetch, timeoutMs = 5000): Promise<boolean> {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
+    try { const r = await fetchImpl(url, { method: "GET", signal: ctl.signal }); return r.ok; } finally { clearTimeout(t); }
+  } catch { return false; }
 }
 
 export const defaultSilentDeps = (log: Log): SilentDeps => ({
-  async listOrganizations() { return (await getAllOrganizations(getAdminClient())) as Array<{ id: string; settings: { silent_connection_alert_enabled?: boolean } }>; },
+  async listOrganizations() { return (await getAllOrganizations(getAdminClient())) as Array<{ id: string; settings: { silent_connection_alert_mode?: unknown } }>; },
   async listInstances(organizationId) { return (await getInstancesByOrganization(getAdminClient(), organizationId)) as Array<{ id: string; instance_name: string }>; },
   async latestObservation(organizationId, instanceName) {
     const { data, error } = await getAdminClient().from("evolution_connection_observations").select("observed_at, evolution_state, query_ok, last_evolution_message_at")
@@ -91,7 +153,7 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
     if (error) throw error;
     if (!data) return null;
     const r = data as { observed_at: string; evolution_state: string | null; query_ok: boolean; last_evolution_message_at: string | null };
-    return { state: r.query_ok ? r.evolution_state : null, lastEvolutionAt: r.last_evolution_message_at ? new Date(r.last_evolution_message_at) : null, observedAt: new Date(r.observed_at) };
+    return { state: r.query_ok ? r.evolution_state : null, queryOk: r.query_ok, lastEvolutionAt: r.last_evolution_message_at ? new Date(r.last_evolution_message_at) : null, observedAt: new Date(r.observed_at) };
   },
   async lastCrmInboundAt(organizationId, instanceId) {
     const { data, error } = await getAdminClient().from("messages").select("created_at, conversations!inner(evolution_instance_id)")
@@ -102,7 +164,7 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
   // Volume habitual: mediana das contagens de mensagens de cliente na mesma hora da semana (BRT) nas últimas semanas.
   async baselinePerHour(organizationId, instanceId, now) {
     const hourMs = 3600_000;
-    const startOfHour = Math.floor((now.getTime() - 3 * hourMs) / hourMs) * hourMs + 3 * hourMs; // início da hora corrente (alinhado a BRT)
+    const startOfHour = Math.floor((now.getTime() - 3 * hourMs) / hourMs) * hourMs + 3 * hourMs;
     const counts: number[] = [];
     for (let w = 1; w <= BASELINE_WEEKS; w++) {
       const from = new Date(startOfHour - w * 7 * 24 * hourMs), to = new Date(from.getTime() + hourMs);
@@ -115,25 +177,37 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
     counts.sort((a, b) => a - b);
     return (counts[1] + counts[2]) / 2;
   },
-  async getOpenAlert(organizationId, instanceName) {
+  async pushReadiness(organizationId) {
+    const db = getAdminClient();
+    const managers = await listManagerUserIds(db, organizationId);
+    let withPush = 0;
+    for (const id of managers) { if (await hasPushSubscription(db, organizationId, id)) withPush++; }
+    return { vapidConfigured: isPushConfigured(), managers: managers.length, managersWithPush: withPush };
+  },
+  async getOpenAlert(organizationId, instanceName, kind, mode) {
     const { data, error } = await getAdminClient().from("silent_connection_alerts").select("id, opened_at, last_notified_at")
-      .eq("organization_id", organizationId).eq("instance_name", instanceName).is("resolved_at", null).maybeSingle();
+      .eq("organization_id", organizationId).eq("instance_name", instanceName).eq("kind", kind).eq("mode", mode).is("resolved_at", null).maybeSingle();
     if (error) throw error;
     if (!data) return null;
     const r = data as { id: string; opened_at: string; last_notified_at: string };
     return { id: r.id, openedAt: new Date(r.opened_at), lastNotifiedAt: new Date(r.last_notified_at) };
   },
-  async openAlert(organizationId, instanceName, now, evidence) {
-    const { error } = await getAdminClient().from("silent_connection_alerts").insert({ organization_id: organizationId, instance_name: instanceName, opened_at: now.toISOString(), last_notified_at: now.toISOString(), evidence });
-    if (error && (error as { code?: string }).code !== "23505") throw error; // 23505: outro processo abriu o mesmo alerta ao mesmo tempo
+  async openAlert(organizationId, instanceName, kind, mode, now, evidence) {
+    const { error } = await getAdminClient().from("silent_connection_alerts").insert({ organization_id: organizationId, instance_name: instanceName, kind, mode, opened_at: now.toISOString(), last_notified_at: now.toISOString(), evidence });
+    if (!error) return true;
+    if ((error as { code?: string }).code === "23505") return false; // outro processo abriu a mesma condição ao mesmo tempo
+    throw error;
   },
-  async touchAlert(id, now, evidence) {
-    const { data: cur } = await getAdminClient().from("silent_connection_alerts").select("notify_count").eq("id", id).maybeSingle();
-    const { error } = await getAdminClient().from("silent_connection_alerts").update({ last_notified_at: now.toISOString(), notify_count: ((cur as { notify_count?: number } | null)?.notify_count ?? 1) + 1, evidence }).eq("id", id);
+  async claimRepeat(id, now, repeatMinutes, evidence) {
+    const limit = new Date(now.getTime() - repeatMinutes * 60_000).toISOString();
+    // UPDATE condicional: o banco serializa; só um processo vê a linha voltar.
+    const { data, error } = await getAdminClient().from("silent_connection_alerts").update({ last_notified_at: now.toISOString(), evidence })
+      .eq("id", id).is("resolved_at", null).lte("last_notified_at", limit).select("id");
     if (error) throw error;
+    return (data ?? []).length === 1;
   },
   async resolveAlert(id, now) {
-    const { error } = await getAdminClient().from("silent_connection_alerts").update({ resolved_at: now.toISOString() }).eq("id", id);
+    const { error } = await getAdminClient().from("silent_connection_alerts").update({ resolved_at: now.toISOString() }).eq("id", id).is("resolved_at", null);
     if (error) throw error;
   },
   async notifyManagers(organizationId, payload) {
@@ -144,6 +218,7 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
     }
     return sent;
   },
+  async heartbeat() { const url = process.env.SILENT_CONNECTION_HEARTBEAT_URL; if (url) await pingHeartbeat(url); },
   log,
 });
 

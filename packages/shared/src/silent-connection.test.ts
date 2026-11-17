@@ -58,3 +58,21 @@ describe("hourOfWeekBrt", () => {
   it("terça 14h BRT = 2*24+14", () => expect(hourOfWeekBrt(now)).toBe(62));
   it("virada de dia em BRT: 01h UTC de quarta ainda é terça 22h BRT", () => expect(hourOfWeekBrt(new Date("2026-11-18T01:00:00Z"))).toBe(2 * 24 + 22));
 });
+
+import { evaluateMonitorHealth, resolveSilentAlertMode } from "./silent-connection.js";
+describe("resolveSilentAlertMode", () => {
+  it("só off/shadow/on; ausente ou inválido = off (inclusive o booleano antigo true)", () => {
+    expect(resolveSilentAlertMode({ silent_connection_alert_mode: "on" })).toBe("on");
+    expect(resolveSilentAlertMode({ silent_connection_alert_mode: "shadow" })).toBe("shadow");
+    for (const v of [undefined, "off", "ON", true, 1, null, ""]) expect(resolveSilentAlertMode({ silent_connection_alert_mode: v })).toBe("off");
+    expect(resolveSilentAlertMode(null)).toBe("off");
+  });
+});
+describe("evaluateMonitorHealth (saúde do próprio monitor)", () => {
+  const maxAgeMs = 15 * 60_000;
+  const obs = (minAgo: number, queryOk = true) => ({ observedAt: new Date(now.getTime() - minAgo * 60_000), queryOk });
+  it("observação recente e consulta ok: ok", () => expect(evaluateMonitorHealth({ now, observation: obs(3), maxAgeMs })).toEqual({ status: "ok" }));
+  it("sem observação: cego", () => expect(evaluateMonitorHealth({ now, observation: null, maxAgeMs })).toMatchObject({ status: "blind", reason: "no_observation" }));
+  it("observação velha: cego, com a idade", () => expect(evaluateMonitorHealth({ now, observation: obs(40), maxAgeMs })).toMatchObject({ status: "blind", reason: "stale_observation", ageMinutes: 40 }));
+  it("consulta à Evolution falhando: cego (não é 'tudo bem' nem 'mudo')", () => expect(evaluateMonitorHealth({ now, observation: obs(2, false), maxAgeMs })).toMatchObject({ status: "blind", reason: "evolution_query_failed" }));
+});
