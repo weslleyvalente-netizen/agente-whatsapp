@@ -123,7 +123,9 @@ describe("Cutucar consolidado — esquema real do banco", () => {
   it("resposta do cliente: encerra só a pendência do cutucar; o retorno do repasse continua", async () => {
     const d = await seedDeal();
     await runCustomerNudge(deps(), NOW);
-    const reply = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Pode fechar!', $3) returning id, created_at", [d.convId, orgId, "2026-11-17T19:00:00.000Z"]);
+    // A pendência nasce com added_at = relógio REAL (tasks.ts); a resposta precisa ser POSTERIOR a ela. Horário fixo quebrava assim que o relógio real passava dele.
+    const replyAt = new Date(Date.now() + 60_000).toISOString();
+    const reply = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Pode fechar!', $3) returning id, created_at", [d.convId, orgId, replyAt]);
     await resolveUnresponsiveTasksOnReply(db, { organizationId: orgId, contactId: d.contactId, conversationId: d.convId, role: "contact", createdAt: reply.created_at, messageId: reply.id });
     const t = await getTask(d.taskId!);
     expect(pendTypes(t)).toEqual(["return_customer"]);
