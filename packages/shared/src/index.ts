@@ -64,3 +64,4 @@ export * from "./attachment.js";
 export * from "./waiting-on-sync.js";
 export * from "./evolution-instances.js";
 export * from "./send-failure-alert.js";
+export * from "./silent-connection.js";
