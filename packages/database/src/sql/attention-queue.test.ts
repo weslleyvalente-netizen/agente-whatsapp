@@ -115,4 +115,36 @@ describe("attention_queue_candidates", () => {
     expect(ids(await forOwner(outro.userId))).toEqual([dele.conversation]);
     expect(ids(await forOwner(null))).toEqual([minha.conversation, dele.conversation, livre.conversation].sort());
   });
+
+  // ---- janela de 30 dias nas DUAS categorias e limites/contadores ----
+  async function lead(conversation: string, contact: string, minutesAgo: number, status = "pending") {
+    const handoff = (await db.query<{ id: string }>("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3) returning id", [org, conversation, ago(minutesAgo)])).rows[0].id;
+    const exc = status === "exception"; // exceção: sem vendedor, motivo da exceção obrigatório (checks da tabela)
+    await db.query(`insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,assigned_at,handoff_at,exception_reason,strategy_version)
+      values ($1,gen_random_uuid(),$2,$3,$4,$5,$6,$7,$8,$8,$9,'test')`, [org, handoff, contact, conversation, exc ? null : marina.repId, exc ? "exception" : "round_robin", status, ago(minutesAgo), exc ? "no_available_rep" : null]);
+  }
+  const DIA = 24 * 60;
+  it("lead com atribuição ANTIGA (fora dos 30 dias) não entra, nem pendente nem exceção sem resolver; dentro da janela entra", async () => {
+    const velho = await conv(); const velhoExc = await conv(); const dentro = await conv(); const limite = await conv();
+    await lead(velho.conversation, velho.contact, 40 * DIA); await lead(velhoExc.conversation, velhoExc.contact, 31 * DIA, "exception");
+    await lead(dentro.conversation, dentro.contact, 29 * DIA); await lead(limite.conversation, limite.contact, 30 * DIA - 5);
+    expect(ids(await run("new_lead"))).toEqual([dentro.conversation, limite.conversation].sort());
+  });
+  it("a mesma janela vale para as duas categorias: antigo some de ambas, recente aparece em ambas", async () => {
+    const velho = await conv(); const novo = await conv();
+    await lead(velho.conversation, velho.contact, 40 * DIA); await msg(velho.conversation, "contact", "preciso de ajuda", 40 * DIA); await touch(velho.conversation, 40 * DIA);
+    await lead(novo.conversation, novo.contact, 3 * DIA); await msg(novo.conversation, "contact", "preciso de ajuda", 3 * DIA); await touch(novo.conversation, 3 * DIA);
+    expect(ids(await run("awaiting"))).toEqual([novo.conversation]); expect(ids(await run("new_lead"))).toEqual([novo.conversation]);
+  });
+  it("kind_total traz o total da categoria na janela, mesmo quando p_limit corta (e não conta atribuição antiga)", async () => {
+    for (let i = 0; i < 5; i++) { const c = await conv(); await msg(c.conversation, "contact", `pedido ${i} de ajuda`, 60 + i * 10); await lead(c.conversation, c.contact, 100 + i); }
+    const antigo = await conv(); await lead(antigo.conversation, antigo.contact, 45 * DIA);
+    const cut = (await db.query<any>("select * from public.attention_queue_candidates($1,$2,2)", [org, ago(30 * DIA)])).rows;
+    const by = (k: string) => cut.filter((r) => r.kind === k);
+    expect(by("awaiting")).toHaveLength(2); expect(by("new_lead")).toHaveLength(2);
+    expect(by("awaiting").every((r) => Number(r.kind_total) === 5)).toBe(true);
+    expect(by("new_lead").every((r) => Number(r.kind_total) === 5)).toBe(true); // 5, não 6: a antiga ficou de fora
+    const all = (await db.query<any>("select * from public.attention_queue_candidates($1,$2,200)", [org, ago(30 * DIA)])).rows;
+    expect(all.filter((r) => r.kind === "awaiting")).toHaveLength(5); expect(all.filter((r) => r.kind === "new_lead")).toHaveLength(5);
+  });
 });

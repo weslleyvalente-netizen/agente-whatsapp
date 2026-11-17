@@ -15,6 +15,8 @@ export interface AttentionCandidate {
   had_human_reply: boolean;
   /** Mensagens do cliente sem resposta humana, da mais recente para a mais antiga (até 5). */
   unanswered_contents: string[] | null;
+  /** Total da categoria na janela antes do limite do banco (igual em todas as linhas da categoria). Ausente em dados antigos. */
+  kind_total?: number | string | null;
 }
 
 export type AttentionViewer = { mode: "all" } | { mode: "own"; userId: string };
@@ -39,6 +41,36 @@ export interface AttentionLists { awaiting: AttentionList; newLeads: AttentionLi
 export interface AttentionQueue extends AttentionLists {
   /** Conversas e leads sem dono, só para quem tem permissão de ver (gestor). null para os demais. */
   unowned: AttentionLists | null;
+}
+
+/**
+ * Piloto por usuário: a fila só liga para quem a organização liberou. Precisa da flag da organização E de o usuário estar em
+ * `needs_reply_queue_user_ids`. Sem a lista (ou vazia) ninguém recebe: ligar só a flag não libera a organização inteira.
+ * Mesma regra no backend (autoridade) e na tela (evita a chamada à toa).
+ */
+export function isNeedsReplyQueueEnabledFor(
+  settings: { needs_reply_queue_enabled?: unknown; needs_reply_queue_user_ids?: unknown } | null | undefined,
+  userId: string | null | undefined,
+): boolean {
+  if (!settings || !userId || settings.needs_reply_queue_enabled !== true) return false;
+  const ids = settings.needs_reply_queue_user_ids;
+  return Array.isArray(ids) && ids.includes(userId);
+}
+
+/**
+ * A lista veio cortada pelo limite do banco? Compara as linhas recebidas de cada categoria com `kind_total`.
+ * Quando é true os contadores são "pelo menos" (e o banco devolve os casos mais antigos primeiro).
+ */
+export function isAttentionTruncated(candidates: Pick<AttentionCandidate, "kind" | "kind_total">[]): boolean {
+  const received = new Map<string, number>();
+  const totals = new Map<string, number>();
+  for (const c of candidates) {
+    received.set(c.kind, (received.get(c.kind) ?? 0) + 1);
+    const t = Number(c.kind_total);
+    if (Number.isFinite(t)) totals.set(c.kind, Math.max(totals.get(c.kind) ?? 0, t));
+  }
+  for (const [kind, total] of totals) if ((received.get(kind) ?? 0) < total) return true;
+  return false;
 }
 
 export const ATTENTION_LIST_LIMIT = 10;

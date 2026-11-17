@@ -33,4 +33,9 @@ describe("NeedsReplyPanel", () => {
     const out = html(base({ awaiting: list([], 0, [item("o1", "Cliente Antigo", 20000)]) }));
     expect(out).toContain("Nenhum caso de até 7 dias."); expect(out).toContain("Mais de 7 dias");
   });
+  it("lista parcial (truncated) avisa que os números são o mínimo; completa não avisa", () => {
+    expect(html(base({ truncated: true }))).toContain("Lista parcial");
+    expect(html(base({ truncated: false }))).not.toContain("Lista parcial");
+    expect(html(base())).not.toContain("Lista parcial");
+  });
 });

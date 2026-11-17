@@ -15,6 +15,9 @@
 --    mensagens do cliente depois da última resposta humana);
 --  * conversa com dono (assigned_to) entra mesmo sem takeover, sem tarefa e sem negócio; sem dono só entra com takeover
 --    ligado (sem dono e sem takeover é conversa da IA, não de vendedor).
+-- Janela: as DUAS categorias respeitam p_since (awaiting: c.last_message_at e mensagens do cliente; new_lead: la.handoff_at).
+-- kind_total: count(*) OVER () calculado antes do LIMIT, igual em todas as linhas da categoria; a API compara com as linhas devolvidas
+-- e marca a lista como parcial (contadores "pelo menos") quando p_limit cortou casos.
 -- p_owner: quando informado (vendedor), só devolve o que é DELE (mesma regra de visibilidade da API: dono = p_owner); NULL = tudo (gestor).
 CREATE OR REPLACE FUNCTION public.attention_queue_candidates(p_org uuid, p_since timestamptz, p_limit integer DEFAULT 200, p_owner uuid DEFAULT NULL)
 RETURNS TABLE (
@@ -28,14 +31,15 @@ RETURNS TABLE (
   waiting_since timestamptz,
   last_contact_at timestamptz,
   had_human_reply boolean,
-  unanswered_contents text[]
+  unanswered_contents text[],
+  kind_total bigint             -- total de casos desta categoria na janela ANTES do limite (p_limit); permite detectar lista truncada
 )
 LANGUAGE sql STABLE
 SET search_path = public, pg_temp
 AS $$
   (
     SELECT 'awaiting'::text, c.id, c.contact_id, w.name, w.phone, c.assigned_to, c.is_human_takeover,
-           u.waiting_since, u.last_contact_at, (h.created_at IS NOT NULL), u.contents
+           u.waiting_since, u.last_contact_at, (h.created_at IS NOT NULL), u.contents, count(*) OVER ()
     FROM public.conversations c
     JOIN public.wa_contacts w ON w.id = c.contact_id
     LEFT JOIN LATERAL (
@@ -61,12 +65,14 @@ AS $$
   UNION ALL
   (
     SELECT 'new_lead'::text, la.conversation_id, la.contact_id, w.name, w.phone, sr.user_id, c.is_human_takeover,
-           la.handoff_at, la.handoff_at, false, ARRAY[]::text[]
+           la.handoff_at, la.handoff_at, false, ARRAY[]::text[], count(*) OVER ()
     FROM public.lead_assignments la
     JOIN public.conversations c ON c.id = la.conversation_id
     JOIN public.wa_contacts w ON w.id = la.contact_id
     LEFT JOIN public.sales_reps sr ON sr.id = la.rep_id
     WHERE la.organization_id = p_org AND la.first_human_message_at IS NULL
+      -- mesma janela da outra lista: a espera mostrada na tela conta desde handoff_at, então só entra o que chegou dentro de p_since
+      AND la.handoff_at >= p_since
       AND (p_owner IS NULL OR sr.user_id = p_owner)
       AND (la.status = 'pending' OR (la.status = 'exception' AND la.resolved_at IS NULL))
       -- o campo first_human_message_at pode atrasar: uma resposta humana (que enviou) depois da atribuição também tira o lead da fila

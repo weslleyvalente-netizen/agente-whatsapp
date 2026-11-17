@@ -10,6 +10,8 @@ interface OrganizationContextType {
   currentOrg: Organization | null;
   setCurrentOrg: (org: Organization) => void;
   loading: boolean;
+  /** Usuário autenticado (auth.users.id); null até carregar. */
+  userId: string | null;
   refetch: () => Promise<void>;
 }
 
@@ -18,6 +20,7 @@ const OrganizationContext = createContext<OrganizationContextType>({
   currentOrg: null,
   setCurrentOrg: () => {},
   loading: true,
+  userId: null,
   refetch: async () => {},
 });
 
@@ -25,11 +28,13 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
   const supabase = createClient();
 
   const fetchOrgs = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    setUserId(user.id);
 
     const loadMemberships = () => supabase
       .from("organization_members")
@@ -79,6 +84,7 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
         currentOrg,
         setCurrentOrg: handleSetCurrentOrg,
         loading,
+        userId,
         refetch: fetchOrgs,
       }}
     >

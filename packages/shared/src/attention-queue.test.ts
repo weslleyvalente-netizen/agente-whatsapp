@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attentionListTotal, buildAttentionQueue, isAwaitingHumanReply, formatWaiting, type AttentionCandidate } from "./attention-queue.js";
+import { attentionListTotal, buildAttentionQueue, isAttentionTruncated, isNeedsReplyQueueEnabledFor, isAwaitingHumanReply, formatWaiting, type AttentionCandidate } from "./attention-queue.js";
 
 const NOW = new Date("2026-11-17T12:00:00Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
@@ -97,5 +97,30 @@ describe("fila 'Precisam de resposta' (regra)", () => {
     const g = buildAttentionQueue(rows, { viewer: { mode: "all" }, now: NOW });
     expect(ids(g.unowned!.awaiting)).toEqual(["sd-novo"]); expect(ids(g.unowned!.awaiting.older)).toEqual(["sd-velho"]);
     expect(buildAttentionQueue(rows, { viewer: own(MARINA), now: NOW }).unowned).toBeNull();
+  });
+});
+
+describe("piloto por usuário e lista truncada", () => {
+  const on = { needs_reply_queue_enabled: true, needs_reply_queue_user_ids: ["marina", "marcio"] };
+  it("só liga com a flag E o usuário na lista", () => {
+    expect(isNeedsReplyQueueEnabledFor(on, "marina")).toBe(true);
+    expect(isNeedsReplyQueueEnabledFor(on, "outro")).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor({ ...on, needs_reply_queue_enabled: false }, "marina")).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor({ ...on, needs_reply_queue_enabled: "true" }, "marina")).toBe(false);
+  });
+  it("sem lista, lista vazia, lista inválida ou sem usuário: ninguém (flag sozinha não libera a organização)", () => {
+    expect(isNeedsReplyQueueEnabledFor({ needs_reply_queue_enabled: true }, "marina")).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor({ needs_reply_queue_enabled: true, needs_reply_queue_user_ids: [] }, "marina")).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor({ needs_reply_queue_enabled: true, needs_reply_queue_user_ids: "marina" }, "marina")).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor(on, null)).toBe(false);
+    expect(isNeedsReplyQueueEnabledFor(null, "marina")).toBe(false);
+  });
+  it("truncada quando recebeu menos linhas que o total da categoria; completa quando iguais", () => {
+    const r = (kind: "awaiting" | "new_lead", kind_total: number | string | undefined) => ({ kind, kind_total });
+    expect(isAttentionTruncated([])).toBe(false);
+    expect(isAttentionTruncated([r("awaiting", 2), r("awaiting", 2), r("new_lead", 1)])).toBe(false);
+    expect(isAttentionTruncated([r("awaiting", 5), r("awaiting", 5)])).toBe(true);
+    expect(isAttentionTruncated([r("awaiting", 2), r("awaiting", 2), r("new_lead", "3")])).toBe(true);
+    expect(isAttentionTruncated([r("awaiting", undefined)])).toBe(false); // dado antigo sem total: não afirma truncamento
   });
 });

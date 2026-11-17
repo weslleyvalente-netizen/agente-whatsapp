@@ -21,6 +21,8 @@ import {
   resolveTaskBucket, getOperationalTaskDueDate,
   toISODateInTimeZone,
   buildAttentionQueue,
+  isAttentionTruncated,
+  isNeedsReplyQueueEnabledFor,
   type Operation,
   type WaitingOn,
   type QualificationUrgency,
@@ -41,6 +43,8 @@ export function splitTodayList<T>(ranked: T[], limit: number): { items: T[]; res
 const WINDOW_DAYS = 7;
 // Janela da fila "Precisam de resposta": conversas com mensagem nos últimos 30 dias.
 const NEEDS_REPLY_WINDOW_DAYS = 30;
+/** Limite por categoria devolvido pelo banco; acima disso a resposta vem com truncated=true (contadores "pelo menos"). */
+const NEEDS_REPLY_DB_LIMIT = 500;
 const MAX_URGENT = 20;
 
 interface DashboardConversationRow {
@@ -360,17 +364,19 @@ export default async function dashboardRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const org = await getOrganizationById(db, organizationId);
-      if (org.settings.needs_reply_queue_enabled !== true) return { enabled: false };
+      // Piloto por usuário: a autoridade é aqui. Flag da organização E usuário na lista; quem não está recebe enabled=false mesmo chamando direto.
+      if (!isNeedsReplyQueueEnabledFor(org.settings, request.user.id)) return { enabled: false };
 
       const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled: isSellerFilterEnabled(org.settings) });
       const sinceISO = new Date(Date.now() - NEEDS_REPLY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
       const [candidates, reps] = await Promise.all([
-        listAttentionCandidates(db, organizationId, sinceISO, 200, viewer.mode === "own" ? viewer.userId : null),
+        listAttentionCandidates(db, organizationId, sinceISO, NEEDS_REPLY_DB_LIMIT, viewer.mode === "own" ? viewer.userId : null),
         viewer.mode === "all" ? listSalesReps(db, organizationId) : Promise.resolve([] as Awaited<ReturnType<typeof listSalesReps>>),
       ]);
       const queue = buildAttentionQueue(candidates, { viewer });
       const ownerNames = Object.fromEntries(reps.map((r) => [r.user_id, r.display_name]));
-      return { enabled: true, ownerNames, ...queue };
+      // truncated: o banco cortou casos pelo limite (devolve os mais antigos); os contadores passam a ser "pelo menos".
+      return { enabled: true, truncated: isAttentionTruncated(candidates), ownerNames, ...queue };
     }
   );
 

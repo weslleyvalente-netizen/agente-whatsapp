@@ -15,17 +15,43 @@ const row = (id: string, owner: string | null, over: Record<string, unknown> = {
 async function get() { const app = Fastify(); await app.register(routes); const r = await app.inject({ method: "GET", url: "/organizations/org-1/dashboard/needs-reply" }); await app.close(); return r; }
 beforeEach(() => {
   vi.clearAllMocks(); m.role.value = "agent";
-  m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true, needs_reply_queue_enabled: true } });
+  m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true, needs_reply_queue_enabled: true, needs_reply_queue_user_ids: ["marina-user", "marcio-user"] } });
   m.listSalesReps.mockResolvedValue([{ user_id: "marina-user", display_name: "Marina" }, { user_id: "marcio-user", display_name: "Márcio" }]);
   m.listAttentionCandidates.mockResolvedValue([row("minha", "marina-user"), row("do-marcio", "marcio-user"), row("sem-dono", null, { is_human_takeover: true })]);
 });
 describe("dashboard/needs-reply", () => {
+  it("piloto: usuário FORA da lista recebe enabled=false mesmo chamando o endpoint direto, sem consultar a fila nem os vendedores", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_enabled: true, needs_reply_queue_user_ids: ["marcio-user"] } });
+    const r = await get(); expect(r.json()).toEqual({ enabled: false });
+    expect(m.listAttentionCandidates).not.toHaveBeenCalled(); expect(m.listSalesReps).not.toHaveBeenCalled();
+  });
+  it("piloto: gestor fora da lista também recebe enabled=false (a lista vale para todos os papéis)", async () => {
+    m.role.value = "owner"; m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_enabled: true, needs_reply_queue_user_ids: ["marcio-user"] } });
+    expect((await get()).json()).toEqual({ enabled: false }); expect(m.listAttentionCandidates).not.toHaveBeenCalled();
+  });
+  it("flag ligada sem lista (ou lista vazia): ninguém recebe", async () => {
+    for (const ids of [undefined, []]) {
+      m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_enabled: true, needs_reply_queue_user_ids: ids } });
+      expect((await get()).json()).toEqual({ enabled: false });
+    }
+    expect(m.listAttentionCandidates).not.toHaveBeenCalled();
+  });
+  it("lista sem a flag da organização: desligado", async () => {
+    m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_user_ids: ["marina-user"] } });
+    expect((await get()).json()).toEqual({ enabled: false });
+  });
+  it("lista cortada pelo banco: truncated=true; completa: false", async () => {
+    m.listAttentionCandidates.mockResolvedValue([row("a", "marina-user", { kind_total: 3 }), row("b", "marina-user", { kind_total: 3 })]);
+    expect((await get()).json().truncated).toBe(true);
+    m.listAttentionCandidates.mockResolvedValue([row("a", "marina-user", { kind_total: 2 }), row("b", "marina-user", { kind_total: 2 })]);
+    expect((await get()).json().truncated).toBe(false);
+  });
   it("flag desligada (ausente): não consulta nada e devolve enabled=false", async () => {
     m.getOrganizationById.mockResolvedValue({ settings: { lead_distribution_enabled: true } });
     const r = await get(); expect(r.json()).toEqual({ enabled: false }); expect(m.listAttentionCandidates).not.toHaveBeenCalled();
   });
   it("flag com valor diferente de true também fica desligada", async () => {
-    m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_enabled: "true" } });
+    m.getOrganizationById.mockResolvedValue({ settings: { needs_reply_queue_enabled: "true", needs_reply_queue_user_ids: ["marina-user"] } });
     expect((await get()).json()).toEqual({ enabled: false });
   });
   it("vendedor só vê a própria fila; não recebe sem dono nem nomes de outros", async () => {
@@ -53,8 +79,8 @@ describe("dashboard/needs-reply", () => {
     expect(Object.keys(m).filter((k) => /^(update|insert|create|set|assign)/i.test(k))).toEqual([]);
   });
   it("vendedor pede ao banco só o que é dele (p_owner = usuário); gestor pede tudo (null)", async () => {
-    await get(); expect(m.listAttentionCandidates.mock.calls[0].slice(3)).toEqual([200, "marina-user"]);
-    m.role.value = "admin"; await get(); expect(m.listAttentionCandidates.mock.calls[1].slice(3)).toEqual([200, null]);
+    await get(); expect(m.listAttentionCandidates.mock.calls[0].slice(3)).toEqual([500, "marina-user"]);
+    m.role.value = "admin"; await get(); expect(m.listAttentionCandidates.mock.calls[1].slice(3)).toEqual([500, null]);
   });
   it("casos de mais de 7 dias vão para 'older' sem sumir do total", async () => {
     m.listAttentionCandidates.mockResolvedValue([row("novo", "marina-user"), row("velho", "marina-user", { waiting_since: ago(10 * 24 * 60) })]);

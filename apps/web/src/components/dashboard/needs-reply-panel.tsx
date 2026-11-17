@@ -5,7 +5,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** Resposta de GET /organizations/:id/dashboard/needs-reply quando a flag está ligada. */
-export type NeedsReplyData = AttentionQueue & { enabled: true; ownerNames: Record<string, string> };
+export type NeedsReplyData = AttentionQueue & { enabled: true; truncated?: boolean; ownerNames: Record<string, string> };
 
 type Item = AttentionList["items"][number];
 
@@ -60,6 +60,7 @@ export function NeedsReplyPanel({ data }: { data: NeedsReplyData }) {
     <Card>
       <CardHeader><CardTitle>Precisam de resposta</CardTitle></CardHeader>
       <CardContent className="space-y-5">
+        {data.truncated && <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">Lista parcial: há mais casos do que o limite de consulta. Os números abaixo são o mínimo e aparecem primeiro os mais antigos.</p>}
         <List title="Cliente aguardando resposta" hint="mensagem do cliente sem resposta humana" list={data.awaiting} ownerNames={data.ownerNames} showOwner={showOwner} empty="Nenhum cliente aguardando resposta." />
         <List title="Lead sem primeiro atendimento" hint="lead recebido, ainda sem mensagem humana" list={data.newLeads} ownerNames={data.ownerNames} showOwner={showOwner} empty="Nenhum lead sem primeiro atendimento." />
         {data.unowned && (attentionListTotal(data.unowned.awaiting) > 0 || attentionListTotal(data.unowned.newLeads) > 0) && (
