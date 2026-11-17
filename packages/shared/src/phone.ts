@@ -49,3 +49,25 @@ export function samePhoneNumber(a: string | null | undefined, b: string | null |
   const x = phoneMatchKey(a);
   return x !== "" && x === phoneMatchKey(b);
 }
+
+// Candidatos de telefone para comparar com a LISTA DE IGNORADOS (organization_ignored_contacts.phone), que guarda o número como o
+// dono digitou: com ou sem o 9º dígito. A Evolution entrega alguns celulares sem o 9 (12 dígitos) e o cadastro pode ter o 9 (13).
+// Estrito de propósito (para não casar números DIFERENTES): só celular brasileiro (55 + DDD válido + 9 + [6-9]xxxxxxx, ou
+// 55 + DDD + [6-9]xxxxxxx sem o 9) ganha a outra forma. Fixo (começa com 2-5), outro país, DDD inválido ou tamanho estranho:
+// só o próprio número. Não altera nenhum dado: é só a lista de chaves para a consulta.
+export function ignoredContactPhoneCandidates(phone: string | null | undefined): string[] {
+  const raw = (phone ?? "").trim();
+  if (!raw) return [];
+  const out = new Set<string>([raw]);
+  const digits = raw.replace(/\D/g, "");
+  if (digits) out.add(digits);
+  if (digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4);
+    const local = digits.slice(4);
+    if (/^[1-9][1-9]$/.test(ddd)) {
+      if (local.length === 9 && local[0] === "9" && /[6-9]/.test(local[1])) out.add(`55${ddd}${local.slice(1)}`);
+      else if (local.length === 8 && /[6-9]/.test(local[0])) out.add(`55${ddd}9${local}`);
+    }
+  }
+  return [...out];
+}
