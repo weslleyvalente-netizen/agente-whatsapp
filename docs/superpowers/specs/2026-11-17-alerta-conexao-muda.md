@@ -31,3 +31,26 @@ A Evolution ficou `open`/"Connected" e aceitando envios, mas parou de receber me
 - Depende do monitor (observação a cada 5 min); sem observação recente não avalia.
 - Mede entrada de mensagens, não a causa. Não substitui capturar os logs do Baileys.
 - Volume habitual com 4 semanas pode ser contaminado por quedas passadas (usa a mediana para reduzir).
+
+## Timeout de 20 s: o que acontece quando a operação original termina depois
+
+`withDeadline` rejeita a chamada após 20 s, mas **não cancela** a operação original (o cliente do banco não aborta). Consequências tratadas e testadas:
+
+| Risco | Tratamento | Teste |
+|---|---|---|
+| Ciclo lento ultrapassado por outro grava/notifica ao acordar | `isCurrent`: o ciclo ultrapassado não inicia gravação nem push e encerra | "ciclo ultrapassado … leitura obsoleta" (falha sem a guarda) |
+| Ciclo ultrapassado emite heartbeat | `isCurrent` também barra o ping | "ciclo vencido … não emite heartbeat" |
+| `resolveAlert` atrasado fecha alerta que outro ciclo já renovou | compare-and-set em `last_notified_at` (lido pelo ciclo que decidiu) | "resolveAlert … NÃO fecha alerta que outro ciclo já tocou" |
+| Push duplicado | `openAlert` (índice único) e `claimRepeat` (UPDATE condicional) são atômicos; o push só sai de quem venceu a gravação, e uma falha/timeout do push **não** é repetida no ciclo | testes de concorrência e de falha de push |
+| Chamadas penduradas se acumulam entre ciclos | contador de "penduradas" (estouraram e ainda não terminaram); com 5, novas chamadas são recusadas na hora; ao terminar, a vaga é liberada | "consultas penduradas não se acumulam" e "libera a vaga" |
+
+### Limites que permanecem (não corrigíveis sem mudar o desenho)
+1. **Gravação ambígua** (`openAlert`/`claimRepeat` estoura o timeout mas o banco confirma): o alerta fica gravado com `last_notified_at` atual e **o push daquele ciclo não sai**; o próximo aviso só na repetição (60 min). Não gera duplicado; pode atrasar o primeiro aviso em modo `on`. Em `shadow` não tem efeito.
+2. **Push que estoura o timeout** pode chegar atrasado ao celular; não é reenviado (evita duplicado).
+3. **`resolveAlert` atrasado de um alerta que ninguém mais tocou** ainda o fecha; se a mudez continua, o ciclo seguinte abre outro alerta e notifica de novo (aviso repetido, não perdido).
+4. A consulta pendurada continua no servidor até o próprio timeout do cliente/servidor (a ordem de minutos); o teto de 5 chamadas penduradas limita o empilhamento do lado da API, não a carga que já foi enviada.
+5. Heartbeat prova que o **laço** está vivo e sem falha de etapa, não que mensagens chegam (isso exige verificação ativa, fora deste PR).
+
+## Requisitos por modo
+**shadow** (só registra o que enviaria; nenhum push): migração `20261117180000` aplicada; deploy desta versão; `silent_connection_alert_mode = "shadow"` na organização; o monitor da Evolution já gravando observações (já ocorre). Não exige gestor com push nem VAPID. Recomendado, não obrigatório: `SILENT_CONNECTION_HEARTBEAT_URL` com um serviço externo.
+**on** (notifica): tudo do shadow + VAPID configurado + pelo menos um gestor com push ativo e testado + heartbeat externo configurado + revisão de alguns dias úteis de registros `shadow` sem falso positivo relevante + sua autorização. Sem gestor com push o modo `on` cai sozinho para sombra e registra `push_not_ready`.

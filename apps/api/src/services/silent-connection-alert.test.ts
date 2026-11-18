@@ -16,7 +16,7 @@ function makeStore() {
     get: (org: string, inst: string, kind: AlertKind, mode: SilentAlertMode): OpenAlert | null => { const r = rows.find((x) => x.org === org && x.inst === inst && x.kind === kind && x.mode === mode && !x.resolved); return r ? { id: r.id, openedAt: r.openedAt, lastNotifiedAt: r.lastNotifiedAt } : null; },
     open: (org: string, inst: string, kind: AlertKind, mode: SilentAlertMode, at: Date, evidence: Record<string, unknown>) => { if (rows.some((x) => x.org === org && x.inst === inst && x.kind === kind && x.mode === mode && !x.resolved)) return false; rows.push({ id: `a${++seq}`, org, inst, kind, mode, openedAt: at, lastNotifiedAt: at, resolved: false, evidence }); return true; },
     claim: (id: string, at: Date, repeat: number, evidence: Record<string, unknown>) => { const r = rows.find((x) => x.id === id && !x.resolved); if (!r || r.lastNotifiedAt.getTime() > at.getTime() - repeat * 60_000) return false; r.lastNotifiedAt = at; r.evidence = evidence; return true; },
-    resolve: (id: string) => { const r = rows.find((x) => x.id === id); if (r) r.resolved = true; },
+    resolve: (id: string, expected?: Date) => { const r = rows.find((x) => x.id === id && !x.resolved); if (!r) return; if (expected && r.lastNotifiedAt.getTime() !== expected.getTime()) return; r.resolved = true; },
   };
 }
 function make(over: Partial<SilentDeps> = {}, mode: unknown = "on", store = makeStore()) {
@@ -31,7 +31,7 @@ function make(over: Partial<SilentDeps> = {}, mode: unknown = "on", store = make
     getOpenAlert: async (o, i, k, m) => store.get(o, i, k, m),
     openAlert: async (o, i, k, m, n, e) => store.open(o, i, k, m, n, e),
     claimRepeat: async (id, n, r, e) => store.claim(id, n, r, e),
-    resolveAlert: async (id) => store.resolve(id),
+    resolveAlert: async (id, _n, expected) => store.resolve(id, expected),
     notifyManagers: async (_o, p) => { notified.push(p); return 1; },
     log: { info: vi.fn(), error: vi.fn() },
     ...over,
@@ -147,6 +147,59 @@ describe("indisponibilidade e falhas", () => {
   });
   it("erro ao gravar o alerta não notifica (grava antes de avisar)", async () => {
     const { deps, notified } = make({ openAlert: async () => { throw new Error("db"); } }, "on"); await run(deps, now); expect(notified).toHaveLength(0);
+  });
+});
+
+describe("operação que termina depois do timeout (escrita atrasada)", () => {
+  it("ciclo ultrapassado por outro não grava nem notifica quando acorda com leitura obsoleta; o corrente decide", async () => {
+    let t = 0; const log = { info() {}, error() {} } as never;
+    let release!: () => void; const gate = new Promise<void>((r) => { release = r; }); let stale = 0;
+    const store = makeStore(); const opened = vi.fn(); const m = make({}, "on", store);
+    m.deps.latestObservation = async () => ({ state: "open", queryOk: true, lastEvolutionAt: ago(300), observedAt: new Date(now.getTime() - 60_000) });
+    const get0 = m.deps.getOpenAlert; // o 1º ciclo lê o alerta de mudez ANTES do 2º gravar (leitura obsoleta: "não há alerta") e só segue depois
+    m.deps.getOpenAlert = async (o, i, k, md) => { if (k === "silent_connection" && stale++ === 0) { await gate; return null; } return get0(o, i, k, md); };
+    const open0 = m.deps.openAlert; m.deps.openAlert = async (...a) => { opened(); return open0(...a); };
+    const tick = createSilentTicker((isCurrent) => runCycle(m.deps, now, isCurrent), log, () => t, 15 * 60_000);
+    tick(); await new Promise((r) => setTimeout(r, 0)); t = 16 * 60_000; tick(); await new Promise((r) => setTimeout(r, 0));
+    expect(opened).toHaveBeenCalledTimes(1); expect(m.notified).toHaveLength(1); // o corrente abriu e avisou uma vez
+    release(); await new Promise((r) => setTimeout(r, 0));
+    expect(opened).toHaveBeenCalledTimes(1); expect(m.notified).toHaveLength(1); // o antigo, ultrapassado, nem tentou gravar nem avisar
+  });
+  it("resolveAlert que estoura o timeout e grava tarde NÃO fecha alerta que outro ciclo já tocou (compare-and-set)", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = makeStore(); store.open("org", "weslley", "silent_connection", "on", ago(130), {});
+      const claimedAt = ago(130); void claimedAt;
+      let lateResolve: (() => void) | null = null;
+      const base = make({ latestObservation: async () => ({ state: "open", queryOk: true, lastEvolutionAt: new Date(now.getTime() - 30_000), observedAt: new Date(now.getTime() - 60_000) }), lastCrmInboundAt: async () => new Date(now.getTime() - 30_000) }, "on", store).deps;
+      const slow = { ...base, resolveAlert: (id: string, n: Date, exp: Date) => new Promise<void>((res) => { lateResolve = () => { base.resolveAlert(id, n, exp).then(res); }; }) };
+      const deps = withDeadline(slow, 1000); const p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(1500); await p; // resolve estourou (cliente voltou a falar)
+      // outro ciclo (60+ min depois da última notificação) renova o aviso: last_notified_at muda
+      expect(store.claim(store.rows[0].id, now, 60, { renewed: true })).toBe(true);
+      lateResolve!(); await vi.advanceTimersByTimeAsync(10);
+      expect(store.rows[0].resolved).toBe(false); // gravação atrasada ignorada
+    } finally { vi.useRealTimers(); }
+  });
+  it("consultas penduradas não se acumulam entre ciclos: com o limite atingido, novas chamadas são recusadas na hora", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = vi.fn(); const m = make({ latestObservation: () => { calls(); return new Promise(() => {}); }, listInstances: async () => [{ id: "i1", instance_name: "a" }, { id: "i2", instance_name: "b" }, { id: "i3", instance_name: "c" }] }, "shadow").deps;
+      const deps = withDeadline(m, 1000, 2);
+      for (let i = 0; i < 3; i++) { const p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(2500); await p; }
+      expect(calls).toHaveBeenCalledTimes(2); // só 2 requisições ficaram penduradas; os demais ciclos nem chegaram a pedir
+    } finally { vi.useRealTimers(); }
+  });
+  it("a chamada pendurada que termina tarde libera a vaga (volta a aceitar chamadas)", async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (v: null) => void; let n = 0; const calls = vi.fn();
+      const m = make({ latestObservation: () => { calls(); n++; return n === 1 ? new Promise<null>((r) => { finish = r; }) : Promise.resolve(null); } }, "shadow").deps;
+      const deps = withDeadline(m, 1000, 1);
+      let p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(1500); await p; expect(calls).toHaveBeenCalledTimes(1);
+      p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(10); await p; expect(calls).toHaveBeenCalledTimes(1); // recusada: vaga ocupada
+      finish(null); await vi.advanceTimersByTimeAsync(10);
+      p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(10); await p; expect(calls).toHaveBeenCalledTimes(2); // vaga liberada
+    } finally { vi.useRealTimers(); }
   });
 });
 

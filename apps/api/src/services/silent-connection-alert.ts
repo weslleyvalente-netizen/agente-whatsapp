@@ -40,7 +40,8 @@ export interface SilentDeps {
   openAlert(organizationId: string, instanceName: string, kind: AlertKind, mode: SilentAlertMode, now: Date, evidence: Record<string, unknown>): Promise<boolean>;
   /** Atômico: só devolve true para UM processo se last_notified_at ainda for anterior ao limite. */
   claimRepeat(id: string, now: Date, repeatMinutes: number, evidence: Record<string, unknown>): Promise<boolean>;
-  resolveAlert(id: string, now: Date): Promise<void>;
+  /** Compare-and-set: só fecha se last_notified_at ainda for o que este ciclo LEU. Escrita atrasada (após timeout) de um ciclo antigo não fecha alerta que outro ciclo já tocou. */
+  resolveAlert(id: string, now: Date, expectedLastNotifiedAt: Date): Promise<void>;
   notifyManagers(organizationId: string, payload: { title: string; body: string; url: string; tag: string }): Promise<number>;
   /** Monitor externo (opcional): chamado ao fim de um ciclo saudável. */
   heartbeat?(): Promise<void>;
@@ -64,13 +65,15 @@ const MESSAGES: Record<AlertKind, (e: Record<string, unknown>) => { title: strin
   push_not_ready: () => ({ title: "Alerta de conexão muda sem canal de aviso", body: "O modo 'on' foi pedido, mas nenhum gestor tem push ativo. O alerta roda só em modo sombra." }),
 };
 
-interface ApplyCtx { deps: SilentDeps; organizationId: string; instanceName: string; kind: AlertKind; effective: SilentAlertMode; now: Date }
+interface ApplyCtx { isCurrent: () => boolean; deps: SilentDeps; organizationId: string; instanceName: string; kind: AlertKind; effective: SilentAlertMode; now: Date }
 
 /** Aplica open/repeat/resolve de UMA condição. Grava primeiro (evidência + anti-duplicação), notifica só quem venceu a gravação. */
 async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open" | "repeat" | "resolve" | "none", evidence: Record<string, unknown>): Promise<void> {
   const { deps, organizationId, instanceName, kind, effective, now } = c;
   if (action === "none") return;
-  if (action === "resolve") { await deps.resolveAlert(open!.id, now); deps.log.info({ organizationId, instanceName, kind, mode: effective }, "silent-connection: condição resolvida"); return; }
+  // Ciclo ultrapassado por outro (travou/demorou): não grava nem notifica. Quem decide agora é o ciclo corrente.
+  if (!c.isCurrent()) { deps.log.info({ organizationId, instanceName, kind, action }, "silent-connection: ciclo ultrapassado; sem gravar nem notificar"); return; }
+  if (action === "resolve") { await deps.resolveAlert(open!.id, now, open!.lastNotifiedAt); deps.log.info({ organizationId, instanceName, kind, mode: effective }, "silent-connection: condição resolvida"); return; }
   const won = action === "open"
     ? await deps.openAlert(organizationId, instanceName, kind, effective, now, evidence)
     : await deps.claimRepeat(open!.id, now, REPEAT_MINUTES, evidence);
@@ -79,6 +82,7 @@ async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open
     deps.log.info({ organizationId, instanceName, kind, action, mode: "shadow", evidence }, "silent-connection: [SOMBRA] enviaria aviso aos gestores");
     return;
   }
+  if (!c.isCurrent()) { deps.log.info({ organizationId, instanceName, kind, action }, "silent-connection: ciclo ultrapassado após gravar; sem notificar"); return; }
   try {
     const m = MESSAGES[kind](evidence);
     const sent = await deps.notifyManagers(organizationId, { ...m, url: "/", tag: `silent-connection-${kind}-${instanceName}` });
@@ -92,6 +96,7 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
   try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); return; }
   let anyEnabled = false; let failures = 0; // falha em qualquer etapa = ciclo NÃO saudável = sem ping (o monitor externo percebe)
   for (const org of orgs) {
+    if (!isCurrent()) { deps.log.info({}, "silent-connection: ciclo ultrapassado; encerrando sem concluir"); return; }
     const requested = resolveSilentAlertMode(org.settings);
     if (requested === "off") continue;
     anyEnabled = true;
@@ -103,14 +108,15 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
       try {
         const open = await deps.getOpenAlert(org.id, "*", "push_not_ready", "shadow");
         const action = decideAlertAction(open ? { openedAt: open.openedAt, lastNotifiedAt: open.lastNotifiedAt } : null, { status: ready ? "ok" : "silent", silentMinutes: null, expectedInSilence: null, probabilityOfSilence: null, reason: ready ? "ok" : "no_manager_push" }, now, REPEAT_MINUTES);
-        await applyCondition({ deps, organizationId: org.id, instanceName: "*", kind: "push_not_ready", effective: "shadow", now }, open, action, { requested_mode: "on", reason: "no_manager_with_push_or_vapid_missing" });
+        await applyCondition({ isCurrent, deps, organizationId: org.id, instanceName: "*", kind: "push_not_ready", effective: "shadow", now }, open, action, { requested_mode: "on", reason: "no_manager_with_push_or_vapid_missing" });
       } catch (err) { failures++; deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao registrar push_not_ready"); }
       if (!ready) effective = "shadow";
     }
     let instances: Array<{ id: string; instance_name: string }>;
     try { instances = await deps.listInstances(org.id); } catch (err) { failures++; deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: failed to list instances"); continue; }
     for (const inst of instances) {
-      const base = { deps, organizationId: org.id, instanceName: inst.instance_name, effective, now };
+      if (!isCurrent()) { deps.log.info({}, "silent-connection: ciclo ultrapassado; encerrando sem concluir"); return; }
+      const base = { isCurrent, deps, organizationId: org.id, instanceName: inst.instance_name, effective, now };
       try {
         const obs = await deps.latestObservation(org.id, inst.instance_name);
         // 1) Saúde do próprio monitor: cego = condição própria (não avalia "mudo" nem "tudo bem").
@@ -207,8 +213,9 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
     if (error) throw error;
     return (data ?? []).length === 1;
   },
-  async resolveAlert(id, now) {
-    const { error } = await getAdminClient().from("silent_connection_alerts").update({ resolved_at: now.toISOString() }).eq("id", id).is("resolved_at", null);
+  async resolveAlert(id, now, expectedLastNotifiedAt) {
+    const { error } = await getAdminClient().from("silent_connection_alerts").update({ resolved_at: now.toISOString() })
+      .eq("id", id).is("resolved_at", null).eq("last_notified_at", expectedLastNotifiedAt.toISOString());
     if (error) throw error;
   },
   async notifyManagers(organizationId, payload) {
@@ -241,15 +248,24 @@ export function createSilentTicker(run: (isCurrent: () => boolean) => Promise<vo
 }
 
 export const QUERY_TIMEOUT_MS = 20_000;
-/** Limite de duração de CADA chamada do ciclo (consulta ao banco, push, heartbeat): estourou = rejeita (conta como falha do ciclo, sem ping).
- * Obs.: o cliente do banco não cancela a consulta; o limite protege o laço, não o servidor. */
-export function withDeadline(deps: SilentDeps, ms = QUERY_TIMEOUT_MS): SilentDeps {
+export const MAX_STUCK_CALLS = 5;
+/** Limite de duração de CADA chamada do ciclo (banco, push, heartbeat): estourou = rejeita (falha do ciclo, sem ping).
+ * A chamada original NÃO é cancelada (o cliente do banco não aborta) e pode terminar depois; por isso:
+ *  - contamos as "penduradas" (estouraram e ainda não terminaram) entre ciclos; com MAX_STUCK_CALLS delas, novas chamadas
+ *    são recusadas na hora (sem empilhar mais requisições num banco/Evolution que já não responde);
+ *  - escrita que termina tarde não faz estrago: resolveAlert é compare-and-set, openAlert/claimRepeat são atômicos no banco,
+ *    e o ciclo ultrapassado nem inicia novas gravações (isCurrent). */
+export function withDeadline(deps: SilentDeps, ms = QUERY_TIMEOUT_MS, maxStuck = MAX_STUCK_CALLS): SilentDeps {
+  let stuck = 0;
   const out: Record<string, unknown> = { log: deps.log };
   for (const [k, v] of Object.entries(deps)) {
     if (typeof v !== "function") continue;
     out[k] = (...args: unknown[]) => new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(Object.assign(new Error(`timeout ${k}`), { name: "TimeoutError" })), ms);
-      (v as (...a: unknown[]) => Promise<unknown>).apply(deps, args).then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
+      if (stuck >= maxStuck) { reject(Object.assign(new Error(`too many pending calls (${k})`), { name: "BackpressureError" })); return; }
+      let timedOut = false;
+      const t = setTimeout(() => { timedOut = true; stuck++; reject(Object.assign(new Error(`timeout ${k}`), { name: "TimeoutError" })); }, ms);
+      const done = () => { clearTimeout(t); if (timedOut) stuck--; };
+      (v as (...a: unknown[]) => Promise<unknown>).apply(deps, args).then((r) => { done(); resolve(r); }, (e) => { done(); reject(e); });
     });
   }
   return out as unknown as SilentDeps;
