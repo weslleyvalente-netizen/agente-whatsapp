@@ -118,6 +118,10 @@ export interface OrganizationSettings {
   evolution_monitor_enabled?: boolean;
   /** Alerta de conexão muda (Evolution 'open' sem receber mensagens de clientes): "off" (padrão/ausente), "shadow" (só registra o que enviaria, sem notificar) ou "on" (registra e avisa gestores por push, canal independente do WhatsApp). Qualquer outro valor = off. */
   silent_connection_alert_mode?: "off" | "shadow" | "on";
+  /** Proteção contra mensagem atrasada de cliente (lote entregue depois de queda da conexão): "off" (padrão/ausente), "shadow" (só registra; a IA responde como hoje) ou "on" (a IA NÃO responde a mensagem mais velha que o limite; chama humano). Qualquer outro valor = off. */
+  stale_message_guard_mode?: "off" | "shadow" | "on";
+  /** Idade máxima (min, 5–1440, padrão 20) pelo timestamp original do WhatsApp para a mensagem ainda ser tratada como atual. */
+  stale_message_guard_minutes?: number;
   // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
   // that haven't configured this yet fall back to
   // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /

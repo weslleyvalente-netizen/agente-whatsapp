@@ -45,6 +45,7 @@ import { runWithTimeout } from "../../lib/with-timeout.js";
 import { syncContactToCrm } from "../../integrations/crm-sync.js";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
+import { applyStaleMessageGuard, defaultStaleGuardDeps } from "../../services/stale-message-guard.js";
 
 // A placeholder saved instead of real content for an ignored contact's
 // message under retention_mode "minimal_record" — proves traffic still
@@ -727,6 +728,16 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       // Recuperação em modo "só gravar": a mensagem já está no CRM; não vai para a IA.
       if (isReplaySaveOnly(request.headers)) {
         return reply.status(200).send({ ok: true, messageId: message.id, skipped: "saved_only" });
+      }
+
+      // Proteção contra mensagem atrasada (settings.stale_message_guard_mode: off | shadow | on). A mensagem JÁ está gravada acima (sem perda,
+      // sem duplicata); em "on" a IA não responde a mensagem velha e a conversa passa para atendimento humano. Nunca bloqueia por falha.
+      const staleDecision = await applyStaleMessageGuard(defaultStaleGuardDeps(request.log), {
+        organizationId, conversation, messageId: message.id, messageTimestamp: payload.data.messageTimestamp, isReplay: replayCreatedAt !== undefined,
+      });
+      if (staleDecision.action === "hold") {
+        if (isNew) await syncContactToCrm(contact);
+        return reply.status(200).send({ ok: true, messageId: message.id, skipped: "stale_message" });
       }
 
       // Marca ANTES de enfileirar que o webhook encaminhou esta mensagem à IA (a varredura de cliente sem resposta só
