@@ -31,7 +31,7 @@ import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
 import { startAutoRecover } from "./services/auto-recover.js";
 import { startEvolutionMonitor } from "./services/evolution-monitor.js";
-import { startSilentConnectionAlert } from "./services/silent-connection-alert.js";
+import { getSilentMonitorStatus, startSilentConnectionAlert } from "./services/silent-connection-alert.js";
 
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
@@ -56,7 +56,8 @@ server.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "
 
 // Health check
 server.get("/health", async () => {
-  return { status: "ok", timestamp: new Date().toISOString() };
+  // monitors: só estados em memória (sem dados de cliente); permite conferir, sem acesso ao painel, que o monitor "conexão muda" está no ar e ciclando.
+  return { status: "ok", timestamp: new Date().toISOString(), monitors: { silentConnection: getSilentMonitorStatus() } };
 });
 
 // Routes
