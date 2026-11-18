@@ -29,7 +29,7 @@ import {
   applyMessageDeliveryStatus,
   mergeMessageMetadata,
 } from "@aula-agente/database";
-import { CHAT_MEDIA_MAX_BYTES, parseDeclaredFileLength } from "@aula-agente/shared";
+import { CHAT_MEDIA_MAX_BYTES, evaluateMessageAge, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { ensureConversation } from "../../services/conversation.service.js";
@@ -94,6 +94,17 @@ const NON_CONTENT_MESSAGE_TYPES = new Set(["reactionMessage", "protocolMessage"]
 // ORIGINAL da mensagem (messageTimestamp, em segundos) em vez de "agora".
 // Só é respeitado com o token aleatório do processo (REPLAY_TOKEN) E com
 // WEBHOOK_SECRET configurado; sem isso o comportamento é o de sempre.
+// Metadados da mensagem de cliente: duração do áudio e o instante ORIGINAL do WhatsApp (wa_original_at), preservado para a proteção contra
+// mensagem atrasada no worker (fila lenta, retry, varredor): created_at é a hora em que a mensagem CHEGOU, não a em que foi escrita.
+export function contactMessageMetadata(durationSeconds: number | undefined, messageTimestamp: unknown): Record<string, unknown> | undefined {
+  const age = evaluateMessageAge({ messageTimestamp, now: new Date(), thresholdMinutes: 0 });
+  const meta: Record<string, unknown> = {
+    ...(durationSeconds !== undefined ? { duration_seconds: durationSeconds } : {}),
+    ...(age.originalAtIso ? { wa_original_at: age.originalAtIso } : {}),
+  };
+  return Object.keys(meta).length ? meta : undefined;
+}
+
 export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
 // Modo "só gravar" da recuperação: grava a mensagem (com o horário original) mas NÃO a encaminha à IA. Usado para clientes
 // que já foram respondidos (pelo celular da loja ou pela IA) depois da mensagem perdida. Mesmas exigências do cabeçalho acima.
@@ -579,7 +590,7 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         role: "contact",
         content,
         mediaType: mediaType as any,
-        metadata: durationSeconds !== undefined ? { duration_seconds: durationSeconds } : undefined,
+        metadata: contactMessageMetadata(durationSeconds, payload.data.messageTimestamp),
         createdAt: replayCreatedAt,
       });
 

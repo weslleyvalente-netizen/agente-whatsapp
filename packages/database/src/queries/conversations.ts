@@ -219,3 +219,19 @@ export async function getConversationNotes(client: SupabaseClient, conversationI
   if (error) throw error;
   return data as ConversationNote[];
 }
+
+/**
+ * Liga o atendimento humano (takeover) SÓ se ainda não estiver ligado. Atômico no banco: com várias mensagens da mesma conversa
+ * chegando ao mesmo tempo, exatamente UMA chamada devolve true (quem deve avisar o responsável); as demais devolvem false.
+ * Não mexe em dono (assigned_to) nem em distribuição.
+ */
+export async function claimHumanTakeover(client: SupabaseClient, conversationId: string, nowIso: string): Promise<boolean> {
+  const { data, error } = await client
+    .from("conversations")
+    .update({ is_human_takeover: true, human_takeover_at: nowIso })
+    .eq("id", conversationId)
+    .eq("is_human_takeover", false)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length === 1;
+}
