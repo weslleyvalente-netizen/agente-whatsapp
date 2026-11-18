@@ -116,6 +116,8 @@ export interface OrganizationSettings {
   auto_recover_messages_enabled?: boolean;
   // Monitor da conexão do Evolution: a cada 5 min grava estado e horários em evolution_connection_observations. Desligado por padrão.
   evolution_monitor_enabled?: boolean;
+  /** Alerta de conexão muda (Evolution 'open' sem receber mensagens de clientes): "off" (padrão/ausente), "shadow" (só registra o que enviaria, sem notificar) ou "on" (registra e avisa gestores por push, canal independente do WhatsApp). Qualquer outro valor = off. */
+  silent_connection_alert_mode?: "off" | "shadow" | "on";
   // See greeting-filter.ts (isGreetingOrShortConfirmation). Optional: orgs
   // that haven't configured this yet fall back to
   // DEFAULT_GREETING_FILTER_ENABLED / DEFAULT_GREETING_WORDS /

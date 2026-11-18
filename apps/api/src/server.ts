@@ -31,6 +31,7 @@ import healthRoutes from "./routes/health/index.js";
 import { startHealthMonitor } from "./services/health-monitor.js";
 import { startAutoRecover } from "./services/auto-recover.js";
 import { startEvolutionMonitor } from "./services/evolution-monitor.js";
+import { startSilentConnectionAlert } from "./services/silent-connection-alert.js";
 
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
@@ -99,6 +100,7 @@ const start = async () => {
   startAutoRecover(server, server.log);
   // Registro periódico do estado da conexão do Evolution (chave settings.evolution_monitor_enabled, desligada por padrão).
   startEvolutionMonitor(server.log);
+  startSilentConnectionAlert(server.log); // desligado por padrão (settings.silent_connection_alert_mode: off | shadow | on); em off não toca a tabela de alertas
 };
 
 start().catch((err) => {
