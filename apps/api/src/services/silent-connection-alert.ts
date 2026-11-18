@@ -21,6 +21,12 @@ export const MAX_OBSERVATION_AGE_MS = 15 * 60 * 1000;
 export const BASELINE_WEEKS = 4;
 export const REPEAT_MINUTES = 60;
 
+/** Estado do laço, só em memória, exposto em GET /health. Prova (sem acesso ao EasyPanel) que ESTA versão do código está no ar e que o ciclo roda. */
+export interface SilentMonitorStatus { started: boolean; startedAt: string | null; cycles: number; lastCycleAt: string | null; lastCycleHealthy: boolean | null; lastCycleEnabledOrgs: number | null }
+const monitorState: SilentMonitorStatus = { started: false, startedAt: null, cycles: 0, lastCycleAt: null, lastCycleHealthy: null, lastCycleEnabledOrgs: null };
+export const getSilentMonitorStatus = (): SilentMonitorStatus => ({ ...monitorState });
+export const resetSilentMonitorStatus = () => { Object.assign(monitorState, { started: false, startedAt: null, cycles: 0, lastCycleAt: null, lastCycleHealthy: null, lastCycleEnabledOrgs: null }); };
+
 export type AlertKind = "silent_connection" | "monitor_blind" | "push_not_ready";
 interface Log { info(obj: unknown, msg: string): void; error(obj: unknown, msg: string): void }
 export interface OpenAlert { id: string; openedAt: Date; lastNotifiedAt: Date }
@@ -93,13 +99,13 @@ async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open
 /** `isCurrent`: um ciclo que já foi ultrapassado por outro (ficou lento e o laço iniciou um novo) NÃO pode mais emitir heartbeat ao terminar. */
 export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new Date(), isCurrent: () => boolean = () => true): Promise<void> {
   let orgs: Awaited<ReturnType<SilentDeps["listOrganizations"]>>;
-  try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); return; }
-  let anyEnabled = false; let failures = 0; // falha em qualquer etapa = ciclo NÃO saudável = sem ping (o monitor externo percebe)
+  try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); if (isCurrent()) Object.assign(monitorState, { cycles: monitorState.cycles + 1, lastCycleAt: now.toISOString(), lastCycleHealthy: false, lastCycleEnabledOrgs: null }); return; }
+  let anyEnabled = false; let failures = 0; let enabledOrgs = 0; // falha em qualquer etapa = ciclo NÃO saudável = sem ping (o monitor externo percebe)
   for (const org of orgs) {
     if (!isCurrent()) { deps.log.info({}, "silent-connection: ciclo ultrapassado; encerrando sem concluir"); return; }
     const requested = resolveSilentAlertMode(org.settings);
     if (requested === "off") continue;
-    anyEnabled = true;
+    anyEnabled = true; enabledOrgs++;
     // "on" só vale com canal comprovado; senão cai para sombra e registra a condição (não finge que avisa).
     let effective: SilentAlertMode = requested;
     if (requested === "on") {
@@ -139,6 +145,7 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
       } catch (err) { failures++; deps.log.error({ organizationId: org.id, instanceName: inst.instance_name, errName: (err as Error)?.name }, "silent-connection: avaliação falhou"); }
     }
   }
+  if (isCurrent()) Object.assign(monitorState, { cycles: monitorState.cycles + 1, lastCycleAt: now.toISOString(), lastCycleHealthy: failures === 0, lastCycleEnabledOrgs: enabledOrgs });
   // Ciclo concluído sem travar E sem falha de etapa: sinaliza ao monitor externo (só se alguma organização usa o alerta).
   if (anyEnabled && failures === 0 && isCurrent() && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
 }
@@ -274,6 +281,8 @@ export function withDeadline(deps: SilentDeps, ms = QUERY_TIMEOUT_MS, maxStuck =
 /** SILENT_CONNECTION_ALERT_DISABLED=1 no ambiente da API impede até a criação do timer. */
 export function startSilentConnectionAlert(log: Log = console): NodeJS.Timeout | null {
   if (process.env.SILENT_CONNECTION_ALERT_DISABLED === "1") return null;
+  Object.assign(monitorState, { started: true, startedAt: new Date().toISOString() });
+  log.info({ cycleMs: SILENT_CYCLE_MS }, "silent-connection: monitor iniciado");
   const deps = defaultSilentDeps(log);
   const guarded = withDeadline(deps);
   const tick = createSilentTicker((isCurrent) => runSilentConnectionCycle(guarded, new Date(), isCurrent), log);
