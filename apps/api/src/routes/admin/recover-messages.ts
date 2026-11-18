@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { evolutionWebhookPayloadSchema, resolveEvolutionPhone } from "@aula-agente/shared";
+import { evolutionWebhookPayloadSchema, ignoredContactPhoneCandidates, resolveEvolutionPhone } from "@aula-agente/shared";
 import {
-  getAdminClient, getInstancesByOrganization, findExistingEvolutionMessageIds, getLastOutboundAtForPhone,
+  getAdminClient, getInstancesByOrganization, findExistingEvolutionMessageIds, getLastOutboundAtForPhone, listIgnoredContacts,
 } from "@aula-agente/database";
 import { authMiddleware } from "../../middleware/auth.js";
 import { isManager } from "../../lib/lead-visibility.js";
@@ -43,7 +43,7 @@ interface Analysis {
   instance: string;
   fetched: number;
   alreadyInCrm: number;
-  skipped: { groups: number; nonContent: number; system: number };
+  skipped: { groups: number; nonContent: number; system: number; ignored: number };
   customersTotal: number;
   answeredCustomers: number;
   skippedAnswered: number;
@@ -95,7 +95,7 @@ async function analyze(opts: {
   const sentWindow = { gteSec: window.gteSec, lteSec: Math.max(window.lteSec, Math.ceil(Date.now() / 1000)) };
 
   let fetched = 0;
-  const skipped = { groups: 0, nonContent: 0, system: 0 };
+  const skipped = { groups: 0, nonContent: 0, system: 0, ignored: 0 };
   const seen = new Set<string>();
   const eligible: Candidate[] = [];
   const lastSentByJid = new Map<string, number>();
@@ -113,6 +113,14 @@ async function analyze(opts: {
       failedInstances.push(String(instance.instance_name)); // só o nome: o erro da Evolution pode ter URL/chave
     }
   }
+  // Contatos ignorados (no_store): o webhook os descartaria na reinjeção; aqui ficam fora da contagem e da fila de reenvio.
+  // Compara com e sem o 9º dígito (mesma regra do webhook). Falha ao ler a lista não bloqueia: a reinjeção ainda respeita a regra.
+  const ignoredNoStore = new Set<string>();
+  try {
+    for (const ic of await listIgnoredContacts(db, opts.organizationId)) {
+      if (ic.retention_mode === "no_store") for (const c of ignoredContactPhoneCandidates(ic.phone)) ignoredNoStore.add(c);
+    }
+  } catch { /* segue sem o filtro */ }
   const ownPhones = new Set(opts.instances.map((i) => String(i.phone_number ?? "").replace(/\D/g, "")).filter((p) => p.length > 0));
   const lidMap = buildLidPhoneMap(
     fetchedByInstance.flatMap((f) => [...f.received, ...f.sent]).filter((r) => typeof r?.key?.remoteJid === "string"),
@@ -136,7 +144,9 @@ async function analyze(opts: {
       if (raw.key.remoteJid.endsWith("@g.us")) { skipped.groups++; continue; }
       if (isSystemJid(raw.key.remoteJid)) { skipped.system++; continue; }
       if (isNonContentMessageType(String(raw.messageType))) { skipped.nonContent++; continue; }
-      eligible.push({ rec: applyLidMap(raw, lidMap, ownPhones), instanceId: instance.instance_id });
+      const rec = applyLidMap(raw, lidMap, ownPhones);
+      if (ignoredNoStore.size > 0 && ignoredContactPhoneCandidates(resolveEvolutionPhone(rec.key)).some((c) => ignoredNoStore.has(c))) { skipped.ignored++; continue; }
+      eligible.push({ rec, instanceId: instance.instance_id });
     }
   }
 

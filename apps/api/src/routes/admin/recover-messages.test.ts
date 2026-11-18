@@ -4,6 +4,7 @@ const m = vi.hoisted(() => ({
   getInstancesByOrganization: vi.fn(),
   findExistingEvolutionMessageIds: vi.fn(),
   getLastOutboundAtForPhone: vi.fn(),
+  listIgnoredContacts: vi.fn(),
   findStoredMessages: vi.fn(),
   findMessagesByRemoteJid: vi.fn(),
   probeRedis: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("@aula-agente/database", () => ({
   getInstancesByOrganization: m.getInstancesByOrganization,
   findExistingEvolutionMessageIds: m.findExistingEvolutionMessageIds,
   getLastOutboundAtForPhone: m.getLastOutboundAtForPhone,
+  listIgnoredContacts: m.listIgnoredContacts,
 }));
 vi.mock("../../services/evolution.service.js", () => ({ findStoredMessages: m.findStoredMessages, findMessagesByRemoteJid: m.findMessagesByRemoteJid }));
 vi.mock("../../middleware/auth.js", () => ({ authMiddleware: async () => {} }));
@@ -81,6 +83,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   lidPhoneResolver.reset();
   m.findMessagesByRemoteJid.mockResolvedValue([]);
+  m.listIgnoredContacts.mockResolvedValue([]);
   resetRecoveryState();
   delivered.length = 0;
   received = []; sent = [];
@@ -553,5 +556,34 @@ describe("recuperação automática: instâncias, limites e interrupção", () =
     const r = await reconcileRecentMessages(await app("owner"), ORG, { now: NOW, stillEnabled });
     expect(r).toMatchObject({ replayed: 1, stopped: true });
     expect(delivered.map((d) => d.id)).toEqual(["A"]);
+  });
+});
+
+describe("recuperação respeita a lista de ignorados (com e sem o 9º dígito)", () => {
+  const JIG = "556296188374@s.whatsapp.net";   // chega da Evolution SEM o 9
+  const JOTHER = "556296188375@s.whatsapp.net"; // número diferente (último dígito)
+  beforeEach(() => {
+    received = [rec("IG1", T0 + 1, JIG), rec("IG2", T0 + 2, JIG), rec("OK1", T0 + 3, JOTHER)];
+    sent = [];
+  });
+  it("ignorado cadastrado COM o 9 (13 dígitos) fica fora da contagem e do reenvio; outro número continua", async () => {
+    m.listIgnoredContacts.mockResolvedValue([{ phone: "5562996188374", retention_mode: "no_store" }]);
+    const body = (await post(await app("admin"), { since: SINCE, until: UNTIL })).json();
+    expect(body).toMatchObject({ toRecover: 1, customers: 1, skipped: { ignored: 2 } });
+  });
+  it("modo minimal_record não é filtrado aqui (o webhook trata); sem lista, nada é filtrado", async () => {
+    m.listIgnoredContacts.mockResolvedValue([{ phone: "5562996188374", retention_mode: "minimal_record" }]);
+    expect((await post(await app("admin"), { since: SINCE, until: UNTIL })).json()).toMatchObject({ toRecover: 3, skipped: { ignored: 0 } });
+    m.listIgnoredContacts.mockResolvedValue([]);
+    expect((await post(await app("admin"), { since: SINCE, until: UNTIL })).json()).toMatchObject({ toRecover: 3 });
+  });
+  it("falha ao ler a lista não derruba a análise", async () => {
+    m.listIgnoredContacts.mockRejectedValue(new Error("db"));
+    expect((await post(await app("admin"), { since: SINCE, until: UNTIL })).json()).toMatchObject({ toRecover: 3 });
+  });
+  it("número diferente do ignorado nunca é filtrado", async () => {
+    m.listIgnoredContacts.mockResolvedValue([{ phone: "5562996188374", retention_mode: "no_store" }]);
+    const body = (await post(await app("admin"), { since: SINCE, until: UNTIL })).json();
+    expect(body.sample.some((x: { phoneLast4: string }) => x.phoneLast4 === "8375")).toBe(true);
   });
 });
