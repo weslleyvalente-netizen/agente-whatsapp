@@ -212,16 +212,18 @@ describe("Cutucar consolidado — esquema real do banco", () => {
     const nudgeConv = nudge.conversation_id as string; const otherConv = nudgeConv === d.convId ? convB.id : d.convId;
     const touches = await all("select note from task_events where task_id = $1 and event_type = 'customer_nudge_touch'", [d.taskId]);
     expect(touches).toHaveLength(1); expect(touches[0].note).toContain(`nudge-conv:${nudgeConv}`);
+    // Horários derivados do relógio REAL (a pendência nasce com added_at = new Date()); horário fixo quebra quando o relógio passa dele.
+    const t0 = Date.now(); const at = (min: number) => new Date(t0 + min * 60_000).toISOString();
     // cliente responde na OUTRA conversa: a pendência continua
-    const r1 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Oi de novo','2026-11-17T19:00:00Z') returning id, created_at", [otherConv, orgId]);
+    const r1 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Oi de novo', $3) returning id, created_at", [otherConv, orgId, at(1)]);
     await resolveUnresponsiveTasksOnReply(db, { organizationId: orgId, contactId: d.contactId, conversationId: otherConv, role: "contact", createdAt: r1.created_at, messageId: r1.id });
     expect(pendTypes(await getTask(d.taskId!))).toContain("customer_nudge");
     // o vendedor fala na OUTRA conversa: a pendência continua (o evento certo é na conversa do cutucar)
-    await pg.query("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'human_agent','x','2026-11-17T20:00:00Z')", [otherConv, orgId]);
-    await completeNudgeTasksOnSellerMessage(db, orgId, otherConv, "2026-11-17T20:00:00.000Z");
+    await pg.query("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'human_agent','x', $3)", [otherConv, orgId, at(2)]);
+    await completeNudgeTasksOnSellerMessage(db, orgId, otherConv, at(2));
     expect(pendTypes(await getTask(d.taskId!))).toContain("customer_nudge");
     // cliente responde na conversa CERTA: encerra só o cutucar
-    const r2 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Fechou','2026-11-17T21:00:00Z') returning id, created_at", [nudgeConv, orgId]);
+    const r2 = await one("insert into messages(conversation_id, organization_id, role, content, created_at) values ($1,$2,'contact','Fechou', $3) returning id, created_at", [nudgeConv, orgId, at(3)]);
     await resolveUnresponsiveTasksOnReply(db, { organizationId: orgId, contactId: d.contactId, conversationId: nudgeConv, role: "contact", createdAt: r2.created_at, messageId: r2.id });
     expect(pendTypes(await getTask(d.taskId!))).toEqual(["return_customer"]);
   });
