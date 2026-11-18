@@ -54,3 +54,10 @@ A Evolution ficou `open`/"Connected" e aceitando envios, mas parou de receber me
 ## Requisitos por modo
 **shadow** (só registra o que enviaria; nenhum push): migração `20261117180000` aplicada; deploy desta versão; `silent_connection_alert_mode = "shadow"` na organização; o monitor da Evolution já gravando observações (já ocorre). Não exige gestor com push nem VAPID. Recomendado, não obrigatório: `SILENT_CONNECTION_HEARTBEAT_URL` com um serviço externo.
 **on** (notifica): tudo do shadow + VAPID configurado + pelo menos um gestor com push ativo e testado + heartbeat externo configurado + revisão de alguns dias úteis de registros `shadow` sem falso positivo relevante + sua autorização. Sem gestor com push o modo `on` cai sozinho para sombra e registra `push_not_ready`.
+
+
+## Correção pendente (registrada em 18/11/2026): hora de chegada x hora real da mensagem
+O monitor mede o silêncio pela `created_at` da última mensagem de cliente no CRM, que é a hora em que a mensagem CHEGOU. Em 18/11, mensagens atrasadas entregues às 17:45 e a partir das 18:08 UTC
+(a Evolution seguia sem registrar mensagem nova desde 16:00:36) zeraram o silêncio e teriam resolvido/escondido o alerta. Um lote antigo recebido agora não deve, sozinho, comprovar que a conexão
+voltou a receber mensagens atuais. Direção da correção: usar o instante original (`metadata.wa_original_at`, gravado pelo webhook a partir deste PR) e só contar como "recebendo" mensagem cujo
+instante original seja recente; reavaliar também `last_evolution_message_at`. Não implementada; exige PR próprio.

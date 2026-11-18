@@ -6,7 +6,7 @@ delete process.env.WEBHOOK_SECRET;
 
 const m = vi.hoisted(() => ({
   getInstanceByInstanceId: vi.fn(), ensureConversation: vi.fn(), saveMessage: vi.fn(), enqueueProcessMessage: vi.fn(),
-  getOrganizationById: vi.fn(), stampMessageMetadata: vi.fn(), updateConversation: vi.fn(), hasOutboundMessageAfter: vi.fn(),
+  getOrganizationById: vi.fn(), stampMessageMetadata: vi.fn(), updateConversation: vi.fn(), claimHumanTakeover: vi.fn(), hasOutboundMessageAfter: vi.fn(),
   listManagerUserIds: vi.fn(), sendPushToUser: vi.fn(), syncContactToCrm: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => ({
@@ -19,7 +19,7 @@ vi.mock("@aula-agente/database", () => ({
   getOpenHandoffEvent: async () => null, markFirstHumanReply: async () => undefined,
   findPendingOutboundMessages: async () => [], setMessageEvolutionId: async () => undefined,
   stampMessageMetadata: m.stampMessageMetadata,
-  hasOutboundMessageAfter: m.hasOutboundMessageAfter,
+  hasOutboundMessageAfter: m.hasOutboundMessageAfter, claimHumanTakeover: m.claimHumanTakeover,
   listManagerUserIds: m.listManagerUserIds, sendPushToUser: m.sendPushToUser,
 }));
 vi.mock("../../services/conversation.service.js", () => ({ ensureConversation: m.ensureConversation }));
@@ -48,7 +48,7 @@ beforeEach(() => {
   m.getInstanceByInstanceId.mockResolvedValue({ id: "i1", organization_id: "org-1", active_agent_id: "agent-1" });
   settings({ stale_message_guard_mode: "on" });
   m.saveMessage.mockResolvedValue({ id: "msg-1", role: "contact", created_at: "2026-11-18T19:00:00Z" });
-  m.stampMessageMetadata.mockResolvedValue(undefined); m.updateConversation.mockResolvedValue(undefined);
+  m.stampMessageMetadata.mockResolvedValue(undefined); m.updateConversation.mockResolvedValue(undefined); m.claimHumanTakeover.mockResolvedValue(true);
   m.hasOutboundMessageAfter.mockResolvedValue(false);
   m.listManagerUserIds.mockResolvedValue(["mgr-1"]); m.sendPushToUser.mockResolvedValue({ sent: 1, removed: 0, failed: 0 });
   m.enqueueProcessMessage.mockResolvedValue(undefined); m.syncContactToCrm.mockResolvedValue(undefined);
@@ -63,8 +63,8 @@ describe("webhook: proteção contra mensagem atrasada", () => {
     expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
     expect(m.stampMessageMetadata).not.toHaveBeenCalledWith({}, "msg-1", expect.objectContaining({ ai_routed_at: expect.anything() }));
     expect(m.stampMessageMetadata).toHaveBeenCalledWith({}, "msg-1", { stale_guard: expect.objectContaining({ mode: "on", action: "hold_and_human" }) });
-    expect(m.updateConversation).toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ is_human_takeover: true }));
-    expect(m.updateConversation).not.toHaveBeenCalledWith({}, "conv-1", expect.objectContaining({ assigned_to: expect.anything() })); // não mexe em dono/distribuição
+    expect(m.claimHumanTakeover).toHaveBeenCalledWith({}, "conv-1", expect.any(String));
+    expect(m.updateConversation).not.toHaveBeenCalled(); // não mexe em dono/distribuição
     expect(m.listManagerUserIds).toHaveBeenCalledWith({}, "org-1");
     expect(m.sendPushToUser).toHaveBeenCalledWith({}, "mgr-1", expect.objectContaining({ tag: "stale-guard-conv-1" }), { organizationId: "org-1" });
   });
@@ -79,7 +79,13 @@ describe("webhook: proteção contra mensagem atrasada", () => {
     const r = await post(payload(nowSec() - 3 * 3600));
     expect(r.json()).toMatchObject({ skipped: "stale_message" });
     expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
-    expect(m.updateConversation).not.toHaveBeenCalled();
+    expect(m.claimHumanTakeover).not.toHaveBeenCalled();
+  });
+  it("on + takeover já ligado por outra mensagem do lote (claim=false): retém e NÃO avisa de novo", async () => {
+    m.claimHumanTakeover.mockResolvedValue(false);
+    await post(payload(nowSec() - 3 * 3600));
+    expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
+    expect(m.sendPushToUser).not.toHaveBeenCalled();
   });
   it("on + contato novo atrasado: continua sincronizando com o CRM", async () => {
     conv({}, true);
@@ -96,7 +102,7 @@ describe("webhook: proteção contra mensagem atrasada", () => {
   it("on + sem messageTimestamp: fluxo normal (nunca retém sem prova de atraso)", async () => {
     await post(payload(undefined));
     expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
-    expect(m.updateConversation).not.toHaveBeenCalled();
+    expect(m.claimHumanTakeover).not.toHaveBeenCalled();
   });
   it("on + timestamp muito no futuro (relógio errado): fluxo normal", async () => {
     await post(payload(nowSec() + 3600));
@@ -106,7 +112,7 @@ describe("webhook: proteção contra mensagem atrasada", () => {
     settings({ stale_message_guard_mode: "shadow" });
     await post(payload(nowSec() - 3 * 3600));
     expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
-    expect(m.updateConversation).not.toHaveBeenCalled();
+    expect(m.claimHumanTakeover).not.toHaveBeenCalled();
     expect(m.sendPushToUser).not.toHaveBeenCalled();
     expect(m.stampMessageMetadata).toHaveBeenCalledWith({}, "msg-1", { stale_guard: expect.objectContaining({ mode: "shadow", would: "hold_and_human" }) });
   });
@@ -114,7 +120,7 @@ describe("webhook: proteção contra mensagem atrasada", () => {
     settings({});
     await post(payload(nowSec() - 3 * 3600));
     expect(m.enqueueProcessMessage).toHaveBeenCalledTimes(1);
-    expect(m.updateConversation).not.toHaveBeenCalled();
+    expect(m.claimHumanTakeover).not.toHaveBeenCalled();
     expect(m.stampMessageMetadata).toHaveBeenCalledTimes(1); // só ai_routed_at, como antes
   });
   it("falha ao ler a organização: segue como hoje", async () => {
@@ -127,7 +133,7 @@ describe("webhook: proteção contra mensagem atrasada", () => {
     const r = await post(payload(nowSec() - 3 * 3600));
     expect(r.json()).toMatchObject({ skipped: "duplicate" });
     expect(m.hasOutboundMessageAfter).not.toHaveBeenCalled();
-    expect(m.updateConversation).not.toHaveBeenCalled();
+    expect(m.claimHumanTakeover).not.toHaveBeenCalled();
   });
   it("conversa já em takeover não passa pela IA (como hoje) e a proteção não roda", async () => {
     conv({ is_human_takeover: true });

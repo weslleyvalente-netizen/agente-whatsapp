@@ -93,6 +93,14 @@ export async function hasOutboundMessageAfter(db: SupabaseClient, conversationId
   return (count ?? 0) > 0;
 }
 
+/** Algum humano (human_agent, envio não falho) respondeu a conversa depois do instante informado? Usado antes de a IA enviar a resposta. */
+export async function hasHumanMessageAfter(db: SupabaseClient, conversationId: string, afterIso: string): Promise<boolean> {
+  const { count, error } = await db.from("messages").select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId).eq("role", "human_agent").is("metadata->>send_failed_at", null).gt("created_at", afterIso);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
 export interface AckContext {
   /** A mensagem imediatamente anterior da conversa também é do cliente (sem resposta nossa no meio). */
   earlierInboundUnanswered: boolean;

@@ -10,7 +10,7 @@ function mk(settings: Record<string, unknown> | null, over: Partial<StaleGuardDe
     readSettings: vi.fn(async () => settings),
     answeredAfter: vi.fn(async () => false),
     stampMessage: vi.fn(async () => undefined),
-    startTakeover: vi.fn(async () => undefined),
+    claimTakeover: vi.fn(async () => true),
     notify: vi.fn(async () => 1),
     log: { info: vi.fn(noop), error: vi.fn(noop) },
     ...over,
@@ -34,7 +34,7 @@ describe("tráfego normal não paga leitura", () => {
   it("sem timestamp: segue como hoje, sem ler configuração", async () => {
     for (const ts of [undefined, null, 0]) expect(await applyStaleMessageGuard(d, input({ messageTimestamp: ts }))).toMatchObject({ action: "proceed", reason: "no_timestamp" });
     expect(d.readSettings).not.toHaveBeenCalled();
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
   });
   it("timestamp muito no futuro (relógio errado): segue, não retém", async () => {
     const r = await applyStaleMessageGuard(d, input({ messageTimestamp: sec(-60) }));
@@ -54,7 +54,7 @@ describe("modo off", () => {
     const r = await applyStaleMessageGuard(d, input());
     expect(r).toMatchObject({ action: "proceed", reason: "off" });
     expect(d.stampMessage).not.toHaveBeenCalled();
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
     expect(d.notify).not.toHaveBeenCalled();
   });
 });
@@ -65,7 +65,7 @@ describe("modo shadow", () => {
     const r = await applyStaleMessageGuard(d, input());
     expect(r).toMatchObject({ action: "proceed", reason: "stale_shadow", ageMinutes: 180 });
     expect(d.stampMessage).toHaveBeenCalledWith("msg-1", { stale_guard: expect.objectContaining({ mode: "shadow", would: "hold_and_human", age_minutes: 180, already_answered: false }) });
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
     expect(d.notify).not.toHaveBeenCalled();
   });
   it("já respondida: registra would=skip_ai", async () => {
@@ -83,37 +83,63 @@ describe("modo on", () => {
   it("mensagem atrasada: retém da IA, passa para humano e avisa o responsável", async () => {
     const r = await applyStaleMessageGuard(d, input());
     expect(r).toMatchObject({ action: "hold", reason: "stale_held", ageMinutes: 180 });
-    expect(d.startTakeover).toHaveBeenCalledWith("conv-1", NOW.toISOString());
+    expect(d.claimTakeover).toHaveBeenCalledWith("conv-1", NOW.toISOString());
     expect(d.notify).toHaveBeenCalledWith("org-1", "seller-1", expect.objectContaining({ tag: "stale-guard-conv-1" }));
     expect(d.stampMessage).toHaveBeenCalledWith("msg-1", { stale_guard: expect.objectContaining({ mode: "on", action: "hold_and_human", original_at: new Date(sec(180) * 1000).toISOString() }) });
   });
   it("contato SEM vendedor: takeover e aviso aos gestores (alvo null); não grava dono", async () => {
     const r = await applyStaleMessageGuard(d, input({ conversation: { id: "conv-2", is_human_takeover: false, assigned_to: null } }));
     expect(r.action).toBe("hold");
-    expect(d.startTakeover).toHaveBeenCalledWith("conv-2", expect.any(String));
+    expect(d.claimTakeover).toHaveBeenCalledWith("conv-2", expect.any(String));
     expect(d.notify).toHaveBeenCalledWith("org-1", null, expect.any(Object));
     expect(Object.keys(d)).not.toContain("assignOwner");
   });
   it("conversa já em takeover: não repete o takeover", async () => {
     await applyStaleMessageGuard(d, input({ conversation: { id: "conv-1", is_human_takeover: true, assigned_to: "seller-1" } }));
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
   });
   it("já respondida depois do horário original: IA não responde, sem takeover nem aviso", async () => {
     d = mk({ stale_message_guard_mode: "on" }, { answeredAfter: vi.fn(async () => true) });
     const r = await applyStaleMessageGuard(d, input());
     expect(r).toMatchObject({ action: "hold", reason: "stale_already_answered" });
     expect(d.answeredAfter).toHaveBeenCalledWith("conv-1", new Date(sec(180) * 1000).toISOString());
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
     expect(d.notify).not.toHaveBeenCalled();
   });
   it("falha ao checar resposta: trata como não respondida e vai para humano", async () => {
     d = mk({ stale_message_guard_mode: "on" }, { answeredAfter: vi.fn(async () => { throw new Error("db"); }) });
     const r = await applyStaleMessageGuard(d, input());
     expect(r).toMatchObject({ action: "hold", reason: "stale_held" });
-    expect(d.startTakeover).toHaveBeenCalled();
+    expect(d.claimTakeover).toHaveBeenCalled();
+  });
+  it("várias mensagens da MESMA conversa: só quem ligou o takeover avisa (sem push repetido)", async () => {
+    let taken = false;
+    d = mk({ stale_message_guard_mode: "on" }, { claimTakeover: vi.fn(async () => { if (taken) return false; taken = true; return true; }) });
+    const out = [];
+    for (const ts of [sec(200), sec(190), sec(150), sec(100)]) out.push(await applyStaleMessageGuard(d, input({ messageTimestamp: ts, messageId: `m-${ts}` })));
+    expect(out.every((r) => r.action === "hold" && r.humanQueued === true)).toBe(true);
+    expect(d.claimTakeover).toHaveBeenCalledTimes(4);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+  });
+  it("takeover concorrente (claim=false): retém, está na fila humana e NÃO avisa de novo", async () => {
+    d = mk({ stale_message_guard_mode: "on" }, { claimTakeover: vi.fn(async () => false) });
+    const r = await applyStaleMessageGuard(d, input());
+    expect(r).toMatchObject({ action: "hold", humanQueued: true });
+    expect(d.notify).not.toHaveBeenCalled();
+  });
+  it("falha ao gravar o takeover: continua retida (IA não responde), humanQueued=false e avisa uma pessoa", async () => {
+    d = mk({ stale_message_guard_mode: "on" }, { claimTakeover: vi.fn(async () => { throw new Error("db"); }) });
+    const r = await applyStaleMessageGuard(d, input());
+    expect(r).toMatchObject({ action: "hold", reason: "stale_held", humanQueued: false });
+    expect(d.notify).toHaveBeenCalledTimes(1);
+  });
+  it("modo on + TODAS as leituras/escritas de apoio falhando: a IA continua sem responder", async () => {
+    const boom = async () => { throw new Error("db"); };
+    d = mk({ stale_message_guard_mode: "on" }, { answeredAfter: boom as never, stampMessage: boom as never, claimTakeover: boom as never, notify: boom as never });
+    expect((await applyStaleMessageGuard(d, input())).action).toBe("hold");
   });
   it("falha no takeover ou no aviso não desfaz a retenção (a mensagem continua gravada e fora da IA)", async () => {
-    d = mk({ stale_message_guard_mode: "on" }, { startTakeover: vi.fn(async () => { throw new Error("db"); }), notify: vi.fn(async () => { throw new Error("push"); }) });
+    d = mk({ stale_message_guard_mode: "on" }, { claimTakeover: vi.fn(async () => { throw new Error("db"); }), notify: vi.fn(async () => { throw new Error("push"); }) });
     expect((await applyStaleMessageGuard(d, input())).action).toBe("hold");
   });
   it("limite configurável: 90 min deixa passar mensagem de 60 min e retém a de 120", async () => {
@@ -133,6 +159,6 @@ describe("falhas inesperadas", () => {
     d = mk(null, { readSettings: vi.fn(async () => { throw new Error("db"); }) });
     const r = await applyStaleMessageGuard(d, input());
     expect(r.action).toBe("proceed");
-    expect(d.startTakeover).not.toHaveBeenCalled();
+    expect(d.claimTakeover).not.toHaveBeenCalled();
   });
 });

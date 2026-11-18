@@ -24,6 +24,8 @@ import { generateSpeech, isSimpleEnoughForAudio } from "../lib/audio-generation.
 import { isNoOpReply } from "../lib/no-op-reply.js";
 import { stripLeakedMetaNarration } from "../lib/meta-narration-leak.js";
 import { collectPendingContactMessages, isReplyStillFresh } from "../lib/message-grouping.js";
+import { defaultWorkerStaleGuardDeps, effectiveMessageTimestampSec, humanRepliedAfter } from "../lib/stale-guard.js";
+import { applyStaleMessageGuard } from "@aula-agente/shared";
 
 const AUDIO_DURATION_CAP_SECONDS = 300;
 const AUDIO_FALLBACK_TEXT =
@@ -144,6 +146,20 @@ export function startProcessMessageWorker() {
         const pendingMessages = collectPendingContactMessages(recentMessages);
         if (pendingMessages.length === 0) {
           console.log(`No pending contact messages for conversation ${conversationId}, skipping`);
+          return;
+        }
+
+        // Proteção contra mensagem atrasada (settings.stale_message_guard_mode: off | shadow | on), MESMAS regras do webhook. Aqui cobre o que o
+        // webhook não vê: fila lenta, retry do BullMQ e reinjeção do varredor. Idade = instante original da mensagem MAIS RECENTE do lote (se o
+        // cliente acabou de escrever, a IA pode responder o lote inteiro). Antes de gastar LLM e antes de qualquer áudio/imagem.
+        const staleGuardDeps = defaultWorkerStaleGuardDeps();
+        const newestPending = pendingMessages[pendingMessages.length - 1];
+        const staleAtStart = await applyStaleMessageGuard(staleGuardDeps, {
+          organizationId, conversation: { id: conversationId, is_human_takeover: conversation.is_human_takeover, assigned_to: (conversation as { assigned_to?: string | null }).assigned_to ?? null },
+          messageId: newestPending.id, messageTimestamp: effectiveMessageTimestampSec(newestPending), isReplay: false, source: "worker",
+        });
+        if (staleAtStart.action === "hold") {
+          console.log(`Conversation ${conversationId}: mensagem atrasada (${staleAtStart.ageMinutes} min); IA não responde (${staleAtStart.reason})`);
           return;
         }
 
@@ -341,6 +357,21 @@ export function startProcessMessageWorker() {
         const latestContact = await getLastContactMessage(db, conversationId);
         if (!isReplyStillFresh(lastPendingMessage.created_at, latestContact?.created_at ?? null)) {
           console.log(`Conversation ${conversationId} has a newer customer message, dropping stale reply`);
+          return;
+        }
+
+        // Relê o estado antes de enviar: (1) um humano respondeu depois da mensagem do cliente (celular da loja ou CRM) mesmo sem takeover
+        // gravado; (2) a mensagem ficou atrasada durante a geração. Em qualquer caso a resposta é descartada, nada se perde (fica gravada).
+        if (await humanRepliedAfter(conversationId, lastPendingMessage.created_at)) {
+          console.log(`Conversation ${conversationId} already has a human reply after the customer message, dropping reply`);
+          return;
+        }
+        const staleBeforeSend = await applyStaleMessageGuard(staleGuardDeps, {
+          organizationId, conversation: { id: conversationId, is_human_takeover: freshConversation.is_human_takeover, assigned_to: (freshConversation as { assigned_to?: string | null }).assigned_to ?? null },
+          messageId: lastPendingMessage.id, messageTimestamp: effectiveMessageTimestampSec(lastPendingMessage), isReplay: false, source: "worker_pre_send",
+        });
+        if (staleBeforeSend.action === "hold") {
+          console.log(`Conversation ${conversationId}: mensagem ficou atrasada (${staleBeforeSend.ageMinutes} min) antes do envio; descartando a resposta (${staleBeforeSend.reason})`);
           return;
         }
 
