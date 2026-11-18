@@ -100,7 +100,7 @@ const start = async () => {
   startAutoRecover(server, server.log);
   // Registro periódico do estado da conexão do Evolution (chave settings.evolution_monitor_enabled, desligada por padrão).
   startEvolutionMonitor(server.log);
-  startSilentConnectionAlert(server.log); // desligado por padrão (settings.silent_connection_alert_enabled)
+  startSilentConnectionAlert(server.log); // desligado por padrão (settings.silent_connection_alert_mode: off | shadow | on); em off não toca a tabela de alertas
 };
 
 start().catch((err) => {
