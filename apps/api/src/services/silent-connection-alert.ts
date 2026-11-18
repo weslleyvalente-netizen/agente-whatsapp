@@ -89,7 +89,7 @@ async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open
 export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new Date()): Promise<void> {
   let orgs: Awaited<ReturnType<SilentDeps["listOrganizations"]>>;
   try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); return; }
-  let anyEnabled = false;
+  let anyEnabled = false; let failures = 0; // falha em qualquer etapa = ciclo NÃO saudável = sem ping (o monitor externo percebe)
   for (const org of orgs) {
     const requested = resolveSilentAlertMode(org.settings);
     if (requested === "off") continue;
@@ -98,16 +98,16 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
     let effective: SilentAlertMode = requested;
     if (requested === "on") {
       let ready = false;
-      try { ready = isPushReady(await deps.pushReadiness(org.id)); } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao verificar o canal de push"); }
+      try { ready = isPushReady(await deps.pushReadiness(org.id)); } catch (err) { failures++; deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao verificar o canal de push"); }
       try {
         const open = await deps.getOpenAlert(org.id, "*", "push_not_ready", "shadow");
         const action = decideAlertAction(open ? { openedAt: open.openedAt, lastNotifiedAt: open.lastNotifiedAt } : null, { status: ready ? "ok" : "silent", silentMinutes: null, expectedInSilence: null, probabilityOfSilence: null, reason: ready ? "ok" : "no_manager_push" }, now, REPEAT_MINUTES);
         await applyCondition({ deps, organizationId: org.id, instanceName: "*", kind: "push_not_ready", effective: "shadow", now }, open, action, { requested_mode: "on", reason: "no_manager_with_push_or_vapid_missing" });
-      } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao registrar push_not_ready"); }
+      } catch (err) { failures++; deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: falha ao registrar push_not_ready"); }
       if (!ready) effective = "shadow";
     }
     let instances: Array<{ id: string; instance_name: string }>;
-    try { instances = await deps.listInstances(org.id); } catch (err) { deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: failed to list instances"); continue; }
+    try { instances = await deps.listInstances(org.id); } catch (err) { failures++; deps.log.error({ organizationId: org.id, errName: (err as Error)?.name }, "silent-connection: failed to list instances"); continue; }
     for (const inst of instances) {
       const base = { deps, organizationId: org.id, instanceName: inst.instance_name, effective, now };
       try {
@@ -129,11 +129,11 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
         const open = await deps.getOpenAlert(org.id, inst.instance_name, "silent_connection", effective);
         const action = decideAlertAction(open ? { openedAt: open.openedAt, lastNotifiedAt: open.lastNotifiedAt } : null, ev, now, REPEAT_MINUTES);
         await applyCondition({ ...base, kind: "silent_connection" }, open, action, buildEvidence(ev, { lastInboundAt: lastInbound, lastCrmAt: crmAt, lastEvolutionAt: obs.lastEvolutionAt, state: obs.state, baselinePerHour: baseline }));
-      } catch (err) { deps.log.error({ organizationId: org.id, instanceName: inst.instance_name, errName: (err as Error)?.name }, "silent-connection: avaliação falhou"); }
+      } catch (err) { failures++; deps.log.error({ organizationId: org.id, instanceName: inst.instance_name, errName: (err as Error)?.name }, "silent-connection: avaliação falhou"); }
     }
   }
-  // Ciclo concluído sem travar: sinaliza ao monitor externo (só se alguma organização usa o alerta).
-  if (anyEnabled && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
+  // Ciclo concluído sem travar E sem falha de etapa: sinaliza ao monitor externo (só se alguma organização usa o alerta).
+  if (anyEnabled && failures === 0 && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
 }
 
 /** GET sem dados para um monitor externo (ex.: serviço de heartbeat). Nunca lança; timeout curto. */
@@ -222,12 +222,27 @@ export const defaultSilentDeps = (log: Log): SilentDeps => ({
   log,
 });
 
+export const MAX_CYCLE_RUN_MS = 15 * 60 * 1000;
+/** Um ciclo por vez. Se um ciclo travar (promessa que nunca resolve), ele NÃO fica ocupando o laço para sempre: passado MAX_CYCLE_RUN_MS o
+ * próximo tick registra o travamento e inicia outro ciclo (o dedupe é atômico no banco, então a sobreposição é segura). O heartbeat só sai
+ * quando um ciclo TERMINA saudável, então enquanto travado o monitor externo deixa de receber pings. */
+export function createSilentTicker(run: () => Promise<void>, log: Log, clockMs: () => number = Date.now, maxRunMs = MAX_CYCLE_RUN_MS): () => void {
+  let startedAt: number | null = null;
+  return () => {
+    if (startedAt !== null) {
+      if (clockMs() - startedAt < maxRunMs) return;
+      log.error({ runningMinutes: Math.round((clockMs() - startedAt) / 60_000) }, "silent-connection: ciclo anterior travado; iniciando outro");
+    }
+    const mine = clockMs(); startedAt = mine;
+    run().catch((err) => log.error({ errName: (err as Error)?.name }, "silent-connection: tick failed")).finally(() => { if (startedAt === mine) startedAt = null; });
+  };
+}
+
 /** SILENT_CONNECTION_ALERT_DISABLED=1 no ambiente da API impede até a criação do timer. */
 export function startSilentConnectionAlert(log: Log = console): NodeJS.Timeout | null {
   if (process.env.SILENT_CONNECTION_ALERT_DISABLED === "1") return null;
   const deps = defaultSilentDeps(log);
-  let busy = false;
-  const tick = () => { if (busy) return; busy = true; runSilentConnectionCycle(deps).catch((err) => log.error({ errName: (err as Error)?.name }, "silent-connection: tick failed")).finally(() => { busy = false; }); };
+  const tick = createSilentTicker(() => runSilentConnectionCycle(deps), log);
   setTimeout(tick, 120_000).unref(); // depois da primeira observação do monitor (90 s)
   const timer = setInterval(tick, SILENT_CYCLE_MS);
   timer.unref();
