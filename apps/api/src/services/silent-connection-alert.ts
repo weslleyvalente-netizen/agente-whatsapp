@@ -86,7 +86,8 @@ async function applyCondition(c: ApplyCtx, open: OpenAlert | null, action: "open
   } catch (err) { deps.log.error({ organizationId, instanceName, kind, errName: (err as Error)?.name }, "silent-connection: falha ao notificar (alerta gravado)"); }
 }
 
-export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new Date()): Promise<void> {
+/** `isCurrent`: um ciclo que já foi ultrapassado por outro (ficou lento e o laço iniciou um novo) NÃO pode mais emitir heartbeat ao terminar. */
+export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new Date(), isCurrent: () => boolean = () => true): Promise<void> {
   let orgs: Awaited<ReturnType<SilentDeps["listOrganizations"]>>;
   try { orgs = await deps.listOrganizations(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: failed to list organizations"); return; }
   let anyEnabled = false; let failures = 0; // falha em qualquer etapa = ciclo NÃO saudável = sem ping (o monitor externo percebe)
@@ -133,7 +134,7 @@ export async function runSilentConnectionCycle(deps: SilentDeps, now: Date = new
     }
   }
   // Ciclo concluído sem travar E sem falha de etapa: sinaliza ao monitor externo (só se alguma organização usa o alerta).
-  if (anyEnabled && failures === 0 && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
+  if (anyEnabled && failures === 0 && isCurrent() && deps.heartbeat) { try { await deps.heartbeat(); } catch (err) { deps.log.error({ errName: (err as Error)?.name }, "silent-connection: heartbeat falhou"); } }
 }
 
 /** GET sem dados para um monitor externo (ex.: serviço de heartbeat). Nunca lança; timeout curto. */
@@ -226,23 +227,40 @@ export const MAX_CYCLE_RUN_MS = 15 * 60 * 1000;
 /** Um ciclo por vez. Se um ciclo travar (promessa que nunca resolve), ele NÃO fica ocupando o laço para sempre: passado MAX_CYCLE_RUN_MS o
  * próximo tick registra o travamento e inicia outro ciclo (o dedupe é atômico no banco, então a sobreposição é segura). O heartbeat só sai
  * quando um ciclo TERMINA saudável, então enquanto travado o monitor externo deixa de receber pings. */
-export function createSilentTicker(run: () => Promise<void>, log: Log, clockMs: () => number = Date.now, maxRunMs = MAX_CYCLE_RUN_MS): () => void {
-  let startedAt: number | null = null;
+export function createSilentTicker(run: (isCurrent: () => boolean) => Promise<void>, log: Log, clockMs: () => number = Date.now, maxRunMs = MAX_CYCLE_RUN_MS): () => void {
+  let startedAt: number | null = null; let gen = 0;
   return () => {
     if (startedAt !== null) {
       if (clockMs() - startedAt < maxRunMs) return;
       log.error({ runningMinutes: Math.round((clockMs() - startedAt) / 60_000) }, "silent-connection: ciclo anterior travado; iniciando outro");
     }
-    const mine = clockMs(); startedAt = mine;
-    run().catch((err) => log.error({ errName: (err as Error)?.name }, "silent-connection: tick failed")).finally(() => { if (startedAt === mine) startedAt = null; });
+    const mine = ++gen; startedAt = clockMs();
+    // O ciclo ultrapassado (gen diferente) pode terminar depois, mas não é mais "corrente": não emite heartbeat.
+    run(() => gen === mine).catch((err) => log.error({ errName: (err as Error)?.name }, "silent-connection: tick failed")).finally(() => { if (gen === mine) startedAt = null; });
   };
+}
+
+export const QUERY_TIMEOUT_MS = 20_000;
+/** Limite de duração de CADA chamada do ciclo (consulta ao banco, push, heartbeat): estourou = rejeita (conta como falha do ciclo, sem ping).
+ * Obs.: o cliente do banco não cancela a consulta; o limite protege o laço, não o servidor. */
+export function withDeadline(deps: SilentDeps, ms = QUERY_TIMEOUT_MS): SilentDeps {
+  const out: Record<string, unknown> = { log: deps.log };
+  for (const [k, v] of Object.entries(deps)) {
+    if (typeof v !== "function") continue;
+    out[k] = (...args: unknown[]) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(Object.assign(new Error(`timeout ${k}`), { name: "TimeoutError" })), ms);
+      (v as (...a: unknown[]) => Promise<unknown>).apply(deps, args).then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
+    });
+  }
+  return out as unknown as SilentDeps;
 }
 
 /** SILENT_CONNECTION_ALERT_DISABLED=1 no ambiente da API impede até a criação do timer. */
 export function startSilentConnectionAlert(log: Log = console): NodeJS.Timeout | null {
   if (process.env.SILENT_CONNECTION_ALERT_DISABLED === "1") return null;
   const deps = defaultSilentDeps(log);
-  const tick = createSilentTicker(() => runSilentConnectionCycle(deps), log);
+  const guarded = withDeadline(deps);
+  const tick = createSilentTicker((isCurrent) => runSilentConnectionCycle(guarded, new Date(), isCurrent), log);
   setTimeout(tick, 120_000).unref(); // depois da primeira observação do monitor (90 s)
   const timer = setInterval(tick, SILENT_CYCLE_MS);
   timer.unref();

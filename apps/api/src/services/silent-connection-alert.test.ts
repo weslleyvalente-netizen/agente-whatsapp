@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSilentTicker, pingHeartbeat, runSilentConnectionCycle as runCycle, type AlertKind, type OpenAlert, type SilentDeps } from "./silent-connection-alert.js";
+import { createSilentTicker, withDeadline, pingHeartbeat, runSilentConnectionCycle as runCycle, type AlertKind, type OpenAlert, type SilentDeps } from "./silent-connection-alert.js";
 import type { SilentAlertMode } from "@aula-agente/shared";
 
 const now = new Date("2026-11-17T17:00:00Z");
@@ -170,12 +170,34 @@ describe("monitor externo (heartbeat)", () => {
     let t = 0; const logs: string[] = []; const log = { info() {}, error: (_o: unknown, m?: string) => { logs.push(String(m)); } } as never;
     let calls = 0; const hb = vi.fn(async () => {});
     const hang = () => { calls++; return calls === 1 ? new Promise<void>(() => {}) : Promise.resolve().then(() => hb()); };
-    const tick = createSilentTicker(hang, log, () => t, 15 * 60_000);
+    const tick = createSilentTicker(() => hang(), log, () => t, 15 * 60_000);
     tick(); t = 5 * 60_000; tick(); t = 10 * 60_000; tick();
     expect(calls).toBe(1); expect(hb).not.toHaveBeenCalled(); // travado: nada roda, nenhum ping
     t = 16 * 60_000; tick(); await Promise.resolve(); await Promise.resolve();
     expect(calls).toBe(2); expect(logs.some((m) => m.includes("travado"))).toBe(true); expect(hb).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 0)); t = 21 * 60_000; tick(); expect(calls).toBe(3); // ciclo terminou: o próximo tick roda
+  });
+  it("ciclo vencido que termina DEPOIS de outro começar não emite heartbeat; o corrente emite", async () => {
+    let t = 0; const log = { info() {}, error() {} } as never; const hb = vi.fn(async () => {});
+    let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+    let n = 0;
+    const deps = make({ heartbeat: hb, listOrganizations: async () => { n++; if (n === 1) await gate; return [{ id: "org", settings: { silent_connection_alert_mode: "shadow" } }]; } }, "shadow").deps;
+    const tick = createSilentTicker((isCurrent) => runCycle(deps, now, isCurrent), log, () => t, 15 * 60_000);
+    tick(); t = 16 * 60_000; tick(); // o 1º trava; passou do limite, o 2º começa
+    await new Promise((r) => setTimeout(r, 0)); expect(hb).toHaveBeenCalledTimes(1); // o 2º (corrente) terminou e emitiu
+    release(); await new Promise((r) => setTimeout(r, 0)); expect(hb).toHaveBeenCalledTimes(1); // o 1º terminou tarde: NÃO emite
+  });
+  it("limite de duração por chamada: consulta que não responde rejeita, o ciclo segue sem travar e não emite heartbeat", async () => {
+    vi.useFakeTimers();
+    try {
+      const hb = vi.fn(async () => {}); const errs: string[] = [];
+      const base = make({ heartbeat: hb, latestObservation: () => new Promise(() => {}) }, "shadow").deps;
+      const deps = withDeadline({ ...base, log: { info() {}, error: (_o: unknown, m?: string) => { errs.push(String(m)); } } as never }, 1000);
+      const p = runCycle(deps, now); await vi.advanceTimersByTimeAsync(1500); await p;
+      expect(errs.some((m) => m.includes("avaliação falhou"))).toBe(true); expect(hb).not.toHaveBeenCalled();
+      // chamada rápida não é afetada
+      const ok = withDeadline(make({ heartbeat: hb }, "shadow").deps, 1000); const q = runCycle(ok, now); await vi.advanceTimersByTimeAsync(10); await q; expect(hb).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
   it("falha do heartbeat não derruba o ciclo", async () => {
     const { deps } = make({ heartbeat: async () => { throw new Error("rede"); } }, "shadow"); await expect(run(deps, now)).resolves.toBeUndefined();
