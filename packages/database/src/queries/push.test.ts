@@ -205,9 +205,24 @@ describe("escalada de SLA: estágio 1", () => {
     const r = await listSlaBreachCandidates(d, now, ["o"]);
     expect(r).toEqual([{ kind: "sla_breach", organizationId: "o", userId: "marina", dedupeKeys: ["sla_breach:a1"], title: "SLA estourado: responda Márcio",
       body: "O prazo para responder este cliente passou. Toque para atender.", url: "/opportunities?conversa=c1", tag: "c1" }]);
-    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "pending"); has(calls, 0, "eq", "sla_action", "alert");
-    has(calls, 0, "not", "rep_id", "is", null); has(calls, 0, "is", "first_human_message_at", null);
+    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "sla_action", "alert");
+    has(calls, 0, "or", "and(status.eq.pending,first_human_message_at.is.null),and(status.eq.accepted,awaiting_first_response.eq.true)");
+    has(calls, 0, "not", "rep_id", "is", null);
     has(calls, 0, "lte", "sla_due_at", now.toISOString()); has(calls, 0, "gte", "sla_due_at", "2026-10-26T12:00:00.000Z");
+  });
+
+  it("atribuição ASSUMIDA e ainda sem resposta também gera 'SLA estourado'; com mensagem confirmada ou em voo, não; com falha, gera", async () => {
+    const now = new Date("2026-10-27T12:00:00Z");
+    const row = (id: string, conv: string, status: string) => ({ id, organization_id: "o", conversation_id: conv, status, assigned_at: "2026-10-27T09:00:00Z", sla_due_at: "2026-10-27T10:40:00Z", sales_reps: { user_id: "marcio" }, wa_contacts: { name: id, phone: "55" } });
+    const { db: d } = db({
+      lead_assignments: { data: [row("pend", "c0", "pending"), row("semresp", "c1", "accepted"), row("resp", "c2", "accepted"), row("voo", "c3", "accepted"), row("falha", "c4", "accepted")] },
+      messages: { data: [
+        { conversation_id: "c2", created_at: "2026-10-27T11:00:00Z", evolution_message_id: "wa-1", metadata: null },
+        { conversation_id: "c3", created_at: "2026-10-27T11:58:00Z", evolution_message_id: null, metadata: null },
+        { conversation_id: "c4", created_at: "2026-10-27T11:00:00Z", evolution_message_id: null, metadata: { send_failed_at: "2026-10-27T11:01:00Z" } },
+      ] },
+    });
+    expect((await listSlaBreachCandidates(d, now, ["o"])).map((c) => c.dedupeKeys[0])).toEqual(["sla_breach:pend", "sla_breach:semresp", "sla_breach:falha"]);
   });
 
   it("sem organizações: não consulta", async () => {

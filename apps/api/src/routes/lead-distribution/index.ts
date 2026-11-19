@@ -129,7 +129,7 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
     const db = getAdminClient();
     const a = await getAssignmentForNudge(db, organizationId, assignmentId);
     if (!a) return reply.status(404).send({ error: "Atribuição não encontrada" });
-    if (a.status !== "pending" || a.sla_action !== "alert" || !a.sla_breached) return reply.status(409).send({ error: "Este alerta não está mais pendente" });
+    if (!(a.status === "pending" || (a.status === "accepted" && a.awaiting_first_response === true)) || a.sla_action !== "alert" || !a.sla_breached) return reply.status(409).send({ error: "Este alerta não está mais pendente" });
     const reps = await listSalesReps(db, organizationId);
     const rep = reps.find((r) => r.id === a.rep_id);
     if (!rep?.user_id) return reply.status(409).send({ error: "Este vendedor não tem usuário vinculado; não dá para enviar o aviso" });
