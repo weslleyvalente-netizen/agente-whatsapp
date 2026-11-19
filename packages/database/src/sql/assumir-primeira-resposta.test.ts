@@ -256,7 +256,7 @@ describe("Assumir mantém o acompanhamento da primeira resposta", () => {
   });
 
   it("somente service_role executa as funções novas", async () => {
-    for (const fn of ["public._awaiting_first_response(public.lead_assignments)", "public._human_msg_confirmed(uuid,uuid,timestamptz)", "public.accept_assignment(uuid,uuid,boolean)", "public.flag_sla_alerts()"]) {
+    for (const fn of ["public._awaiting_first_response(public.lead_assignments)", "public._human_msg_confirmed(uuid,uuid,timestamptz,uuid)", "public.accept_assignment(uuid,uuid,boolean)", "public.flag_sla_alerts()"]) {
       const r = (await q(`select has_function_privilege('authenticated','${fn}','execute') as a, has_function_privilege('anon','${fn}','execute') as n, has_function_privilege('service_role','${fn}','execute') as s`))[0];
       expect(r).toEqual({ a: false, n: false, s: true });
     }

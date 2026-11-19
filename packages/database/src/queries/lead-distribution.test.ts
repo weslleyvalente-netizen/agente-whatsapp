@@ -207,6 +207,24 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
     const stuck = { conversation_id: "conv-p", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: null };
     expect(await run([a], { messages: [stuck] })).toEqual(["p"]);
   });
+  it("AUTOR: mensagem/marco do GESTOR não tira o alerta do vendedor; a do vendedor ou de autoria desconhecida tira", async () => {
+    const MARCIO = "11111111-1111-4111-8111-111111111111", GESTOR = "22222222-2222-4222-8222-222222222222";
+    const as = ["gm", "vm", "um", "marco-g", "marco-v"].map((id) => base(id, { rep_id: "rep-m", status: "pending",
+      ...(id === "marco-g" ? { first_human_message_at: "2026-10-27T12:10:00Z", first_human_message_by: GESTOR } : {}),
+      ...(id === "marco-v" ? { first_human_message_at: "2026-10-27T12:10:00Z", first_human_message_by: MARCIO } : {}) }));
+    const opp = (id: string) => ({ id: `o-${id}`, contact_id: `ct-${id}`, status: "open", last_commercial_activity_at: "2026-10-27T12:10:00Z", updated_at: null });
+    const out = await run(as, {
+      sales_reps: [{ id: "rep-m", user_id: MARCIO }],
+      messages: [
+        { conversation_id: "conv-gm", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-1", metadata: { sent_by_user_id: GESTOR } },
+        { conversation_id: "conv-vm", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-2", metadata: { sent_by_user_id: MARCIO } },
+        { conversation_id: "conv-um", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-3", metadata: null },
+      ],
+      // a atividade comercial gravada no pedido de envio do gestor (e no marco dele) também não conta como atendimento do vendedor
+      opportunities: ["gm", "marco-g"].map(opp),
+    });
+    expect(out).toEqual(["gm", "marco-g"]);
+  });
   it("sem alertas não consulta as demais tabelas", async () => {
     const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, or: () => b, order: () => b, range: async () => ({ data: [], error: null }) }; return b; });
     expect(await listSlaAlerts({ from } as any, "org")).toEqual([]);
