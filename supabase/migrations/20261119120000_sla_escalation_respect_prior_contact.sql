@@ -1,12 +1,17 @@
--- Escalada de SLA: cliente que o vendedor JÁ atendeu não troca de dono.
+-- Escalada de SLA: cliente que o vendedor ATUAL já atendeu não troca de dono.
 --
 -- Caso real (18/11): o Márcio atendeu o cliente na quarta (mensagens e áudios), o cliente voltou, a IA abriu novo pedido de atendimento
 -- e o SLA estourou sem resposta. A escalada olhava só mensagens humanas "desde o handoff" e passou o cliente à Marina.
 --
--- Regra nova: só troca de vendedor quem nunca entrou em contato depois que a IA atendeu. Para atribuições 'existing_owner' (dono da
--- carteira), qualquer mensagem role='human_agent' na conversa a partir do PRIMEIRO handoff dela conta como "já atendido".
--- Atribuição 'manual' mantém o critério anterior (mensagens desde a atribuição): o gestor escolheu um vendedor novo e o histórico de
--- outro vendedor não prova que ESTE atendeu. Histórico humano anterior ao primeiro handoff (conversa antiga) continua sem bloquear.
+-- O QUE CONTA como "já atendido" (atribuições 'existing_owner' e demais não-manuais; o rodízio de lead novo não passa por aqui):
+--   * mensagem role='human_agent' CONFIRMADA (evolution_message_id preenchido) e SEM falha (metadata.send_failed_at nulo);
+--   * criada a partir do marco  GREATEST(1º handoff da conversa, LEAST(início do período do vendedor atual, handoff desta atribuição)):
+--       - 1º handoff = primeira vez que a IA encaminhou a conversa (histórico humano mais antigo não protege ninguém);
+--       - período do vendedor atual = a partir da 1ª atribuição dele depois da última atribuição de OUTRO vendedor na conversa
+--         (mensagens do tempo de outro vendedor não protegem; linhas de exceção sem vendedor não quebram o período).
+-- LIMITES CONHECIDOS: a tabela messages não guarda o autor. Dentro do período do vendedor atual, uma mensagem humana enviada por outra
+--   pessoa (ex.: o gestor pelo painel) é atribuída a ele; o autor só é conhecido no marco first_human_message_by da atribuição.
+-- Atribuição 'manual' mantém o critério anterior (mensagens desde a atribuição), agora também só mensagens confirmadas e sem falha.
 -- O rodízio de lead novo ('redistribute') já só troca quando o vendedor não respondeu; não muda.
 --
 -- Só redefine _alert_assignment_answered (CREATE OR REPLACE); usada por escalate_alert_assignment e list_escalation_candidates.
@@ -15,13 +20,21 @@ SET LOCAL lock_timeout = '5s';
 
 CREATE OR REPLACE FUNCTION public._alert_assignment_answered(a public.lead_assignments)
 RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE since timestamptz; conv_status text;
+DECLARE since timestamptz; conv_status text; first_handoff timestamptz; prev_other timestamptz; run_start timestamptz;
 BEGIN
-  since := CASE WHEN a.reason = 'manual' THEN a.assigned_at
-                ELSE LEAST(a.handoff_at, COALESCE((SELECT min(h.handed_at) FROM public.handoff_events h WHERE h.conversation_id = a.conversation_id), a.handoff_at)) END;
+  IF a.reason = 'manual' THEN
+    since := a.assigned_at;
+  ELSE
+    first_handoff := COALESCE((SELECT min(h.handed_at) FROM public.handoff_events h WHERE h.conversation_id = a.conversation_id), a.handoff_at);
+    SELECT max(x.assigned_at) INTO prev_other FROM public.lead_assignments x
+     WHERE x.conversation_id = a.conversation_id AND x.rep_id IS NOT NULL AND x.rep_id <> a.rep_id AND x.assigned_at <= a.assigned_at;
+    SELECT min(x.assigned_at) INTO run_start FROM public.lead_assignments x
+     WHERE x.conversation_id = a.conversation_id AND x.rep_id = a.rep_id AND x.assigned_at <= a.assigned_at AND (prev_other IS NULL OR x.assigned_at > prev_other);
+    since := GREATEST(first_handoff, LEAST(COALESCE(run_start, a.assigned_at), a.handoff_at));
+  END IF;
   IF a.first_human_message_at IS NOT NULL OR a.accepted_at IS NOT NULL THEN RETURN true; END IF;
   IF EXISTS (SELECT 1 FROM public.messages m WHERE m.conversation_id = a.conversation_id AND m.organization_id = a.organization_id
-               AND m.role = 'human_agent' AND m.created_at >= since) THEN RETURN true; END IF;
+               AND m.role = 'human_agent' AND m.evolution_message_id IS NOT NULL AND (m.metadata->>'send_failed_at') IS NULL AND m.created_at >= since) THEN RETURN true; END IF;
   IF EXISTS (SELECT 1 FROM public.sales_call_logs l WHERE l.organization_id = a.organization_id AND l.called_at >= a.assigned_at
                AND (l.contact_id = a.contact_id OR l.opportunity_id IN (SELECT o.id FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id))) THEN RETURN true; END IF;
   IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id AND o.status = 'open'
