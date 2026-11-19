@@ -9,7 +9,7 @@ const PIPELINE_FIXTURE = `
 CREATE SCHEMA IF NOT EXISTS auth; CREATE TABLE auth.users (id uuid PRIMARY KEY);
 ALTER TABLE public.conversations ADD COLUMN agent_id uuid;
 CREATE TABLE public.agents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, tools_config jsonb NOT NULL DEFAULT '{}');
-ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS evolution_message_id text;
+ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS evolution_message_id text, ADD COLUMN IF NOT EXISTS metadata jsonb;
 ALTER TABLE public.opportunities ADD COLUMN initial_operation text, ADD COLUMN sale_amount numeric, ADD COLUMN credit_amount numeric, ADD COLUMN down_payment_amount numeric,
   ADD COLUMN bid_amount numeric, ADD COLUMN target_installment_amount numeric, ADD COLUMN term_months integer, ADD COLUMN usage_purpose text, ADD COLUMN urgency text,
   ADD COLUMN commercial_notes text, ADD COLUMN last_interaction_at timestamptz, ADD COLUMN last_progress_at timestamptz, ADD COLUMN next_action text,

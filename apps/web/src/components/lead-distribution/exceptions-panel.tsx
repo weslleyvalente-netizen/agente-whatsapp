@@ -3,8 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import type { SalesRep, SlaAlert } from "@aula-agente/shared";
-import { SlaAlertsSection } from "./sla-alerts-section";
-import { exceptionRow, nudgedAtLabel, nudgeNotDeliveredMessage, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
+import { DelayBoard } from "./delay-board";
+import { nudgedAtLabel, nudgeNotDeliveredMessage, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
 
 /** "Atraso no atendimento" no funil. Só aviso (sem escolher vendedor): clientes que ninguém respondeu e atrasos da carteira. Só gestores (403 some o painel). */
 export function ExceptionsPanel() {
@@ -60,27 +60,5 @@ export function ExceptionsPanel() {
     } catch (err) { setNotice({ kind: "error", text: (err as Error).message }); }
     finally { setNudgingAll(false); }
   };
-  if (!items.length && !alerts.length) return null;
-  const total = items.length + alerts.length;
-  return (
-    <details open aria-label="Atraso no atendimento" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
-      <summary className="cursor-pointer font-medium">Atraso no atendimento <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{total}</span></summary>
-      {items.length > 0 && (
-        <div className="mt-3" aria-label="Clientes que nenhum vendedor respondeu">
-          <h3 className="font-medium">Ninguém respondeu <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{items.length}</span></h3>
-          <p className="text-xs text-muted-foreground">O sistema não troca mais de vendedor sozinho nem pede para você escolher. Abra a conversa e cobre o vendedor do cliente.</p>
-          {items.map(e => {
-            const row = exceptionRow(e);
-            return (
-              <div key={e.id} className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <a href={row.href} className="font-medium underline-offset-2 hover:underline">{row.client}</a>
-                <span className="text-muted-foreground">· {row.reason} · aguardando {row.waiting}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <SlaAlertsSection alerts={alerts} reps={reps} nudged={nudged} busy={nudgeBusy} nudgingAll={nudgingAll} notice={notice} onNudge={nudge} onNudgeAll={nudgeAll} />
-    </details>
-  );
+  return <DelayBoard exceptions={items} alerts={alerts} reps={reps} nudged={nudged} busy={nudgeBusy} nudgingAll={nudgingAll} notice={notice} onNudge={nudge} onNudgeAll={nudgeAll} />;
 }
