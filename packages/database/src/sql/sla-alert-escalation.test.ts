@@ -167,6 +167,68 @@ describe("escalate_alert_assignment", () => {
     expect(await escalate(manual)).toBeTruthy();
   });
 
+  it("aceite pelo botão Assumir (sem mensagem) não vale como resposta; aceite pela primeira mensagem vale", async () => {
+    const w = await breached();
+    await q("update public.lead_assignments set accepted_at=now(), accepted_via='button' where id=$1", [w.id]);
+    expect(await escalate(w.id)).toBeTruthy();
+    const w2 = await breached();
+    await q("update public.lead_assignments set accepted_at=now(), accepted_via='first_message' where id=$1", [w2.id]);
+    expect(await escalate(w2.id)).toBeNull();
+  });
+
+  // Sequência real: Márcio atende -> Marina recebe -> o gestor DEVOLVE ao Márcio (manual). Cada helper usa as funções reais do rodízio.
+  async function sequencia(opts: { attend: "mensagem" | "assumir" | "mensagem-com-falha" | "nada" }) {
+    const w = await seedWorld(db, ON, THREE);
+    const h = await seedLead(db, w.org, { assignedTo: w.reps["Márcio"].userId, handedAt: inMinutes(-300) });
+    const first = (await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [w.org, h.conversationId, h.handoffId, inMinutes(60)]))[0].id as string;
+    expect((await row(first)).rep_id).toBe(w.reps["Márcio"].repId);
+    if (opts.attend === "mensagem" || opts.attend === "mensagem-com-falha") {
+      const meta = opts.attend === "mensagem-com-falha" ? JSON.stringify({ send_failed_at: "2026-11-18T12:00:00Z" }) : "{}";
+      await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id,metadata) values ($1,$2,'human_agent','bom dia, me manda seu CPF','wa-seq',$3::jsonb)", [w.org, h.conversationId, meta]);
+      await q("select public.record_human_message($1,$2,now(),$3,'panel')", [w.org, h.conversationId, w.reps["Márcio"].userId]);
+    }
+    if (opts.attend === "assumir") expect(await q("select public.accept_assignment($1,$2,false) as ok", [first, w.reps["Márcio"].userId])).toEqual([{ ok: true }]);
+    const toMarina = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Marina"].repId, w.def, inMinutes(60)]))[0].id as string;
+    const back = async (due = -70) => (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Márcio"].repId, w.def, inMinutes(due)]))[0].id as string;
+    return { w, h, first, toMarina, back };
+  }
+
+  it("devolução manual ao vendedor com atendimento comprovado: o SLA cobra, mas a escalada não tira o cliente dele de novo", async () => {
+    const { w, h, back } = await sequencia({ attend: "mensagem" });
+    const ret = await back();
+    expect(await row(ret)).toMatchObject({ reason: "manual", rep_id: w.reps["Márcio"].repId, status: "pending", sla_action: "alert" });
+    // cobrança: o prazo vencido marca o atraso (alerta/cutucar)...
+    expect((await q("select public.flag_sla_alerts() as n"))[0].n).toBeGreaterThanOrEqual(1);
+    expect((await row(ret)).sla_breached).toBe(true);
+    // ...mas nem a função nem a fila de candidatas movem o cliente
+    expect(await escalate(ret)).toBeNull();
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [ret])).toHaveLength(0);
+    expect((await row(ret)).status).toBe("pending");
+    expect((await q("select assigned_to from public.conversations where id=$1", [h.conversationId]))[0].assigned_to).toBe(w.reps["Márcio"].userId);
+  });
+
+  it("Assumir sozinho não vale como atendimento: sem mensagem, a devolução manual continua escalável", async () => {
+    const { back } = await sequencia({ attend: "assumir" });
+    const ret = await back();
+    expect(await escalate(ret)).toBeTruthy();
+  });
+
+  it("sem nenhum atendimento anterior, ou com envio que falhou, a devolução manual não protege", async () => {
+    const nada = await sequencia({ attend: "nada" });
+    expect(await escalate(await nada.back())).toBeTruthy();
+    const falhou = await sequencia({ attend: "mensagem-com-falha" });
+    expect(await escalate(await falhou.back())).toBeTruthy();
+  });
+
+  it("troca manual deliberada para OUTRO vendedor continua possível, e o histórico do Márcio não protege o novo", async () => {
+    const { w, h } = await sequencia({ attend: "mensagem" });
+    const toPaulo = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Paulo"].repId, w.def, inMinutes(-70)]))[0].id as string;
+    expect(await row(toPaulo)).toMatchObject({ reason: "manual", rep_id: w.reps["Paulo"].repId, status: "pending" });
+    expect((await q("select assigned_to from public.conversations where id=$1", [h.conversationId]))[0].assigned_to).toBe(w.reps["Paulo"].userId);
+    // sem atendimento comprovado DELE: não está "atendido" (todos os vendedores já passaram pela cadeia, então a escalada não tem para quem ir)
+    expect((await q("select public._alert_assignment_answered(x) as a from public.lead_assignments x where x.id=$1", [toPaulo]))[0].a).toBe(false);
+  });
+
   it("rodízio ('redistribute') e exceção não são tocados por esta função", async () => {
     const w = await seedWorld(db, ON, THREE);
     const h = await seedLead(db, w.org, { handedAt: inMinutes(-130) });
