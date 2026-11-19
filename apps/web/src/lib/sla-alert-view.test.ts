@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SlaAlert } from "@aula-agente/shared";
-import { nudgeNotDeliveredMessage, nudgedAtLabel, slaAlertRow, summarizeNudgeAll } from "./sla-alert-view";
+import { exceptionRow, nudgeNotDeliveredMessage, nudgedAtLabel, slaAlertRow, summarizeNudgeAll } from "./sla-alert-view";
 
 const now = new Date("2026-11-09T12:00:00Z");
 const alert = (over: Partial<SlaAlert> = {}) => ({ id: "a1", rep_id: "r1", conversation_id: "conv 1", sla_due_at: "2026-11-09T09:30:00Z", assigned_at: "2026-11-09T08:30:00Z", contact_name: "Ana", contact_phone: "5511", ...over }) as SlaAlert;
@@ -35,5 +35,16 @@ describe("nudgeNotDeliveredMessage", () => {
   it("distingue falha de sem aparelho", () => {
     expect(nudgeNotDeliveredMessage("failed")).toBe("Não foi possível entregar o aviso agora");
     expect(nudgeNotDeliveredMessage("no_device")).toBe("O vendedor não tem notificações ativadas");
+  });
+});
+
+describe("exceptionRow", () => {
+  it("cliente sem vendedor que respondeu: motivo em português, há quanto tempo espera e link da conversa (sem escolher vendedor)", () => {
+    const e = { id: "e1", conversation_id: "conv 1", assigned_at: "2026-11-09T09:00:00Z", exception_reason: "all_reps_sla_breached", contact_name: "David", contact_phone: "5562" } as unknown as SlaAlert;
+    expect(exceptionRow(e, now)).toEqual({ id: "e1", client: "David", reason: "Nenhum vendedor respondeu no prazo", waiting: "há 3 h", href: "/opportunities?conversa=conv%201" });
+  });
+  it("motivo desconhecido não quebra", () => {
+    expect(exceptionRow({ id: "e2", conversation_id: "c", assigned_at: "2026-11-09T11:59:30Z", exception_reason: "x", contact_name: null, contact_phone: "5562" } as unknown as SlaAlert, now))
+      .toMatchObject({ client: "5562", reason: "x", waiting: "há menos de 1 min" });
   });
 });
