@@ -102,6 +102,24 @@ describe("escalate_alert_assignment", () => {
     expect(await escalate(w.id)).toBeTruthy();
   });
 
+  it("vendedor que já conversou depois do 1º atendimento da IA não perde o cliente, mesmo que o novo pedido de atendimento fique sem resposta", async () => {
+    // Caso real (18/11): o Márcio atendeu na quarta; o cliente voltou (novo handoff), o SLA estourou sem resposta e a escalada tirou o cliente dele.
+    const w = await breached();
+    await q("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3)", [w.org, w.h.conversationId, inMinutes(-60 * 24)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','Bom dia, me manda seu CPF',$3)", [w.org, w.h.conversationId, inMinutes(-60 * 23)]);
+    expect(await escalate(w.id)).toBeNull();
+    expect((await row(w.id)).status).toBe("pending");
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [w.id])).toHaveLength(0);
+  });
+
+  it("atribuição manual continua só olhando as mensagens humanas depois da atribuição", async () => {
+    const { org, def, reps, h } = await breached(ON, THREE, "Marina", 60);
+    await q("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3)", [org, h.conversationId, inMinutes(-60 * 24)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','conversa do vendedor anterior',$3)", [org, h.conversationId, inMinutes(-60 * 23)]);
+    const manual = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [org, h.conversationId, reps["Márcio"].repId, def, inMinutes(-70)]))[0].id;
+    expect(await escalate(manual)).toBeTruthy();
+  });
+
   it("rodízio ('redistribute') e exceção não são tocados por esta função", async () => {
     const w = await seedWorld(db, ON, THREE);
     const h = await seedLead(db, w.org, { handedAt: inMinutes(-130) });

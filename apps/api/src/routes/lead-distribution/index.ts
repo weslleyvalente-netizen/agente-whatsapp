@@ -108,7 +108,8 @@ export default async function leadDistributionRoutes(app: FastifyInstance) {
   app.get<{ Params: { organizationId: string } }>("/organizations/:organizationId/lead-assignments/exceptions", async (request, reply) => {
     const role = roleIn(request, request.params.organizationId);
     if (!role || !isManager(role)) return reply.status(403).send({ error: "Somente gestores veem a fila de exceções" });
-    return listOpenExceptions(getAdminClient(), request.params.organizationId);
+    const db = getAdminClient();
+    return withContacts(db, request.params.organizationId, await listOpenExceptions(db, request.params.organizationId));
   });
 
   app.get<{ Params: { organizationId: string } }>("/organizations/:organizationId/lead-assignments/sla-alerts", async (request, reply) => {
