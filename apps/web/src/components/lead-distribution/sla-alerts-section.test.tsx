@@ -22,6 +22,12 @@ describe("SlaAlertsSection", () => {
     expect(out).toContain("Cutucar todos");
     expect(out.match(/>Cutucar</g)).toHaveLength(2);
   });
+  it("explica o comportamento real: cobra o vendedor, troca só se nunca atendeu e o prazo dobrou", () => {
+    const out = html(base());
+    expect(out).toContain("Se o vendedor nunca atendeu o cliente e o prazo dobrar");
+    expect(out).toContain("se já atendeu, não troca");
+    expect(out).not.toContain("não há redistribuição automática");
+  });
   it("não renderiza nada sem alertas", () => expect(html(base({ alerts: [] }))).toBe(""));
   it("linha cutucada mostra o horário no lugar do botão; enviando desabilita", () => {
     const out = html(base({ nudged: { a: "Cutucado às 14:05" }, busy: { b: true } }));

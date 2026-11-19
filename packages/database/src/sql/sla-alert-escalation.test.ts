@@ -83,7 +83,7 @@ describe("escalate_alert_assignment", () => {
   it("cliente já respondido: nada a escalar (mensagem humana desde o handoff, marco de primeira resposta ou atribuição já aceita)", async () => {
     // mensagem de humano na conversa DEPOIS do handoff
     let w = await breached();
-    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','Oi, já te atendo',$3)", [w.org, w.h.conversationId, inMinutes(-20)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','Oi, já te atendo',$3,'wa-'||gen_random_uuid())", [w.org, w.h.conversationId, inMinutes(-20)]);
     expect(await escalate(w.id)).toBeNull();
     // atribuição aceita por mensagem do vendedor
     w = await breached();
@@ -98,8 +98,135 @@ describe("escalate_alert_assignment", () => {
 
   it("conversa com histórico humano ANTIGO (antes do handoff) não impede a escalada", async () => {
     const w = await breached();
-    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','conversa de meses atrás',$3)", [w.org, w.h.conversationId, inMinutes(-60 * 24 * 90)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','conversa de meses atrás',$3,'wa-'||gen_random_uuid())", [w.org, w.h.conversationId, inMinutes(-60 * 24 * 90)]);
     expect(await escalate(w.id)).toBeTruthy();
+  });
+
+  // Histórico real do Claudivan: Marina (rodízio) -> Márcio (SLA) atende -> cliente volta (novo handoff) e o Márcio não responde.
+  async function claudivan(w: Awaited<ReturnType<typeof breached>>, marcioMessage?: { at: number; id: string | null; meta?: object; role?: string }, marinaMessageAt?: number) {
+    const conv = w.h.conversationId;
+    const prior = async (rep: string, minutes: number, reason: string) => {
+      const ho = (await q("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3) returning id", [w.org, conv, inMinutes(minutes)]))[0].id;
+      await q(`insert into public.lead_assignments(organization_id,chain_id,handoff_event_id,contact_id,conversation_id,rep_id,reason,status,assigned_at,handoff_at,strategy_version)
+               values ($1,gen_random_uuid(),$2,$3,$4,$5,$6,'redistributed',$7,$7,'test')`, [w.org, ho, w.h.contactId, conv, w.reps[rep].repId, reason, inMinutes(minutes)]);
+    };
+    await prior("Paulo", -60 * 60, "round_robin");     // 1º handoff da conversa
+    await prior("Marina", -60 * 59, "round_robin");    // Marina teve o lead primeiro
+    await prior("Márcio", -60 * 40, "sla_redistribution"); // Márcio assume depois do SLA da Marina
+    // a atribuição pendente (w.id) é do dono "Marina" em breached(); passa para o Márcio como dono atual
+    await q("update public.lead_assignments set rep_id=rep_id where id=$1", [w.id]);
+    if (marinaMessageAt !== undefined) await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','msg da Marina',$3,'wa-marina')", [w.org, conv, inMinutes(marinaMessageAt)]);
+    if (marcioMessage) await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id,metadata) values ($1,$2,$5,'msg do Márcio',$3,$4,$6)", [w.org, conv, inMinutes(marcioMessage.at), marcioMessage.id, marcioMessage.role ?? "human_agent", JSON.stringify(marcioMessage.meta ?? {})]);
+  }
+  const marcioOwner = async () => {
+    const w = await breached(ON, THREE, "Márcio");
+    return w;
+  };
+
+  it("protege: o responsável atual já conversou (mensagem confirmada dentro do seu período), mesmo com novo encaminhamento sem resposta", async () => {
+    const w = await marcioOwner();
+    await claudivan(w, { at: -60 * 30, id: "wa-1" });
+    expect(await escalate(w.id)).toBeNull();
+    expect((await row(w.id)).status).toBe("pending");
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [w.id])).toHaveLength(0);
+  });
+
+  it("não protege: mensagem humana ANTIGA, anterior ao primeiro atendimento da IA na conversa", async () => {
+    const w = await marcioOwner();
+    await claudivan(w);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','meses atrás',$3,'wa-old')", [w.org, w.h.conversationId, inMinutes(-60 * 24 * 90)]);
+    expect(await escalate(w.id)).toBeTruthy();
+  });
+
+  it("não protege: mensagem da época de OUTRO vendedor (antes de o dono atual assumir)", async () => {
+    const w = await marcioOwner();
+    await claudivan(w, undefined, -60 * 50); // a Marina falou quando o lead era dela
+    expect(await escalate(w.id)).toBeTruthy();
+  });
+
+  it("não protege: envio que falhou (sem id do WhatsApp, ou marcado send_failed_at)", async () => {
+    const semId = await marcioOwner();
+    await claudivan(semId, { at: -60 * 30, id: null });
+    expect(await escalate(semId.id)).toBeTruthy();
+    const falhou = await marcioOwner();
+    await claudivan(falhou, { at: -60 * 30, id: "wa-2", meta: { send_failed_at: "2026-11-18T12:00:00Z" } });
+    expect(await escalate(falhou.id)).toBeTruthy();
+  });
+
+  it("não protege: mensagem da IA ou do cliente no período do vendedor", async () => {
+    const w = await marcioOwner();
+    await claudivan(w, { at: -60 * 30, id: "wa-3", role: "agent" });
+    expect(await escalate(w.id)).toBeTruthy();
+  });
+
+  it("atribuição manual continua só olhando as mensagens humanas depois da atribuição", async () => {
+    const { org, def, reps, h } = await breached(ON, THREE, "Marina", 60);
+    await q("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3)", [org, h.conversationId, inMinutes(-60 * 24)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','conversa do vendedor anterior',$3,'wa-prev')", [org, h.conversationId, inMinutes(-60 * 23)]);
+    const manual = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [org, h.conversationId, reps["Márcio"].repId, def, inMinutes(-70)]))[0].id;
+    expect(await escalate(manual)).toBeTruthy();
+  });
+
+  it("aceite pelo botão Assumir (sem mensagem) não vale como resposta; aceite pela primeira mensagem vale", async () => {
+    const w = await breached();
+    await q("update public.lead_assignments set accepted_at=now(), accepted_via='button' where id=$1", [w.id]);
+    expect(await escalate(w.id)).toBeTruthy();
+    const w2 = await breached();
+    await q("update public.lead_assignments set accepted_at=now(), accepted_via='first_message' where id=$1", [w2.id]);
+    expect(await escalate(w2.id)).toBeNull();
+  });
+
+  // Sequência real: Márcio atende -> Marina recebe -> o gestor DEVOLVE ao Márcio (manual). Cada helper usa as funções reais do rodízio.
+  async function sequencia(opts: { attend: "mensagem" | "assumir" | "mensagem-com-falha" | "nada" }) {
+    const w = await seedWorld(db, ON, THREE);
+    const h = await seedLead(db, w.org, { assignedTo: w.reps["Márcio"].userId, handedAt: inMinutes(-300) });
+    const first = (await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [w.org, h.conversationId, h.handoffId, inMinutes(60)]))[0].id as string;
+    expect((await row(first)).rep_id).toBe(w.reps["Márcio"].repId);
+    if (opts.attend === "mensagem" || opts.attend === "mensagem-com-falha") {
+      const meta = opts.attend === "mensagem-com-falha" ? JSON.stringify({ send_failed_at: "2026-11-18T12:00:00Z" }) : "{}";
+      await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id,metadata) values ($1,$2,'human_agent','bom dia, me manda seu CPF','wa-seq',$3::jsonb)", [w.org, h.conversationId, meta]);
+      await q("select public.record_human_message($1,$2,now(),$3,'panel')", [w.org, h.conversationId, w.reps["Márcio"].userId]);
+    }
+    if (opts.attend === "assumir") expect(await q("select public.accept_assignment($1,$2,false) as ok", [first, w.reps["Márcio"].userId])).toEqual([{ ok: true }]);
+    const toMarina = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Marina"].repId, w.def, inMinutes(60)]))[0].id as string;
+    const back = async (due = -70) => (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Márcio"].repId, w.def, inMinutes(due)]))[0].id as string;
+    return { w, h, first, toMarina, back };
+  }
+
+  it("devolução manual ao vendedor com atendimento comprovado: o SLA cobra, mas a escalada não tira o cliente dele de novo", async () => {
+    const { w, h, back } = await sequencia({ attend: "mensagem" });
+    const ret = await back();
+    expect(await row(ret)).toMatchObject({ reason: "manual", rep_id: w.reps["Márcio"].repId, status: "pending", sla_action: "alert" });
+    // cobrança: o prazo vencido marca o atraso (alerta/cutucar)...
+    expect((await q("select public.flag_sla_alerts() as n"))[0].n).toBeGreaterThanOrEqual(1);
+    expect((await row(ret)).sla_breached).toBe(true);
+    // ...mas nem a função nem a fila de candidatas movem o cliente
+    expect(await escalate(ret)).toBeNull();
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [ret])).toHaveLength(0);
+    expect((await row(ret)).status).toBe("pending");
+    expect((await q("select assigned_to from public.conversations where id=$1", [h.conversationId]))[0].assigned_to).toBe(w.reps["Márcio"].userId);
+  });
+
+  it("Assumir sozinho não vale como atendimento: sem mensagem, a devolução manual continua escalável", async () => {
+    const { back } = await sequencia({ attend: "assumir" });
+    const ret = await back();
+    expect(await escalate(ret)).toBeTruthy();
+  });
+
+  it("sem nenhum atendimento anterior, ou com envio que falhou, a devolução manual não protege", async () => {
+    const nada = await sequencia({ attend: "nada" });
+    expect(await escalate(await nada.back())).toBeTruthy();
+    const falhou = await sequencia({ attend: "mensagem-com-falha" });
+    expect(await escalate(await falhou.back())).toBeTruthy();
+  });
+
+  it("troca manual deliberada para OUTRO vendedor continua possível, e o histórico do Márcio não protege o novo", async () => {
+    const { w, h } = await sequencia({ attend: "mensagem" });
+    const toPaulo = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, w.reps["Paulo"].repId, w.def, inMinutes(-70)]))[0].id as string;
+    expect(await row(toPaulo)).toMatchObject({ reason: "manual", rep_id: w.reps["Paulo"].repId, status: "pending" });
+    expect((await q("select assigned_to from public.conversations where id=$1", [h.conversationId]))[0].assigned_to).toBe(w.reps["Paulo"].userId);
+    // sem atendimento comprovado DELE: não está "atendido" (todos os vendedores já passaram pela cadeia, então a escalada não tem para quem ir)
+    expect((await q("select public._alert_assignment_answered(x) as a from public.lead_assignments x where x.id=$1", [toPaulo]))[0].a).toBe(false);
   });
 
   it("rodízio ('redistribute') e exceção não são tocados por esta função", async () => {
@@ -197,5 +324,60 @@ describe("escalate_alert_assignment", () => {
   it("somente service_role executa (anon/authenticated sem acesso)", async () => {
     const r = (await q("select has_function_privilege('authenticated','public.escalate_alert_assignment(uuid,timestamptz,timestamptz)','execute') as a, has_function_privilege('anon','public.escalate_alert_assignment(uuid,timestamptz,timestamptz)','execute') as n, has_function_privilege('service_role','public.escalate_alert_assignment(uuid,timestamptz,timestamptz)','execute') as s"))[0];
     expect(r).toEqual({ a: false, n: false, s: true });
+  });
+});
+
+// LIMITAÇÃO DE AUTORIA (documentada no cabeçalho de 20261119120000): estes testes fixam o comportamento EXATO de hoje.
+// Se um dia a autoria da mensagem passar a ser gravada, estes testes devem falhar e ser reescritos para o novo comportamento.
+describe("limitação de autoria: mensagem de outra pessoa durante o período do vendedor", () => {
+  const managerMessage = async (w: Awaited<ReturnType<typeof breached>>, via: "panel" | "phone_echo") => {
+    await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id) values ($1,$2,'human_agent','Oi, aqui é o gestor, já te respondo','wa-gestor')", [w.org, w.h.conversationId]);
+    await q("select public.record_human_message($1,$2,now(),$3,$4)", [w.org, w.h.conversationId, via === "panel" ? w.def : null, via]);
+  };
+
+  it("mensagem do GESTOR pelo painel protege o vendedor (a escalada não troca), embora a autoria fique registrada como a do gestor", async () => {
+    const w = await breached(); // dono atual: Marina, SLA e 2x o SLA vencidos, ninguém do vendedor falou
+    await managerMessage(w, "panel");
+    const a = await row(w.id);
+    // prova registrada: o autor da PRIMEIRA mensagem humana da atribuição é o gestor, não a Marina...
+    expect(a.first_human_message_by).toBe(w.def);
+    expect(a.first_human_message_by).not.toBe(w.reps["Marina"].userId);
+    // ...e como o autor não é o vendedor, o gestor não "assume" em nome dele (a atribuição segue pendente, sem aceite)
+    expect(a).toMatchObject({ status: "pending", accepted_via: null });
+    // comportamento atual (a limitação): a função de "já atendido" não confere o autor, então o cliente é tratado como atendido
+    expect((await q("select public._alert_assignment_answered(x) as a from public.lead_assignments x where x.id=$1", [w.id]))[0].a).toBe(true);
+    expect(await escalate(w.id)).toBeNull();
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [w.id])).toHaveLength(0);
+    expect((await row(w.id)).status).toBe("pending"); // continua com a Marina
+  });
+
+  it("mensagem pelo celular da loja (eco): a autoria NÃO é conhecida (first_human_message_by nulo), e também protege", async () => {
+    const w = await breached();
+    await managerMessage(w, "phone_echo");
+    const a = await row(w.id);
+    expect(a.first_human_message_by).toBeNull();
+    expect(await escalate(w.id)).toBeNull();
+  });
+
+  it("só a PRIMEIRA mensagem tem autor registrado: a Marina fala primeiro e o gestor depois, e nada distingue as duas mensagens", async () => {
+    const w = await breached();
+    await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id) values ($1,$2,'human_agent','Oi, sou a Marina','wa-marina-1')", [w.org, w.h.conversationId]);
+    await q("select public.record_human_message($1,$2,now(),$3,'panel')", [w.org, w.h.conversationId, w.reps["Marina"].userId]);
+    await managerMessage(w, "panel"); // o gestor responde depois, na mesma conversa
+    const a = await row(w.id);
+    expect(a.first_human_message_by).toBe(w.reps["Marina"].userId); // o marco guarda só o primeiro autor
+    const msgs = await q("select * from public.messages where conversation_id=$1 and role='human_agent' order by created_at, id", [w.h.conversationId]);
+    expect(msgs).toHaveLength(2);
+    // nenhuma coluna/metadado identifica quem escreveu
+    for (const m of msgs) expect(Object.keys(m).filter((k) => /user|author|sent_by|sender/i.test(k))).toEqual([]);
+    expect(msgs.map((m) => m.metadata?.sent_by ?? null)).toEqual([null, null]);
+  });
+
+  it("o esquema real de messages não tem coluna de autor (por isso não dá para provar, hoje, quem escreveu cada mensagem)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync(new URL("../../../../supabase/migrations/00007_conversations.sql", import.meta.url), "utf8");
+    const block = sql.slice(sql.indexOf("CREATE TABLE messages"), sql.indexOf(");", sql.indexOf("CREATE TABLE messages")));
+    expect(block).toMatch(/evolution_message_id/);
+    expect(block).not.toMatch(/user_id|author|sent_by|sender/i);
   });
 });
