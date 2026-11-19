@@ -3,6 +3,7 @@ import {
   claimPushDedupe, deletePushSubscription, listCustomerMessageCandidates, listNewAssignmentCandidates,
   listSlaRiskCandidates, upsertPushSubscription, releasePushDedupe, purgePushNotificationLog,
   listPushEnabledOrganizationIds, listCurrentMemberIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds,
+  listExceptionCandidates, listExceptionPushOrganizationIds,
 } from "./push.js";
 
 /** Builder encadeável e "await-able" que registra as chamadas e devolve `result` por tabela. */
@@ -250,5 +251,72 @@ describe("escalada de SLA: estágio 1", () => {
     const { db: d, calls } = db({});
     expect(await listSlaBreachCandidates(d, new Date(), [])).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("aviso ao gestor: conversa em exceção", () => {
+  const now = new Date("2026-11-19T15:00:00Z");
+  const exc = (id: string, over: Record<string, unknown> = {}) => ({
+    id, organization_id: "o", conversation_id: `conv-${id}`, handoff_at: "2026-11-19T13:30:00Z", exception_reason: "all_reps_sla_breached",
+    previous_assignment_id: `prev-${id}`, wa_contacts: { name: "Claudivan", phone: "556296148561" }, ...over,
+  });
+  // Uma resposta por tabela e por chamada, na ordem: lead_assignments (exceções), lead_assignments (anteriores), organization_members (gestores).
+  const queued = (...results: Array<{ data?: unknown }>) => {
+    const calls: Array<{ table: string; ops: Array<[string, unknown[]]> }> = [];
+    let i = 0;
+    const from = (table: string) => {
+      const entry = { table, ops: [] as Array<[string, unknown[]]> }; calls.push(entry);
+      const r = results[i++] ?? { data: [] };
+      const c: any = new Proxy({}, { get: (_t, prop: string) => prop === "then" ? (res: any) => res({ data: r.data ?? null, error: null }) : (...args: unknown[]) => { entry.ops.push([prop, args]); return c; } });
+      return c;
+    };
+    return { db: { from } as any, calls };
+  };
+
+  it("organizações com a chave exception_manager_push_enabled === true", async () => {
+    const { db: d, calls } = queued({ data: [{ id: "o1" }] });
+    expect(await listExceptionPushOrganizationIds(d, ["o1", "o2"])).toEqual(["o1"]);
+    has(calls, 0, "in", "id", ["o1", "o2"]); has(calls, 0, "eq", "settings->>exception_manager_push_enabled", "true");
+    expect(await listExceptionPushOrganizationIds(d, [])).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("um aviso por gestor (owner/admin) com cliente, último responsável, tempo de espera e link da conversa; chave por entrada e por gestor", async () => {
+    const { db: d, calls } = queued(
+      { data: [exc("e1")] },
+      { data: [{ id: "prev-e1", sales_reps: { display_name: "Marina" } }] },
+      { data: [{ user_id: "dono" }, { user_id: "gestor" }] },
+    );
+    const r = await listExceptionCandidates(d, now, ["o"]);
+    expect(r).toEqual([
+      { kind: "exception", organizationId: "o", userId: "dono", dedupeKeys: ["exception:e1:dono"], title: "Cliente sem dono: Claudivan",
+        body: "Nenhum vendedor respondeu no prazo. Último responsável: Marina. Aguardando há 1 h. Toque para atribuir.", url: "/opportunities?conversa=conv-e1", tag: "exception-conv-e1" },
+      { kind: "exception", organizationId: "o", userId: "gestor", dedupeKeys: ["exception:e1:gestor"], title: "Cliente sem dono: Claudivan",
+        body: "Nenhum vendedor respondeu no prazo. Último responsável: Marina. Aguardando há 1 h. Toque para atribuir.", url: "/opportunities?conversa=conv-e1", tag: "exception-conv-e1" },
+    ]);
+    // só exceções abertas e recentes, só das organizações habilitadas; gestores = owner/admin
+    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "exception"); has(calls, 0, "is", "resolved_at", null);
+    has(calls, 0, "gte", "created_at", "2026-11-18T15:00:00.000Z");
+    has(calls, 2, "in", "role", ["owner", "admin"]);
+  });
+
+  it("sem responsável anterior: 'nenhum'; motivo desconhecido cai no texto genérico; cada exceção gera a sua chave", async () => {
+    const { db: d } = queued(
+      { data: [exc("e2", { previous_assignment_id: null, exception_reason: "no_available_rep" }), exc("e3", { previous_assignment_id: null, exception_reason: null })] },
+      { data: [{ user_id: "dono" }] },
+    );
+    const r = await listExceptionCandidates(d, now, ["o"]);
+    expect(r.map((c) => c.dedupeKeys[0])).toEqual(["exception:e2:dono", "exception:e3:dono"]);
+    expect(r[0].body).toContain("Nenhum vendedor disponível. Último responsável: nenhum.");
+    expect(r[1].body).toContain("Sem vendedor responsável. Último responsável: nenhum.");
+  });
+
+  it("sem organizações ou sem exceções: não avisa", async () => {
+    const none = queued({ data: [] });
+    expect(await listExceptionCandidates(none.db, now, ["o"])).toEqual([]);
+    expect(none.calls).toHaveLength(1);
+    const off = queued();
+    expect(await listExceptionCandidates(off.db, now, [])).toEqual([]);
+    expect(off.calls).toHaveLength(0);
   });
 });

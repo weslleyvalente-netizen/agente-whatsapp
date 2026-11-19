@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { funnelConversationHref } from "@aula-agente/shared";
+import { contactDisplayName, formatElapsed, funnelConversationHref } from "@aula-agente/shared";
 import { countsForRep, isConfirmedOrInFlight, type HumanMessageRow } from "./lead-distribution.js";
 
 export interface PushCandidate {
-  kind: "assign" | "message" | "sla" | "sla_breach";
+  kind: "assign" | "message" | "sla" | "sla_breach" | "exception";
   organizationId: string;
   userId: string;
   /** Chaves de idempotência (push_notification_log). Mais de uma quando várias mensagens viram uma notificação. */
@@ -217,6 +217,78 @@ export async function listSlaBreachCandidates(db: SupabaseClient, now: Date, org
       title: `SLA estourado: responda ${contactLabel(first(row.wa_contacts))}`, body: "O prazo para responder este cliente passou. Toque para atender.",
       url: funnelUrl(row.conversation_id), tag: row.conversation_id,
     });
+  }
+  return out;
+}
+
+/** Organizações (entre `orgIds`) com o aviso de exceção ao gestor ligado: settings.exception_manager_push_enabled === true. */
+export async function listExceptionPushOrganizationIds(db: SupabaseClient, orgIds: string[]): Promise<string[]> {
+  if (!orgIds.length) return [];
+  const { data, error } = await db.from("organizations").select("id").in("id", orgIds).eq("settings->>exception_manager_push_enabled", "true");
+  if (error) throw error;
+  return ((data ?? []) as Array<{ id: string }>).map(o => o.id);
+}
+
+/** Exceção que entrou há mais que isto não avisa (o log de idempotência é apagado após 7 dias; evita reavisar entradas antigas). */
+export const EXCEPTION_PUSH_MAX_AGE_HOURS = 24;
+const EXCEPTION_REASON_LABEL: Record<string, string> = {
+  no_available_rep: "Nenhum vendedor disponível",
+  all_reps_sla_breached: "Nenhum vendedor respondeu no prazo",
+  invalid_existing_owner: "O dono anterior não pode atender",
+  distribution_error: "Erro ao distribuir o lead",
+  manual_review: "Precisa de revisão manual",
+};
+
+type ExceptionRow = {
+  id: string; organization_id: string; conversation_id: string; handoff_at: string; exception_reason: string | null; previous_assignment_id: string | null;
+  wa_contacts: One<ContactRef>;
+};
+
+/**
+ * Conversas que ENTRARAM em exceção (status 'exception', ainda não resolvidas, nas últimas 24 h): um aviso para CADA gestor (owner/admin)
+ * da organização, com cliente, último responsável, tempo de espera (desde o encaminhamento) e link da conversa.
+ * Idempotência: uma chave por entrada e por gestor (`exception:{atribuição}:{gestor}`). Cada nova entrada em exceção é uma linha nova.
+ * `orgIds` já deve conter só as organizações com exception_manager_push_enabled.
+ */
+export async function listExceptionCandidates(db: SupabaseClient, now: Date, orgIds: string[]): Promise<PushCandidate[]> {
+  if (!orgIds.length) return [];
+  const oldest = new Date(now.getTime() - EXCEPTION_PUSH_MAX_AGE_HOURS * 3_600_000);
+  const { data, error } = await db.from("lead_assignments")
+    .select("id, organization_id, conversation_id, handoff_at, exception_reason, previous_assignment_id, wa_contacts(name, phone)")
+    .in("organization_id", orgIds).eq("status", "exception").is("resolved_at", null).gte("created_at", oldest.toISOString()).order("created_at").limit(ASSIGNMENT_LIMIT);
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as ExceptionRow[];
+  if (!rows.length) return [];
+
+  // Último responsável: o vendedor da atribuição anterior da cadeia (a que foi expirada/redistribuída antes da exceção).
+  const previousIds = [...new Set(rows.map((r) => r.previous_assignment_id).filter((x): x is string => Boolean(x)))];
+  const repByPrevious = new Map<string, string>();
+  if (previousIds.length) {
+    const { data: prev, error: prevError } = await db.from("lead_assignments").select("id, sales_reps(display_name)").in("id", previousIds);
+    if (prevError) throw prevError;
+    for (const p of (prev ?? []) as unknown as Array<{ id: string; sales_reps: One<{ display_name?: string | null }> }>) {
+      const name = first(p.sales_reps)?.display_name?.trim();
+      if (name) repByPrevious.set(p.id, name);
+    }
+  }
+  const managersByOrg = new Map<string, string[]>();
+  for (const orgId of new Set(rows.map((r) => r.organization_id))) managersByOrg.set(orgId, await listManagerUserIds(db, orgId));
+
+  const out: PushCandidate[] = [];
+  for (const row of rows) {
+    const contact = first(row.wa_contacts);
+    const client = contactDisplayName(contact?.name, contact?.phone);
+    const reason = EXCEPTION_REASON_LABEL[row.exception_reason ?? ""] ?? "Sem vendedor responsável";
+    const lastRep = row.previous_assignment_id ? repByPrevious.get(row.previous_assignment_id) : undefined;
+    const waiting = formatElapsed(Math.max(0, now.getTime() - new Date(row.handoff_at).getTime()));
+    for (const userId of managersByOrg.get(row.organization_id) ?? []) {
+      out.push({
+        kind: "exception", organizationId: row.organization_id, userId, dedupeKeys: [`exception:${row.id}:${userId}`],
+        title: `Cliente sem dono: ${client}`,
+        body: `${reason}. Último responsável: ${lastRep ?? "nenhum"}. Aguardando há ${waiting}. Toque para atribuir.`,
+        url: funnelUrl(row.conversation_id), tag: `exception-${row.conversation_id}`,
+      });
+    }
   }
   return out;
 }
