@@ -326,3 +326,58 @@ describe("escalate_alert_assignment", () => {
     expect(r).toEqual({ a: false, n: false, s: true });
   });
 });
+
+// LIMITAÇÃO DE AUTORIA (documentada no cabeçalho de 20261119120000): estes testes fixam o comportamento EXATO de hoje.
+// Se um dia a autoria da mensagem passar a ser gravada, estes testes devem falhar e ser reescritos para o novo comportamento.
+describe("limitação de autoria: mensagem de outra pessoa durante o período do vendedor", () => {
+  const managerMessage = async (w: Awaited<ReturnType<typeof breached>>, via: "panel" | "phone_echo") => {
+    await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id) values ($1,$2,'human_agent','Oi, aqui é o gestor, já te respondo','wa-gestor')", [w.org, w.h.conversationId]);
+    await q("select public.record_human_message($1,$2,now(),$3,$4)", [w.org, w.h.conversationId, via === "panel" ? w.def : null, via]);
+  };
+
+  it("mensagem do GESTOR pelo painel protege o vendedor (a escalada não troca), embora a autoria fique registrada como a do gestor", async () => {
+    const w = await breached(); // dono atual: Marina, SLA e 2x o SLA vencidos, ninguém do vendedor falou
+    await managerMessage(w, "panel");
+    const a = await row(w.id);
+    // prova registrada: o autor da PRIMEIRA mensagem humana da atribuição é o gestor, não a Marina...
+    expect(a.first_human_message_by).toBe(w.def);
+    expect(a.first_human_message_by).not.toBe(w.reps["Marina"].userId);
+    // ...e como o autor não é o vendedor, o gestor não "assume" em nome dele (a atribuição segue pendente, sem aceite)
+    expect(a).toMatchObject({ status: "pending", accepted_via: null });
+    // comportamento atual (a limitação): a função de "já atendido" não confere o autor, então o cliente é tratado como atendido
+    expect((await q("select public._alert_assignment_answered(x) as a from public.lead_assignments x where x.id=$1", [w.id]))[0].a).toBe(true);
+    expect(await escalate(w.id)).toBeNull();
+    expect(await q("select id from public.list_escalation_candidates(50) where id=$1", [w.id])).toHaveLength(0);
+    expect((await row(w.id)).status).toBe("pending"); // continua com a Marina
+  });
+
+  it("mensagem pelo celular da loja (eco): a autoria NÃO é conhecida (first_human_message_by nulo), e também protege", async () => {
+    const w = await breached();
+    await managerMessage(w, "phone_echo");
+    const a = await row(w.id);
+    expect(a.first_human_message_by).toBeNull();
+    expect(await escalate(w.id)).toBeNull();
+  });
+
+  it("só a PRIMEIRA mensagem tem autor registrado: a Marina fala primeiro e o gestor depois, e nada distingue as duas mensagens", async () => {
+    const w = await breached();
+    await q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id) values ($1,$2,'human_agent','Oi, sou a Marina','wa-marina-1')", [w.org, w.h.conversationId]);
+    await q("select public.record_human_message($1,$2,now(),$3,'panel')", [w.org, w.h.conversationId, w.reps["Marina"].userId]);
+    await managerMessage(w, "panel"); // o gestor responde depois, na mesma conversa
+    const a = await row(w.id);
+    expect(a.first_human_message_by).toBe(w.reps["Marina"].userId); // o marco guarda só o primeiro autor
+    const msgs = await q("select * from public.messages where conversation_id=$1 and role='human_agent' order by created_at, id", [w.h.conversationId]);
+    expect(msgs).toHaveLength(2);
+    // nenhuma coluna/metadado identifica quem escreveu
+    for (const m of msgs) expect(Object.keys(m).filter((k) => /user|author|sent_by|sender/i.test(k))).toEqual([]);
+    expect(msgs.map((m) => m.metadata?.sent_by ?? null)).toEqual([null, null]);
+  });
+
+  it("o esquema real de messages não tem coluna de autor (por isso não dá para provar, hoje, quem escreveu cada mensagem)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync(new URL("../../../../supabase/migrations/00007_conversations.sql", import.meta.url), "utf8");
+    const block = sql.slice(sql.indexOf("CREATE TABLE messages"), sql.indexOf(");", sql.indexOf("CREATE TABLE messages")));
+    expect(block).toMatch(/evolution_message_id/);
+    expect(block).not.toMatch(/user_id|author|sent_by|sender/i);
+  });
+});

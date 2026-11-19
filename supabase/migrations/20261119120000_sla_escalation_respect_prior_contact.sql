@@ -11,6 +11,10 @@
 --         (mensagens do tempo de outro vendedor não protegem; linhas de exceção sem vendedor não quebram o período).
 -- LIMITES CONHECIDOS: a tabela messages não guarda o autor. Dentro do período do vendedor atual, uma mensagem humana enviada por outra
 --   pessoa (ex.: o gestor pelo painel) é atribuída a ele; o autor só é conhecido no marco first_human_message_by da atribuição.
+--   Comportamento exato (fixado em sla-alert-escalation.test.ts, 'limitação de autoria'): uma mensagem do gestor pelo painel dentro do período do
+--   vendedor protege o vendedor e a escalada não troca. Prova registrada que existe: first_human_message_by guarda o autor da PRIMEIRA mensagem
+--   humana de cada atribuição, e só quando veio do painel (eco do celular da loja grava NULL: o celular é compartilhado). Mensagens seguintes não
+--   têm autor em lugar nenhum. Para fechar a lacuna é preciso gravar o autor em messages.metadata no envio pelo painel (mudança de código, fora daqui).
 -- Atribuição 'manual': vale a mensagem confirmada desde a atribuição E, para DEVOLUÇÃO do cliente a um vendedor que já o atendeu, o
 --   atendimento anterior COMPROVADO desse mesmo vendedor: uma atribuição anterior dele nesta conversa cuja primeira mensagem humana tem
 --   ele como autor (first_human_message_by) ou foi eco do celular dele (accepted_via='phone_echo'), com mensagem confirmada e sem falha
