@@ -138,12 +138,20 @@ describe("runPushSweep", () => {
     expect(m.sendPushToUser.mock.calls[0][2]).toMatchObject({ title: "8 novos leads", url: "/opportunities", tag: "push-summary" });
   });
 
-  it("falha no envio libera as chaves para nova tentativa", async () => {
+  it("erro que PROVA que nada foi enviado (leitura das assinaturas) libera as chaves para nova tentativa", async () => {
     m.listNewAssignmentCandidates.mockResolvedValue(list([cand()]));
-    m.sendPushToUser.mockRejectedValue(new Error("db"));
+    m.sendPushToUser.mockRejectedValue(Object.assign(new Error("db"), { attempted: false }));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await runPushSweep(db, createPushCursor(now), now);
     expect(m.releasePushDedupe).toHaveBeenCalledWith(db, ["assign:a1"]);
+    log.mockRestore();
+  });
+  it("erro qualquer (o provedor pode ter aceitado e a resposta se perdeu) NÃO libera a chave: repetir duplicaria o aviso", async () => {
+    m.listNewAssignmentCandidates.mockResolvedValue(list([cand()]));
+    m.sendPushToUser.mockRejectedValue(new Error("socket hang up"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await runPushSweep(db, createPushCursor(now), now);
+    expect(m.releasePushDedupe).not.toHaveBeenCalled();
     log.mockRestore();
   });
 
@@ -238,14 +246,14 @@ describe("runPushSweep: conversa em exceção avisa os gestores (uma vez por ent
     expect(m.sendPushToUser).toHaveBeenCalledTimes(2);
   });
 
-  it("envio que falhou libera a chave: a próxima varredura tenta de novo (e depois não repete)", async () => {
+  it("falha ANTES de enviar (nada saiu) libera a chave: a próxima varredura tenta de novo (e depois não repete)", async () => {
     const seen = new Set<string>();
     m.claimPushDedupe.mockImplementation(async (_d: unknown, key: string) => (seen.has(key) ? false : (seen.add(key), true)));
     m.releasePushDedupe.mockImplementation(async (_d: unknown, keys: string[]) => { for (const k of keys) seen.delete(k); });
     m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
     m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono")]);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    m.sendPushToUser.mockRejectedValueOnce(new Error("push fora do ar"));
+    m.sendPushToUser.mockRejectedValueOnce(Object.assign(new Error("db fora do ar"), { attempted: false }));
     await runPushSweep(db, createPushCursor(now), now);
     await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + 30_000));
     await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + 60_000));
