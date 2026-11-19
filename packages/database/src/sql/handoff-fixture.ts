@@ -46,6 +46,7 @@ export const NEW_MIGRATIONS = [
   "20261027120100_default_operation_sync.sql",
   "20261027120200_sla_alert_escalation.sql",
   "20261119120000_sla_escalation_respect_prior_contact.sql",
+  "20261119130000_assumir_keeps_first_response_sla.sql",
 ];
 
 export async function setupHandoffDb(opts: { apply?: string[] } = {}) {
