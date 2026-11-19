@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { contactDisplayName, formatElapsed, funnelConversationHref } from "@aula-agente/shared";
+import { isConfirmedOrInFlight, type HumanMessageRow } from "./lead-distribution.js";
 
 export interface PushCandidate {
   kind: "assign" | "message" | "sla" | "sla_breach" | "exception";
@@ -182,12 +183,28 @@ export const SLA_BREACH_MAX_AGE_HOURS = 24;
 export async function listSlaBreachCandidates(db: SupabaseClient, now: Date, orgIds: string[]): Promise<PushCandidate[]> {
   if (!orgIds.length) return [];
   const oldest = new Date(now.getTime() - SLA_BREACH_MAX_AGE_HOURS * 3_600_000);
-  const { data, error } = await db.from("lead_assignments").select(ASSIGNMENT_SELECT).in("organization_id", orgIds)
-    .eq("status", "pending").eq("sla_action", "alert").not("rep_id", "is", null).is("first_human_message_at", null)
+  // Pendente sem 1ª mensagem OU assumida (botão/1ª mensagem do painel) ainda aguardando resposta confirmada.
+  const { data, error } = await db.from("lead_assignments").select(`${ASSIGNMENT_SELECT}, status, assigned_at`).in("organization_id", orgIds)
+    .or("and(status.eq.pending,first_human_message_at.is.null),and(status.eq.accepted,awaiting_first_response.eq.true)")
+    .eq("sla_action", "alert").not("rep_id", "is", null)
     .lte("sla_due_at", now.toISOString()).gte("sla_due_at", oldest.toISOString()).order("sla_due_at").limit(ASSIGNMENT_LIMIT);
   if (error) throw error;
+  const rows = (data ?? []) as unknown as Array<AssignmentRow & { status?: string; assigned_at?: string }>;
+  // Assumidas: só cobra se ainda não houve mensagem humana confirmada (ou em voo) desde a atribuição.
+  const accepted = rows.filter((r) => r.status === "accepted");
+  const answeredIds = new Set<string>();
+  if (accepted.length) {
+    const minAt = new Date(Math.min(...accepted.map((r) => new Date(r.assigned_at ?? 0).getTime()))).toISOString();
+    const { data: msgs, error: msgError } = await db.from("messages").select("conversation_id, created_at, evolution_message_id, metadata")
+      .eq("role", "human_agent").in("conversation_id", accepted.map((r) => r.conversation_id)).gte("created_at", minAt).limit(5000);
+    if (msgError) throw msgError;
+    for (const r of accepted) {
+      if (((msgs ?? []) as HumanMessageRow[]).some((m) => m.conversation_id === r.conversation_id && new Date(m.created_at) >= new Date(r.assigned_at ?? 0) && isConfirmedOrInFlight(m, now.getTime()))) answeredIds.add(r.id);
+    }
+  }
   const out: PushCandidate[] = [];
-  for (const row of (data ?? []) as unknown as AssignmentRow[]) {
+  for (const row of rows) {
+    if (answeredIds.has(row.id)) continue;
     const userId = first(row.sales_reps)?.user_id;
     if (!userId) continue;
     out.push({
