@@ -22,8 +22,13 @@
 --   falha, com menos de 10 min) também suspende a troca: a próxima varredura a vê confirmada (encerra) ou falhada (volta a cobrar).
 --   CORREÇÃO junto: o marco first_human_message_at / aceite 'first_message' e a atividade comercial do negócio (last_commercial_activity_at)
 --   são gravados quando o envio é PEDIDO, não quando chega. Se só houver mensagens com falha (nenhuma confirmada nem em voo) desde a
---   atribuição, o marco deixa de contar como resposta e a atividade comercial feita até 1 min depois da última falha também não conta
---   (heurística: o pedido de envio e o registro acontecem na mesma requisição; ligação, tarefa e nota seguem valendo).
+--   atribuição, o marco deixa de contar como resposta e a atividade comercial feita dentro da JANELA DE ENVIO também não conta.
+--   JANELA DE ENVIO = 10 min contados da criação da mensagem (o mesmo prazo em que uma mensagem em voo adia a decisão):
+--     * em voo (sem id, sem falha, < 10 min): adia a troca/redistribuição por no máximo 10 min;
+--     * falhou (send_failed_at) em qualquer momento, inclusive depois de 1 min: a cobrança volta na varredura seguinte;
+--     * presa (sem id, sem falha, > 10 min): tratada como NÃO ENVIADA, não adia mais;
+--     * a atividade gravada no pedido de envio (que pode ocorrer minutos depois da criação da mensagem, em anexo/áudio lento) é ignorada
+--       dentro da janela; ligação, tarefa, nota e atividade DEPOIS da janela continuam valendo.
 --
 -- Efeito por tipo de atribuição depois do clique, sem resposta, com o prazo vencido:
 --   carteira ('alert'): flag_sla_alerts marca sla_breached (push "SLA estourado" ao dono + quadro "Atraso no atendimento"); aos 2x o SLA a
@@ -55,10 +60,12 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
                    AND m.evolution_message_id IS NULL AND (m.metadata->>'send_failed_at') IS NULL
                    AND m.created_at >= GREATEST(p_since, now() - interval '10 minutes'))
 $$;
-CREATE OR REPLACE FUNCTION public._human_msg_failed(p_org uuid, p_conv uuid, p_since timestamptz) RETURNS boolean
+-- NÃO ENVIADA: sem id do WhatsApp e (marcada como falha OU parada há mais de 10 min). Mensagem presa não pode adiar a decisão para sempre.
+CREATE OR REPLACE FUNCTION public._human_msg_unsent(p_org uuid, p_conv uuid, p_since timestamptz) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   SELECT EXISTS (SELECT 1 FROM public.messages m WHERE m.conversation_id = p_conv AND m.organization_id = p_org AND m.role = 'human_agent'
-                   AND (m.metadata->>'send_failed_at') IS NOT NULL AND m.created_at >= p_since)
+                   AND m.evolution_message_id IS NULL AND m.created_at >= p_since
+                   AND ((m.metadata->>'send_failed_at') IS NOT NULL OR m.created_at < now() - interval '10 minutes'))
 $$;
 
 -- "Já atendido" (carteira): igual à 20261119120000, com duas correções: mensagem EM VOO também vale (suspende a troca) e o marco de primeira
@@ -79,7 +86,7 @@ BEGIN
   END IF;
   -- Marco de primeira mensagem / aceite por mensagem: só vale se o envio não falhou (o botão Assumir, sozinho, nunca vale).
   IF (a.first_human_message_at IS NOT NULL OR a.accepted_via IN ('first_message', 'phone_echo'))
-     AND NOT (public._human_msg_failed(a.organization_id, a.conversation_id, a.assigned_at)
+     AND NOT (public._human_msg_unsent(a.organization_id, a.conversation_id, a.assigned_at)
               AND NOT public._human_msg_confirmed(a.organization_id, a.conversation_id, a.assigned_at)
               AND NOT public._human_msg_in_flight(a.organization_id, a.conversation_id, a.assigned_at)) THEN RETURN true; END IF;
   IF public._human_msg_confirmed(a.organization_id, a.conversation_id, since) OR public._human_msg_in_flight(a.organization_id, a.conversation_id, since) THEN RETURN true; END IF;
@@ -96,13 +103,15 @@ BEGIN
      ) THEN RETURN true; END IF;
   IF EXISTS (SELECT 1 FROM public.sales_call_logs l WHERE l.organization_id = a.organization_id AND l.called_at >= a.assigned_at
                AND (l.contact_id = a.contact_id OR l.opportunity_id IN (SELECT o.id FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id))) THEN RETURN true; END IF;
-  -- record_human_message grava last_commercial_activity_at quando o envio é PEDIDO (antes de saber se saiu). Se só houve envio com falha,
-  -- essa marca (feita até 1 min depois da última mensagem falhada) não conta como atendimento.
-  IF public._human_msg_failed(a.organization_id, a.conversation_id, a.assigned_at)
+  -- record_human_message grava last_commercial_activity_at quando o envio é PEDIDO (antes de saber se saiu). Se só houve envio NÃO ENVIADO
+  -- (falhou ou ficou preso), a atividade comercial feita dentro da JANELA DE ENVIO (10 min após a criação da última dessas mensagens)
+  -- não conta como atendimento. Ligação, tarefa, nota e atividade depois da janela continuam valendo.
+  IF public._human_msg_unsent(a.organization_id, a.conversation_id, a.assigned_at)
      AND NOT public._human_msg_confirmed(a.organization_id, a.conversation_id, a.assigned_at)
      AND NOT public._human_msg_in_flight(a.organization_id, a.conversation_id, a.assigned_at) THEN
     opp_since := GREATEST(a.assigned_at, (SELECT max(m.created_at) FROM public.messages m WHERE m.conversation_id = a.conversation_id AND m.organization_id = a.organization_id
-                                              AND m.role = 'human_agent' AND (m.metadata->>'send_failed_at') IS NOT NULL AND m.created_at >= a.assigned_at) + interval '1 minute');
+                                              AND m.role = 'human_agent' AND m.evolution_message_id IS NULL AND m.created_at >= a.assigned_at
+                                              AND ((m.metadata->>'send_failed_at') IS NOT NULL OR m.created_at < now() - interval '10 minutes')) + interval '10 minutes');
   END IF;
   IF EXISTS (SELECT 1 FROM public.opportunities o WHERE o.organization_id = a.organization_id AND o.contact_id = a.contact_id AND o.status = 'open'
                AND o.last_commercial_activity_at >= opp_since) THEN RETURN true; END IF;
@@ -309,12 +318,12 @@ RETURNS TABLE(id uuid, organization_id uuid, assigned_at timestamptz) LANGUAGE s
   ) x WHERE x.rn <= GREATEST(1, p_per_org) ORDER BY x.sla_due_at DESC, x.id
 $$;
 
-REVOKE ALL ON FUNCTION public._human_msg_confirmed(uuid, uuid, timestamptz), public._human_msg_in_flight(uuid, uuid, timestamptz), public._human_msg_failed(uuid, uuid, timestamptz),
+REVOKE ALL ON FUNCTION public._human_msg_confirmed(uuid, uuid, timestamptz), public._human_msg_in_flight(uuid, uuid, timestamptz), public._human_msg_unsent(uuid, uuid, timestamptz),
   public._alert_assignment_answered(public.lead_assignments), public._awaiting_first_response(public.lead_assignments),
   public.accept_assignment(uuid, uuid, boolean), public.record_human_message(uuid, uuid, timestamptz, uuid, text), public.flag_sla_alerts(),
   public.redistribute_assignment(uuid, timestamptz), public.escalate_alert_assignment(uuid, timestamptz, timestamptz), public.list_escalation_candidates(integer)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public._human_msg_confirmed(uuid, uuid, timestamptz), public._human_msg_in_flight(uuid, uuid, timestamptz), public._human_msg_failed(uuid, uuid, timestamptz),
+GRANT EXECUTE ON FUNCTION public._human_msg_confirmed(uuid, uuid, timestamptz), public._human_msg_in_flight(uuid, uuid, timestamptz), public._human_msg_unsent(uuid, uuid, timestamptz),
   public._alert_assignment_answered(public.lead_assignments), public._awaiting_first_response(public.lead_assignments),
   public.accept_assignment(uuid, uuid, boolean), public.record_human_message(uuid, uuid, timestamptz, uuid, text), public.flag_sla_alerts(),
   public.redistribute_assignment(uuid, timestamptz), public.escalate_alert_assignment(uuid, timestamptz, timestamptz), public.list_escalation_candidates(integer)

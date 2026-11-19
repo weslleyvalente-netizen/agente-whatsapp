@@ -262,3 +262,90 @@ describe("Assumir mantém o acompanhamento da primeira resposta", () => {
     }
   });
 });
+
+// JANELA DE ENVIO (10 min): quanto uma tentativa de envio pode adiar a decisão, e o que acontece quando ela não sai.
+describe("janela de envio: envio lento, falha tardia, mensagem presa e concorrência", () => {
+  /** Na vida real a atribuição é mais antiga que o envio: recua assigned_at (a trava de imutabilidade é desligada SÓ no teste). */
+  const backdate = async (id: string, minutes = 60) => {
+    await q("alter table public.lead_assignments disable trigger lead_assignments_guard_update");
+    await q("update public.lead_assignments set assigned_at = assigned_at - make_interval(mins => $2) where id=$1", [id, minutes]);
+    await q("alter table public.lead_assignments enable trigger lead_assignments_guard_update");
+  };
+  /** Vendedor assume, pede o envio (mensagem criada `ageMin` minutos atrás, sem id) e o pedido é registrado AGORA (atividade gravada tarde). */
+  async function pedido(ageMin: number, activityDelayMin = 0) {
+    const c = await carteira();
+    await backdate(c.id);
+    await accept(c.id, c.marcio);
+    const m = await msg(c.w, c.h.conversationId, { id: null, at: -ageMin });
+    await panelReply(c.w, c.h.conversationId, c.marcio); // marco do pedido de envio
+    // a atividade comercial é gravada no pedido de envio: normalmente junto da criação da mensagem; em anexo/áudio lento, minutos depois
+    await q("update public.opportunities set last_commercial_activity_at = $2 where contact_id=$1", [c.h.contactId, inMinutes(-ageMin + activityDelayMin)]);
+    return { ...c, m };
+  }
+
+  it("envio LENTO (3 min sem id): adia a troca; quando confirma, encerra a espera", async () => {
+    const { id, m } = await pedido(3);
+    expect(await escalate(id)).toBeNull();
+    expect(await awaiting(id)).toBe(false);
+    await confirm(m);
+    expect(await escalate(id)).toBeNull();
+    expect(await flag()).toBe(0);
+  });
+
+  it("envio LENTO que depois FALHA (anexo/áudio: pedido registrado 6 min depois da criação): a atividade tardia não vale e a cobrança volta", async () => {
+    const { id, m } = await pedido(6, 5); // pedido registrado 5 min depois da criação: o heurístico antigo (1 min) trataria a atividade como atendimento
+    expect(await escalate(id)).toBeNull(); // ainda em voo (6 min < 10)
+    await fail(m);
+    expect(await awaiting(id)).toBe(true);
+    expect(await flag()).toBeGreaterThanOrEqual(1);
+    expect(await candidates(id)).toBe(1);
+    expect(await escalate(id)).toBeTruthy();
+  });
+
+  it("FALHA depois de mais de um minuto: volta à cobrança na varredura seguinte (não precisa ser imediata)", async () => {
+    const { id, m } = await pedido(2);
+    expect(await escalate(id)).toBeNull();      // varredura 1: em voo
+    expect(await flag()).toBe(0);
+    await fail(m);                               // o worker esgota as tentativas e marca a falha
+    expect(await flag()).toBeGreaterThanOrEqual(1); // varredura 2: cobra
+    expect(await escalate(id)).toBeTruthy();
+  });
+
+  it("mensagem PRESA (sem id e sem falha há mais de 10 min): o adiamento é limitado; passa a cobrar e a escalar", async () => {
+    const { id } = await pedido(11);
+    expect(await awaiting(id)).toBe(true);
+    expect(await flag()).toBeGreaterThanOrEqual(1);
+    expect(await escalate(id)).toBeTruthy();
+  });
+
+  it("atividade real DEPOIS da janela (ação humana no negócio) continua valendo mesmo com envio falho", async () => {
+    const { h, id, m } = await pedido(12);
+    await fail(m);
+    expect(await awaiting(id)).toBe(true); // só o pedido de envio (dentro da janela): não é atendimento
+    await q("update public.opportunities set last_commercial_activity_at = now() where contact_id=$1", [h.contactId]); // 12 min depois da criação
+    expect(await awaiting(id)).toBe(false);
+  });
+
+  it("concorrência: confirmação chegando antes da escalada impede a troca; falha chegando antes permite", async () => {
+    const a = await pedido(2);
+    await confirm(a.m);
+    expect(await escalate(a.id)).toBeNull();
+    ({ db, q } = await setupHandoffDb());
+    const b = await pedido(2);
+    await fail(b.m);
+    expect(await escalate(b.id)).toBeTruthy();
+  });
+
+  it("rodízio: envio em voo adia a redistribuição por no máximo 10 min; falha ou presa volta a redistribuir", async () => {
+    for (const [age, falha, redistribui] of [[3, false, false], [3, true, true], [11, false, true]] as const) {
+      ({ db, q } = await setupHandoffDb());
+      const r = await rodizio();
+      await backdate(r.id);
+      await accept(r.id, r.marina);
+      const m = await msg(r.w, r.h.conversationId, { id: null, at: -age });
+      if (falha) await fail(m);
+      const out = (await q("select public.redistribute_assignment($1,$2) as id", [r.id, inMinutes(60)]))[0].id;
+      expect(Boolean(out)).toBe(redistribui);
+    }
+  });
+});

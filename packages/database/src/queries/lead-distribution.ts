@@ -108,16 +108,20 @@ export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
 }
 
 export interface HumanMessageRow { conversation_id: string; created_at: string; evolution_message_id?: string | null; metadata?: { send_failed_at?: string | null } | null }
-const IN_FLIGHT_MS = 10 * 60_000;
+/** Janela de envio: uma mensagem em voo adia a decisão por no máximo isto; depois, sem id, conta como NÃO ENVIADA. Espelha as funções SQL _human_msg_*. */
+export const SEND_WINDOW_MS = 10 * 60_000;
 const sendFailed = (m: HumanMessageRow) => Boolean(m.metadata?.send_failed_at);
-/** Mensagem humana CONFIRMADA (id do WhatsApp) e sem falha, ou EM VOO (sem id, sem falha, < 10 min). Espelha _human_msg_confirmed/_in_flight. */
+/** Mensagem humana CONFIRMADA (id do WhatsApp) e sem falha, ou EM VOO (sem id, sem falha, dentro da janela de envio). */
 export const isConfirmedOrInFlight = (m: HumanMessageRow, now: number): boolean =>
-  !sendFailed(m) && (Boolean(m.evolution_message_id) || now - new Date(m.created_at).getTime() < IN_FLIGHT_MS);
-/** Só houve envio com falha (nenhum confirmado nem em voo)? E quando foi a última falha. */
+  !sendFailed(m) && (Boolean(m.evolution_message_id) || now - new Date(m.created_at).getTime() < SEND_WINDOW_MS);
+/** NÃO ENVIADA: sem id e (falhou OU presa além da janela de envio). */
+const isUnsent = (m: HumanMessageRow, now: number): boolean =>
+  !m.evolution_message_id && (sendFailed(m) || now - new Date(m.created_at).getTime() >= SEND_WINDOW_MS);
+/** Só houve envio não enviado (nenhum confirmado nem em voo)? E quando foi criada a última dessas mensagens. */
 export function humanSendState(msgs: HumanMessageRow[], now: number): { failedOnly: boolean; lastFailedAt: number } {
-  const failed = msgs.filter(sendFailed);
+  const unsent = msgs.filter((m) => isUnsent(m, now));
   const ok = msgs.some((m) => isConfirmedOrInFlight(m, now));
-  return { failedOnly: failed.length > 0 && !ok, lastFailedAt: failed.reduce((x, m) => Math.max(x, new Date(m.created_at).getTime()), 0) };
+  return { failedOnly: unsent.length > 0 && !ok, lastFailedAt: unsent.reduce((x, m) => Math.max(x, new Date(m.created_at).getTime()), 0) };
 }
 
 /**
@@ -196,8 +200,8 @@ export async function listSlaAlerts(db: SupabaseClient, organizationId: string):
     const opps = oppsByContact.get(a.contact_id) ?? [];
     const oppSet = new Set(opps.map((o) => o.id));
     if (callList.some((l) => t(l.called_at) >= t(a.assigned_at) && (l.contact_id === a.contact_id || (l.opportunity_id && oppSet.has(l.opportunity_id))))) return true;
-    // last_commercial_activity_at é gravado quando o envio é pedido: se só houve envio com falha, vale só o que vier depois dele (+1 min).
-    const oppSince = state.failedOnly ? Math.max(t(a.assigned_at), state.lastFailedAt + 60_000) : t(a.assigned_at);
+    // last_commercial_activity_at é gravado quando o envio é pedido: se só houve envio não enviado, vale só o que vier depois da janela de envio (+10 min).
+    const oppSince = state.failedOnly ? Math.max(t(a.assigned_at), state.lastFailedAt + SEND_WINDOW_MS) : t(a.assigned_at);
     if (opps.some((o) => o.status === "open" && t(o.last_commercial_activity_at) >= oppSince)) return true;
     if ((notesByConv.get(a.conversation_id) ?? []).some((n) => t(n.created_at) >= t(a.assigned_at))) return true;
     const status = statusByConv.get(a.conversation_id);

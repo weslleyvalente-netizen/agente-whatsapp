@@ -194,12 +194,18 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
     ] });
     expect(out).toEqual(["btn", "adm", "fail"]);
   });
-  it("a atividade comercial gravada no pedido de envio não vale quando o envio falhou (só depois de 1 min da falha)", async () => {
+  it("janela de envio (10 min): a atividade gravada no pedido de envio não vale quando o envio não saiu; depois da janela, vale", async () => {
     const a = base("f", { status: "accepted", accepted_via: "button", awaiting_first_response: true });
     const failedMsg = { conversation_id: "conv-f", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: { send_failed_at: "2026-10-27T12:07:00Z" } };
     const opp = (at: string) => ({ id: "o-f", contact_id: "ct-f", status: "open", last_commercial_activity_at: at, updated_at: null });
     expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:06:01Z")] })).toEqual(["f"]);
-    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:30:00Z")] })).toEqual([]);
+    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:12:00Z")] })).toEqual(["f"]); // envio lento: atividade 6 min depois da criação
+    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:30:00Z")] })).toEqual([]);   // depois da janela: atividade real
+  });
+  it("mensagem presa (sem id, sem falha, mais de 10 min) conta como não enviada e não adia nada", async () => {
+    const a = base("p", { status: "accepted", accepted_via: "first_message", first_human_message_at: "2026-10-27T12:06:00Z", awaiting_first_response: true });
+    const stuck = { conversation_id: "conv-p", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: null };
+    expect(await run([a], { messages: [stuck] })).toEqual(["p"]);
   });
   it("sem alertas não consulta as demais tabelas", async () => {
     const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, or: () => b, order: () => b, range: async () => ({ data: [], error: null }) }; return b; });
