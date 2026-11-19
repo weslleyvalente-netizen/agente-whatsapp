@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { sendPushToUser, isPushConfigured } from "./send.js";
+import { sendPushToUser, isPushConfigured, PushNotAttemptedError } from "./send.js";
 
 const ENV = { VAPID_PUBLIC_KEY: "pub", VAPID_PRIVATE_KEY: "priv", VAPID_SUBJECT: "mailto:a@b.c" };
 const sub = (id: string) => ({ id, endpoint: `https://push.example/${id}`, p256dh: "k", auth: "a" });
@@ -71,5 +71,23 @@ describe("sendPushToUser", () => {
     const logged = JSON.stringify(log.mock.calls);
     expect(logged).not.toContain("push.example");
     log.mockRestore();
+  });
+});
+
+describe("sendPushToUser: o que prova que nada foi enviado", () => {
+  it("erro ao LER as assinaturas lança PushNotAttemptedError (attempted=false): nada saiu, repetir é seguro", async () => {
+    const db = { from: () => ({ select: () => { const c: any = { eq: () => c, then: (res: any) => res({ data: null, error: { message: "db fora do ar" } }) }; return c; } }) } as any;
+    const send = vi.fn();
+    const err = await sendPushToUser(db, "u", payload, { env: ENV, send }).catch((e) => e);
+    expect(err).toBeInstanceOf(PushNotAttemptedError);
+    expect(err.attempted).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("timeout/erro de rede num aparelho (o provedor pode ter aceitado) NÃO lança: conta como falha e não prova nada, então ninguém repete", async () => {
+    const { db } = fakeDb([sub("a")]);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await sendPushToUser(db, "u", payload, { env: ENV, send: async () => { throw new Error("socket hang up"); } });
+    log.mockRestore();
+    expect(r).toMatchObject({ sent: 0, failed: 1 });
   });
 });
