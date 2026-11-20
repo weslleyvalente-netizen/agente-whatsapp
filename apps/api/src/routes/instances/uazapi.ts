@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getAdminClient, getInstanceById, setInstanceProviderFields } from "@aula-agente/database";
 import {
   decryptInstanceToken, encryptInstanceToken, resetWhatsAppTargetCache, uazapiConnect, uazapiCreateInstance, uazapiSetWebhook, uazapiStatus,
+  UazapiHttpError,
 } from "@aula-agente/agent-runtime";
 import { authMiddleware } from "../../middleware/auth.js";
 
@@ -41,15 +42,26 @@ export default async function instanceUazapiRoutes(app: FastifyInstance) {
     const config = serverConfigured();
     if (!config) return reply.status(503).send({ error: "UAZAPI não configurada no servidor" });
 
-    let token: string;
-    if (instance.provider_token_encrypted) {
-      token = decryptInstanceToken(instance.provider_token_encrypted);
-    } else {
-      token = (await uazapiCreateInstance(instance.instance_name)).token;
-      await setInstanceProviderFields(getAdminClient(), instance.id, { provider_token_encrypted: encryptInstanceToken(token) });
+    // Token guardado ilegível (UAZAPI_ADMIN_TOKEN trocado) ou recusado pela UAZAPI (instância apagada lá): cria a instância de novo.
+    const createAndStore = async () => {
+      const created = (await uazapiCreateInstance(instance.instance_name)).token;
+      await setInstanceProviderFields(getAdminClient(), instance.id, { provider_token_encrypted: encryptInstanceToken(created) });
       request.log.info({ event: "uazapi_instance_created", instanceId: instance.id }, "UAZAPI instance created");
+      return created;
+    };
+    let token: string | null = null;
+    if (instance.provider_token_encrypted) {
+      try { token = decryptInstanceToken(instance.provider_token_encrypted); } catch { token = null; }
     }
-    await uazapiSetWebhook(token, config.webhookUrl);
+    let fresh = false;
+    if (!token) { token = await createAndStore(); fresh = true; }
+    try {
+      await uazapiSetWebhook(token, config.webhookUrl);
+    } catch (err) {
+      if (fresh || !(err instanceof UazapiHttpError) || (err.status !== 401 && err.status !== 404)) throw err;
+      token = await createAndStore();
+      await uazapiSetWebhook(token, config.webhookUrl);
+    }
     return uazapiConnect(token, phone);
   });
 
@@ -58,8 +70,14 @@ export default async function instanceUazapiRoutes(app: FastifyInstance) {
     if (!instance) return reply;
     const provider = instance.provider === "uazapi" ? "uazapi" : "evolution";
     if (!instance.provider_token_encrypted) return { provider, connected: false, status: "not_created", qrcode: null, paircode: null };
-    const info = await uazapiStatus(decryptInstanceToken(instance.provider_token_encrypted));
-    return { provider, connected: info.status === "connected", ...info };
+    try {
+      const info = await uazapiStatus(decryptInstanceToken(instance.provider_token_encrypted));
+      return { provider, connected: info.status === "connected", ...info };
+    } catch (err) {
+      // UAZAPI fora do ar ou token ilegível: a tela precisa continuar mostrando o provedor e a volta para a Evolution.
+      request.log.warn({ event: "uazapi_status_unavailable", instanceId: instance.id, err: err instanceof Error ? err.name : "unknown" }, "UAZAPI status unavailable");
+      return { provider, connected: false, status: "unavailable", qrcode: null, paircode: null };
+    }
   });
 
   app.put<Params & { Body: { provider?: unknown } }>("/instances/:instanceId/provider", async (request, reply) => {

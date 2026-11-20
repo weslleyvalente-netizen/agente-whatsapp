@@ -5,6 +5,7 @@ import { invalidateSalesWorkspaceCacheOnWrite } from "./services/sales-workspace
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
 import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
 import uazapiWebhookRoutes from "./routes/webhooks/uazapi.js";
+import { requestLogSerializer } from "./lib/log-serializers.js";
 import messageSendRoutes from "./routes/messages/send.js";
 import messageSendAudioRoutes from "./routes/messages/send-audio.js";
 import messageSendAttachmentRoutes from "./routes/messages/send-attachment.js";
@@ -38,7 +39,7 @@ import { getSilentMonitorStatus, startSilentConnectionAlert } from "./services/s
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
 
-const server = Fastify({ logger: true });
+const server = Fastify({ logger: { serializers: { req: requestLogSerializer } } });
 
 if (!process.env.WEBHOOK_SECRET) {
   server.log.warn("WEBHOOK_SECRET is not set: webhook verification is off and message recovery keeps no original timestamps");

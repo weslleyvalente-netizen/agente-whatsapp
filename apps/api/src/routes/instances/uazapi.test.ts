@@ -14,7 +14,7 @@ vi.mock("@aula-agente/database", () => ({
 vi.mock("@aula-agente/agent-runtime", async () => {
   const real = await vi.importActual<typeof import("@aula-agente/agent-runtime")>("@aula-agente/agent-runtime");
   return {
-    encryptInstanceToken: real.encryptInstanceToken, decryptInstanceToken: real.decryptInstanceToken,
+    encryptInstanceToken: real.encryptInstanceToken, decryptInstanceToken: real.decryptInstanceToken, UazapiHttpError: real.UazapiHttpError,
     uazapiCreateInstance: m.create, uazapiSetWebhook: m.setWebhook, uazapiConnect: m.connect, uazapiStatus: m.status,
     resetWhatsAppTargetCache: m.resetCache,
   };
@@ -89,6 +89,38 @@ describe("rotas UAZAPI da instância", () => {
   it("status com token: estado da UAZAPI", async () => {
     m.instance.provider_token_encrypted = encryptInstanceToken("tok");
     expect((await call("GET", "/instances/i1/uazapi/status")).json()).toEqual({ provider: "evolution", connected: true, status: "connected", qrcode: null, paircode: null });
+  });
+
+  it("status com a UAZAPI fora do ar: 200 unavailable (a tela continua oferecendo a volta)", async () => {
+    m.instance.provider = "uazapi";
+    m.instance.provider_token_encrypted = encryptInstanceToken("tok");
+    m.status.mockRejectedValue(new Error("timeout"));
+    const r = await call("GET", "/instances/i1/uazapi/status");
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ provider: "uazapi", connected: false, status: "unavailable", qrcode: null, paircode: null });
+  });
+
+  it("status com token ilegível (admin trocado): 200 unavailable", async () => {
+    m.instance.provider_token_encrypted = "aa:bb:cc";
+    expect((await call("GET", "/instances/i1/uazapi/status")).json()).toMatchObject({ status: "unavailable", connected: false });
+  });
+
+  it("connect com token ilegível (admin trocado): cria de novo e guarda o token novo", async () => {
+    m.instance.provider_token_encrypted = "aa:bb:cc";
+    const r = await call("POST", "/instances/i1/uazapi/connect", {});
+    expect(r.statusCode).toBe(200);
+    expect(m.create).toHaveBeenCalledWith("weslley");
+    expect(decryptInstanceToken(m.setFields.mock.calls[0][2].provider_token_encrypted)).toBe("tok-novo");
+  });
+
+  it("connect com token recusado pela UAZAPI (instância apagada lá): cria de novo", async () => {
+    const { UazapiHttpError } = await vi.importActual<typeof import("@aula-agente/agent-runtime")>("@aula-agente/agent-runtime");
+    m.instance.provider_token_encrypted = encryptInstanceToken("tok-velho");
+    m.setWebhook.mockRejectedValueOnce(new UazapiHttpError(401, "invalid token"));
+    const r = await call("POST", "/instances/i1/uazapi/connect", {});
+    expect(r.statusCode).toBe(200);
+    expect(m.create).toHaveBeenCalledTimes(1);
+    expect(m.setWebhook).toHaveBeenLastCalledWith("tok-novo", "https://api.exemplo/webhooks/uazapi?apikey=seg");
   });
 
   it("virar para uazapi conectando: 409 e nada muda", async () => {

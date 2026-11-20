@@ -30,6 +30,10 @@ describe("translateUazapiEvent: mensagens", () => {
     expect(evolutionWebhookPayloadSchema.safeParse(t.payload).success).toBe(true);
   });
 
+  it("timestamp que já vem em segundos não é dividido de novo", () => {
+    expect(msg(base({ messageTimestamp: 1788868800 })).payload.data.messageTimestamp).toBe(1788868800);
+  });
+
   it("ExtendedTextMessage também vira conversation", () => {
     const t = msg(base({ messageType: "ExtendedTextMessage", text: "link aqui" }));
     expect(t.payload.data.messageType).toBe("conversation");

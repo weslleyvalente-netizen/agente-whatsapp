@@ -103,7 +103,8 @@ function translateMessage(body: Rec, m: Rec, instanceId: string): UazapiTranslat
   const externalAdReply = isRec(contextInfo?.externalAdReply) ? contextInfo.externalAdReply : undefined;
 
   const ms = typeof m.messageTimestamp === "number" ? m.messageTimestamp : Number(m.messageTimestamp);
-  const messageTimestamp = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : undefined;
+  // Documentado em milissegundos; se algum evento vier em segundos, não divide de novo (mesmo critério de evaluateMessageAge).
+  const messageTimestamp = Number.isFinite(ms) && ms > 0 ? (ms > 1e11 ? Math.floor(ms / 1000) : Math.floor(ms)) : undefined;
 
   const payload: EvolutionLikeMessageEvent = {
     event: "messages.upsert",

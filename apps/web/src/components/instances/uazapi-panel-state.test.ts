@@ -22,4 +22,8 @@ describe("describeUazapiPanel", () => {
     expect(describeUazapiPanel({ provider: "uazapi", status: "disconnected", connected: false }))
       .toEqual({ label: "Desconectada", canConnect: true, canSwitchToUazapi: false, canSwitchToEvolution: true, polling: false });
   });
+  it("UAZAPI indisponível em uso: mostra o estado e mantém a volta para a Evolution", () => {
+    expect(describeUazapiPanel({ provider: "uazapi", status: "unavailable", connected: false }))
+      .toEqual({ label: "UAZAPI indisponível", canConnect: true, canSwitchToUazapi: false, canSwitchToEvolution: true, polling: false });
+  });
 });
