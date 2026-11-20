@@ -5,6 +5,7 @@ import { useOrganization } from "@/providers/organization-provider";
 import { Button } from "@/components/ui/button";
 import type { LeadAssignment, SalesRep, SlaAlert } from "@aula-agente/shared";
 import { SlaAlertsSection } from "./sla-alerts-section";
+import { ExceptionTriagePanel } from "./exception-triage-panel";
 import { nudgedAtLabel, nudgeNotDeliveredMessage, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
 
 const REASONS: Record<string, string> = {
@@ -12,8 +13,8 @@ const REASONS: Record<string, string> = {
   distribution_error: "Erro na distribuição", manual_review: "Conflito: revisão manual",
 };
 
-/** Só para gestores (a rota devolve 403 para vendedores e o painel some). */
-export function ExceptionsPanel() {
+/** Painel antigo (comportamento atual, sem mudança). */
+function LegacyExceptionsPanel() {
   const { currentOrg } = useOrganization();
   const [items, setItems] = useState<LeadAssignment[] | null>(null);
   const [alerts, setAlerts] = useState<SlaAlert[]>([]);
@@ -92,4 +93,14 @@ export function ExceptionsPanel() {
       <SlaAlertsSection alerts={alerts} reps={reps} nudged={nudged} busy={nudgeBusy} nudgingAll={nudgingAll} notice={notice} onNudge={nudge} onNudgeAll={nudgeAll} />
     </section>
   );
+}
+
+/**
+ * Só para gestores (a rota devolve 403 para vendedores e o painel some). Com settings.exception_triage_panel_enabled = true mostra a
+ * triagem (urgentes / respondidas / obsoletas); sem a chave (padrão) o painel antigo segue exatamente como está.
+ */
+export function ExceptionsPanel() {
+  const { currentOrg } = useOrganization();
+  if (currentOrg?.settings.exception_triage_panel_enabled === true) return <ExceptionTriagePanel />;
+  return <LegacyExceptionsPanel />;
 }

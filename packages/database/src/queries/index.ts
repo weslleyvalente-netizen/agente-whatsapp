@@ -24,9 +24,10 @@ export * from "./sales-pipeline.js";
 export * from "./ad-closure.js";
 export * from "./silence-retirement.js";
 export * from "./lead-distribution.js";
+export * from "./exception-triage.js";
 export * from "./push.js";
 export * from "./unanswered-leads.js";
-export { sendPushToUser, isPushConfigured, type PushPayload, type PushSendResult } from "../push/send.js";
+export { sendPushToUser, isPushConfigured, classifyPushError, type PushPayload, type PushSendResult, type PushErrorClass } from "../push/send.js";
 export * from "./customer-nudge.js";
 export * from "./send-failure-report.js";
 
