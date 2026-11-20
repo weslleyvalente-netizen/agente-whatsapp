@@ -41,12 +41,8 @@ export interface EvolutionMediaBase64 {
   fileName?: string;
 }
 
-export class EvolutionMediaTooLargeError extends Error {
-  constructor(public readonly contentLength: number) {
-    super(`Evolution media too large (content-length ${contentLength})`);
-    this.name = "EvolutionMediaTooLargeError";
-  }
-}
+import { EvolutionMediaTooLargeError } from "./whatsapp/media-errors.js";
+export { EvolutionMediaTooLargeError };
 
 // Baixa a mídia (imagem/vídeo/documento) como veio, sem convertToMp4.
 // maxBytes: tamanho máximo do arquivo; se o Content-Length da resposta (JSON com base64, ~4/3 do
