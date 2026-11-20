@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import { invalidateSalesWorkspaceCacheOnWrite } from "./services/sales-workspace.service.js";
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
 import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
+import uazapiWebhookRoutes from "./routes/webhooks/uazapi.js";
 import messageSendRoutes from "./routes/messages/send.js";
 import messageSendAudioRoutes from "./routes/messages/send-audio.js";
 import messageSendAttachmentRoutes from "./routes/messages/send-attachment.js";
@@ -64,6 +65,7 @@ server.get("/health", async () => {
 server.register(financingRoutes);
 server.register(manualFinancingRoutes);
 server.register(evolutionWebhookRoutes);
+server.register(uazapiWebhookRoutes);
 server.register(wixLeadWebhookRoutes);
 server.register(messageSendRoutes);
 server.register(messageSendAudioRoutes);

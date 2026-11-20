@@ -106,6 +106,17 @@ export function contactMessageMetadata(durationSeconds: number | undefined, mess
 }
 
 export const REPLAY_TIMESTAMP_HEADER = "x-replay-original-timestamp";
+// Repasse interno da rota /webhooks/uazapi (evento já autenticado e traduzido). Só vale com o token aleatório do processo.
+export const PROVIDER_RELAY_HEADER = "x-provider-relay";
+export function isProviderRelay(headers: Record<string, unknown>): boolean {
+  return headers[PROVIDER_RELAY_HEADER] === REPLAY_TOKEN;
+}
+// Cada instância tem UM provedor ativo (evolution_instances.provider; ausente = "evolution"). Eventos do outro provedor são ignorados:
+// com os dois aparelhos conectados no mesmo número, isso evita gravar a mesma mensagem duas vezes e acionar a IA duas vezes.
+function eventFromActiveProvider(instance: { provider?: string | null }, headers: Record<string, unknown>): boolean {
+  const active = instance.provider === "uazapi" ? "uazapi" : "evolution";
+  return active === (isProviderRelay(headers) ? "uazapi" : "evolution");
+}
 // Modo "só gravar" da recuperação: grava a mensagem (com o horário original) mas NÃO a encaminha à IA. Usado para clientes
 // que já foram respondidos (pelo celular da loja ou pela IA) depois da mensagem perdida. Mesmas exigências do cabeçalho acima.
 // Limite de tempo do registro do anúncio no webhook (consulta + gravação). Mutável só para os testes.
@@ -273,9 +284,11 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
         // O aviso pode chegar antes de o evolution_message_id ser gravado (o worker/eco grava
         // depois do envio): se a mensagem ainda não existe, tenta de novo em segundo plano.
         const log = request.log;
+        const headers = request.headers as Record<string, unknown>;
         void (async () => {
           try {
             const instance = await getInstanceByInstanceId(getAdminClient(), update.instance);
+            if (!eventFromActiveProvider(instance, headers)) return;
             for (let attempt = 0; attempt <= STATUS_RETRY_DELAYS_MS.length; attempt++) {
               const found = await applyMessageDeliveryStatus(getAdminClient(), {
                 organizationId: instance.organization_id,
@@ -333,6 +346,10 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       } catch {
         request.log.warn({ instanceId }, "Unknown Evolution instance");
         return reply.status(200).send({ ok: true, skipped: "unknown_instance" });
+      }
+
+      if (!eventFromActiveProvider(instance, request.headers as Record<string, unknown>)) {
+        return reply.status(200).send({ ok: true, skipped: "inactive_provider" });
       }
 
       // Check if instance has an active agent
