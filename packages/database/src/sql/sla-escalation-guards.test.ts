@@ -95,9 +95,9 @@ describe("sinais de 'já atendido' (a função recusa e a fila não lista)", () 
     ["tarefa mexida por humano", (w, l) => q("insert into public.tasks(organization_id,contact_id,assignee_type,assignee_id,type,due_date,created_by_type) values ($1,$2,'human',$3,'return_customer',current_date,'ai') returning id", [w.org, l.contactId, w.reps["Marina"].userId]).then(r => q("insert into public.task_events(task_id,organization_id,event_type,created_by_type) values ($1,$2,'completed','human')", [r[0].id, w.org]))],
     ["evento humano no negócio (etapa mudada à mão)", (w, l) => q("insert into public.opportunity_events(organization_id,opportunity_id,event_type,evidence,changed_by_type) select $1,id,'stage_changed','mudou','human' from public.opportunities where contact_id=$2", [w.org, l.contactId])],
     ["nota do vendedor na conversa", (w, l) => q("insert into public.conversation_notes(conversation_id,organization_id,user_id,content) values ($1,$2,$3,'liguei')", [l.conversationId, w.org, w.reps["Marina"].userId])],
-    ["aceite registrado", (_w, l) => q("update public.lead_assignments set accepted_at=now() where id=$1", [l.id])],
+    ["aceite pela primeira mensagem (não pelo botão)", (_w, l) => q("update public.lead_assignments set accepted_at=now(), accepted_via='first_message' where id=$1", [l.id])],
     ["primeira resposta humana registrada", (_w, l) => q("update public.lead_assignments set first_human_message_at=now() where id=$1", [l.id])],
-    ["mensagem humana depois do handoff", (w, l) => q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','oi',$3)", [w.org, l.conversationId, inMinutes(-30)])],
+    ["mensagem humana depois do handoff", (w, l) => q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','oi',$3,'wa-'||gen_random_uuid())", [w.org, l.conversationId, inMinutes(-30)])],
   ];
   for (const [name, act] of cases) {
     it(name, async () => {
@@ -121,7 +121,7 @@ describe("sinais de 'já atendido' (a função recusa e a fila não lista)", () 
   it("manual: resposta do vendedor ANTERIOR (antes da reatribuição) não bloqueia a escalada do novo", async () => {
     const w2 = await seedWorld(db, ON, THREE);
     const l2 = await lead(w2, 60, -130);
-    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at) values ($1,$2,'human_agent','oi',$3)", [w2.org, l2.conversationId, inMinutes(-100)]);
+    await q("insert into public.messages(organization_id,conversation_id,role,content,created_at,evolution_message_id) values ($1,$2,'human_agent','oi',$3,'wa-'||gen_random_uuid())", [w2.org, l2.conversationId, inMinutes(-100)]);
     const manual = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w2.org, l2.conversationId, w2.reps["Márcio"].repId, w2.def, inMinutes(-70)]))[0].id;
     expect(await escalate(manual)).toBeTruthy();
   });

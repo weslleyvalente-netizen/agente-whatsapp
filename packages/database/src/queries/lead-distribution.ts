@@ -68,8 +68,9 @@ export async function recordDistributionError(
 }
 
 export async function listExpiredAssignments(db: SupabaseClient, limit = 50) {
+  // Pendente OU assumida e ainda aguardando a 1ª resposta (o banco, em redistribute_assignment, decide se já houve resposta confirmada).
   const { data, error } = await db.from("lead_assignments").select("id, organization_id")
-    .eq("status", "pending").eq("sla_action", "redistribute").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
+    .or("status.eq.pending,and(status.eq.accepted,awaiting_first_response.eq.true)").eq("sla_action", "redistribute").lte("sla_due_at", new Date().toISOString()).order("sla_due_at").limit(limit);
   if (error) throw error;
   return (data ?? []) as Array<{ id: string; organization_id: string }>;
 }
@@ -106,6 +107,28 @@ export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
   return typeof data === "number" ? data : 0;
 }
 
+export interface HumanMessageRow { conversation_id: string; created_at: string; evolution_message_id?: string | null; metadata?: { send_failed_at?: string | null; sent_by_user_id?: string | null } | null }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Autor registrado pelo painel (metadata.sent_by_user_id); null = DESCONHECIDO (celular da loja, registro antigo ou chave inválida). Espelha public._msg_author. */
+export const messageAuthor = (m: HumanMessageRow): string | null => { const v = m.metadata?.sent_by_user_id; return typeof v === "string" && UUID_RE.test(v) ? v.toLowerCase() : null; };
+/** A mensagem conta para o vendedor? Autor dele OU desconhecido. Autor conhecido diferente (ex.: o gestor) não conta. */
+export const countsForRep = (m: HumanMessageRow, repUserId: string | null | undefined): boolean => { const au = messageAuthor(m); return au === null || !repUserId || au === repUserId.toLowerCase(); };
+/** Janela de envio: uma mensagem em voo adia a decisão por no máximo isto; depois, sem id, conta como NÃO ENVIADA. Espelha as funções SQL _human_msg_*. */
+export const SEND_WINDOW_MS = 10 * 60_000;
+const sendFailed = (m: HumanMessageRow) => Boolean(m.metadata?.send_failed_at);
+/** Mensagem humana CONFIRMADA (id do WhatsApp) e sem falha, ou EM VOO (sem id, sem falha, dentro da janela de envio). */
+export const isConfirmedOrInFlight = (m: HumanMessageRow, now: number): boolean =>
+  !sendFailed(m) && (Boolean(m.evolution_message_id) || now - new Date(m.created_at).getTime() < SEND_WINDOW_MS);
+/** NÃO ENVIADA: sem id e (falhou OU presa além da janela de envio). */
+const isUnsent = (m: HumanMessageRow, now: number): boolean =>
+  !m.evolution_message_id && (sendFailed(m) || now - new Date(m.created_at).getTime() >= SEND_WINDOW_MS);
+/** Só houve envio não enviado (nenhum confirmado nem em voo)? E quando foi criada a última dessas mensagens. */
+export function humanSendState(msgs: HumanMessageRow[], now: number): { failedOnly: boolean; lastFailedAt: number } {
+  const unsent = msgs.filter((m) => isUnsent(m, now));
+  const ok = msgs.some((m) => isConfirmedOrInFlight(m, now));
+  return { failedOnly: unsent.length > 0 && !ok, lastFailedAt: unsent.reduce((x, m) => Math.max(x, new Date(m.created_at).getTime()), 0) };
+}
+
 /**
  * Atribuições 'alert' pendentes com SLA estourado e AINDA sem resposta. Mesma regra de public._alert_assignment_answered
  * (20261027120200_sla_alert_escalation.sql), reimplementada em lote porque a função SQL recebe a linha inteira
@@ -118,7 +141,7 @@ export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
 export async function listSlaAlerts(db: SupabaseClient, organizationId: string): Promise<LeadAssignment[]> {
   const rows = await fetchAllPages<LeadAssignment>(async (from, to) => {
     const { data, error } = await db.from("lead_assignments").select("*").eq("organization_id", organizationId)
-      .eq("status", "pending").eq("sla_action", "alert").eq("sla_breached", true).order("sla_due_at").order("id").range(from, to);
+      .or("status.eq.pending,and(status.eq.accepted,awaiting_first_response.eq.true)").eq("sla_action", "alert").eq("sla_breached", true).order("sla_due_at").order("id").range(from, to);
     if (error) throw error;
     return (data ?? []) as LeadAssignment[];
   });
@@ -145,15 +168,18 @@ export async function listSlaAlerts(db: SupabaseClient, organizationId: string):
     }
     return all;
   };
-  const [messageRows, conversationRows, noteRows, oppRows] = await Promise.all([
-    fetchIn<{ conversation_id: string; created_at: string }>(conversationIds, (ids) =>
-      db.from("messages").select("id, conversation_id, created_at").eq("organization_id", organizationId).eq("role", "human_agent").in("conversation_id", ids).gte("created_at", minIso), "created_at"),
+  const [messageRows, conversationRows, noteRows, oppRows, repRows] = await Promise.all([
+    fetchIn<HumanMessageRow>(conversationIds, (ids) =>
+      db.from("messages").select("id, conversation_id, created_at, evolution_message_id, metadata").eq("organization_id", organizationId).eq("role", "human_agent").in("conversation_id", ids).gte("created_at", minIso), "created_at"),
     fetchIn<{ id: string; status: string }>(conversationIds, (ids) => db.from("conversations").select("id, status").in("id", ids), "id"),
     fetchIn<{ conversation_id: string; created_at: string }>(conversationIds, (ids) =>
       db.from("conversation_notes").select("id, conversation_id, created_at").in("conversation_id", ids).gte("created_at", minIso), "created_at"),
     fetchIn<{ id: string; contact_id: string; status: string; last_commercial_activity_at: string | null; updated_at: string | null }>(contactIds, (ids) =>
       db.from("opportunities").select("id, contact_id, status, last_commercial_activity_at, updated_at").eq("organization_id", organizationId).in("contact_id", ids), "id"),
+    fetchIn<{ id: string; user_id: string | null }>([...new Set(rows.map((r) => r.rep_id).filter((x): x is string => Boolean(x)))], (ids) =>
+      db.from("sales_reps").select("id, user_id").eq("organization_id", organizationId).in("id", ids), "id"),
   ]);
+  const repUserById = new Map(repRows.map((r) => [r.id, r.user_id]));
   const oppIds = oppRows.map((o) => o.id);
   type CallRow = { contact_id: string | null; opportunity_id: string | null; called_at: string };
   const callBase = (db2: SupabaseClient) => db2.from("sales_call_logs").select("id, contact_id, opportunity_id, called_at").eq("organization_id", organizationId).gte("called_at", minIso);
@@ -174,12 +200,23 @@ export async function listSlaAlerts(db: SupabaseClient, organizationId: string):
   const callList = [...callsByContact, ...callsByOpp];
 
   const answered = (a: LeadAssignment): boolean => {
-    if (a.first_human_message_at || a.accepted_at) return true;
-    if ((humanByConv.get(a.conversation_id) ?? []).some((m) => t(m.created_at) >= sinceOf(a))) return true;
+    const ru = (a.rep_id ? repUserById.get(a.rep_id) : null) ?? null;
+    const all = (humanByConv.get(a.conversation_id) ?? []).filter((m) => t(m.created_at) >= t(a.assigned_at));
+    const mine = all.filter((m) => countsForRep(m, ru)); // só mensagem do vendedor ou de autoria desconhecida
+    const state = humanSendState(mine, Date.now());
+    // Marco de 1ª mensagem: o autor registrado precisa ser o vendedor (nulo = celular/antigo, vale). Aceite por mensagem vale. O botão Assumir, sozinho, nunca vale.
+    const markerOk = Boolean(a.first_human_message_at) && (!a.first_human_message_by || a.first_human_message_by === ru);
+    if ((markerOk || a.accepted_via === "first_message" || a.accepted_via === "phone_echo") && !state.failedOnly) return true;
+    if ((humanByConv.get(a.conversation_id) ?? []).some((m) => t(m.created_at) >= sinceOf(a) && countsForRep(m, ru) && isConfirmedOrInFlight(m, Date.now()))) return true;
     const opps = oppsByContact.get(a.contact_id) ?? [];
     const oppSet = new Set(opps.map((o) => o.id));
     if (callList.some((l) => t(l.called_at) >= t(a.assigned_at) && (l.contact_id === a.contact_id || (l.opportunity_id && oppSet.has(l.opportunity_id))))) return true;
-    if (opps.some((o) => o.status === "open" && t(o.last_commercial_activity_at) >= t(a.assigned_at))) return true;
+    // last_commercial_activity_at é gravado quando o envio é pedido: se só houve envio não enviado, vale só o que vier depois da janela de envio (+10 min).
+    let oppSince = state.failedOnly ? Math.max(t(a.assigned_at), state.lastFailedAt + SEND_WINDOW_MS) : t(a.assigned_at);
+    // Também gravada quando OUTRO autor (ex.: o gestor) pede um envio: sem nenhuma mensagem do vendedor/desconhecida, ignora a janela de envio dessa mensagem alheia.
+    const otherAt = Math.max(0, ...all.filter((m) => !countsForRep(m, ru)).map((m) => t(m.created_at)), a.first_human_message_by && a.first_human_message_by !== ru ? t(a.first_human_message_at) : 0);
+    if (otherAt > 0 && mine.length === 0) oppSince = Math.max(oppSince, otherAt + SEND_WINDOW_MS);
+    if (opps.some((o) => o.status === "open" && t(o.last_commercial_activity_at) >= oppSince)) return true;
     if ((notesByConv.get(a.conversation_id) ?? []).some((n) => t(n.created_at) >= t(a.assigned_at))) return true;
     const status = statusByConv.get(a.conversation_id);
     if (status && status !== "open" && status !== "waiting") return true;
@@ -277,13 +314,13 @@ export async function listContactsByIds(db: SupabaseClient, organizationId: stri
 
 export interface NudgeTarget {
   id: string; conversation_id: string; contact_id: string; rep_id: string | null;
-  status: string; sla_action: string; sla_breached: boolean; sla_due_at: string | null; assigned_at: string;
+  status: string; sla_action: string; sla_breached: boolean; sla_due_at: string | null; assigned_at: string; awaiting_first_response?: boolean;
 }
 
 /** Atribuição da organização para o "Cutucar" (null se não existir nesta organização). */
 export async function getAssignmentForNudge(db: SupabaseClient, organizationId: string, assignmentId: string): Promise<NudgeTarget | null> {
   const { data, error } = await db.from("lead_assignments")
-    .select("id, conversation_id, contact_id, rep_id, status, sla_action, sla_breached, sla_due_at, assigned_at")
+    .select("id, conversation_id, contact_id, rep_id, status, sla_action, sla_breached, sla_due_at, assigned_at, awaiting_first_response")
     .eq("organization_id", organizationId).eq("id", assignmentId).maybeSingle();
   if (error) throw error;
   return (data as NudgeTarget | null) ?? null;

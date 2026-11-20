@@ -3,6 +3,7 @@ import {
   claimPushDedupe, deletePushSubscription, listCustomerMessageCandidates, listNewAssignmentCandidates,
   listSlaRiskCandidates, upsertPushSubscription, releasePushDedupe, purgePushNotificationLog,
   listPushEnabledOrganizationIds, listCurrentMemberIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds,
+  listExceptionCandidates, listExceptionPushOrganizationIds,
 } from "./push.js";
 
 /** Builder encadeável e "await-able" que registra as chamadas e devolve `result` por tabela. */
@@ -205,14 +206,117 @@ describe("escalada de SLA: estágio 1", () => {
     const r = await listSlaBreachCandidates(d, now, ["o"]);
     expect(r).toEqual([{ kind: "sla_breach", organizationId: "o", userId: "marina", dedupeKeys: ["sla_breach:a1"], title: "SLA estourado: responda Márcio",
       body: "O prazo para responder este cliente passou. Toque para atender.", url: "/opportunities?conversa=c1", tag: "c1" }]);
-    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "pending"); has(calls, 0, "eq", "sla_action", "alert");
-    has(calls, 0, "not", "rep_id", "is", null); has(calls, 0, "is", "first_human_message_at", null);
+    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "sla_action", "alert");
+    has(calls, 0, "or", "status.eq.pending,and(status.eq.accepted,awaiting_first_response.eq.true)");
+    has(calls, 0, "not", "rep_id", "is", null);
     has(calls, 0, "lte", "sla_due_at", now.toISOString()); has(calls, 0, "gte", "sla_due_at", "2026-10-26T12:00:00.000Z");
+  });
+
+  it("atribuição ASSUMIDA e ainda sem resposta também gera 'SLA estourado'; com mensagem confirmada ou em voo, não; com falha, gera", async () => {
+    const now = new Date("2026-10-27T12:00:00Z");
+    const row = (id: string, conv: string, status: string) => ({ id, organization_id: "o", conversation_id: conv, status, assigned_at: "2026-10-27T09:00:00Z", sla_due_at: "2026-10-27T10:40:00Z", sales_reps: { user_id: "marcio" }, wa_contacts: { name: id, phone: "55" } });
+    const { db: d } = db({
+      lead_assignments: { data: [row("pend", "c0", "pending"), row("semresp", "c1", "accepted"), row("resp", "c2", "accepted"), row("voo", "c3", "accepted"), row("falha", "c4", "accepted")] },
+      messages: { data: [
+        { conversation_id: "c2", created_at: "2026-10-27T11:00:00Z", evolution_message_id: "wa-1", metadata: null },
+        { conversation_id: "c3", created_at: "2026-10-27T11:58:00Z", evolution_message_id: null, metadata: null },
+        { conversation_id: "c4", created_at: "2026-10-27T11:00:00Z", evolution_message_id: null, metadata: { send_failed_at: "2026-10-27T11:01:00Z" } },
+      ] },
+    });
+    expect((await listSlaBreachCandidates(d, now, ["o"])).map((c) => c.dedupeKeys[0])).toEqual(["sla_breach:pend", "sla_breach:semresp", "sla_breach:falha"]);
+  });
+
+  it("AUTOR: marco de 1ª mensagem do GESTOR não silencia o aviso; o do próprio vendedor (ou sem autor) silencia; mensagem do gestor não encerra a assumida", async () => {
+    const now = new Date("2026-10-27T12:00:00Z");
+    const MARCIO = "11111111-1111-4111-8111-111111111111", GESTOR = "22222222-2222-4222-8222-222222222222";
+    const row = (id: string, conv: string, over: Record<string, unknown> = {}) => ({ id, organization_id: "o", conversation_id: conv, status: "pending", assigned_at: "2026-10-27T09:00:00Z", sla_due_at: "2026-10-27T10:40:00Z",
+      sales_reps: { user_id: MARCIO }, wa_contacts: { name: id, phone: "55" }, first_human_message_at: null, first_human_message_by: null, ...over });
+    const { db: d } = db({
+      lead_assignments: { data: [
+        row("gestor", "c1", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: GESTOR }),
+        row("proprio", "c2", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: MARCIO }),
+        row("celular", "c3", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: null }),
+        row("assum-gestor", "c4", { status: "accepted" }),
+        row("assum-proprio", "c5", { status: "accepted" }),
+      ] },
+      messages: { data: [
+        { conversation_id: "c4", created_at: "2026-10-27T09:40:00Z", evolution_message_id: "wa-g", metadata: { sent_by_user_id: GESTOR } },
+        { conversation_id: "c5", created_at: "2026-10-27T09:40:00Z", evolution_message_id: "wa-m", metadata: { sent_by_user_id: MARCIO } },
+      ] },
+    });
+    expect((await listSlaBreachCandidates(d, now, ["o"])).map((c) => c.dedupeKeys[0])).toEqual(["sla_breach:gestor", "sla_breach:assum-gestor"]);
   });
 
   it("sem organizações: não consulta", async () => {
     const { db: d, calls } = db({});
     expect(await listSlaBreachCandidates(d, new Date(), [])).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("aviso ao gestor: conversa em exceção", () => {
+  const now = new Date("2026-11-19T15:00:00Z");
+  const exc = (id: string, over: Record<string, unknown> = {}) => ({
+    id, organization_id: "o", conversation_id: `conv-${id}`, handoff_at: "2026-11-19T13:30:00Z", exception_reason: "all_reps_sla_breached",
+    previous_assignment_id: `prev-${id}`, wa_contacts: { name: "Claudivan", phone: "556296148561" }, ...over,
+  });
+  // Uma resposta por tabela e por chamada, na ordem: lead_assignments (exceções), lead_assignments (anteriores), organization_members (gestores).
+  const queued = (...results: Array<{ data?: unknown }>) => {
+    const calls: Array<{ table: string; ops: Array<[string, unknown[]]> }> = [];
+    let i = 0;
+    const from = (table: string) => {
+      const entry = { table, ops: [] as Array<[string, unknown[]]> }; calls.push(entry);
+      const r = results[i++] ?? { data: [] };
+      const c: any = new Proxy({}, { get: (_t, prop: string) => prop === "then" ? (res: any) => res({ data: r.data ?? null, error: null }) : (...args: unknown[]) => { entry.ops.push([prop, args]); return c; } });
+      return c;
+    };
+    return { db: { from } as any, calls };
+  };
+
+  it("organizações com a chave exception_manager_push_enabled === true", async () => {
+    const { db: d, calls } = queued({ data: [{ id: "o1" }] });
+    expect(await listExceptionPushOrganizationIds(d, ["o1", "o2"])).toEqual(["o1"]);
+    has(calls, 0, "in", "id", ["o1", "o2"]); has(calls, 0, "eq", "settings->>exception_manager_push_enabled", "true");
+    expect(await listExceptionPushOrganizationIds(d, [])).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("um aviso por gestor (owner/admin) com cliente, último responsável, tempo de espera e link da conversa; chave por entrada e por gestor", async () => {
+    const { db: d, calls } = queued(
+      { data: [exc("e1")] },
+      { data: [{ id: "prev-e1", sales_reps: { display_name: "Marina" } }] },
+      { data: [{ user_id: "dono" }, { user_id: "gestor" }] },
+    );
+    const r = await listExceptionCandidates(d, now, ["o"]);
+    expect(r).toEqual([
+      { kind: "exception", organizationId: "o", userId: "dono", dedupeKeys: ["exception:e1:dono"], title: "Cliente sem dono: Claudivan",
+        body: "Nenhum vendedor respondeu no prazo. Último responsável: Marina. Aguardando há 1 h. Toque para atribuir.", url: "/opportunities?conversa=conv-e1", tag: "exception-conv-e1" },
+      { kind: "exception", organizationId: "o", userId: "gestor", dedupeKeys: ["exception:e1:gestor"], title: "Cliente sem dono: Claudivan",
+        body: "Nenhum vendedor respondeu no prazo. Último responsável: Marina. Aguardando há 1 h. Toque para atribuir.", url: "/opportunities?conversa=conv-e1", tag: "exception-conv-e1" },
+    ]);
+    // só exceções abertas e recentes, só das organizações habilitadas; gestores = owner/admin
+    has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "status", "exception"); has(calls, 0, "is", "resolved_at", null);
+    has(calls, 0, "gte", "created_at", "2026-11-18T15:00:00.000Z");
+    has(calls, 2, "in", "role", ["owner", "admin"]);
+  });
+
+  it("sem responsável anterior: 'nenhum'; motivo desconhecido cai no texto genérico; cada exceção gera a sua chave", async () => {
+    const { db: d } = queued(
+      { data: [exc("e2", { previous_assignment_id: null, exception_reason: "no_available_rep" }), exc("e3", { previous_assignment_id: null, exception_reason: null })] },
+      { data: [{ user_id: "dono" }] },
+    );
+    const r = await listExceptionCandidates(d, now, ["o"]);
+    expect(r.map((c) => c.dedupeKeys[0])).toEqual(["exception:e2:dono", "exception:e3:dono"]);
+    expect(r[0].body).toContain("Nenhum vendedor disponível. Último responsável: nenhum.");
+    expect(r[1].body).toContain("Sem vendedor responsável. Último responsável: nenhum.");
+  });
+
+  it("sem organizações ou sem exceções: não avisa", async () => {
+    const none = queued({ data: [] });
+    expect(await listExceptionCandidates(none.db, now, ["o"])).toEqual([]);
+    expect(none.calls).toHaveLength(1);
+    const off = queued();
+    expect(await listExceptionCandidates(off.db, now, [])).toEqual([]);
+    expect(off.calls).toHaveLength(0);
   });
 });
