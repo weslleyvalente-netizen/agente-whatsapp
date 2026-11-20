@@ -5,7 +5,7 @@ const m = vi.hoisted(() => ({
   getMessageById: vi.fn(), createSignedUrl: vi.fn(),
 }));
 vi.mock("@aula-agente/agent-runtime", async () => {
-  const { UazapiHttpError } = await import("../../../../packages/agent-runtime/src/whatsapp/uazapi.js");
+  const { UazapiHttpError } = await vi.importActual<typeof import("@aula-agente/agent-runtime")>("@aula-agente/agent-runtime");
   return { resolveWhatsAppTarget: m.resolve, uazapiSendText: m.sendText, uazapiSendMedia: m.sendMedia, UazapiHttpError };
 });
 vi.mock("@aula-agente/database", () => ({
@@ -18,7 +18,7 @@ vi.mock("@aula-agente/database", () => ({
 
 import { CHAT_MEDIA_REF_PREFIX } from "@aula-agente/shared";
 import { processSendMessageJob } from "./send-message.js";
-import { UazapiHttpError } from "../../../../packages/agent-runtime/src/whatsapp/uazapi.js";
+import { UazapiHttpError } from "@aula-agente/agent-runtime";
 
 const job = (data: Record<string, unknown>, attemptsMade = 0) =>
   ({ data: { messageId: "msg-1", instanceId: "i1", organizationId: "o1", conversationId: "c1", phone: "5562999990000", content: "oi", ...data }, opts: { attempts: 1 }, attemptsMade }) as any;

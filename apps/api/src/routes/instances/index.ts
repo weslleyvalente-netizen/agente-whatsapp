@@ -17,6 +17,12 @@ import {
 } from "../../services/evolution.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
+// O token da UAZAPI (cifrado) nunca sai pela API.
+function withoutProviderToken<T extends Record<string, unknown>>(row: T): Omit<T, "provider_token_encrypted"> {
+  const { provider_token_encrypted: _omit, ...rest } = row;
+  return rest;
+}
+
 export default async function instanceRoutes(app: FastifyInstance) {
   // All routes require auth
   app.addHook("preHandler", authMiddleware);
@@ -33,7 +39,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
 
       const db = getAdminClient();
       const instances = await getInstancesByOrganization(db, organizationId);
-      return instances;
+      return (instances ?? []).map((i: Record<string, unknown>) => withoutProviderToken(i));
     }
   );
 
@@ -68,7 +74,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
         webhook_url: webhookUrl,
       });
 
-      return reply.status(201).send(instance);
+      return reply.status(201).send(withoutProviderToken(instance as unknown as Record<string, unknown>));
     }
   );
 
@@ -99,7 +105,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
         });
       }
 
-      return { ...instance, status: newStatus, phone_number: newPhoneNumber, live: status };
+      return { ...withoutProviderToken(instance as unknown as Record<string, unknown>), status: newStatus, phone_number: newPhoneNumber, live: status };
     }
   );
 
@@ -138,7 +144,7 @@ export default async function instanceRoutes(app: FastifyInstance) {
       }
 
       const updated = await updateInstance(db, instance.id, parseResult.data);
-      return updated;
+      return withoutProviderToken(updated as unknown as Record<string, unknown>);
     }
   );
 
