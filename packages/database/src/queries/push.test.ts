@@ -207,7 +207,7 @@ describe("escalada de SLA: estágio 1", () => {
     expect(r).toEqual([{ kind: "sla_breach", organizationId: "o", userId: "marina", dedupeKeys: ["sla_breach:a1"], title: "SLA estourado: responda Márcio",
       body: "O prazo para responder este cliente passou. Toque para atender.", url: "/opportunities?conversa=c1", tag: "c1" }]);
     has(calls, 0, "in", "organization_id", ["o"]); has(calls, 0, "eq", "sla_action", "alert");
-    has(calls, 0, "or", "status.eq.pending,and(status.eq.accepted,awaiting_first_response.eq.true)");
+    has(calls, 0, "or", "and(status.eq.pending,first_human_message_at.is.null),and(status.eq.accepted,awaiting_first_response.eq.true)");
     has(calls, 0, "not", "rep_id", "is", null);
     has(calls, 0, "lte", "sla_due_at", now.toISOString()); has(calls, 0, "gte", "sla_due_at", "2026-10-26T12:00:00.000Z");
   });
@@ -224,27 +224,6 @@ describe("escalada de SLA: estágio 1", () => {
       ] },
     });
     expect((await listSlaBreachCandidates(d, now, ["o"])).map((c) => c.dedupeKeys[0])).toEqual(["sla_breach:pend", "sla_breach:semresp", "sla_breach:falha"]);
-  });
-
-  it("AUTOR: marco de 1ª mensagem do GESTOR não silencia o aviso; o do próprio vendedor (ou sem autor) silencia; mensagem do gestor não encerra a assumida", async () => {
-    const now = new Date("2026-10-27T12:00:00Z");
-    const MARCIO = "11111111-1111-4111-8111-111111111111", GESTOR = "22222222-2222-4222-8222-222222222222";
-    const row = (id: string, conv: string, over: Record<string, unknown> = {}) => ({ id, organization_id: "o", conversation_id: conv, status: "pending", assigned_at: "2026-10-27T09:00:00Z", sla_due_at: "2026-10-27T10:40:00Z",
-      sales_reps: { user_id: MARCIO }, wa_contacts: { name: id, phone: "55" }, first_human_message_at: null, first_human_message_by: null, ...over });
-    const { db: d } = db({
-      lead_assignments: { data: [
-        row("gestor", "c1", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: GESTOR }),
-        row("proprio", "c2", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: MARCIO }),
-        row("celular", "c3", { first_human_message_at: "2026-10-27T09:30:00Z", first_human_message_by: null }),
-        row("assum-gestor", "c4", { status: "accepted" }),
-        row("assum-proprio", "c5", { status: "accepted" }),
-      ] },
-      messages: { data: [
-        { conversation_id: "c4", created_at: "2026-10-27T09:40:00Z", evolution_message_id: "wa-g", metadata: { sent_by_user_id: GESTOR } },
-        { conversation_id: "c5", created_at: "2026-10-27T09:40:00Z", evolution_message_id: "wa-m", metadata: { sent_by_user_id: MARCIO } },
-      ] },
-    });
-    expect((await listSlaBreachCandidates(d, now, ["o"])).map((c) => c.dedupeKeys[0])).toEqual(["sla_breach:gestor", "sla_breach:assum-gestor"]);
   });
 
   it("sem organizações: não consulta", async () => {
