@@ -1,35 +1,12 @@
 import { generateText } from "ai";
-import { createModel, extractTokenUsage, type TokenUsage } from "@aula-agente/agent-runtime";
+import { createModel, extractTokenUsage, fetchMediaBase64, type TokenUsage } from "@aula-agente/agent-runtime";
 import type { LLMProvider } from "@aula-agente/shared";
 
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 const IMAGE_SIZE_CAP_BYTES = 10 * 1024 * 1024;
 
-interface EvolutionMediaResponse {
-  base64: string;
-  mimetype: string;
-}
-
-async function fetchImage(instanceName: string, evolutionMessageId: string): Promise<EvolutionMediaResponse> {
-  const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: EVOLUTION_API_KEY,
-    },
-    body: JSON.stringify({
-      message: { key: { id: evolutionMessageId } },
-    }),
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Evolution media fetch error ${response.status}`);
-  }
-
-  const data = await response.json();
-  return { base64: data.base64, mimetype: data.mimetype };
+// Baixa pelo provedor ativo da instância (Evolution ou UAZAPI), com o mesmo teto de tempo de antes.
+function fetchImage(instanceName: string, evolutionMessageId: string) {
+  return fetchMediaBase64(instanceName, evolutionMessageId, 20_000);
 }
 
 export function exceedsSizeCap(byteLength: number): boolean {

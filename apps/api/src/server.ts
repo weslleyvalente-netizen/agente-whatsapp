@@ -4,6 +4,8 @@ import cors from "@fastify/cors";
 import { invalidateSalesWorkspaceCacheOnWrite } from "./services/sales-workspace.service.js";
 import evolutionWebhookRoutes from "./routes/webhooks/evolution.js";
 import wixLeadWebhookRoutes from "./routes/webhooks/wix-lead.js";
+import uazapiWebhookRoutes from "./routes/webhooks/uazapi.js";
+import { requestLogSerializer } from "./lib/log-serializers.js";
 import messageSendRoutes from "./routes/messages/send.js";
 import messageSendAudioRoutes from "./routes/messages/send-audio.js";
 import messageSendAttachmentRoutes from "./routes/messages/send-attachment.js";
@@ -12,6 +14,7 @@ import messageMediaUrlRoutes from "./routes/messages/media-url.js";
 import profilePictureUrlsRoutes from "./routes/contacts/profile-picture-urls.js";
 import adTouchesRoutes from "./routes/contacts/ad-touches.js";
 import instanceRoutes from "./routes/instances/index.js";
+import instanceUazapiRoutes from "./routes/instances/uazapi.js";
 import knowledgeDocumentRoutes from "./routes/knowledge/documents.js";
 import knowledgeFaqRoutes from "./routes/knowledge/faqs.js";
 import costRoutes from "./routes/costs/index.js";
@@ -36,7 +39,7 @@ import { getSilentMonitorStatus, startSilentConnectionAlert } from "./services/s
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
 
-const server = Fastify({ logger: true });
+const server = Fastify({ logger: { serializers: { req: requestLogSerializer } } });
 
 if (!process.env.WEBHOOK_SECRET) {
   server.log.warn("WEBHOOK_SECRET is not set: webhook verification is off and message recovery keeps no original timestamps");
@@ -64,6 +67,7 @@ server.get("/health", async () => {
 server.register(financingRoutes);
 server.register(manualFinancingRoutes);
 server.register(evolutionWebhookRoutes);
+server.register(uazapiWebhookRoutes);
 server.register(wixLeadWebhookRoutes);
 server.register(messageSendRoutes);
 server.register(messageSendAudioRoutes);
@@ -73,6 +77,7 @@ server.register(messageMediaUrlRoutes);
 server.register(profilePictureUrlsRoutes);
 server.register(adTouchesRoutes);
 server.register(instanceRoutes);
+server.register(instanceUazapiRoutes);
 server.register(knowledgeDocumentRoutes);
 server.register(knowledgeFaqRoutes);
 server.register(costRoutes);

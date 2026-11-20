@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROFILE_PICTURE_BUCKET, buildProfilePicturePath } from "@aula-agente/shared";
 import { getInstanceById, setContactProfilePicture } from "@aula-agente/database";
 import type { FetchProfilePictureJobData } from "@aula-agente/queue";
+import { resolveWhatsAppTarget, uazapiAvatarUrl } from "@aula-agente/agent-runtime";
 
 const PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -26,6 +27,8 @@ function pickUrl(body: unknown): string | null {
 
 // O formato da resposta da Evolution é lido de forma defensiva (ver relatório): nulo/ausente = foto oculta.
 const defaultFetchPictureUrl = async (instanceName: string, phone: string): Promise<string | null> => {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") return uazapiAvatarUrl(target.token, phone);
   const response = await fetch(`${process.env.EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instanceName}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: process.env.EVOLUTION_API_KEY ?? "" },

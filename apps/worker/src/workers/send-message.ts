@@ -4,6 +4,7 @@ import { Worker, type Job } from "bullmq";
 import { QUEUE_NAMES, CHAT_MEDIA_SIGNED_URL_TTL_SECONDS, isChatMediaRefFor, parseChatMediaRef, parseCustomerAudioRef, sanitizeEvolutionError } from "@aula-agente/shared";
 import type { SendMessageJobData } from "@aula-agente/queue";
 import { getRedisConnection } from "@aula-agente/queue";
+import { resolveWhatsAppTarget, uazapiSendMedia, uazapiSendText, UazapiHttpError } from "@aula-agente/agent-runtime";
 import { shouldCancelPreFreezeAgentMessage, reportSendFailure, recoverSendFailures, getMessageById, getConversationById, hasFrozenContact, getAdminClient, getInstanceById, setMessageEvolutionId, updateMessageContent } from "@aula-agente/database";
 
 // Evolution/Baileys echoes the id it assigned back in the response's
@@ -22,7 +23,20 @@ function extractEvolutionMessageId(response: unknown): string | null {
   return null;
 }
 
+// Provedor ativo da instância (evolution_instances.provider). Na UAZAPI, a recusa vira a mesma mensagem de erro que a Evolution
+// produziria, para o fluxo de falha de envio (reportSendFailure) funcionar igual.
+async function viaUazapi<T>(kind: "send error" | "media send error" | "audio send error", run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof UazapiHttpError) throw new Error(sanitizeEvolutionError(error.status, error.body).replace("send error", kind));
+    throw error;
+  }
+}
+
 async function sendEvolutionText(instanceName: string, phone: string, text: string, signal?: AbortSignal) {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") return viaUazapi("send error", () => uazapiSendText(target.token, phone, text, signal));
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 
@@ -51,6 +65,12 @@ async function sendEvolutionMedia(
   caption: string,
   opts?: { mediatype?: "image" | "video" | "document"; fileName?: string; mimetype?: string }
 ) {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") {
+    return viaUazapi("media send error", () => uazapiSendMedia(target.token, phone, {
+      type: opts?.mediatype ?? "image", file: mediaUrl, caption, docName: opts?.fileName, mimetype: opts?.mimetype,
+    }));
+  }
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 
@@ -79,6 +99,8 @@ async function sendEvolutionMedia(
 }
 
 async function sendEvolutionAudio(instanceName: string, phone: string, audioBase64: string) {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") return viaUazapi("audio send error", () => uazapiSendMedia(target.token, phone, { type: "ptt", file: audioBase64 }));
   const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
   const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 

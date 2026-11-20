@@ -26,3 +26,9 @@ export {
 } from "./seller-message-suggestion.js";
 
 export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, fetchMediaBase64, EvolutionMediaTooLargeError, type EvolutionMediaBase64, type EvolutionMediaResponse, type TranscriptionResult } from "./audio-transcription.js";
+export { encryptInstanceToken, decryptInstanceToken } from "./whatsapp/instance-token.js";
+export { resolveWhatsAppTarget, targetFromInstance, resetWhatsAppTargetCache, type WhatsAppTarget } from "./whatsapp/target.js";
+export {
+  UazapiHttpError, uazapiSendText, uazapiSendMedia, uazapiDownloadMedia, uazapiAvatarUrl, uazapiCreateInstance, uazapiSetWebhook, uazapiConnect, uazapiStatus,
+  type UazapiConnectionInfo,
+} from "./whatsapp/uazapi.js";

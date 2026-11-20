@@ -31,6 +31,27 @@ export async function getInstanceByInstanceId(client: SupabaseClient, instanceId
   return data as EvolutionInstance;
 }
 
+export async function getInstanceByInstanceName(client: SupabaseClient, instanceName: string): Promise<EvolutionInstance | null> {
+  const { data, error } = await client
+    .from("evolution_instances")
+    .select("*")
+    .eq("instance_name", instanceName)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as EvolutionInstance | null) ?? null;
+}
+
+export async function setInstanceProviderFields(
+  client: SupabaseClient,
+  id: string,
+  fields: { provider?: "evolution" | "uazapi"; provider_token_encrypted?: string | null }
+): Promise<void> {
+  const { error } = await client.from("evolution_instances").update(fields).eq("id", id);
+  if (error) throw error;
+}
+
 export async function createInstance(
   client: SupabaseClient,
   instance: Pick<EvolutionInstance, "organization_id" | "instance_name" | "instance_id" | "webhook_url">

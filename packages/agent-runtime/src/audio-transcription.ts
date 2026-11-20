@@ -1,4 +1,6 @@
 import { resolveApiKey } from "./vault.js";
+import { resolveWhatsAppTarget } from "./whatsapp/target.js";
+import { uazapiDownloadMedia } from "./whatsapp/uazapi.js";
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
@@ -14,6 +16,8 @@ export async function fetchAudioAsMp4(
   evolutionMessageId: string,
   timeoutMs = 20_000
 ): Promise<EvolutionMediaResponse> {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") return uazapiDownloadMedia(target.token, evolutionMessageId, { timeoutMs, mp3: true });
   const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
     method: "POST",
     headers: {
@@ -41,12 +45,8 @@ export interface EvolutionMediaBase64 {
   fileName?: string;
 }
 
-export class EvolutionMediaTooLargeError extends Error {
-  constructor(public readonly contentLength: number) {
-    super(`Evolution media too large (content-length ${contentLength})`);
-    this.name = "EvolutionMediaTooLargeError";
-  }
-}
+import { EvolutionMediaTooLargeError } from "./whatsapp/media-errors.js";
+export { EvolutionMediaTooLargeError };
 
 // Baixa a mídia (imagem/vídeo/documento) como veio, sem convertToMp4.
 // maxBytes: tamanho máximo do arquivo; se o Content-Length da resposta (JSON com base64, ~4/3 do
@@ -57,6 +57,8 @@ export async function fetchMediaBase64(
   timeoutMs = 60_000,
   options: { maxBytes?: number } = {}
 ): Promise<EvolutionMediaBase64> {
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") return uazapiDownloadMedia(target.token, evolutionMessageId, { timeoutMs, maxBytes: options.maxBytes });
   const response = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`, {
     method: "POST",
     headers: {
