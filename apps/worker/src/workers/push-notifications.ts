@@ -4,8 +4,8 @@ import { QUEUE_NAMES } from "@aula-agente/shared";
 import { getPushNotificationsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
   claimPushDedupe, deletePushSubscriptionsForUser, getAdminClient, isPushConfigured, listCurrentMemberIds,
-  listCustomerMessageCandidates, listExceptionCandidates, listExceptionPushOrganizationIds, listNewAssignmentCandidates, listPushEnabledOrganizationIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds, listSlaRiskCandidates,
-  purgePushNotificationLog, releasePushDedupe, sendPushToUser, type PushCandidate, type PushSender,
+  listCustomerMessageCandidates, listNewAssignmentCandidates, listPushEnabledOrganizationIds, listSlaBreachCandidates, listSlaEscalationOrganizationIds, listSlaRiskCandidates,
+  purgePushNotificationLog, releasePushDedupe, sendPushToUser, type PushCandidate,
 } from "@aula-agente/database";
 
 const SWEEP_EVERY_MS = 30_000;
@@ -30,13 +30,10 @@ export function createPushCursor(startedAt = new Date()): PushCursor {
 type Fresh = { organizationId: string; userId: string; items: Array<{ c: PushCandidate; keys: string[] }> };
 
 /**
- * Varredura dos gatilhos (lead novo, mensagem do cliente, SLA em risco, SLA estourado, exceção para gestores). Só organizações com a flag ligada;
+ * Varredura dos gatilhos (lead novo, mensagem do cliente, SLA em risco, SLA estourado). Só organizações com a flag ligada;
  * cada vendedor só recebe o que é dele e só enquanto for membro da organização.
  */
-/** Só um erro que prova que NADA foi enviado (leitura das assinaturas falhou) autoriza repetir; qualquer outro pode duplicar o aviso. */
-const provablyNotSent = (err: unknown): boolean => typeof err === "object" && err !== null && (err as { attempted?: unknown }).attempted === false;
-
-export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now = new Date(), deps: { send?: PushSender } = {}) {
+export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now = new Date()) {
   if (!isPushConfigured()) return { sent: 0, skipped: true as const };
   if (!cursor.lastPurgeAt || now.getTime() - cursor.lastPurgeAt.getTime() >= PURGE_EVERY_MS) {
     try { await purgePushNotificationLog(db, new Date(now.getTime() - LOG_RETENTION_MS)); cursor.lastPurgeAt = now; }
@@ -60,8 +57,6 @@ export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now =
   await run("sla", () => listSlaRiskCandidates(db, now, orgIds, SLA_WINDOW_MINUTES));
   // Estágio 1 da escalada de SLA (chave sla_alert_escalation_enabled): avisa o dono quando o SLA estoura, uma vez por atribuição.
   await run("sla_breach", async () => listSlaBreachCandidates(db, now, await listSlaEscalationOrganizationIds(db, orgIds)));
-  // Conversa que entrou em exceção de distribuição (chave exception_manager_push_enabled): avisa os gestores, uma vez por entrada.
-  await run("exception", async () => listExceptionCandidates(db, now, await listExceptionPushOrganizationIds(db, orgIds)));
 
   // Membros atuais por organização (um vendedor removido não recebe nada e perde as assinaturas).
   const usersByOrg = new Map<string, Set<string>>();
@@ -102,12 +97,9 @@ export async function runPushSweep(db: SupabaseClient, cursor: PushCursor, now =
         }];
     for (const { payload, keys } of batches) {
       try {
-        sent += (await sendPushToUser(db, userId, payload, { organizationId, ...(deps.send ? { send: deps.send } : {}) })).sent;
+        sent += (await sendPushToUser(db, userId, payload, { organizationId })).sent;
       } catch (err) {
         console.error("Push sweep: delivery failed", err);
-        // Libera as chaves (para tentar de novo) SÓ quando está provado que nada foi enviado. Se o provedor pode ter aceito o push e a
-        // resposta se perdeu, repetir duplicaria o aviso: a chave fica reservada (no máximo uma vez).
-        if (!provablyNotSent(err)) continue;
         try { await releasePushDedupe(db, keys); } catch (releaseErr) { console.error("Push sweep: releasing keys failed", releaseErr); }
       }
     }

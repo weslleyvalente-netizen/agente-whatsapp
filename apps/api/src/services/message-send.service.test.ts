@@ -153,13 +153,8 @@ describe("sendPanelMessage", () => {
     });
 
     expect(saveMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: { source: "task_followup", task_id: "task-1", sent_by_user_id: "user-1" } })
+      expect.objectContaining({ metadata: { source: "task_followup", task_id: "task-1" } })
     );
-  });
-
-  it("AUTOR: todo envio do painel (texto, áudio, anexo) grava sent_by_user_id; a chave sobrevive à marcação de falha", async () => {
-    await sendPanelMessage({ conversation: baseConversation, content: "Oi", actorUserId: "gestor-9", activateTakeover: false });
-    expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({ metadata: { sent_by_user_id: "gestor-9" } }));
   });
 
   it("throws when saveMessage returns null (echo/duplicate)", async () => {
@@ -202,14 +197,14 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
   it("chama trackFirstHumanMessage com papel, autor e metadata, e o aceite vai como 'panel' do autor", async () => {
     await sendPanelMessage({ conversation: baseConversation, content: "Oi, sou a Marina", actorUserId: "user-1" });
     expect(trackFirstHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({
-      organizationId: "org-1", conversationId: "conv-1", role: "human_agent", source: "panel", actorUserId: "user-1", metadata: { sent_by_user_id: "user-1" },
+      organizationId: "org-1", conversationId: "conv-1", role: "human_agent", source: "panel", actorUserId: "user-1", metadata: null,
     }));
     expect(recordHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ organizationId: "org-1", conversationId: "conv-1", authorUserId: "user-1", via: "panel" }));
   });
 
   it("mensagem de follow-up de tarefa (metadata source=task_followup) ainda conta como humana", async () => {
     await sendPanelMessage({ conversation: baseConversation, content: "Passando para lembrar", actorUserId: "user-1", metadata: { source: "task_followup" } });
-    expect(trackFirstHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ metadata: { source: "task_followup", sent_by_user_id: "user-1" }, actorUserId: "user-1" }));
+    expect(trackFirstHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ metadata: { source: "task_followup" }, actorUserId: "user-1" }));
     expect(recordHumanMessage).toHaveBeenCalledWith(fakeDb, expect.objectContaining({ authorUserId: "user-1", via: "panel" }));
   });
 
@@ -221,7 +216,7 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
       await sendPanelMessage({ conversation: baseConversation, content: "[audio]", actorUserId: "user-1", audio });
       expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
         content: "[audio]", mediaType: "audio", role: "human_agent",
-        metadata: { source: "seller_audio", duration_seconds: 7, sent_by_user_id: "user-1" },
+        metadata: { source: "seller_audio", duration_seconds: 7 },
       }));
       expect(fakeDb.storage.from).toHaveBeenCalledWith("customer-audio");
       expect(upload).toHaveBeenCalledWith("org-1/conv-1/msg-1.webm", audio.buffer, { contentType: "audio/webm", upsert: false });
@@ -292,7 +287,7 @@ describe("sendPanelMessage — primeira mensagem humana (distribuição de leads
       await send({ caption: "Segue a foto" });
       expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
         content: "Segue a foto", mediaType: "image", role: "human_agent",
-        metadata: { source: "seller_attachment", media: { status: "stored", file_name: "foto.jpg", mime_type: "image/jpeg", size_bytes: 5 }, sent_by_user_id: "user-1" },
+        metadata: { source: "seller_attachment", media: { status: "stored", file_name: "foto.jpg", mime_type: "image/jpeg", size_bytes: 5 } },
       }));
       expect(fakeDb.storage.from).toHaveBeenCalledWith("chat-media");
       expect(upload).toHaveBeenCalledWith("org-1/conv-1/msg-1.jpg", attachment.buffer, { contentType: "image/jpeg", upsert: false });

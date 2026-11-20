@@ -1,7 +1,7 @@
 // packages/database/src/queries/lead-distribution.test.ts
 import { describe, expect, it, vi } from "vitest";
 import {
-  acceptAssignment, computeEscalationDueAt, listExpiredAssignments, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
+  acceptAssignment, computeEscalationDueAt, computeSlaDueAt, distributeLeadForHandoff, getActiveAssignmentRepUserId, hasOpenDistributionException,
   listSlaAlerts, recordDistributionError, recordHumanMessage, redistributeAssignment,
 } from "./lead-distribution.js";
 
@@ -123,16 +123,6 @@ describe("recordDistributionError (I2)", () => {
   });
 });
 
-describe("listExpiredAssignments", () => {
-  it("lista pendentes E assumidas ainda aguardando a 1ª resposta (o banco decide em redistribute_assignment)", async () => {
-    const calls: Array<[string, unknown[]]> = [];
-    const b: any = new Proxy({}, { get: (_t, prop: string) => prop === "then" ? (res: any) => res({ data: [{ id: "x", organization_id: "o" }], error: null }) : (...args: unknown[]) => { calls.push([prop, args]); return b; } });
-    expect(await listExpiredAssignments({ from: () => b } as any)).toEqual([{ id: "x", organization_id: "o" }]);
-    expect(calls).toContainEqual(["or", ["status.eq.pending,and(status.eq.accepted,awaiting_first_response.eq.true)"]]);
-    expect(calls).toContainEqual(["eq", ["sla_action", "redistribute"]]);
-  });
-});
-
 describe("computeEscalationDueAt (2x o SLA em minutos úteis)", () => {
   it("estouro na sexta 17:45 (SP) escala na segunda 08:15; dentro do expediente é só 2x", () => {
     expect(computeEscalationDueAt({ lead_sla_minutes: 15 }, new Date("2026-10-23T20:45:00Z")).toISOString()).toBe("2026-10-26T11:15:00.000Z"); // sexta 17:45 + 30 min úteis
@@ -159,14 +149,14 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
   });
   it("some quando há mensagem human_agent depois do handoff (resposta pelo celular), mas não uma anterior", async () => {
     const as = [base("a"), base("b")];
-    expect(await run(as, { messages: [{ conversation_id: "conv-a", created_at: "2026-10-27T12:30:00Z", evolution_message_id: "wa-1" }, { conversation_id: "conv-b", created_at: "2026-10-27T11:00:00Z", evolution_message_id: "wa-2" }] })).toEqual(["b"]);
+    expect(await run(as, { messages: [{ conversation_id: "conv-a", created_at: "2026-10-27T12:30:00Z" }, { conversation_id: "conv-b", created_at: "2026-10-27T11:00:00Z" }] })).toEqual(["b"]);
   });
   it("atribuição manual conta a mensagem desde assigned_at, não desde o handoff", async () => {
     const m = base("m", { reason: "manual", handoff_at: "2026-10-27T10:00:00Z" });
-    expect(await run([m], { messages: [{ conversation_id: "conv-m", created_at: "2026-10-27T11:00:00Z", evolution_message_id: "wa-3" }] })).toEqual(["m"]);
+    expect(await run([m], { messages: [{ conversation_id: "conv-m", created_at: "2026-10-27T11:00:00Z" }] })).toEqual(["m"]);
   });
-  it("some com first_human_message_at, aceite pela 1ª mensagem, conversa encerrada, nota, ligação, atividade comercial ou negócio ganho", async () => {
-    const as = [base("fh", { first_human_message_at: "2026-10-27T12:10:00Z" }), base("ac", { accepted_at: "2026-10-27T12:10:00Z", accepted_via: "first_message" }), base("cl"), base("nt"), base("ca"), base("co"), base("wo"), base("keep")];
+  it("some com first_human_message_at, accepted_at, conversa encerrada, nota, ligação, atividade comercial ou negócio ganho", async () => {
+    const as = [base("fh", { first_human_message_at: "2026-10-27T12:10:00Z" }), base("ac", { accepted_at: "2026-10-27T12:10:00Z" }), base("cl"), base("nt"), base("ca"), base("co"), base("wo"), base("keep")];
     const out = await listSlaAlerts(fake({
       lead_assignments: as,
       conversations: as.map((a) => ({ id: a.conversation_id, status: a.id === "cl" ? "closed" : "open" })),
@@ -180,53 +170,8 @@ describe("listSlaAlerts: só atribuições ainda sem resposta", () => {
     }), "org");
     expect(out.map((a: any) => a.id)).toEqual(["keep"]);
   });
-  it("Assumir (botão/admin) sozinho NÃO tira o alerta; mensagem confirmada tira; envio com falha não tira; mensagem em voo tira", async () => {
-    const as = [base("btn", { status: "accepted", accepted_at: "2026-10-27T12:05:00Z", accepted_via: "button", awaiting_first_response: true }),
-      base("adm", { status: "accepted", accepted_at: "2026-10-27T12:05:00Z", accepted_via: "admin", awaiting_first_response: true }),
-      base("ok", { status: "accepted", accepted_at: "2026-10-27T12:05:00Z", accepted_via: "button", awaiting_first_response: true }),
-      base("fail", { status: "accepted", accepted_at: "2026-10-27T12:05:00Z", accepted_via: "first_message", first_human_message_at: "2026-10-27T12:06:00Z", awaiting_first_response: true }),
-      base("flight", { status: "accepted", accepted_at: "2026-10-27T12:05:00Z", accepted_via: "button", awaiting_first_response: true })];
-    const recent = new Date(Date.now() - 60_000).toISOString();
-    const out = await run(as, { messages: [
-      { conversation_id: "conv-ok", created_at: "2026-10-27T12:30:00Z", evolution_message_id: "wa-ok" },
-      { conversation_id: "conv-fail", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: { send_failed_at: "2026-10-27T12:07:00Z" } },
-      { conversation_id: "conv-flight", created_at: recent, evolution_message_id: null },
-    ] });
-    expect(out).toEqual(["btn", "adm", "fail"]);
-  });
-  it("janela de envio (10 min): a atividade gravada no pedido de envio não vale quando o envio não saiu; depois da janela, vale", async () => {
-    const a = base("f", { status: "accepted", accepted_via: "button", awaiting_first_response: true });
-    const failedMsg = { conversation_id: "conv-f", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: { send_failed_at: "2026-10-27T12:07:00Z" } };
-    const opp = (at: string) => ({ id: "o-f", contact_id: "ct-f", status: "open", last_commercial_activity_at: at, updated_at: null });
-    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:06:01Z")] })).toEqual(["f"]);
-    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:12:00Z")] })).toEqual(["f"]); // envio lento: atividade 6 min depois da criação
-    expect(await run([a], { messages: [failedMsg], opportunities: [opp("2026-10-27T12:30:00Z")] })).toEqual([]);   // depois da janela: atividade real
-  });
-  it("mensagem presa (sem id, sem falha, mais de 10 min) conta como não enviada e não adia nada", async () => {
-    const a = base("p", { status: "accepted", accepted_via: "first_message", first_human_message_at: "2026-10-27T12:06:00Z", awaiting_first_response: true });
-    const stuck = { conversation_id: "conv-p", created_at: "2026-10-27T12:06:00Z", evolution_message_id: null, metadata: null };
-    expect(await run([a], { messages: [stuck] })).toEqual(["p"]);
-  });
-  it("AUTOR: mensagem/marco do GESTOR não tira o alerta do vendedor; a do vendedor ou de autoria desconhecida tira", async () => {
-    const MARCIO = "11111111-1111-4111-8111-111111111111", GESTOR = "22222222-2222-4222-8222-222222222222";
-    const as = ["gm", "vm", "um", "marco-g", "marco-v"].map((id) => base(id, { rep_id: "rep-m", status: "pending",
-      ...(id === "marco-g" ? { first_human_message_at: "2026-10-27T12:10:00Z", first_human_message_by: GESTOR } : {}),
-      ...(id === "marco-v" ? { first_human_message_at: "2026-10-27T12:10:00Z", first_human_message_by: MARCIO } : {}) }));
-    const opp = (id: string) => ({ id: `o-${id}`, contact_id: `ct-${id}`, status: "open", last_commercial_activity_at: "2026-10-27T12:10:00Z", updated_at: null });
-    const out = await run(as, {
-      sales_reps: [{ id: "rep-m", user_id: MARCIO }],
-      messages: [
-        { conversation_id: "conv-gm", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-1", metadata: { sent_by_user_id: GESTOR } },
-        { conversation_id: "conv-vm", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-2", metadata: { sent_by_user_id: MARCIO } },
-        { conversation_id: "conv-um", created_at: "2026-10-27T12:10:00Z", evolution_message_id: "wa-3", metadata: null },
-      ],
-      // a atividade comercial gravada no pedido de envio do gestor (e no marco dele) também não conta como atendimento do vendedor
-      opportunities: ["gm", "marco-g"].map(opp),
-    });
-    expect(out).toEqual(["gm", "marco-g"]);
-  });
   it("sem alertas não consulta as demais tabelas", async () => {
-    const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, or: () => b, order: () => b, range: async () => ({ data: [], error: null }) }; return b; });
+    const from = vi.fn((t: string) => { const b: any = { select: () => b, eq: () => b, order: () => b, range: async () => ({ data: [], error: null }) }; return b; });
     expect(await listSlaAlerts({ from } as any, "org")).toEqual([]);
     expect(from).toHaveBeenCalledTimes(1);
   });

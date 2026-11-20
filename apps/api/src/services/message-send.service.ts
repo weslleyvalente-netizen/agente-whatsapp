@@ -91,7 +91,7 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
     : attachment
       ? attachment.caption ?? (attachment.kind === "image" ? "[imagem]" : attachment.kind === "video" ? "[video]" : attachmentName!)
       : params.content;
-  const baseMetadata = audio
+  const metadata = audio
     ? { source: "seller_audio", ...(audio.durationSeconds != null ? { duration_seconds: audio.durationSeconds } : {}) }
     : attachment
       ? {
@@ -99,9 +99,6 @@ export async function sendPanelMessage(params: SendPanelMessageParams): Promise<
           media: { status: "stored", file_name: attachmentName, mime_type: attachment.mime, size_bytes: attachment.buffer.length },
         }
       : params.metadata;
-  // Autor: toda mensagem enviada pelo painel registra quem a enviou (as regras de SLA só aceitam mensagem do vendedor da atribuição ou de autoria
-  // desconhecida). Eco do celular da loja NÃO grava a chave: autoria desconhecida. Registros antigos também não têm.
-  const metadata = { ...(baseMetadata ?? {}), sent_by_user_id: actorUserId };
   const activateTakeover = params.activateTakeover ?? true;
   const db = getAdminClient();
 

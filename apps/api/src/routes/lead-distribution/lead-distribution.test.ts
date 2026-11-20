@@ -206,12 +206,6 @@ describe("Cutucar vendedor (gestor)", () => {
       expect(res.json().error).toBe("Este alerta não está mais pendente");
     }
   });
-  it("atribuição ASSUMIDA e ainda aguardando a 1ª resposta pode ser cutucada; assumida e já respondida (sem a marca), não", async () => {
-    m.getAssignmentForNudge.mockResolvedValue(assignment({ status: "accepted", awaiting_first_response: true }));
-    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(200);
-    m.getAssignmentForNudge.mockResolvedValue(assignment({ status: "accepted", awaiting_first_response: false }));
-    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(409);
-  });
   it("vendedor sem usuário: 409", async () => {
     m.listSalesReps.mockResolvedValue([{ id: "r1", user_id: null, display_name: "Marina" }]);
     const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
@@ -343,9 +337,8 @@ describe("fila de exceções e reatribuição manual (gestor)", () => {
     expect((await (await app("agent")).inject({ method: "POST", url: "/organizations/org/lead-assignments/manual", payload: { conversationId: "11111111-1111-4111-8111-111111111111", repId: "22222222-2222-4222-8222-222222222222" } })).statusCode).toBe(403);
   });
   it("gestor lista e reatribui com novo prazo", async () => {
-    m.listOpenExceptions.mockResolvedValue([{ id: "e1", contact_id: "c1" }]);
-    m.listContactsByIds.mockResolvedValue([{ id: "c1", name: "Ana", phone: "5511" }]);
-    expect((await (await app("admin")).inject({ method: "GET", url: "/organizations/org/lead-assignments/exceptions" })).json()).toEqual([{ id: "e1", contact_id: "c1", contact_name: "Ana", contact_phone: "5511" }]);
+    m.listOpenExceptions.mockResolvedValue([{ id: "e1" }]);
+    expect((await (await app("admin")).inject({ method: "GET", url: "/organizations/org/lead-assignments/exceptions" })).json()).toEqual([{ id: "e1" }]);
     m.manualAssignLead.mockResolvedValue("a9");
     const res = await (await app("owner")).inject({ method: "POST", url: "/organizations/org/lead-assignments/manual", payload: { conversationId: "11111111-1111-4111-8111-111111111111", repId: "22222222-2222-4222-8222-222222222222" } });
     expect(res.json()).toEqual({ assignmentId: "a9" });

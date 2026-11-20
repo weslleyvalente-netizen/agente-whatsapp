@@ -47,8 +47,6 @@ export interface OrganizationSettings {
   // Cria um negócio no funil quando a IA encaminha para humano e o contato não tem negócio. Ligado a menos que seja false explícito.
   handoff_card_enabled?: boolean;
   sla_alert_escalation_enabled?: boolean;
-  /** Push aos gestores (owner/admin) quando uma conversa ENTRA em exceção de distribuição (uma vez por entrada). Opt-in: só com `true` (e com push ligado). */
-  exception_manager_push_enabled?: boolean;
   // ISO: quando a chave acima foi ligada. A escalada só considera estouros posteriores a isto (e de no máximo 24 h).
   sla_alert_escalation_activated_at?: string;
   owner_lookback_days?: number;

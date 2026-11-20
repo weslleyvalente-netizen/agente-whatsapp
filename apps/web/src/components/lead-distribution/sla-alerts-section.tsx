@@ -26,7 +26,7 @@ export function SlaAlertsSection({ alerts, reps, nudged, busy, nudgingAll, notic
         <h3 className="font-medium">Atrasos de resposta (clientes que já têm vendedor) <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{alerts.length}</span></h3>
         <Button size="sm" variant="outline" disabled={nudgingAll} onClick={onNudgeAll}>{nudgingAll ? "Enviando…" : "Cutucar todos"}</Button>
       </div>
-      <p className="text-xs text-muted-foreground">Estes clientes continuam com o vendedor atual, que é cobrado por aviso. Se o vendedor nunca atendeu o cliente e o prazo dobrar, o sistema passa o cliente ao próximo vendedor (uma única vez); se já atendeu, não troca.</p>
+      <p className="text-xs text-muted-foreground">Estes clientes continuam com o mesmo vendedor; não há redistribuição automática.</p>
       {notice && (notice.kind === "error"
         ? <p role="alert" className="mt-2 text-destructive">{notice.text}</p>
         : <p role="status" className="mt-2 text-muted-foreground">{notice.text}</p>)}
