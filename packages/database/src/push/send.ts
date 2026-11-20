@@ -4,30 +4,20 @@ import webpush from "web-push";
 export interface PushPayload { title: string; body: string; url: string; tag?: string }
 export interface PushSendResult { sent: number; removed: number; failed: number; skipped?: boolean }
 type Env = Partial<Record<"VAPID_PUBLIC_KEY" | "VAPID_PRIVATE_KEY" | "VAPID_SUBJECT", string | undefined>>;
-export type PushSender = (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, body: string, options: { vapidDetails: { subject: string; publicKey: string; privateKey: string }; TTL: number }) => Promise<unknown>;
+type Sender = (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, body: string, options: { vapidDetails: { subject: string; publicKey: string; privateKey: string }; TTL: number }) => Promise<unknown>;
 
 export function isPushConfigured(env: Env = process.env): boolean {
   return Boolean(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT);
 }
 
-/**
- * A leitura das assinaturas falhou ANTES de qualquer envio: nada saiu, então repetir é seguro (não duplica).
- * Qualquer outro erro, ou um envio por aparelho que falhou/expirou, NÃO prova que o provedor não recebeu o push (a resposta pode ter se perdido):
- * esses casos nunca devem ser repetidos automaticamente.
- */
-export class PushNotAttemptedError extends Error {
-  readonly attempted = false as const;
-  constructor(readonly cause: unknown) { super(`Push não tentado: ${(cause as { message?: string } | null)?.message ?? "erro ao ler assinaturas"}`); }
-}
-
-const defaultSender: PushSender = (subscription, body, options) => webpush.sendNotification(subscription, body, options);
+const defaultSender: Sender = (subscription, body, options) => webpush.sendNotification(subscription, body, options);
 
 /**
  * Envia o push a todas as assinaturas do usuário. Sem chaves VAPID é inerte. 404/410 removem a assinatura;
  * a falha de um endpoint não impede os demais. Nunca loga endpoint nem chaves.
  */
 export async function sendPushToUser(
-  db: SupabaseClient, userId: string, payload: PushPayload, deps: { env?: Env; send?: PushSender; organizationId?: string } = {},
+  db: SupabaseClient, userId: string, payload: PushPayload, deps: { env?: Env; send?: Sender; organizationId?: string } = {},
 ): Promise<PushSendResult> {
   const env = deps.env ?? process.env;
   if (!isPushConfigured(env)) return { sent: 0, removed: 0, failed: 0, skipped: true };
@@ -36,7 +26,7 @@ export async function sendPushToUser(
   // Só os aparelhos assinados nesta organização (quem está em duas organizações não recebe as dos outros contextos).
   if (deps.organizationId) query = query.eq("organization_id", deps.organizationId);
   const { data, error } = await query;
-  if (error) throw new PushNotAttemptedError(error);
+  if (error) throw error;
   const vapidDetails = { subject: env.VAPID_SUBJECT!, publicKey: env.VAPID_PUBLIC_KEY!, privateKey: env.VAPID_PRIVATE_KEY! };
   const body = JSON.stringify(payload);
   const gone: string[] = [];
