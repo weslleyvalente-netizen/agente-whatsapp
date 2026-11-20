@@ -199,6 +199,61 @@ describe("Assumir mantém o acompanhamento da primeira resposta", () => {
     }
   });
 
+  // Caso David (19/11): a Marina atendeu pela manhã, o cliente voltou reclamando, a IA encaminhou de novo, ela clicou em Assumir e não respondeu.
+  // Duas decisões distintas: atendimento anterior PROTEGE a continuidade (a escalada não troca a responsável), mas NÃO encerra a espera pela
+  // resposta ao NOVO pedido: o prazo conta do novo encaminhamento e, ao vencer, o atraso aparece no quadro (sla_breached) sem reiniciar pelo clique.
+  async function novoPedidoAposAtendimento(clicar: boolean) {
+    const { w, h, id, marcio } = await carteira();
+    await msg(w, h.conversationId);                       // atendimento anterior (confirmado)
+    await panelReply(w, h.conversationId, marcio);
+    const ho2 = (await q("insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,$3) returning id", [w.org, h.conversationId, inMinutes(-100)]))[0].id;
+    const nid = (await q("select public.distribute_lead($1,$2,$3,$4,'{}'::jsonb) as id", [w.org, h.conversationId, ho2, inMinutes(-70)]))[0].id as string;
+    expect(await row(nid)).toMatchObject({ reason: "existing_owner", rep_id: w.reps["Márcio"].repId, status: "pending", sla_action: "alert" });
+    const dueBefore = new Date((await row(nid)).sla_due_at).getTime();
+    if (clicar) expect(await accept(nid, marcio)).toBe(true);
+    return { w, h, nid, marcio, dueBefore, ho2 };
+  }
+  const noQuadro = async (id: string) => (await q(
+    "select 1 from public.lead_assignments where id=$1 and (status='pending' or (status='accepted' and awaiting_first_response)) and sla_action='alert' and sla_breached", [id])).length === 1;
+
+  it("novo encaminhamento depois de atendimento anterior: Assumir sem responder, o prazo vence => quadro + cobrança, responsável preservado", async () => {
+    const { h, nid, marcio, dueBefore } = await novoPedidoAposAtendimento(true);
+    const a = await row(nid);
+    expect(a).toMatchObject({ status: "accepted", accepted_via: "button", awaiting_first_response: true });
+    expect(new Date(a.sla_due_at).getTime()).toBe(dueBefore);       // o clique não reinicia o prazo
+    expect(await awaiting(nid)).toBe(true);                         // o atendimento da manhã não encerra a espera pelo NOVO pedido
+    expect(await flag()).toBeGreaterThanOrEqual(1);
+    expect((await row(nid)).sla_breached).toBe(true);
+    expect(await noQuadro(nid)).toBe(true);
+    expect(new Date((await row(nid)).sla_due_at).getTime()).toBe(dueBefore);
+    // continuidade: a escalada não troca quem já atendeu
+    expect(await candidates(nid)).toBe(0);
+    expect(await escalate(nid)).toBeNull();
+    expect((await q("select assigned_to from public.conversations where id=$1", [h.conversationId]))[0].assigned_to).toBe(marcio);
+  });
+
+  it("clicando ou não, o atraso do novo encaminhamento é o mesmo (pendente e assumida se comportam igual)", async () => {
+    for (const clicar of [false, true]) {
+      ({ db, q } = await setupHandoffDb());
+      const { nid } = await novoPedidoAposAtendimento(clicar);
+      expect(await awaiting(nid)).toBe(true);
+      await flag();
+      expect(await noQuadro(nid)).toBe(true);
+    }
+  });
+
+  it("resposta confirmada DEPOIS do novo encaminhamento encerra a espera; falha ou mensagem anterior a ele, não", async () => {
+    const { w, h, nid, marcio } = await novoPedidoAposAtendimento(true);
+    const falhou = await msg(w, h.conversationId, { id: null, failed: true });
+    await panelReply(w, h.conversationId, marcio);
+    expect(await awaiting(nid)).toBe(true);                         // envio falho não encerra
+    await fail(falhou);
+    await msg(w, h.conversationId);                                  // confirmada, depois do novo encaminhamento
+    expect(await awaiting(nid)).toBe(false);
+    expect(await flag()).toBe(0);
+    expect((await row(nid)).sla_breached).toBe(false);
+  });
+
   it("rodízio (lead novo): assumir sem responder continua redistribuindo no prazo; resposta confirmada impede", async () => {
     const sem = await rodizio();
     await accept(sem.id, sem.marina);
