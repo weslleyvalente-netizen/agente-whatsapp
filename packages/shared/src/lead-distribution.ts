@@ -58,8 +58,6 @@ export interface LeadAssignment {
   accepted_via: LeadAcceptedVia | null;
   first_human_message_at: string | null;
   first_human_message_by: string | null;
-  /** Assumida (botão/1ª mensagem do painel) e ainda sem resposta confirmada: continua no acompanhamento de SLA. Ver 20261119130000. */
-  awaiting_first_response: boolean;
   previous_assignment_id: string | null;
   next_assignment_id: string | null;
   exception_reason: LeadExceptionReason | null;

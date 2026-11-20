@@ -206,12 +206,6 @@ describe("Cutucar vendedor (gestor)", () => {
       expect(res.json().error).toBe("Este alerta não está mais pendente");
     }
   });
-  it("atribuição ASSUMIDA e ainda aguardando a 1ª resposta pode ser cutucada; assumida e já respondida (sem a marca), não", async () => {
-    m.getAssignmentForNudge.mockResolvedValue(assignment({ status: "accepted", awaiting_first_response: true }));
-    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(200);
-    m.getAssignmentForNudge.mockResolvedValue(assignment({ status: "accepted", awaiting_first_response: false }));
-    expect((await (await app("admin", "u1", ORG)).inject({ method: "POST", url })).statusCode).toBe(409);
-  });
   it("vendedor sem usuário: 409", async () => {
     m.listSalesReps.mockResolvedValue([{ id: "r1", user_id: null, display_name: "Marina" }]);
     const res = await (await app("admin", "u1", ORG)).inject({ method: "POST", url });
