@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import { QrCodeDialog } from "@/components/instances/qrcode-dialog";
 import { InstanceStatus } from "@/components/instances/instance-status";
+import { UazapiPanel } from "@/components/instances/uazapi-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -108,6 +109,8 @@ export default function InstanceDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      <UazapiPanel instanceId={instanceId} />
 
       <Card>
         <CardHeader><CardTitle>Agente Vinculado</CardTitle></CardHeader>
