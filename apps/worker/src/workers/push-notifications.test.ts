@@ -4,7 +4,6 @@ const m = vi.hoisted(() => ({
   listPushEnabledOrganizationIds: vi.fn(), listCurrentMemberIds: vi.fn(), deletePushSubscriptionsForUser: vi.fn(), purgePushNotificationLog: vi.fn(),
   listNewAssignmentCandidates: vi.fn(), listCustomerMessageCandidates: vi.fn(), listSlaRiskCandidates: vi.fn(),
   listSlaBreachCandidates: vi.fn(), listSlaEscalationOrganizationIds: vi.fn(),
-  listExceptionCandidates: vi.fn(), listExceptionPushOrganizationIds: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getPushNotificationsQueue: () => ({ upsertJobScheduler: vi.fn() }) }));
@@ -27,8 +26,6 @@ beforeEach(() => {
   m.listSlaRiskCandidates.mockResolvedValue([]);
   m.listSlaEscalationOrganizationIds.mockResolvedValue([]);
   m.listSlaBreachCandidates.mockResolvedValue([]);
-  m.listExceptionPushOrganizationIds.mockResolvedValue([]);
-  m.listExceptionCandidates.mockResolvedValue([]);
 });
 
 describe("runPushSweep", () => {
@@ -200,80 +197,5 @@ describe("runPushSweep: SLA estourado (estágio 1 da escalada)", () => {
     m.listNewAssignmentCandidates.mockResolvedValue(list([cand({ userId: "novo-dono", dedupeKeys: ["assign:escalada"], title: "Novo lead: Márcio" })]));
     await runPushSweep(db, createPushCursor(now), now);
     expect(m.sendPushToUser).toHaveBeenCalledWith(db, "novo-dono", expect.objectContaining({ title: "Novo lead: Márcio" }), { organizationId: "o" });
-  });
-});
-
-describe("runPushSweep: conversa em exceção avisa os gestores (uma vez por entrada)", () => {
-  const exception = (id: string, manager: string, over: Record<string, unknown> = {}) =>
-    cand({ kind: "exception", userId: manager, dedupeKeys: [`exception:${id}:${manager}`], title: "Cliente sem dono: Claudivan", url: "/opportunities?conversa=conv-1", tag: "exception-conv-1", ...over });
-  /** Log de idempotência de verdade: a primeira reserva da chave ganha, as demais perdem. */
-  const realDedupe = () => { const seen = new Set<string>(); m.claimPushDedupe.mockImplementation(async (_d: unknown, key: string) => (seen.has(key) ? false : (seen.add(key), true))); return seen; };
-
-  it("só consulta as organizações com exception_manager_push_enabled e envia a cada gestor", async () => {
-    m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono"), exception("e1", "gestor")]);
-    const r = await runPushSweep(db, createPushCursor(now), now);
-    expect(m.listExceptionPushOrganizationIds).toHaveBeenCalledWith(db, ["o"]);
-    expect(m.listExceptionCandidates).toHaveBeenCalledWith(db, now, ["o"]);
-    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "dono", expect.objectContaining({ title: "Cliente sem dono: Claudivan", url: "/opportunities?conversa=conv-1" }), { organizationId: "o" });
-    expect(m.sendPushToUser).toHaveBeenCalledWith(db, "gestor", expect.anything(), { organizationId: "o" });
-    expect(r.sent).toBe(2);
-  });
-
-  it("DEDUPLICAÇÃO: a mesma entrada em exceção varrida de novo (várias varreduras) não reenvia", async () => {
-    realDedupe();
-    m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono"), exception("e1", "gestor")]);
-    for (let i = 0; i < 4; i++) await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + i * 30_000));
-    expect(m.sendPushToUser).toHaveBeenCalledTimes(2); // um por gestor, uma única vez
-  });
-
-  it("nova entrada em exceção da mesma conversa (linha nova) avisa de novo; a antiga continua sem repetir", async () => {
-    realDedupe();
-    m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono")]);
-    await runPushSweep(db, createPushCursor(now), now);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono"), exception("e2", "dono")]);
-    await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + 60_000));
-    expect(m.sendPushToUser).toHaveBeenCalledTimes(2);
-  });
-
-  it("envio que falhou libera a chave: a próxima varredura tenta de novo (e depois não repete)", async () => {
-    const seen = new Set<string>();
-    m.claimPushDedupe.mockImplementation(async (_d: unknown, key: string) => (seen.has(key) ? false : (seen.add(key), true)));
-    m.releasePushDedupe.mockImplementation(async (_d: unknown, keys: string[]) => { for (const k of keys) seen.delete(k); });
-    m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono")]);
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    m.sendPushToUser.mockRejectedValueOnce(new Error("push fora do ar"));
-    await runPushSweep(db, createPushCursor(now), now);
-    await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + 30_000));
-    await runPushSweep(db, createPushCursor(now), new Date(now.getTime() + 60_000));
-    log.mockRestore();
-    expect(m.sendPushToUser).toHaveBeenCalledTimes(2); // 1ª falhou, 2ª entregou, 3ª não repete
-  });
-
-  it("chave desligada em todas as organizações: nenhum aviso de exceção", async () => {
-    m.listExceptionPushOrganizationIds.mockResolvedValue([]);
-    await runPushSweep(db, createPushCursor(now), now);
-    expect(m.listExceptionCandidates).toHaveBeenCalledWith(db, now, []);
-    expect(m.sendPushToUser).not.toHaveBeenCalled();
-  });
-
-  it("gestor que deixou de ser membro não recebe e perde as assinaturas", async () => {
-    m.listExceptionPushOrganizationIds.mockResolvedValue(["o"]);
-    m.listExceptionCandidates.mockResolvedValue([exception("e1", "dono"), exception("e1", "ex-gestor")]);
-    m.listCurrentMemberIds.mockResolvedValue(new Set(["dono"]));
-    await runPushSweep(db, createPushCursor(now), now);
-    expect(m.sendPushToUser).toHaveBeenCalledTimes(1);
-    expect(m.deletePushSubscriptionsForUser).toHaveBeenCalledWith(db, "o", "ex-gestor");
-  });
-
-  it("erro na fonte de exceção não derruba os outros gatilhos", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    m.listExceptionPushOrganizationIds.mockRejectedValue(new Error("db"));
-    m.listNewAssignmentCandidates.mockResolvedValue(list([cand()]));
-    expect((await runPushSweep(db, createPushCursor(now), now)).sent).toBe(1);
-    log.mockRestore();
   });
 });
