@@ -1,4 +1,4 @@
-import { contactDisplayName, formatElapsed, funnelConversationHref, overdueLabel, SLA_NUDGE_COOLDOWN_MINUTES, type SalesRep, type SlaAlert } from "@aula-agente/shared";
+import { contactDisplayName, funnelConversationHref, overdueLabel, SLA_NUDGE_COOLDOWN_MINUTES, type SalesRep, type SlaAlert } from "@aula-agente/shared";
 
 export interface SlaAlertRow { id: string; client: string; repName: string; overdue: string; href: string }
 
@@ -40,22 +40,4 @@ export function summarizeNudgeAll(results: NudgeAllResult[]): string {
 /** Mensagem do painel quando o toque individual não foi enviado (resposta 200 com status diferente de "sent"). */
 export function nudgeNotDeliveredMessage(status: string): string {
   return status === "failed" ? "Não foi possível entregar o aviso agora" : "O vendedor não tem notificações ativadas";
-}
-
-const EXCEPTION_REASONS: Record<string, string> = {
-  no_available_rep: "Nenhum vendedor disponível", all_reps_sla_breached: "Nenhum vendedor respondeu no prazo", invalid_existing_owner: "Dono atual inválido",
-  distribution_error: "Erro na distribuição", manual_review: "Conflito: revisão manual",
-};
-
-export interface ExceptionRow { id: string; client: string; reason: string; waiting: string; href: string }
-
-/** Linha de "Atraso no atendimento" para cliente que o rodízio não conseguiu entregar a ninguém: só aviso, sem escolher vendedor. */
-export function exceptionRow(e: SlaAlert, now: Date = new Date()): ExceptionRow {
-  return {
-    id: e.id,
-    client: contactDisplayName(e.contact_name, e.contact_phone),
-    reason: EXCEPTION_REASONS[e.exception_reason ?? ""] ?? e.exception_reason ?? "Sem vendedor",
-    waiting: `há ${formatElapsed(now.getTime() - Date.parse(e.assigned_at))}`,
-    href: funnelConversationHref(e.conversation_id),
-  };
 }
