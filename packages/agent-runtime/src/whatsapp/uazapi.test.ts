@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  UazapiHttpError, uazapiAvatarUrl, uazapiConnect, uazapiCreateInstance, uazapiDownloadMedia, uazapiSendMedia, uazapiSendText, uazapiSetWebhook, uazapiStatus,
+  UazapiHttpError, uazapiAvatarUrl, uazapiConnect, uazapiCreateInstance, uazapiDownloadMedia, uazapiFindMessages, uazapiSendMedia, uazapiSendText, uazapiSetWebhook, uazapiStatus,
 } from "./uazapi.js";
 import { EvolutionMediaTooLargeError } from "./media-errors.js";
 
@@ -112,5 +112,33 @@ describe("foto e administração", () => {
   it("status sem instância = disconnected", async () => {
     queue({ body: {} });
     expect(await uazapiStatus("tok")).toEqual({ status: "disconnected", qrcode: null, paircode: null });
+  });
+});
+
+describe("histórico (/message/find)", () => {
+  const B = 1_788_868_800_000;
+  it("pagina do mais novo para o mais antigo e para ao passar do início da janela", async () => {
+    const m = (id: string, ms: number) => ({ messageid: id, messageTimestamp: B + ms });
+    queue(
+      { body: { messages: [m("C", 5000), m("B", 4000)], pagination: { hasMore: true, nextOffset: 2 } } },
+      { body: { messages: [m("A", 2500), m("Z", 1000)], pagination: { hasMore: true, nextOffset: 4 } } },
+    );
+    const out = await uazapiFindMessages("tok", { sinceMs: B + 2000, untilMs: B + 4500, pageSize: 2 });
+    expect(out.map((x: any) => x.messageid)).toEqual(["B", "A"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(call(0).init.body))).toEqual({ limit: 2, offset: 0 });
+    expect(JSON.parse(String(call(1).init.body))).toEqual({ limit: 2, offset: 2 });
+  });
+
+  it("sem mais páginas: para", async () => {
+    queue({ body: { messages: [{ messageid: "A", messageTimestamp: B + 3000 }], pagination: { hasMore: false } } });
+    expect(await uazapiFindMessages("tok", { sinceMs: B, untilMs: B + 9999 })).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("respeita o máximo de páginas", async () => {
+    for (let i = 0; i < 3; i++) queue({ body: { messages: [{ messageid: `M${i}`, messageTimestamp: B + 9000 - i }], pagination: { hasMore: true, nextOffset: i + 1 } } });
+    await uazapiFindMessages("tok", { sinceMs: B, untilMs: B + 99999, pageSize: 1, maxPages: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

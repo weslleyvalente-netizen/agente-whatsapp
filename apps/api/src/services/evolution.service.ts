@@ -1,3 +1,6 @@
+import { resolveWhatsAppTarget, uazapiFindMessages } from "@aula-agente/agent-runtime";
+import { translateUazapiEvent } from "@aula-agente/shared";
+
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!;
 
@@ -131,6 +134,17 @@ export async function findStoredMessages(
   window: { gteSec: number; lteSec: number },
   fromMe: boolean
 ): Promise<EvolutionStoredMessage[]> {
+  // Instância na UAZAPI: o histórico vem dela, convertido para o mesmo formato interno que o webhook usa.
+  const target = await resolveWhatsAppTarget(instanceName);
+  if (target.provider === "uazapi") {
+    const messages = await uazapiFindMessages(target.token, { sinceMs: window.gteSec * 1000, untilMs: window.lteSec * 1000 + 999 });
+    const out: EvolutionStoredMessage[] = [];
+    for (const message of messages) {
+      const t = translateUazapiEvent({ EventType: "messages", message }, instanceName);
+      if (t.kind === "message" && t.payload.data.key.fromMe === fromMe) out.push(t.payload.data as unknown as EvolutionStoredMessage);
+    }
+    return out;
+  }
   const filtered: EvolutionStoredMessage[] = [];
   const filteredPages = await pageThrough(
     instanceName,

@@ -29,6 +29,6 @@ export { transcribeAudioMessage, pickAudioFileExtension, fetchAudioAsMp4, fetchM
 export { encryptInstanceToken, decryptInstanceToken } from "./whatsapp/instance-token.js";
 export { resolveWhatsAppTarget, targetFromInstance, resetWhatsAppTargetCache, type WhatsAppTarget } from "./whatsapp/target.js";
 export {
-  UazapiHttpError, uazapiSendText, uazapiSendMedia, uazapiDownloadMedia, uazapiAvatarUrl, uazapiCreateInstance, uazapiSetWebhook, uazapiConnect, uazapiStatus,
+  UazapiHttpError, uazapiSendText, uazapiSendMedia, uazapiDownloadMedia, uazapiAvatarUrl, uazapiCreateInstance, uazapiSetWebhook, uazapiConnect, uazapiStatus, uazapiFindMessages,
   type UazapiConnectionInfo,
 } from "./whatsapp/uazapi.js";
