@@ -587,3 +587,23 @@ describe("recuperação respeita a lista de ignorados (com e sem o 9º dígito)"
     expect(body.sample.some((x: { phoneLast4: string }) => x.phoneLast4 === "8375")).toBe(true);
   });
 });
+
+describe("recuperação com a instância na UAZAPI", () => {
+  it("reenvio leva o cabeçalho de repasse quando a instância está em uazapi", async () => {
+    m.getInstancesByOrganization.mockResolvedValue([{ id: "i1", instance_name: "inst-a", instance_id: "inst-a", active_agent_id: "ag", provider: "uazapi" }]);
+    received = [rec("U1", T0 + 60)];
+    const a = await app("admin");
+    const st = await runAndWait(a);
+    expect(st.replayed).toBe(1);
+    expect(delivered[0].headers["x-provider-relay"]).toBe(REPLAY_TOKEN);
+    await a.close();
+  });
+
+  it("instância na Evolution: sem cabeçalho de repasse (como antes)", async () => {
+    received = [rec("E1", T0 + 60)];
+    const a = await app("admin");
+    await runAndWait(a);
+    expect(delivered[0].headers["x-provider-relay"]).toBeUndefined();
+    await a.close();
+  });
+});

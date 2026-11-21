@@ -137,3 +137,34 @@ export async function uazapiConnect(token: string, phone?: string): Promise<Uaza
   // 409: já existe um pareamento em andamento; o estado atual traz o QR/código vigente.
   return status === 409 ? uazapiStatus(token) : connectionInfo(data);
 }
+
+/**
+ * Mensagens guardadas pela UAZAPI na janela [sinceMs, untilMs] (epoch em ms), de todas as conversas.
+ * /message/find devolve do mais novo para o mais antigo (offset 0 = mais recentes); para quando a página passa do início da janela,
+ * quando não há mais páginas ou no teto de páginas. Devolve os objetos `message` como vêm (mesmo formato do webhook).
+ */
+export async function uazapiFindMessages(
+  token: string,
+  opts: { sinceMs: number; untilMs: number; pageSize?: number; maxPages?: number }
+): Promise<Array<Record<string, unknown>>> {
+  const pageSize = opts.pageSize ?? 500;
+  const maxPages = opts.maxPages ?? 40;
+  const out: Array<Record<string, unknown>> = [];
+  let offset = 0;
+  for (let page = 0; page < maxPages; page++) {
+    const { data } = await uazapiFetch("/message/find", { token }, { body: { limit: pageSize, offset }, signal: AbortSignal.timeout(30_000) });
+    const messages: Array<Record<string, unknown>> = Array.isArray(data?.messages) ? data.messages : [];
+    let oldest = Infinity;
+    for (const m of messages) {
+      const ts = Number(m?.messageTimestamp);
+      if (!Number.isFinite(ts)) continue;
+      const ms = ts > 1e11 ? ts : ts * 1000;
+      oldest = Math.min(oldest, ms);
+      if (ms >= opts.sinceMs && ms <= opts.untilMs) out.push(m);
+    }
+    const hasMore = data?.pagination?.hasMore === true && messages.length > 0;
+    if (!hasMore || oldest < opts.sinceMs) break;
+    offset = typeof data?.pagination?.nextOffset === "number" ? data.pagination.nextOffset : offset + messages.length;
+  }
+  return out;
+}

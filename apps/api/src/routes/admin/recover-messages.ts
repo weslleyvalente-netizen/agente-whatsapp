@@ -11,7 +11,7 @@ import { probeRedis } from "../../lib/redis-probe.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 import { findStoredMessages, type EvolutionStoredMessage } from "../../services/evolution.service.js";
 import { buildLidPhoneMap, applyLidMap } from "../../services/lid-phone-map.js";
-import { isNonContentMessageType, isSystemJid, REPLAY_TIMESTAMP_HEADER, REPLAY_SAVE_ONLY_HEADER } from "../webhooks/evolution.js";
+import { isNonContentMessageType, isSystemJid, REPLAY_TIMESTAMP_HEADER, REPLAY_SAVE_ONLY_HEADER, PROVIDER_RELAY_HEADER } from "../webhooks/evolution.js";
 
 // Tempos do reenvio. Mutável para os testes.
 //  - intraMs: entre mensagens do MESMO cliente (a fila agrupa em ~6 s e a IA responde uma vez só);
@@ -36,7 +36,8 @@ const tsOf = (r: EvolutionStoredMessage) => Number(r.messageTimestamp);
 const phoneOf = (jid: string) => jid.replace("@s.whatsapp.net", "");
 const iso = (sec: number) => (Number.isFinite(sec) ? new Date(sec * 1000).toISOString() : null);
 
-type Candidate = { rec: EvolutionStoredMessage; instanceId: string };
+// relay: a instância está na UAZAPI; o reenvio precisa do cabeçalho de repasse para a rota da Evolution aceitar.
+type Candidate = { rec: EvolutionStoredMessage; instanceId: string; relay: boolean };
 interface CustomerGroup { jid: string; items: Candidate[]; answered: boolean }
 
 interface Analysis {
@@ -146,7 +147,7 @@ async function analyze(opts: {
       if (isNonContentMessageType(String(raw.messageType))) { skipped.nonContent++; continue; }
       const rec = applyLidMap(raw, lidMap, ownPhones);
       if (ignoredNoStore.size > 0 && ignoredContactPhoneCandidates(resolveEvolutionPhone(rec.key)).some((c) => ignoredNoStore.has(c))) { skipped.ignored++; continue; }
-      eligible.push({ rec, instanceId: instance.instance_id });
+      eligible.push({ rec, instanceId: instance.instance_id, relay: instance.provider === "uazapi" });
     }
   }
 
@@ -277,8 +278,8 @@ export default async function recoverMessagesRoutes(app: FastifyInstance) {
           const items = a.groups[gi].items;
           for (let i = 0; i < items.length; i++) {
             if (i > 0) await sleep(recoveryConfig.intraMs);
-            const { rec, instanceId } = items[i];
-            const outcome = await replayOne(app, rec, instanceId, secret);
+            const { rec, instanceId, relay } = items[i];
+            const outcome = await replayOne(app, rec, instanceId, secret, false, relay);
             status.done++;
             if (outcome === "replayed") status.replayed++;
             else if (outcome === "duplicate") status.summary.alreadyInCrm++;
@@ -376,8 +377,8 @@ export async function reconcileRecentMessages(app: FastifyInstance, organization
       processed++;
       for (let i = 0; i < g.items.length; i++) {
         if (i > 0) await sleep(recoveryConfig.intraMs);
-        const { rec, instanceId } = g.items[i];
-        const outcome = await replayOne(app, rec, instanceId, secret, saveOnly);
+        const { rec, instanceId, relay } = g.items[i];
+        const outcome = await replayOne(app, rec, instanceId, secret, saveOnly, relay);
         if (outcome === "replayed") { if (saveOnly) result.saved++; else result.replayed++; }
         else if (outcome === "failed") result.failed++;
       }
@@ -393,7 +394,7 @@ export async function reconcileRecentMessages(app: FastifyInstance, organization
 }
 
 async function replayOne(
-  app: FastifyInstance, rec: EvolutionStoredMessage, instanceId: string, secret: string | undefined, saveOnly = false
+  app: FastifyInstance, rec: EvolutionStoredMessage, instanceId: string, secret: string | undefined, saveOnly = false, relay = false
 ): Promise<"replayed" | "duplicate" | "failed"> {
   const payload = {
     event: "messages.upsert",
@@ -419,7 +420,7 @@ async function replayOne(
     const res = await Promise.race([
       app.inject({
         method: "POST", url: "/webhooks/evolution",
-        headers: { ...(secret ? { apikey: secret } : {}), [REPLAY_TIMESTAMP_HEADER]: REPLAY_TOKEN, ...(saveOnly ? { [REPLAY_SAVE_ONLY_HEADER]: REPLAY_TOKEN } : {}) },
+        headers: { ...(secret ? { apikey: secret } : {}), [REPLAY_TIMESTAMP_HEADER]: REPLAY_TOKEN, ...(saveOnly ? { [REPLAY_SAVE_ONLY_HEADER]: REPLAY_TOKEN } : {}), ...(relay ? { [PROVIDER_RELAY_HEADER]: REPLAY_TOKEN } : {}) },
         payload,
       }),
       timeout,
