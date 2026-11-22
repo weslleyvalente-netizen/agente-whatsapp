@@ -7,7 +7,7 @@ import { getProcessMessageQueue, getRedisConnection, getUnansweredLeadSweepQueue
 import {
   claimPushDedupe, getAckContext, getAdminClient, getIgnoredContact, getInstanceById, getInstancesByOrganization, getOpenHandoffEvent, hasFrozenContact,
   hasOutboundMessageAfter, hasPushSubscription, isPushConfigured, listCurrentMemberIds, listLatestInboundMessages, listStaleUnprocessedRouted,
-  listUnansweredSweepOrganizations, releasePushDedupe, sendPushToUser, reconcileUnreportedSendFailures,
+  listUnansweredSweepOrganizations, releasePushDedupe, distributeEscapedLead, sendPushToUser, reconcileUnreportedSendFailures,
   type PushPayload, type SweepOrganization, type UnansweredCandidate,
 } from "@aula-agente/database";
 import { acquireConversationLock, releaseConversationLock } from "../lib/lock.js";
@@ -27,6 +27,8 @@ export const ownerAlertedKey = (messageId: string) => `unanswered-sweep:alerted-
 const PUSH_STAGE_PREFIX = "push:";
 /** Chave de idempotência do push (push_notification_log), uma por mensagem do cliente. */
 export const pushDedupeKey = (messageId: string) => `unanswered:${messageId}`;
+/** Cliente que escapou já foi entregue ao rodízio (uma vez por conversa). */
+export const escapedKey = (conversationId: string) => `unanswered-sweep:escaped:${conversationId}`;
 export const attemptsKey = (messageId: string) => `unanswered-sweep:attempts:${messageId}`;
 /** jobId determinístico (BullMQ não aceita ":" em id customizado). */
 export const retryJobId = (messageId: string) => `unanswered-sweep-${messageId}`;
@@ -69,6 +71,11 @@ export interface SweepDeps {
   releasePushDedupe(keys: string[]): Promise<void>;
   /** Envia o push; devolve quantos aparelhos receberam (0 = nada entregue). */
   sendPush(organizationId: string, userId: string, payload: PushPayload): Promise<number>;
+  /**
+   * Cliente que escreveu e ninguém respondeu (nem a IA), sem dono e sem encaminhamento aberto: registra o encaminhamento pelo
+   * sistema (trigger sistema_sem_resposta) e chama o rodízio. Devolve a atribuição (ou null se nada foi feito).
+   */
+  distributeEscaped(organizationId: string, conversationId: string): Promise<string | null>;
   log: { info(msg: string): void; error(msg: string): void };
 }
 
@@ -117,7 +124,8 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
     summary.organizations++;
     let inbound: UnansweredCandidate[];
     try { inbound = await deps.listInbound(org.id, since); } catch (err) { deps.log.error(`unanswered-sweep: org ${org.id} listing failed (${errText(err)})`); summary.errors++; continue; }
-    const settings = org.settings as { business_calendar?: unknown; health_alert_phone?: string | null; push_notifications_enabled?: unknown };
+    const settings = org.settings as { business_calendar?: unknown; health_alert_phone?: string | null; push_notifications_enabled?: unknown; escape_distribution_enabled?: unknown };
+    const escapeEnabled = settings.escape_distribution_enabled === true;
     const pushEnabled = settings.push_notifications_enabled === true;
     const businessOpen = isBusinessOpen(now, resolveBusinessCalendar(settings.business_calendar));
     const alertItems: AlertItem[] = [];
@@ -154,6 +162,21 @@ export async function runUnansweredLeadSweep(deps: SweepDeps, now = new Date()):
         if (decision.action === "alert" && (!c.mediaType || c.mediaType === "text") && isClosingAcknowledgement(c.content)) {
           const ctx = await deps.ackContext(c.conversationId, c.createdAt);
           if (!ctx.earlierInboundUnanswered && !ctx.lastOutboundAsksQuestion) decision = decideSweepAction({ ...facts, closingAck: true });
+        }
+        // Cliente que escapou: ninguém respondeu (nem a IA), sem dono e sem encaminhamento aberto => rodízio, uma vez, no expediente.
+        // Independe do aviso já ter saído (o aviso é deduplicado; a distribuição tem chave própria e é refeita se falhar).
+        const avisaria = decision.action === "alert" || (decision.action === "skip" && decision.reason === "already_alerted");
+        if (escapeEnabled && businessOpen && avisaria && !c.assignedTo && !openHandoff && !hasOutboundAfter) {
+          if (await deps.redis.setNx(escapedKey(c.conversationId), now.toISOString(), KEY_TTL_SEC)) {
+            try {
+              const id = await deps.distributeEscaped(org.id, c.conversationId);
+              deps.log.info(`unanswered-sweep: escaped lead distributed conv ${c.conversationId} assignment ${id ?? "none"}`);
+            } catch (err) {
+              await deps.redis.del(escapedKey(c.conversationId)).catch(() => {});
+              summary.errors++;
+              deps.log.error(`unanswered-sweep: escaped distribution failed conv ${c.conversationId} (${errText(err)})`);
+            }
+          }
         }
         if (decision.action === "skip") { skip(decision.reason); continue; }
 
@@ -365,6 +388,7 @@ export function buildRealDeps(): SweepDeps {
     claimPushDedupe: (key, userId) => claimPushDedupe(db, key, userId),
     releasePushDedupe: (keys) => releasePushDedupe(db, keys),
     sendPush: async (orgId, userId, payload) => (await sendPushToUser(db, userId, payload, { organizationId: orgId })).sent,
+    distributeEscaped: (orgId, conversationId) => distributeEscapedLead(db, orgId, conversationId),
     log: console,
   };
 }

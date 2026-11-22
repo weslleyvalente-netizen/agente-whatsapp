@@ -22,6 +22,7 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
   const jobs = new Map<string, unknown>(); const enqueueCalls: string[] = []; const alerts: Array<{ phone: string; text: string }> = [];
   const pushes: Array<{ userId: string; payload: any }> = []; const pushDedupe = new Set<string>(); const pushUsers = new Set<string>(); let pushSent = 1;
   const ackCalls: string[] = []; const ackCtx: Record<string, { earlierInboundUnanswered: boolean; lastOutboundAsksQuestion: boolean }> = {};
+  const escaped: string[] = []; let escapeResult: string | null = "assign-1";
   const logs: string[] = []; const attempts = new Map<string, number>(); let enqueueResult: EnqueueResult = { ok: true }; let stale: any[] = [];
   const deps: SweepDeps = {
     redisReady: () => true,
@@ -52,9 +53,10 @@ function world(opts: { settings?: Record<string, unknown>; convs?: Array<Record<
     claimPushDedupe: async (k) => { if (pushDedupe.has(k)) return false; pushDedupe.add(k); return true; },
     releasePushDedupe: async (keys) => { for (const k of keys) pushDedupe.delete(k); },
     sendPush: async (_o, userId, payload) => { if (failOn.has("push")) throw new Error("push down"); pushes.push({ userId, payload }); return pushSent; },
+    distributeEscaped: async (_o, cid) => { escaped.push(cid); return escapeResult; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
   };
-  return { deps, ackCalls, ackCtx, pushes, pushDedupe, pushUsers, setPushSent: (n: number) => { pushSent = n; }, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
+  return { escaped, setEscapeResult: (r: string | null) => { escapeResult = r; }, deps, ackCalls, ackCtx, pushes, pushDedupe, pushUsers, setPushSent: (n: number) => { pushSent = n; }, setEnqueueResult: (r: EnqueueResult) => { enqueueResult = r; }, setStale: (x: any[]) => { stale = x; }, outbound, ignored, handoff, failOn, kv, jobs, enqueueCalls, alerts, logs, msgs };
 }
 // mensagem de 11 min atrás no instante T0+0 => createdAt = T0-11min
 const old = (m: number) => ({ createdAt: min(-m).toISOString() });
@@ -472,5 +474,41 @@ describe("sendEvolutionAlert: instância conectada e falhas definitivas (liberam
       await expect(sendEvolutionAlert("o", "1", "t")).rejects.toBeInstanceOf(DefinitiveSendError);
       expect(sendCalls()).toEqual([]);
     });
+  });
+});
+
+describe("cliente que escapou (ninguém respondeu, nem a IA) entra no rodízio", () => {
+  // Mensagem de 3 h atrás nunca processada pela IA: vai direto para o aviso (velha demais para o retry).
+  const escaped = { id: "e1", ...old(180) };
+  it("flag ligada, sem dono e sem encaminhamento aberto: distribui uma vez", async () => {
+    const w = world({ settings: { escape_distribution_enabled: true }, convs: [escaped] });
+    await runUnansweredLeadSweep(w.deps, T0);
+    await runUnansweredLeadSweep(w.deps, min(5));
+    expect(w.escaped).toEqual(["e1"]);
+  });
+  it("flag desligada: não distribui (comportamento de hoje)", async () => {
+    const w = world({ convs: [escaped] });
+    await runUnansweredLeadSweep(w.deps, T0);
+    expect(w.escaped).toEqual([]);
+  });
+  it("com dono ou com encaminhamento aberto: não distribui", async () => {
+    const w = world({ settings: { escape_distribution_enabled: true }, convs: [{ ...escaped, owner: "marina" }, { id: "e2", ...old(180) }] });
+    w.handoff.add("e2");
+    await runUnansweredLeadSweep(w.deps, T0);
+    expect(w.escaped).toEqual([]);
+  });
+  it("fora do horário comercial: não distribui", async () => {
+    const w = world({ settings: { escape_distribution_enabled: true }, convs: [escaped] });
+    await runUnansweredLeadSweep(w.deps, new Date("2026-10-25T15:00:00Z")); // domingo
+    expect(w.escaped).toEqual([]);
+  });
+  it("falha na distribuição não derruba o aviso e tenta de novo na próxima varredura", async () => {
+    const w = world({ settings: { escape_distribution_enabled: true }, convs: [escaped] });
+    w.deps.distributeEscaped = async () => { throw new Error("rpc down"); };
+    await runUnansweredLeadSweep(w.deps, T0);
+    expect(w.alerts).toHaveLength(1);
+    w.deps.distributeEscaped = async (_o, cid) => { w.escaped.push(cid); return "a"; };
+    await runUnansweredLeadSweep(w.deps, min(5));
+    expect(w.escaped).toEqual(["e1"]);
   });
 });
