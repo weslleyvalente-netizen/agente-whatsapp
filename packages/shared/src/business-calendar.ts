@@ -55,6 +55,19 @@ function zonedToInstant(y: number, mo: number, d: number, h: number, mi: number,
   return guess;
 }
 
+/** Instante em que o relógio do fuso marca `isoDate` (YYYY-MM-DD) às h:mi. */
+export function localInstant(isoDate: string, h: number, mi: number, timeZone: string): Date {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return new Date(zonedToInstant(y, mo, d, h, mi, timeZone));
+}
+
+/** É dia com expediente (tem janela e não é data fechada)? */
+export function isBusinessDate(isoDate: string, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): boolean {
+  if ((calendar.closedDates ?? []).includes(isoDate)) return false;
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return (calendar.weekly[WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()]] ?? []).length > 0;
+}
+
 function closedPeriodAt(t: number, cal: BusinessCalendar) {
   return (cal.closedPeriods ?? []).map(p => ({ from: Date.parse(p.from), to: Date.parse(p.to) }))
     .find(p => Number.isFinite(p.from) && Number.isFinite(p.to) && p.from <= t && t < p.to) ?? null;
