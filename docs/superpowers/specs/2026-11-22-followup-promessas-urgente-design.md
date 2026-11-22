@@ -200,3 +200,18 @@ Mensagem do vendedor com promessa de retorno cria a tarefa `return_customer` "Re
    descoberto vem com o motivo: `no_open_card`, `not_urgent` ou `wrong_queue`.
 4. **Substituição de promessa.** O novo prazo troca a data, a hora e a prioridade da tarefa: a atualização genérica de tarefa
    semelhante não trocava a hora. Se a promessa antiga estava em outra tarefa, a pendência dela é encerrada.
+
+## Cenários de regressão adicionais (pedido do dono, 22/11)
+
+1. **Proposta enviada em várias mensagens.** Mensagens do vendedor com até 5 min entre uma e outra, sem resposta do cliente no meio
+   e com no máximo 30 min no total, são a **mesma apresentação**. Elas não contam como follow-up, e o lembrete de 30 min conta a
+   partir da **última parte**. O primeiro follow-up é a mensagem do vendedor depois de uma pausa maior. Uma resposta do cliente
+   encerra a apresentação. Testes: três partes (10:00, 10:01 e 10:03) dão lembrete só às 10:33; um follow-up real às 10:25 entra na
+   métrica; um cliente que responde no meio da apresentação zera a escada.
+2. **Promessa gravada e criação da tarefa com falha.** Toda execução revisa as promessas abertas. A que ficou sem tarefa ganha a
+   tarefa que faltou, deduplicada por negócio e tipo. Se a falha aconteceu entre duas promessas da mesma conversa, só a mais nova
+   fica aberta. Testes: a execução seguinte cria uma única tarefa, com o prazo da promessa, e a terceira execução não duplica.
+3. **Erro temporário ao consultar a tarefa.** Só "tarefa não existe" (`PGRST116`) conta como pendência fechada. Qualquer outro erro
+   do banco interrompe a verificação daquela promessa (o erro é registrado) e não encerra nada. Antes, qualquer falha virava
+   "tarefa concluída". Testes: na camada de banco (erro de conexão lança; inexistente, concluída ou de outra organização devolvem
+   false) e na rotina (a promessa e o lembrete de proposta continuam abertos).

@@ -25,6 +25,12 @@ export const COMMITMENTS_RUN_EVERY_MS = 5 * 60_000;
 export const SELLER_MESSAGES_LOOKBACK_MS = 24 * 60 * 60_000;
 /** Folga do cursor: mensagem gravada com created_at um pouco antes do fim da leitura anterior não se perde (dedupe por chave única). */
 const CURSOR_OVERLAP_MS = 10 * 60_000;
+/**
+ * Proposta mandada em várias mensagens: mensagens do vendedor com até 5 min entre uma e outra (sem resposta do cliente no meio, e
+ * no máximo 30 min no total) são a MESMA apresentação. Não contam como follow-up, e o lembrete de 30 min conta do fim do envio.
+ */
+const PRESENTATION_GAP_MS = 5 * 60_000;
+const PRESENTATION_MAX_MS = 30 * 60_000;
 /** Uma proposta por conversa nesta janela: etapa movida + várias mensagens em seguida (ou proposta em partes) contam uma vez. */
 const PROPOSAL_DEDUPE_WINDOW_MS = 2 * 60 * 60_000;
 
@@ -74,7 +80,7 @@ export interface CommitmentsDeps {
   insertCommitment(row: Omit<CommitmentRow, "id" | "taskId" | "resolvedAt"> & { organizationId: string; kind: string; phrase: string }): Promise<string | null>;
   /** Encerra (superseded) as promessas abertas anteriores da conversa e devolve quais eram, com a tarefa de cada uma. */
   supersedeCommitments(organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>>;
-  listOpenCommitments(organizationId: string): Promise<CommitmentRow[]>;
+  listOpenCommitments(organizationId: string): Promise<Array<CommitmentRow & { kind: string; phrase: string }>>;
   updateCommitment(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   createTask(input: {
     organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: "proposal_followup" | "return_customer";
@@ -116,7 +122,7 @@ export async function runCommitments(deps: CommitmentsDeps, now = new Date(), st
     catch (err) { summary.errors++; deps.log.error(`commitments: org ${org.id} scan failed (${errText(err)})`); }
     try { await trackProposals(deps, org.id, calendar, now, summary); }
     catch (err) { summary.errors++; deps.log.error(`commitments: org ${org.id} proposals failed (${errText(err)})`); }
-    try { await resolveCommitments(deps, org.id, now, summary); }
+    try { await resolveCommitments(deps, org.id, calendar, now, summary); }
     catch (err) { summary.errors++; deps.log.error(`commitments: org ${org.id} promises failed (${errText(err)})`); }
   }
   deps.log.info(`commitments: orgs=${summary.organizations} proposals=${summary.proposals} reminders=${summary.reminders} promises=${summary.promises} resolved=${summary.resolved} errors=${summary.errors}`);
@@ -195,6 +201,24 @@ async function isMessageNearestToStage(deps: CommitmentsDeps, organizationId: st
   return between.length === 0;
 }
 
+/**
+ * Separa a apresentação da proposta (partes seguidas do vendedor) do primeiro follow-up real (mensagem do vendedor depois de uma
+ * pausa). Resposta do cliente encerra a apresentação.
+ */
+export function splitPresentation(sentAtIso: string, after: ConvMessage[]): { presentationEnd: string; followup: ConvMessage | null } {
+  const start = Date.parse(sentAtIso);
+  let last = start;
+  let end = sentAtIso;
+  for (const x of after) {
+    if (x.role === "contact") return { presentationEnd: end, followup: after.find((y) => y.role === "human_agent" && Date.parse(y.createdAt) > Date.parse(x.createdAt)) ?? null };
+    if (x.role !== "human_agent") continue;
+    const t = Date.parse(x.createdAt);
+    if (t - last <= PRESENTATION_GAP_MS && t - start <= PRESENTATION_MAX_MS) { last = t; end = x.createdAt; continue; }
+    return { presentationEnd: end, followup: x };
+  }
+  return { presentationEnd: end, followup: null };
+}
+
 async function trackProposals(deps: CommitmentsDeps, organizationId: string, calendar: BusinessCalendar, now: Date, summary: CommitmentsSummary) {
   const rows = await deps.listTrackedProposals(organizationId, new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString());
   if (!rows.length) return;
@@ -208,16 +232,19 @@ async function trackProposals(deps: CommitmentsDeps, organizationId: string, cal
       let firstSeller = r.firstSellerFollowupAt;
       let firstCustomer = r.firstCustomerReplyAt;
       const trackMessages = (!firstSeller || !firstCustomer) && now.getTime() - Date.parse(r.sentAt) <= PROPOSAL_MESSAGE_TRACK_MS;
-      if (trackMessages) {
+      // Fim do envio da proposta (última parte da apresentação): é dele que o lembrete de 30 min conta.
+      let presentationEnd = r.sentAt;
+      if (trackMessages || !r.reminderTaskId) {
         const after = (await deps.messagesAfter(organizationId, r.conversationId, r.sentAt)).filter((x) => x.id !== r.sellerMessageId);
-        const s = after.find((x) => x.role === "human_agent");
+        const read = splitPresentation(r.sentAt, after);
+        presentationEnd = read.presentationEnd;
+        if (!firstSeller && read.followup) { firstSeller = read.followup.createdAt; patch.first_seller_followup_at = firstSeller; }
         const c = after.find((x) => x.role === "contact");
-        if (!firstSeller && s) { firstSeller = s.createdAt; patch.first_seller_followup_at = s.createdAt; }
         if (!firstCustomer && c) { firstCustomer = c.createdAt; patch.first_customer_reply_at = c.createdAt; }
       }
       const closed = !!(patch.outcome ?? r.outcome);
       if (!r.reminderTaskId && !firstSeller && !firstCustomer && !closed && r.ownerUserId && open) {
-        const due = addBusinessMinutes(new Date(r.sentAt), PROPOSAL_FOLLOWUP_MINUTES, calendar);
+        const due = addBusinessMinutes(new Date(presentationEnd), PROPOSAL_FOLLOWUP_MINUTES, calendar);
         if (now.getTime() >= due.getTime()) {
           const task = await deps.createTask({
             organizationId, contactId: r.contactId, conversationId: r.conversationId, opportunityId: r.opportunityId, ownerId: r.ownerUserId, type: "proposal_followup",
@@ -242,11 +269,39 @@ async function trackProposals(deps: CommitmentsDeps, organizationId: string, cal
   }
 }
 
-async function resolveCommitments(deps: CommitmentsDeps, organizationId: string, now: Date, summary: CommitmentsSummary) {
+async function resolveCommitments(deps: CommitmentsDeps, organizationId: string, calendar: BusinessCalendar, now: Date, summary: CommitmentsSummary) {
   const open = await deps.listOpenCommitments(organizationId);
   if (!open.length) return;
   const statuses = await deps.opportunityStatuses(organizationId, [...new Set(open.map((c) => c.opportunityId).filter((x): x is string => !!x))]);
+  // Recuperação (falha entre gravar a promessa e criar a tarefa): na mesma conversa só a promessa MAIS NOVA fica aberta, e toda
+  // promessa aberta sem tarefa ganha a tarefa que faltou (a criação é deduplicada por negócio/tipo).
+  const newestByConversation = new Map<string, CommitmentRow>();
+  for (const c of open) { const cur = newestByConversation.get(c.conversationId); if (!cur || c.sentAt > cur.sentAt) newestByConversation.set(c.conversationId, c); }
   for (const c of open) {
+    try {
+      const newest = newestByConversation.get(c.conversationId)!;
+      if (newest.id !== c.id) {
+        await deps.updateCommitment(organizationId, c.id, { resolved_at: now.toISOString(), resolution: "superseded" });
+        if (c.taskId && c.taskId !== newest.taskId) await deps.resolvePendency(organizationId, c.taskId, "return_customer", "Substituída por nova promessa do vendedor com outro prazo.");
+        c.resolvedAt = now.toISOString();
+        continue;
+      }
+      if (!c.taskId && c.ownerUserId) {
+        const dueAt = new Date(c.dueAt);
+        const task = await deps.createTask({
+          organizationId, contactId: c.contactId, conversationId: c.conversationId, opportunityId: c.opportunityId, ownerId: c.ownerUserId, type: "return_customer",
+          description: `Retornar ao cliente: você disse "${c.phrase}" às ${hhmm(new Date(c.sentAt), calendar.timeZone)}. Prazo: ${describeBusinessInstant(dueAt, calendar)}.`,
+          reason: "Promessa de retorno do vendedor ao cliente.", priority: "high",
+          dueDate: toISODateInTimeZone(dueAt, calendar.timeZone), dueTime: hhmm(dueAt, calendar.timeZone),
+        });
+        await deps.updateCommitment(organizationId, c.id, { task_id: task.id });
+        c.taskId = task.id;
+        deps.log.info(`commitments: recovered missing task ${task.id} for commitment ${c.id}`);
+      }
+    } catch (err) { summary.errors++; deps.log.error(`commitments: recovering commitment ${c.id} failed (${errText(err)})`); }
+  }
+  for (const c of open) {
+    if (c.resolvedAt) continue;
     try {
       let resolution: "opportunity_closed" | "task_completed" | "delivered" | null = null;
       const status = c.opportunityId ? statuses.get(c.opportunityId) ?? null : null;

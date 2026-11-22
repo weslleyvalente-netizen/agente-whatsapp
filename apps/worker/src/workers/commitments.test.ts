@@ -335,3 +335,92 @@ describe("revisão corretiva: nova promessa substitui a antiga sem deixar tarefa
     expect(w.tasks[0]).toMatchObject({ dueDate: "2026-11-23", dueTime: "15:00" });
   });
 });
+
+describe("cenário 1: proposta enviada em várias mensagens seguidas", () => {
+  const partes = [
+    { id: "p1", content: PROPOSTA, createdAt: brt("2026-11-23T10:00:00") },
+    { id: "p2", content: "Entrada de 10 mil e saldo em 48 parcelas", createdAt: brt("2026-11-23T10:01:00") },
+    { id: "p3", content: "segue o PDF com os detalhes", createdAt: brt("2026-11-23T10:03:00") },
+  ];
+  it("as partes da apresentação não contam como follow-up; o lembrete conta 30 min a partir da última parte", async () => {
+    const w = world({ seller: partes });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:32:00"))); // 32 min da 1ª parte, 29 da última
+    expect(w.proposals).toHaveLength(1);
+    expect(w.proposals[0].firstSellerFollowupAt).toBeNull();
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(0);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:34:00"))); // 31 min da última parte
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+    expect(w.proposals[0].firstSellerFollowupAt).toBeNull();
+  });
+  it("mensagem do vendedor depois de uma pausa (fim da apresentação) é o follow-up real e entra na métrica", async () => {
+    const w = world({ seller: [...partes, { id: "f", content: "conseguiu ver a proposta?", createdAt: brt("2026-11-23T10:25:00") }] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:40:00")));
+    expect(w.proposals[0].firstSellerFollowupAt).toBe(brt("2026-11-23T10:25:00"));
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(0);
+  });
+  it("cliente responde no meio da apresentação: a resposta encerra a apresentação (escada zera, sem lembrete)", async () => {
+    const w = world({ seller: partes.slice(0, 1), after: { c1: [{ role: "contact", createdAt: brt("2026-11-23T10:02:00"), content: "opa" }] } });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:40:00")));
+    expect(w.proposals[0].firstCustomerReplyAt).toBe(brt("2026-11-23T10:02:00"));
+    expect(w.tasks).toHaveLength(0);
+  });
+});
+
+describe("cenário 2: promessa gravada e criação da tarefa falhou", () => {
+  it("a execução seguinte recupera a pendência e cria a tarefa que faltou, sem duplicar", async () => {
+    const w = world({ seller: [{ id: "m1", content: "vou verificar e te retorno" }] });
+    const realCreate = w.deps.createTask;
+    let fail = true;
+    w.deps.createTask = async (i) => { if (fail) throw new Error("timeout do banco"); return realCreate(i); };
+    const s1 = await runCommitments(w.deps, new Date(brt("2026-11-23T10:05:00")));
+    expect(s1.errors).toBeGreaterThan(0);
+    expect(w.commitments).toHaveLength(1);
+    expect(w.commitments[0].taskId).toBeNull();
+    expect(w.tasks).toHaveLength(0);
+    fail = false;
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:10:00")));
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:15:00")));
+    expect(w.tasks.filter((t) => t.type === "return_customer")).toHaveLength(1);
+    expect(w.tasks[0]).toMatchObject({ dueDate: "2026-11-23", dueTime: "12:00", ownerId: "marina" });
+    expect(w.commitments[0]).toMatchObject({ taskId: w.tasks[0].id, resolvedAt: null });
+  });
+  it("falhou entre duas promessas da mesma conversa: na recuperação só a mais nova fica aberta", async () => {
+    const w = world({ seller: [
+      { id: "m1", content: "já te falo", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "m2", content: "te retorno às 15h", createdAt: brt("2026-11-23T10:20:00") },
+    ] });
+    const realCreate = w.deps.createTask;
+    let fail = true;
+    w.deps.createTask = async (i) => { if (fail) throw new Error("timeout do banco"); return realCreate(i); };
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:25:00")));
+    fail = false;
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:30:00")));
+    expect(w.commitments.filter((c) => !c.resolvedAt).map((c) => c.sellerMessageId)).toEqual(["m2"]);
+    expect(w.tasks.filter((t) => t.type === "return_customer")).toHaveLength(1);
+    expect(w.tasks[0].dueTime).toBe("15:00");
+  });
+});
+
+describe("cenário 3: erro temporário ao consultar a tarefa", () => {
+  it("não encerra a promessa; a execução seguinte, com o banco de volta, segue normal", async () => {
+    const w = world({ seller: [{ content: "vou verificar" }] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:05:00")));
+    const realCheck = w.deps.taskHasOpenPendency;
+    w.deps.taskHasOpenPendency = async () => { throw new Error("connection reset"); };
+    const s = await runCommitments(w.deps, new Date(brt("2026-11-23T10:10:00")));
+    expect(s.errors).toBeGreaterThan(0);
+    expect(w.commitments[0]).toMatchObject({ resolvedAt: null, resolution: null });
+    w.deps.taskHasOpenPendency = realCheck;
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:15:00")));
+    expect(w.commitments[0]).toMatchObject({ resolvedAt: null });
+  });
+  it("erro ao consultar o lembrete de proposta não o encerra nem cria outro", async () => {
+    const w = world({ seller: [{ content: PROPOSTA }] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")));
+    w.deps.taskHasOpenPendency = async () => { throw new Error("connection reset"); };
+    w.deps.messagesAfter = async () => [{ id: "r", role: "contact", createdAt: brt("2026-11-23T10:40:00"), content: "oi", mediaType: "text", fileName: null }];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:41:00")));
+    expect(w.resolved).toHaveLength(0);
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+  });
+});

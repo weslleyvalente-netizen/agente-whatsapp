@@ -147,14 +147,14 @@ export async function supersedeSellerCommitments(db: SupabaseClient, organizatio
 export async function listOpenSellerCommitments(db: SupabaseClient, organizationId: string) {
   const rows = await fetchAllPages<any>(async (from, to) => {
     const { data, error } = await db.from("seller_commitments")
-      .select("id, conversation_id, contact_id, opportunity_id, owner_user_id, seller_message_id, sent_at, due_at, task_id, resolved_at")
+      .select("id, conversation_id, contact_id, opportunity_id, owner_user_id, seller_message_id, sent_at, due_at, task_id, resolved_at, kind, phrase")
       .eq("organization_id", organizationId).is("resolved_at", null).order("due_at").order("id").range(from, to);
     if (error) throw error;
     return (data ?? []) as any[];
   });
   return rows.map((r) => ({
     id: r.id, conversationId: r.conversation_id, contactId: r.contact_id, opportunityId: r.opportunity_id, ownerUserId: r.owner_user_id,
-    sellerMessageId: r.seller_message_id, sentAt: r.sent_at, dueAt: r.due_at, taskId: r.task_id, resolvedAt: r.resolved_at,
+    sellerMessageId: r.seller_message_id, sentAt: r.sent_at, dueAt: r.due_at, taskId: r.task_id, resolvedAt: r.resolved_at, kind: r.kind, phrase: r.phrase,
   }));
 }
 
@@ -188,7 +188,10 @@ export async function createCommitmentTask(db: SupabaseClient, i: {
 
 export async function taskHasOpenPendency(db: SupabaseClient, organizationId: string, taskId: string, type: string): Promise<boolean> {
   let task: Awaited<ReturnType<typeof getTaskById>>;
-  try { task = await getTaskById(db, taskId); } catch { return false; }
+  // Só "tarefa não existe" (PGRST116 do .single()) vale como pendência fechada. Erro temporário do banco LANÇA: a rotina registra
+  // o erro e não encerra a promessa por engano (antes, qualquer falha virava "tarefa concluída").
+  try { task = await getTaskById(db, taskId); }
+  catch (err) { if ((err as { code?: string } | null)?.code === "PGRST116") return false; throw err; }
   if (!task || task.organization_id !== organizationId || !OPEN_TASK_STATUSES.includes(task.status)) return false;
   const pendencies = task.consolidated_pendencies ?? [];
   return pendencies.length ? pendencies.some((p) => p.type === type) : task.type === type;
