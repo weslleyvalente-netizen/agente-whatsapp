@@ -50,6 +50,11 @@ describe("translateUazapiEvent: mensagens", () => {
     expect(t.payload.data.key.remoteJidAlt).toBe("5562999990000@s.whatsapp.net");
   });
 
+  it("chat já com o número e @lid informado (sender_lid / chat.wa_chatlid): remoteJidAlt = o @lid (para juntar o contato antigo)", () => {
+    expect(msg(base({ sender_lid: "88683172618347@lid" })).payload.data.key.remoteJidAlt).toBe("88683172618347@lid");
+    expect(msg(base({}, { chat: { wa_chatlid: "88683172618347@lid" } })).payload.data.key.remoteJidAlt).toBe("88683172618347@lid");
+    expect(msg(base({ sender_lid: "lixo" })).payload.data.key.remoteJidAlt ?? null).toBeNull();
+  });
   it("número comum não ganha remoteJidAlt", () => {
     expect(msg(base({})).payload.data.key.remoteJidAlt ?? null).toBeNull();
   });

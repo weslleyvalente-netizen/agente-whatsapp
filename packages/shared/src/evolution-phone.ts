@@ -15,3 +15,15 @@ export function resolveEvolutionPhone(key: { remoteJid: string; remoteJidAlt?: s
   }
   return remoteJid.replace(PHONE_SUFFIX, "");
 }
+
+/**
+ * Par (identificador @lid, número real) quando o PRÓPRIO evento do WhatsApp traz os dois: chat @lid com alt de telefone, ou chat já
+ * com o telefone e o @lid no alt (UAZAPI chatlid). Número só com 10 a 15 dígitos e nunca o da própria loja. Nunca por nome/foto.
+ */
+export function lidPairOf(key: { remoteJid: string; remoteJidAlt?: string | null }, resolvedPhone: string, ownPhone?: string | null): { lid: string; phone: string } | null {
+  const lid = key.remoteJid.endsWith("@lid") ? key.remoteJid : typeof key.remoteJidAlt === "string" && key.remoteJidAlt.endsWith("@lid") ? key.remoteJidAlt : null;
+  if (!lid || !/^\d{10,15}$/.test(resolvedPhone)) return null;
+  const own = (ownPhone ?? "").replace(/\D/g, "");
+  if (own && own === resolvedPhone) return null;
+  return { lid, phone: resolvedPhone };
+}

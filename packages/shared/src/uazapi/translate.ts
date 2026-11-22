@@ -58,7 +58,11 @@ export function describeShape(value: unknown, depth = 3): unknown {
 
 function remoteJidAlt(m: Rec, chat: Rec | undefined, fromMe: boolean): string | null {
   const chatid = str(m.chatid) ?? "";
-  if (!chatid.endsWith("@lid")) return null;
+  if (!chatid.endsWith("@lid")) {
+    // Chat já com o número: o @lid informado (sender_lid / chat.wa_chatlid) vai no alt, para o webhook juntar o contato @lid antigo.
+    const lid = str(m.sender_lid) ?? str(chat?.wa_chatlid);
+    return lid && lid.endsWith("@lid") ? lid : null;
+  }
   if (!fromMe) return str(m.sender_pn) ?? null;
   const pn = str(chat?.wa_chatid);
   return pn && pn.endsWith("@s.whatsapp.net") ? pn : null;

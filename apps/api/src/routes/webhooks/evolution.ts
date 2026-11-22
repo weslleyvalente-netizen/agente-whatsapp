@@ -3,6 +3,7 @@ import {
   evolutionWebhookPayloadSchema,
   identifyLeadOrigin,
   resolveGreetingFilterConfig,
+  lidPairOf,
   isGreetingOrShortConfirmation,
   matchPendingOutboundMessage,
   shouldRunAiAfterHours,
@@ -28,6 +29,7 @@ import {
   stampMessageMetadata,
   applyMessageDeliveryStatus,
   mergeMessageMetadata,
+  adoptLidContact,
 } from "@aula-agente/database";
 import { CHAT_MEDIA_MAX_BYTES, evaluateMessageAge, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
@@ -388,6 +390,21 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       }
       if (ignoredContact && ignoredContact.retention_mode === "no_store") {
         return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
+      }
+
+      // Contato @lid antigo que reaparece com o número real (par do próprio WhatsApp): o @lid assume o número (ou é juntado ao
+      // contato real) ANTES de achar a conversa, para o cliente continuar com o mesmo vendedor e histórico. Nunca lança.
+      const lidPair = lidPairOf(payload.data.key, phone, instance.phone_number);
+      if (lidPair) {
+        try {
+          const org = await getOrganizationById(getAdminClient(), organizationId);
+          if (org.settings?.lid_auto_merge_enabled === true) {
+            const result = await adoptLidContact(getAdminClient(), organizationId, lidPair.lid, lidPair.phone);
+            if (result !== "none") request.log.info({ event: "lid_contact_adopted", organizationId, result, last4: lidPair.phone.slice(-4) }, "lid contact adopted");
+          }
+        } catch (err) {
+          request.log.error({ err, organizationId }, "Failed to adopt @lid contact — processing normally");
+        }
       }
 
       // Ensure conversation exists
