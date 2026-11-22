@@ -8,6 +8,7 @@ import {
   changeOpportunityOperationSchema,
   markOpportunityWonSchema,
   markOpportunityLostSchema,
+  aggregateProposalMetrics, resolveBusinessCalendar,
 } from "@aula-agente/shared";
 import {
   freezeOpportunity, getUnidentifiedSalesContacts, listSalesReps,
@@ -60,6 +61,25 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       return attachContactState(db, organizationId, withUrgent);
     }
   );
+
+  // Métricas de proposta (propostas identificadas, acompanhamento no prazo e conversão) por vendedor. Só gestor.
+  app.get<{ Params: { organizationId: string }; Querystring: { days?: string } }>("/organizations/:organizationId/proposal-metrics", async (request, reply) => {
+    const { organizationId } = request.params;
+    const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
+    if (!membership || !isManager(membership.role)) return reply.status(403).send({ error: "Somente gestores" });
+    const days = Math.min(Math.max(Number.parseInt(request.query.days ?? "30", 10) || 30, 1), 180);
+    const db = getAdminClient();
+    const org = await getOrganizationById(db, organizationId);
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const { data, error } = await db.from("proposal_followups").select("owner_user_id, sent_at, first_seller_followup_at, first_customer_reply_at, outcome")
+      .eq("organization_id", organizationId).gte("sent_at", since).order("sent_at").limit(5000);
+    // Migração ainda não aplicada: a tela mostra que não há dados, sem erro.
+    if (error) return { available: false, days };
+    const reps = await listSalesReps(db, organizationId);
+    const names = Object.fromEntries(reps.map((r) => [r.user_id, r.display_name ?? "Vendedor"]));
+    const rows = (data ?? []).map((r: any) => ({ ownerUserId: r.owner_user_id, sentAt: r.sent_at, firstSellerFollowupAt: r.first_seller_followup_at, firstCustomerReplyAt: r.first_customer_reply_at, outcome: r.outcome }));
+    return { available: true, days, ...aggregateProposalMetrics(rows, resolveBusinessCalendar(org.settings.business_calendar), names) };
+  });
 
   // Prova de cobertura antes de tirar o quadro "Atraso no atendimento": casos do quadro sem card no funil. Só gestor.
   app.get<{ Params: { organizationId: string } }>("/organizations/:organizationId/urgent-coverage", async (request, reply) => {

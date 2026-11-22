@@ -13,6 +13,7 @@ import { TASK_TYPE_LABELS, funnelConversationHref, type TaskType, type TaskPrior
 import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import { loadNeedsReply } from "@/lib/needs-reply-loader";
 import { NeedsReplyPanel, type NeedsReplyData } from "@/components/dashboard/needs-reply-panel";
+import { ProposalMetricsCard } from "@/components/dashboard/proposal-metrics-card";
 import type { TaskWithRelations } from "@/components/tasks/task-card";
 
 interface UrgentConversation {
@@ -361,6 +362,8 @@ export default function HomePage() {
           )}
         </CardContent>
       </Card>
+
+      {currentOrg?.settings.commitments_enabled === true && <ProposalMetricsCard organizationId={currentOrg.id} />}
 
       {needsReply ? (
         <NeedsReplyPanel data={needsReply} />
