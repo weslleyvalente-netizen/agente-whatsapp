@@ -6,7 +6,7 @@ import {
 import { getCustomerNudgeQueue, getRedisConnection } from "@aula-agente/queue";
 import {
   claimPushDedupe, completeNudgeTask, createTaskWithDedup, getAdminClient, getLastConversationMessage, getLastCustomerMessage, getMessageText, hasFrozenContact,
-  hasPushSubscription, hasSellerMessageAfter, isPushConfigured, listContactIdsWithOpenOpportunity, listCurrentMemberIds, listCustomerNudgeOrganizations,
+  hasPushSubscription, hasSellerMessageAfter, hasCustomerMessageAfter, isPushConfigured, listContactIdsWithOpenOpportunity, listCurrentMemberIds, listCustomerNudgeOrganizations,
   listNudgeTasksByConversation, listOpenNudgeTasks, listOpenOpportunitiesForNudge, listOpenOpportunityIds, listRecentConversationsForContacts,
   releasePushDedupe, recordNudgeTouch, sendPushToUser, type SupabaseClient,
   type NudgeConversation, type NudgeMessage, type NudgeOpportunity, type NudgeOrganization, type NudgeTaskRef, type OpenNudgeTask, type PushPayload,
@@ -54,6 +54,8 @@ export interface NudgeDeps {
   openOpportunityIds(organizationId: string, ids: string[]): Promise<Set<string>>;
   contactsWithOpenOpportunity(organizationId: string, contactIds: string[]): Promise<Set<string>>;
   sellerMessageAfter(organizationId: string, conversationId: string, afterIso: string): Promise<boolean>;
+  /** O cliente escreveu depois da tarefa? (a escada zera e a conversa já aparece em "Cliente respondeu"). */
+  customerMessageAfter(organizationId: string, conversationId: string, afterIso: string): Promise<boolean>;
   completeTask(organizationId: string, taskId: string, note: string): Promise<void>;
   // Push ao vendedor
   canReceivePush(organizationId: string, userId: string): Promise<boolean>;
@@ -138,6 +140,7 @@ async function resolveNudgeTasks(deps: NudgeDeps, organizationId: string): Promi
       let note: string | null = null;
       if (!stillOpen) note = "O negócio deixou de estar aberto — lembrete de cutucar encerrado.";
       else if (t.conversationId && (await deps.sellerMessageAfter(organizationId, t.conversationId, t.createdAt))) note = "Vendedor já cutucou o cliente (mensagem enviada depois da tarefa).";
+      else if (t.conversationId && (await deps.customerMessageAfter(organizationId, t.conversationId, t.createdAt))) note = "O cliente respondeu — lembrete de cutucar encerrado.";
       if (!note) continue;
       await deps.completeTask(organizationId, t.id, note);
       resolved++;
@@ -282,6 +285,7 @@ export function buildRealDeps(db: SupabaseClient = getAdminClient(), overrides: 
     openOpportunityIds: (orgId, ids) => listOpenOpportunityIds(db, orgId, ids),
     contactsWithOpenOpportunity: (orgId, contactIds) => listContactIdsWithOpenOpportunity(db, orgId, contactIds),
     sellerMessageAfter: (orgId, conversationId, afterIso) => hasSellerMessageAfter(db, orgId, conversationId, afterIso),
+    customerMessageAfter: (orgId, conversationId, afterIso) => hasCustomerMessageAfter(db, orgId, conversationId, afterIso),
     completeTask: (orgId, taskId, note) => completeNudgeTask(db, orgId, taskId, note),
     canReceivePush: async (orgId, userId) => {
       if (!isPushConfigured()) return false;

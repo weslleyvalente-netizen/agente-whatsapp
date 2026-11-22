@@ -10,7 +10,7 @@ const NOW = new Date("2026-10-30T18:00:00Z");
 interface Conv { id?: string; contact?: string; lastRole?: string; lastAt?: string; assigned?: string | null; customerMsg?: { content: string; at: string; mediaType?: string | null } | null; tasks?: Array<{ id: string; status: string; createdAt: string; completedAt?: string | null }> }
 interface Opp { id?: string; contact?: string; owner?: string | null; waitingOn?: string | null; waitingOnUntil?: string | null }
 
-function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean; pendencyAdded?: boolean; nonMembers?: string[]; openNudges?: any[] } = {}) {
+function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: Opp[]; frozen?: string[]; openTasks?: any[]; openOppIds?: string[]; sellerAfter?: string[]; customerAfter?: string[]; pushUsers?: string[]; pushSent?: number; pushThrows?: boolean; createWasUpdated?: boolean; pendencyAdded?: boolean; nonMembers?: string[]; openNudges?: any[] } = {}) {
   const convs = (o.convs ?? [{}]).map((c, i) => ({ id: c.id ?? `c${i}`, contact: c.contact ?? `ct${i}`, ...c }));
   const opps = (o.opps ?? convs.map((c): Opp => ({ contact: c.contact }))).map((p, i) => ({ id: p.id ?? `op${i}`, owner: "owner" in p ? p.owner : "seller1", waitingOn: null, waitingOnUntil: null, ...p }));
   const textCalls: string[] = []; const undone: Array<{ id: string; note: string }> = []; const created: any[] = []; const completed: Array<{ id: string; note: string }> = []; const pushes: any[] = []; const touches: any[] = []; const claimedKeys: string[] = []; const claimed = new Set<string>(); const logs: string[] = [];
@@ -33,6 +33,7 @@ function world(o: { settings?: Record<string, unknown>; convs?: Conv[]; opps?: O
     openOpportunityIds: async (_o, ids) => new Set((o.openOppIds ?? ids).filter((x) => ids.includes(x))),
     contactsWithOpenOpportunity: async (_o, ids) => new Set(ids),
     sellerMessageAfter: async (_o, id) => (o.sellerAfter ?? []).includes(id),
+    customerMessageAfter: async (_o, id) => (o.customerAfter ?? []).includes(id),
     completeTask: async (_o, id, note) => { completed.push({ id, note }); },
     canReceivePush: async (_o, u) => (o.pushUsers ?? ["seller1"]).includes(u),
     claimPushDedupe: async (k) => { claimedKeys.push(k); if (claimed.has(k)) return false; claimed.add(k); return true; },
@@ -196,6 +197,11 @@ describe("runCustomerNudge: resolução automática", () => {
     const w = world({ openTasks: [open()], openOppIds: [], convs: [{ lastRole: "agent" }] });
     await runCustomerNudge(w.deps, NOW);
     expect(w.completed[0].note).toContain("deixou de estar aberto");
+  });
+  it("conclui com nota quando o cliente respondeu depois da tarefa (a escada zera)", async () => {
+    const w = world({ openTasks: [open()], customerAfter: ["c0"], convs: [{ lastRole: "contact" }] });
+    const s = await runCustomerNudge(w.deps, NOW);
+    expect(s.resolved).toBe(1); expect(w.completed[0].note).toContain("cliente respondeu");
   });
   it("mantém a tarefa quando nada mudou", async () => {
     const w = world({ openTasks: [open()], convs: [{ lastRole: "agent" }] });
