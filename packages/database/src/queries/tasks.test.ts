@@ -78,6 +78,10 @@ function makeFakeClient(initialTasks: Row[]) {
         }
         throw new Error("single() called without insert/update");
       },
+      // Lista (as buscas de "tarefa aberta" agora leem várias e ignoram as tarefas independentes da rotina de compromissos).
+      then(resolve: (v: { data: Row[]; error: null }) => void) {
+        resolve({ data: tasks.filter((row) => filters.every((f) => f(row))), error: null });
+      },
     };
     return builder;
   }

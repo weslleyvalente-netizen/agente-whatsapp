@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PROPOSAL_STAGES } from "@aula-agente/shared";
+import { COMMITMENT_TASK_REASON, PROPOSAL_STAGES, TASK_TYPE_LABELS, type CommitmentTaskType, type Task, type TaskPendency } from "@aula-agente/shared";
 import { fetchAllPages } from "../pagination.js";
-import { createTaskWithDedup, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency, updateTask } from "./tasks.js";
+import { addTaskEvent, createTask, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency, updateTask } from "./tasks.js";
 
 // Consultas da rotina "commitments" (apps/worker/src/workers/commitments.ts). Leitura limitada: só mensagens de vendedor da janela
 // e, por conversa acompanhada, as mensagens depois da proposta/promessa (com limite).
@@ -163,26 +163,46 @@ export async function updateSellerCommitment(db: SupabaseClient, organizationId:
   if (error) throw error;
 }
 
-/** Tarefa interna do compromisso (dedupe e consolidação de sempre). Criada como sistema ("ai"), atribuída ao vendedor. */
+/**
+ * Tarefa interna do compromisso, INDEPENDENTE da consolidação por negócio (decisão do dono em 22/11/2026, após a simulação):
+ *  - não entra na tarefa aberta de outro fluxo (não troca título, hora, tipo nem responsável dela) e outro fluxo não põe pendência
+ *    nela (as buscas de agrupamento ignoram tarefas com o motivo fixo da rotina — ver isCommitmentTask);
+ *  - o prazo da promessa é o prazo da própria tarefa (data e hora visíveis ao vendedor);
+ *  - uma por conversa e tipo: nova promessa (ou nova proposta) na mesma conversa reaproveita a tarefa aberta e troca o prazo.
+ * Criada como sistema ("ai"), atribuída ao vendedor dono do compromisso.
+ */
 export async function createCommitmentTask(db: SupabaseClient, i: {
-  organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: "proposal_followup" | "return_customer";
-  description: string; reason: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
+  organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: CommitmentTaskType;
+  description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
 }): Promise<{ id: string }> {
-  const { task } = await createTaskWithDedup(db, {
-    organization_id: i.organizationId, contact_id: i.contactId, conversation_id: i.conversationId, opportunity_id: i.opportunityId,
-    type: i.type, description: i.description, reason: i.reason, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime,
-    created_by_type: "ai", created_by_id: null, assignee_type: "human", assignee_id: i.ownerId, assign_on_merge: true,
-  } as Parameters<typeof createTaskWithDedup>[1]);
-  // Tarefa do mesmo tipo já aberta: a atualização genérica troca data e descrição, mas NÃO a hora. Para a promessa (novo prazo do
-  // vendedor) a hora é o prazo: alinha data, hora e prioridade, senão a tarefa continuaria vencida pela hora antiga.
-  const single = (task.consolidated_pendencies ?? []).length <= 1;
-  const currentTime = (task.due_time ?? "").slice(0, 5) || null;
-  if (single && task.type === i.type && (task.due_date !== i.dueDate || currentTime !== (i.dueTime ?? null))) {
-    await updateTask(db, task.id, {
-      due_date: i.dueDate, due_time: i.dueTime, priority: i.priority,
-      consolidated_pendencies: (task.consolidated_pendencies ?? []).map((p) => (p.type === i.type ? { ...p, due_date: i.dueDate, due_time: i.dueTime } : p)),
-    });
+  const reason = COMMITMENT_TASK_REASON[i.type];
+  const pendency: TaskPendency = {
+    type: i.type, description: i.description, reason, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime,
+    added_at: new Date().toISOString(), added_by_type: "ai", added_by_id: null,
+  };
+  const { data, error } = await db.from("tasks").select("*")
+    .eq("organization_id", i.organizationId).eq("conversation_id", i.conversationId).eq("type", i.type).eq("reason", reason)
+    .in("status", OPEN_TASK_STATUSES).order("created_at", { ascending: false }).limit(1);
+  if (error) throw error;
+  const existing = ((data ?? []) as Task[])[0];
+  if (existing) {
+    const currentTime = (existing.due_time ?? "").slice(0, 5) || null;
+    if (existing.due_date !== i.dueDate || currentTime !== i.dueTime || existing.description !== i.description || existing.priority !== i.priority) {
+      await updateTask(db, existing.id, { description: i.description, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime, consolidated_pendencies: [pendency] }, existing.updated_at);
+      await addTaskEvent(db, { task_id: existing.id, organization_id: i.organizationId, event_type: "updated",
+        note: `Novo prazo do compromisso: ${i.dueDate}${i.dueTime ? ` às ${i.dueTime}` : ""}.`, created_by_type: "ai", created_by_id: null });
+    }
+    return { id: existing.id };
   }
+  const task = await createTask(db, {
+    organization_id: i.organizationId, contact_id: i.contactId, conversation_id: i.conversationId, opportunity_id: i.opportunityId,
+    assignee_type: "human", assignee_id: i.ownerId, type: i.type, title: TASK_TYPE_LABELS[i.type], description: i.description, ai_summary: null,
+    reason, priority: i.priority, status: "pending", due_date: i.dueDate, due_time: i.dueTime, created_by_type: "ai", created_by_id: null,
+    consolidated_pendencies: [pendency], followup_suggested_message: null, followup_suggestion_generated_at: null, followup_regeneration_count: 0,
+    followup_pending_message_id: null,
+  } as Parameters<typeof createTask>[1]);
+  await addTaskEvent(db, { task_id: task.id, organization_id: i.organizationId, event_type: "created",
+    note: "Tarefa independente da rotina de compromissos: não é agrupada com outras tarefas do negócio.", created_by_type: "ai", created_by_id: null });
   return { id: task.id };
 }
 

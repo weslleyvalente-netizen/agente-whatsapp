@@ -25,7 +25,28 @@ const MONEY = [
 const COMMERCIAL_TERMS = ["parcela", "parcelas", "entrada", "credito", "proposta", "simulacao", "financiamento", "consorcio", "lance", "a vista", "valor", "prestacao", "prestacoes"];
 const DOCUMENT_TERMS = /\b(proposta|simulacao|orcamento)\b/;
 
-export interface ProposalEvidence { strong: boolean; evidence: string | null }
+export interface ProposalEvidence { strong: boolean; evidence: string | null; excluded?: "reengagement" | "qualification_question" | "pending_check" }
+
+// Simulação de 22/11/2026 (7 dias reais): mensagens que citam valor + termo comercial mas NÃO apresentam proposta nova.
+// Retomada de conversa: a abertura remete ao que já foi falado ("vi que…", "conforme combinado", "fiquei pensando…").
+const REENGAGEMENT = /\b(vi que|soube que|sei que|(fiquei|ficou|estive|tava|to|estou) pensando|(fiquei|ficou) naquela|passando (aqui )?(pra|para|so)|conforme combinado|como (a gente )?combin|combinou|ficamos sem resposta|ainda tem interesse|ficou alguma duvida|pensou (mais|melhor|sobre)|conseguiu (vender|juntar|separar|resolver|ver|falar)|retomando|lembra (da|do|que))\b/;
+const REENGAGEMENT_OPENING_CHARS = 140;
+// Pergunta de qualificação: quer saber quanto o cliente pode pagar/tem; no máximo UM valor citado (oferta com opções tem vários).
+const QUALIFICATION = /\b(quanto|qual( o| e)? valor|pretende|consegue|possui|tem (de|pra|para|disponivel)|teria|dispoe)\b/;
+// Pergunta mesmo sem "?": a mensagem já começa perguntando.
+const QUESTION_OPENING = /^(qual|quais|quanto|quanta|quantos|quantas)\b/;
+// O vendedor diz que VAI verificar/consultar: é promessa (vira tarefa de retorno), não apresentação de proposta.
+const PENDING_CHECK = /\bvou (verificar|consultar|ver|confirmar|checar|conferir|analisar|levantar|olhar)\b/;
+
+/** Quantos valores em dinheiro distintos o texto cita (trechos sobrepostos de padrões diferentes contam uma vez). */
+function moneyMentions(text: string): number {
+  const spans: Array<[number, number]> = [];
+  for (const r of MONEY) for (const m of text.matchAll(new RegExp(r.source, "g"))) spans.push([m.index!, m.index! + m[0].length]);
+  spans.sort((a, b) => a[0] - b[0]);
+  let count = 0, end = -1;
+  for (const [s, e] of spans) { if (s > end) count++; end = Math.max(end, e); }
+  return count;
+}
 
 export function detectProposalEvidence(input: { content?: string | null; mediaType?: string | null; fileName?: string | null }): ProposalEvidence {
   const text = normalize(input.content ?? "");
@@ -38,8 +59,27 @@ export function detectProposalEvidence(input: { content?: string | null; mediaTy
   if (!text) return { strong: false, evidence: null };
   const money = MONEY.some((r) => r.test(text));
   const term = COMMERCIAL_TERMS.find((t) => new RegExp(`\\b${t}\\b`).test(text));
-  if (money && term) return { strong: true, evidence: `valor + termo "${term}"` };
-  return { strong: false, evidence: null };
+  if (!(money && term)) return { strong: false, evidence: null };
+  if (REENGAGEMENT.test(text.slice(0, REENGAGEMENT_OPENING_CHARS))) return { strong: false, evidence: null, excluded: "reengagement" };
+  if ((text.includes("?") || QUESTION_OPENING.test(text)) && QUALIFICATION.test(text) && moneyMentions(text) <= 1) return { strong: false, evidence: null, excluded: "qualification_question" };
+  if (PENDING_CHECK.test(text)) return { strong: false, evidence: null, excluded: "pending_check" };
+  return { strong: true, evidence: `valor + termo "${term}"` };
+}
+
+/** Motivo fixo gravado nas tarefas criadas pela rotina de compromissos: marca a tarefa como INDEPENDENTE (fora da consolidação). */
+export const COMMITMENT_TASK_REASON = {
+  return_customer: "Promessa de retorno do vendedor ao cliente.",
+  proposal_followup: "Proposta enviada sem resposta do cliente.",
+} as const;
+export type CommitmentTaskType = keyof typeof COMMITMENT_TASK_REASON;
+
+/**
+ * A tarefa é da rotina de compromissos? Essas tarefas nunca recebem pendência de outro fluxo nem entram numa tarefa de outro
+ * fluxo: cada promessa mantém o próprio prazo e só é encerrada pela conclusão dela mesma, entrega comprovada ou negócio fechado.
+ */
+export function isCommitmentTask(task: { type?: string | null; reason?: string | null }): boolean {
+  const type = task.type as CommitmentTaskType;
+  return Object.prototype.hasOwnProperty.call(COMMITMENT_TASK_REASON, type) && task.reason === COMMITMENT_TASK_REASON[type];
 }
 
 export type PromiseKind = "quick" | "standard" | "explicit_time" | "tomorrow";

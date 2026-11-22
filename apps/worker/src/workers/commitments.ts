@@ -84,7 +84,7 @@ export interface CommitmentsDeps {
   updateCommitment(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   createTask(input: {
     organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: "proposal_followup" | "return_customer";
-    description: string; reason: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
+    description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
   }): Promise<{ id: string }>;
   /** A tarefa ainda tem pendência aberta deste tipo (tarefa aberta do tipo, ou pendência consolidada do tipo)? */
   taskHasOpenPendency(organizationId: string, taskId: string, type: string): Promise<boolean>;
@@ -152,7 +152,7 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
           const task = await deps.createTask({
             organizationId, contactId: m.contactId, conversationId: m.conversationId, opportunityId: opp?.id ?? null, ownerId: owner, type: "return_customer",
             description: `Retornar ao cliente: você disse "${promise.phrase}" às ${hhmm(sentAt, calendar.timeZone)}. Prazo: ${describeBusinessInstant(promise.dueAt, calendar)}.`,
-            reason: "Promessa de retorno do vendedor ao cliente.", priority: "high",
+            priority: "high",
             dueDate: toISODateInTimeZone(promise.dueAt, calendar.timeZone), dueTime: hhmm(promise.dueAt, calendar.timeZone),
           });
           await deps.updateCommitment(organizationId, id, { task_id: task.id });
@@ -249,7 +249,7 @@ async function trackProposals(deps: CommitmentsDeps, organizationId: string, cal
           const task = await deps.createTask({
             organizationId, contactId: r.contactId, conversationId: r.conversationId, opportunityId: r.opportunityId, ownerId: r.ownerUserId, type: "proposal_followup",
             description: "Proposta enviada há 30 min — avaliar próximo contato. É só um lembrete interno: nada foi enviado ao cliente.",
-            reason: "Proposta enviada sem resposta do cliente.", priority: "normal", dueDate: toISODateInTimeZone(now, calendar.timeZone), dueTime: null,
+            priority: "normal", dueDate: toISODateInTimeZone(now, calendar.timeZone), dueTime: null,
           });
           patch.reminder_task_id = task.id; patch.reminder_created_at = now.toISOString();
           r.reminderTaskId = task.id;
@@ -291,7 +291,7 @@ async function resolveCommitments(deps: CommitmentsDeps, organizationId: string,
         const task = await deps.createTask({
           organizationId, contactId: c.contactId, conversationId: c.conversationId, opportunityId: c.opportunityId, ownerId: c.ownerUserId, type: "return_customer",
           description: `Retornar ao cliente: você disse "${c.phrase}" às ${hhmm(new Date(c.sentAt), calendar.timeZone)}. Prazo: ${describeBusinessInstant(dueAt, calendar)}.`,
-          reason: "Promessa de retorno do vendedor ao cliente.", priority: "high",
+          priority: "high",
           dueDate: toISODateInTimeZone(dueAt, calendar.timeZone), dueTime: hhmm(dueAt, calendar.timeZone),
         });
         await deps.updateCommitment(organizationId, c.id, { task_id: task.id });
