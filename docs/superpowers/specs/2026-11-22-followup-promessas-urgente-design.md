@@ -157,3 +157,27 @@ Mensagem do vendedor com promessa de retorno cria a tarefa `return_customer` "Re
 - TRT18, calendário de feriados locais: https://www.trt18.jus.br/portal/arquivos/2020/12/Calendario-Anual-2021-em-PDF-1.pdf
 - Decreto estadual de 2026 que transfere o 26/07: https://legisla.casacivil.go.gov.br
 - Confirmar no Diário Oficial de Posse antes de ligar.
+
+## Decisões tomadas na implementação
+
+1. **Janela do evento de etapa.** O evento de etapa vale se aconteceu até **2 horas de relógio** antes da mensagem (o texto acima
+   dizia "2 horas úteis"). Na prática quase sempre dá o mesmo, porque o vendedor move a etapa e manda a proposta em seguida. Se
+   estiver errado: uma proposta mandada logo na abertura, para uma etapa movida no fim do expediente anterior, não é reconhecida
+   pelo evento (mas ainda pode ser pelo conteúdo).
+2. **Uma proposta por conversa a cada 2 horas.** Etapa movida seguida de várias mensagens, ou proposta mandada em partes, conta uma
+   vez só (a primeira mensagem). Se estiver errado: uma proposta revisada dentro de 2 horas não ganha lembrete de 30 min próprio; o
+   cliente que sumir ainda cai no "Cutucar cliente" de 1, 3 e 7 dias.
+3. **Leitura incremental.** A rotina de 5 minutos lê só as mensagens novas desde a última execução, com 10 minutos de folga. Depois
+   de um reinício, relê as últimas 24 horas, sem duplicar nada graças às chaves únicas. Os degraus de 1, 3 e 7 dias continuam na
+   rotina de 30 minutos. O motivo é a carga no banco (plano Nano).
+4. **Promessas em tabela própria** (`seller_commitments`), porque a tabela de tarefas não tem metadados. Essa tabela evita
+   duplicidade, serve de auditoria e define o "Urgente" sem depender do agrupamento de tarefas.
+5. **Encerramento da pendência "Retornar ao cliente"** usa o encerramento por tipo de pendência que já existe. Numa tarefa agrupada,
+   ele remove todas as pendências `return_customer` dela. Se estiver errado: um "Retornar cliente" criado pela IA no mesmo negócio
+   fecharia junto quando a promessa é entregue.
+6. **Cliente que escapou passa para o atendimento humano** (`is_human_takeover`), como no pedido de humano da IA, para que a IA não
+   responda depois por cima do vendedor.
+7. **@lid juntado que volta sem o número junto:** o webhook procura o contato que guardou aquele @lid (`metadata.lid`) em vez de
+   criar um contato @lid novo.
+8. **Selo de follow-up sem "há X".** O selo diz o tipo ("proposta sem resposta" ou "cliente sem responder") sem o tempo, porque o card
+   não carrega o horário da proposta. O tempo aparece na tarefa.
