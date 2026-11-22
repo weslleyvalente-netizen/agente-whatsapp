@@ -502,6 +502,14 @@ describe("cliente que escapou (ninguém respondeu, nem a IA) entra no rodízio",
     await runUnansweredLeadSweep(w.deps, new Date("2026-10-25T15:00:00Z")); // domingo
     expect(w.escaped).toEqual([]);
   });
+  it("rodízio devolveu vazio (nada gravado): não repete a cada varredura e não derruba o aviso", async () => {
+    const w = world({ settings: { escape_distribution_enabled: true }, convs: [escaped] });
+    w.setEscapeResult(null);
+    await runUnansweredLeadSweep(w.deps, T0);
+    await runUnansweredLeadSweep(w.deps, min(5));
+    expect(w.escaped).toEqual(["e1"]);
+    expect(w.alerts).toHaveLength(1);
+  });
   it("falha na distribuição não derruba o aviso e tenta de novo na próxima varredura", async () => {
     const w = world({ settings: { escape_distribution_enabled: true }, convs: [escaped] });
     w.deps.distributeEscaped = async () => { throw new Error("rpc down"); };

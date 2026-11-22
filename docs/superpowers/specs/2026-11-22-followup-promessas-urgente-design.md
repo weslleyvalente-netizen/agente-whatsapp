@@ -181,3 +181,22 @@ Mensagem do vendedor com promessa de retorno cria a tarefa `return_customer` "Re
    criar um contato @lid novo.
 8. **Selo de follow-up sem "há X".** O selo diz o tipo ("proposta sem resposta" ou "cliente sem responder") sem o tempo, porque o card
    não carrega o horário da proposta. O tempo aparece na tarefa.
+
+## Revisão corretiva (pedido do dono, 22/11)
+
+1. **A etapa movida depois não transforma mensagem anterior em proposta.** O evento de etapa vale para uma única mensagem: a
+   primeira do vendedor depois do evento (evento até 2 h antes) ou a última antes dele (evento até 10 min depois), e só se não
+   houver outra mensagem do vendedor no meio. Uma proposta com valor no mesmo intervalo prevalece sobre a identificada pela etapa,
+   que é descartada se ainda não tiver lembrete. Isso substitui as decisões 1 e 2 da seção anterior.
+2. **Clientes esquecidos com operação atômica.** A função `distribute_escaped_lead` grava o encaminhamento, chama o rodízio e liga
+   o atendimento humano numa única transação. A IA só é desligada quando há vendedor atribuído.
+   - Rodízio vazio: tudo é desfeito e nada fica gravado. A varredura não repete por 24 h.
+   - Erro do rodízio: nada fica gravado e a varredura tenta de novo.
+   - Exceção para o gestor: o encaminhamento e a exceção ficam, mas a IA continua ativa.
+
+   Isso substitui a decisão 6.
+3. **A cobertura prova que o caso aparece como Urgente na fila certa.** A rota monta os cards pelo mesmo pipeline do funil (visão
+   do gestor, urgência aplicada como se a flag estivesse ligada) e confere `classifySalesQueue` = "Cliente respondeu". Cada caso
+   descoberto vem com o motivo: `no_open_card`, `not_urgent` ou `wrong_queue`.
+4. **Substituição de promessa.** O novo prazo troca a data, a hora e a prioridade da tarefa: a atualização genérica de tarefa
+   semelhante não trocava a hora. Se a promessa antiga estava em outra tarefa, a pendência dela é encerrada.

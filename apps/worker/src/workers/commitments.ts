@@ -14,7 +14,7 @@ import {
 } from "@aula-agente/shared";
 import { getCommitmentsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventSince, insertProposalFollowup, proposalExistsBetween,
+  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventBetween, discardStageProposalFollowups, insertProposalFollowup, proposalExistsBetween,
   insertSellerCommitment, listCommitmentsOrganizations, listMessagesAfter, listOpenSellerCommitments, listRecentSellerMessages,
   listTrackedProposalFollowups, resolveCommitmentPendency, supersedeSellerCommitments, taskHasOpenPendency, updateProposalFollowup,
   updateSellerCommitment, type SupabaseClient,
@@ -33,8 +33,12 @@ export interface CommitmentsState { lastScan: Map<string, number> }
 export const createCommitmentsState = (): CommitmentsState => ({ lastScan: new Map() });
 /** Até quando uma proposta é acompanhada para métrica de mensagens (o resultado do negócio segue até 30 dias). */
 const PROPOSAL_MESSAGE_TRACK_MS = 7 * 24 * 60 * 60_000;
-/** Evento de etapa vale como prova da proposta se ocorreu até 2 h antes da mensagem do vendedor (ou depois dela). */
+/**
+ * Evento de etapa vale como prova da proposta para UMA mensagem do vendedor: a primeira depois do evento (evento até 2 h antes), ou a
+ * última antes dele (evento até 10 min depois). Etapa movida mais tarde nunca transforma uma mensagem anterior ("bom dia") em proposta.
+ */
 const STAGE_EVENT_BEFORE_MS = 2 * 60 * 60_000;
+const STAGE_EVENT_AFTER_MS = 10 * 60_000;
 
 export interface SellerMessage {
   id: string; conversationId: string; contactId: string; assignedTo: string | null;
@@ -58,15 +62,18 @@ export interface CommitmentsDeps {
   /** Negócio aberto do contato (dono preferido), ou null. */
   openOpportunity(organizationId: string, contactId: string): Promise<{ id: string; ownerId: string | null } | null>;
   opportunityStatuses(organizationId: string, ids: string[]): Promise<Map<string, string>>;
-  /** Último stage_changed para etapa de proposta do negócio desde sinceIso. */
-  proposalStageEventSince(organizationId: string, opportunityId: string, sinceIso: string): Promise<{ at: string; stage: string } | null>;
+  /** stage_changed para etapa de proposta do negócio entre fromIso e toIso (o mais recente). */
+  proposalStageEventBetween(organizationId: string, opportunityId: string, fromIso: string, toIso: string): Promise<{ at: string; stage: string } | null>;
+  /** Remove propostas identificadas só pela etapa (sem lembrete criado) desta conversa no intervalo: a proposta com valor prevalece. */
+  discardStageProposals(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<void>;
   /** Já existe proposta registrada nesta conversa com sent_at entre fromIso e toIso? */
   recentProposalExists(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean>;
   insertProposal(row: Omit<ProposalRow, "id" | "reminderTaskId" | "firstSellerFollowupAt" | "firstCustomerReplyAt" | "outcome"> & { organizationId: string; identifiedBy: "stage_event" | "content"; evidence: string }): Promise<boolean>;
   listTrackedProposals(organizationId: string, sinceIso: string): Promise<ProposalRow[]>;
   updateProposal(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   insertCommitment(row: Omit<CommitmentRow, "id" | "taskId" | "resolvedAt"> & { organizationId: string; kind: string; phrase: string }): Promise<string | null>;
-  supersedeCommitments(organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<void>;
+  /** Encerra (superseded) as promessas abertas anteriores da conversa e devolve quais eram, com a tarefa de cada uma. */
+  supersedeCommitments(organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>>;
   listOpenCommitments(organizationId: string): Promise<CommitmentRow[]>;
   updateCommitment(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   createTask(input: {
@@ -136,7 +143,6 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
           sellerMessageId: m.id, sentAt: sentAt.toISOString(), dueAt: promise.dueAt.toISOString(), kind: promise.kind, phrase: promise.phrase,
         });
         if (id) {
-          await deps.supersedeCommitments(organizationId, m.conversationId, id, now.toISOString());
           const task = await deps.createTask({
             organizationId, contactId: m.contactId, conversationId: m.conversationId, opportunityId: opp?.id ?? null, ownerId: owner, type: "return_customer",
             description: `Retornar ao cliente: você disse "${promise.phrase}" às ${hhmm(sentAt, calendar.timeZone)}. Prazo: ${describeBusinessInstant(promise.dueAt, calendar)}.`,
@@ -144,6 +150,12 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
             dueDate: toISODateInTimeZone(promise.dueAt, calendar.timeZone), dueTime: hhmm(promise.dueAt, calendar.timeZone),
           });
           await deps.updateCommitment(organizationId, id, { task_id: task.id });
+          // Novo prazo do vendedor: a promessa antiga sai e, se estava em OUTRA tarefa, a pendência dela é encerrada
+          // (não pode continuar aparecendo vencida). Na mesma tarefa, o prazo e a hora já foram trocados pela criação acima.
+          const superseded = await deps.supersedeCommitments(organizationId, m.conversationId, id, now.toISOString());
+          for (const old of superseded) {
+            if (old.taskId && old.taskId !== task.id) await deps.resolvePendency(organizationId, old.taskId, "return_customer", "Substituída por nova promessa do vendedor com outro prazo.");
+          }
           summary.promises++;
         }
       }
@@ -152,10 +164,15 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       const ev = detectProposalEvidence({ content: m.content, mediaType: m.mediaType, fileName: m.fileName });
       if (ev.strong && ev.evidence) identified = { by: "content", evidence: ev.evidence };
       else if (opp) {
-        const stage = await deps.proposalStageEventSince(organizationId, opp.id, new Date(sentAt.getTime() - STAGE_EVENT_BEFORE_MS).toISOString());
-        if (stage && Date.parse(stage.at) <= now.getTime()) {
+        const stage = await deps.proposalStageEventBetween(organizationId, opp.id,
+          new Date(sentAt.getTime() - STAGE_EVENT_BEFORE_MS).toISOString(), new Date(sentAt.getTime() + STAGE_EVENT_AFTER_MS).toISOString());
+        if (stage && Date.parse(stage.at) <= now.getTime() && (await isMessageNearestToStage(deps, organizationId, m, stage.at))) {
           identified = { by: "stage_event", evidence: `Etapa movida para ${FUNNEL_STAGE_LABELS[stage.stage] ?? stage.stage} às ${hhmm(new Date(stage.at), calendar.timeZone)}` };
         }
+      }
+      // Proposta com valor/termo (evidência forte de conteúdo) prevalece sobre a identificada só pela etapa no mesmo intervalo.
+      if (identified?.by === "content") {
+        await deps.discardStageProposals(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString());
       }
       if (identified && !(await deps.recentProposalExists(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString()))) {
         const inserted = await deps.insertProposal({
@@ -166,6 +183,16 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       }
     } catch (err) { summary.errors++; deps.log.error(`commitments: message ${m.id} failed (${errText(err)})`); }
   }
+}
+
+/** A mensagem é a do vendedor mais próxima do evento: nenhuma outra mensagem do vendedor entre a mensagem e o evento. */
+async function isMessageNearestToStage(deps: CommitmentsDeps, organizationId: string, m: SellerMessage, stageAtIso: string): Promise<boolean> {
+  const msgAt = Date.parse(m.createdAt);
+  const stageAt = Date.parse(stageAtIso);
+  const from = new Date(Math.min(msgAt, stageAt)).toISOString();
+  const between = (await deps.messagesAfter(organizationId, m.conversationId, from))
+    .filter((x) => x.role === "human_agent" && x.id !== m.id && Date.parse(x.createdAt) < Math.max(msgAt, stageAt));
+  return between.length === 0;
 }
 
 async function trackProposals(deps: CommitmentsDeps, organizationId: string, calendar: BusinessCalendar, now: Date, summary: CommitmentsSummary) {
@@ -248,7 +275,8 @@ export function buildCommitmentsDeps(db: SupabaseClient = getAdminClient()): Com
     messagesAfter: (org, conv, after) => listMessagesAfter(db, org, conv, after),
     openOpportunity: (org, contact) => getOpenOpportunityForContact(db, org, contact),
     opportunityStatuses: (org, ids) => (ids.length ? getOpportunityStatuses(db, org, ids) : Promise.resolve(new Map())),
-    proposalStageEventSince: (org, opp, since) => getProposalStageEventSince(db, org, opp, since),
+    proposalStageEventBetween: (org, opp, from, to) => getProposalStageEventBetween(db, org, opp, from, to),
+    discardStageProposals: (org, conv, from, to) => discardStageProposalFollowups(db, org, conv, from, to),
     recentProposalExists: (org, conv, from, to) => proposalExistsBetween(db, org, conv, from, to),
     insertProposal: (row) => insertProposalFollowup(db, row),
     listTrackedProposals: (org, since) => listTrackedProposalFollowups(db, org, since),

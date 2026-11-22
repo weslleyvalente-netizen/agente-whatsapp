@@ -2,7 +2,7 @@
 // listOpenExceptions) e as promessas de retorno vencidas (seller_commitments). A cobertura diz quantos casos do quadro antigo
 // não têm card no funil: o quadro só pode sair quando ela ficar zerada (desenho 2026-11-22).
 import { getAdminClient, listOpenExceptions, listSlaAlerts } from "@aula-agente/database";
-import type { UrgentState } from "@aula-agente/shared";
+import { classifySalesQueue, type SalesQueueInput, type UrgentState } from "@aula-agente/shared";
 import { createOrgCache } from "../lib/org-cache.js";
 
 type AssignmentLike = { contact_id: string; conversation_id: string; handoff_at: string; assigned_at: string; reason: string };
@@ -30,12 +30,33 @@ export function applyUrgent<T extends { contact_id: string; status: string; sale
   });
 }
 
-export function urgentCoverage(src: UrgentSources, openContactIds: Set<string>) {
+type CoverageProblem = "no_open_card" | "not_urgent" | "wrong_queue";
+/**
+ * Prova de cobertura: cada caso do quadro antigo (alerta de prazo / exceção) precisa aparecer como card URGENTE na coluna
+ * "Cliente respondeu" da fila — calculado com o mesmo pipeline do funil (cards já enriquecidos + applyUrgent + classifySalesQueue).
+ * Não basta existir um negócio aberto do contato.
+ */
+export function urgentCoverage(
+  src: UrgentSources,
+  cards: Array<SalesQueueInput & { contact_id: string }>,
+  nowIso: string,
+  classify: (row: SalesQueueInput, now: string) => { group: string } = classifySalesQueue,
+) {
   const items = [
     ...src.alerts.map((a) => ({ contactId: a.contact_id, conversationId: a.conversation_id, reason: "sla" as const })),
     ...src.exceptions.map((e) => ({ contactId: e.contact_id, conversationId: e.conversation_id, reason: "exception" as const })),
   ];
-  const uncovered = items.filter((i) => !openContactIds.has(i.contactId));
+  const byContact = new Map<string, Array<SalesQueueInput & { contact_id: string }>>();
+  for (const c of cards) if (c.status === "open") byContact.set(c.contact_id, [...(byContact.get(c.contact_id) ?? []), c]);
+  const uncovered: Array<(typeof items)[number] & { problem: CoverageProblem }> = [];
+  for (const i of items) {
+    const open = byContact.get(i.contactId) ?? [];
+    let problem: CoverageProblem | null = null;
+    if (!open.length) problem = "no_open_card";
+    else if (!open.some((c) => !!c.sales_state?.urgent)) problem = "not_urgent";
+    else if (!open.some((c) => !!c.sales_state?.urgent && classify(c, nowIso).group === "customer_replied")) problem = "wrong_queue";
+    if (problem) uncovered.push({ ...i, problem });
+  }
   return { total: items.length, covered: items.length - uncovered.length, uncovered };
 }
 

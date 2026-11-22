@@ -87,11 +87,18 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
     if (!membership || !isManager(membership.role)) return reply.status(403).send({ error: "Somente gestores" });
     const db = getAdminClient();
-    const [sources, open] = await Promise.all([
+    const [sources, rows, organization] = await Promise.all([
       loadUrgentSources(db, organizationId),
       getOpportunitiesByOrganization(db, organizationId, { status: "open" }),
+      getOrganizationById(db, organizationId),
     ]);
-    return urgentCoverage(sources, new Set((open as Array<{ contact_id: string }>).map((o) => o.contact_id)));
+    // Mesmo pipeline do funil (visão do gestor: todos os cards), com a urgência aplicada como se a flag estivesse ligada: a prova
+    // vale ANTES de ligar urgent_cards_enabled e de tirar o quadro antigo.
+    const now = new Date();
+    const enriched = await enrichSalesWorkspace(db, organizationId, rows, true,
+      isSellerFilterEnabled(organization.settings) ? { enabled: true, viewer: { mode: "all" } } : undefined);
+    const cards = applyUrgent(enriched as any[], buildUrgentByContact(sources, now));
+    return { ...urgentCoverage(sources, cards, now.toISOString()), urgentCardsEnabled: organization.settings.urgent_cards_enabled === true };
   });
 
   app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/pending-tasks",async(request,reply)=>{

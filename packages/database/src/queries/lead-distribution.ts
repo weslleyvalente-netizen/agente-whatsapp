@@ -5,8 +5,6 @@ import {
   type DistributionContext, type LeadAssignment, type OrganizationSettings, type SalesRep, type SalesRepAvailability,
 } from "@aula-agente/shared";
 import { getOrganizationById } from "./organizations.js";
-import { createHandoffEvent } from "./handoff-events.js";
-import { updateConversation } from "./conversations.js";
 import { fetchAllPages } from "../pagination.js";
 
 /** Prazo do SLA em minutos úteis. Nunca lança: calendário inválido cai no padrão. */
@@ -41,22 +39,18 @@ export async function distributeLeadForHandoff(
 }
 
 /**
- * Cliente que escapou (escreveu e ninguém respondeu, nem a IA): se a conversa segue sem dono, sem atribuição ativa e sem exceção
- * aberta, registra o encaminhamento pelo sistema e chama o rodízio — o mesmo caminho do pedido de humano da IA (a IA para de
- * responder: takeover). Devolve a atribuição criada, ou null quando nada foi feito.
+ * Cliente que escapou (escreveu e ninguém respondeu, nem a IA): encaminhamento + rodízio + atendimento humano numa ÚNICA transação
+ * (função distribute_escaped_lead, migração 20261122120000). A IA só é desligada quando o rodízio entregou a um vendedor; rodízio
+ * vazio desfaz tudo (devolve null); erro do rodízio lança e nada fica gravado. Só a distribuição real (sem modo sombra).
  */
-export async function distributeEscapedLead(db: SupabaseClient, organizationId: string, conversationId: string): Promise<string | null> {
-  const { data: conv, error } = await db.from("conversations").select("id, assigned_to").eq("organization_id", organizationId).eq("id", conversationId).maybeSingle();
-  if (error) throw error;
-  if (!conv || (conv as { assigned_to: string | null }).assigned_to) return null;
-  if (await getActiveAssignmentRepUserId(db, organizationId, conversationId)) return null;
-  if (await hasOpenDistributionException(db, organizationId, conversationId)) return null;
-  await updateConversation(db, conversationId, { is_human_takeover: true, human_takeover_at: new Date().toISOString() });
-  const handoff = await createHandoffEvent(db, {
-    organization_id: organizationId, conversation_id: conversationId, trigger_type: "sistema_sem_resposta", motivo: "ia_sem_resposta",
-    resumo: "Cliente escreveu e ninguém respondeu (nem a IA). Entregue ao rodízio pelo sistema.", urgencia: "alta", criado_por: "sistema",
+export async function distributeEscapedLead(db: SupabaseClient, organizationId: string, conversationId: string, now: Date = new Date()): Promise<string | null> {
+  const org = await getOrganizationById(db, organizationId);
+  if (org.settings.lead_distribution_enabled !== true) return null;
+  const { data, error } = await db.rpc("distribute_escaped_lead", {
+    p_organization_id: organizationId, p_conversation_id: conversationId, p_sla_due_at: computeSlaDueAt(org.settings, now).toISOString(),
   });
-  return distributeLeadForHandoff(db, { organizationId, conversationId, handoffEventId: handoff.id });
+  if (error) throw error;
+  return (data as string | null) ?? null;
 }
 
 /** Usuário do vendedor da atribuição ativa (pendente/aceita) da conversa, ou null. */

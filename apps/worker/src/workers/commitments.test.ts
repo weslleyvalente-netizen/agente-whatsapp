@@ -29,17 +29,21 @@ function world(o: WorldOpts = {}) {
   const deps: CommitmentsDeps = {
     listOrganizations: async () => [{ id: "org1", settings: { commitments_enabled: true, ...(o.settings ?? {}) } }],
     listSellerMessages: async () => seller,
-    messagesAfter: async (_org, conv, afterIso) => (o.after?.[conv] ?? []).filter((m) => m.createdAt > afterIso)
-      .map((m, i) => ({ id: m.id ?? `a${i}`, role: m.role, createdAt: m.createdAt, content: m.content ?? "", mediaType: m.mediaType ?? "text", fileName: m.fileName ?? null })),
+    // Mensagens da conversa depois de afterIso: as do vendedor da própria lista + as extras do cenário (como no banco real).
+    messagesAfter: async (_org, conv, afterIso) => [
+      ...seller.filter((m) => m.conversationId === conv && m.createdAt > afterIso).map((m) => ({ id: m.id, role: "human_agent", createdAt: m.createdAt, content: m.content, mediaType: m.mediaType, fileName: m.fileName })),
+      ...(o.after?.[conv] ?? []).filter((m) => m.createdAt > afterIso).map((m, i) => ({ id: m.id ?? `a${i}`, role: m.role, createdAt: m.createdAt, content: m.content ?? "", mediaType: m.mediaType ?? "text", fileName: m.fileName ?? null })),
+    ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     openOpportunity: async () => (o.oppStatus && o.oppStatus !== "open" ? null : { id: "op1", ownerId: o.oppOwner === undefined ? "marina" : o.oppOwner }),
     opportunityStatuses: async (_org, ids) => new Map(ids.map((i) => [i, o.oppStatus ?? "open"])),
-    proposalStageEventSince: async (_org, _opp, since) => (o.stageEventAt && o.stageEventAt >= since ? { at: o.stageEventAt, stage: "proposal_sent" } : null),
+    proposalStageEventBetween: async (_org, _opp, fromIso, toIso) => (o.stageEventAt && o.stageEventAt >= fromIso && o.stageEventAt <= toIso ? { at: o.stageEventAt, stage: "proposal_sent" } : null),
+    discardStageProposals: async (_org, conv, fromIso, toIso) => { for (let i = proposals.length - 1; i >= 0; i--) { const p = proposals[i]; if (p.conversationId === conv && p.identifiedBy === "stage_event" && !p.reminderTaskId && p.sentAt >= fromIso && p.sentAt <= toIso) proposals.splice(i, 1); } },
     recentProposalExists: async (_org, conv, fromIso, toIso) => proposals.some((p) => p.conversationId === conv && p.sentAt >= fromIso && p.sentAt <= toIso),
     insertProposal: async (row) => { if (proposals.some((p) => p.sellerMessageId === row.sellerMessageId)) return false; proposals.push({ id: `p${proposals.length}`, reminderTaskId: null, firstSellerFollowupAt: null, firstCustomerReplyAt: null, outcome: null, ...row }); return true; },
     listTrackedProposals: async () => proposals.map((p) => ({ ...p })),
     updateProposal: async (_org, id, patch) => { Object.assign(proposals.find((p) => p.id === id), camel(patch)); },
     insertCommitment: async (row) => { if (commitments.some((c) => c.sellerMessageId === row.sellerMessageId)) return null; const id = `k${commitments.length}`; commitments.push({ id, taskId: null, resolvedAt: null, resolution: null, ...row }); return id; },
-    supersedeCommitments: async (_org, conv, keep, at) => { for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt) Object.assign(c, { resolvedAt: at, resolution: "superseded" }); },
+    supersedeCommitments: async (_org, conv, keep, at) => { const out: Array<{ id: string; taskId: string | null }> = []; for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt) { Object.assign(c, { resolvedAt: at, resolution: "superseded" }); out.push({ id: c.id, taskId: c.taskId }); } return out; },
     listOpenCommitments: async () => commitments.filter((c) => !c.resolvedAt).map((c) => ({ ...c })),
     updateCommitment: async (_org, id, patch) => { Object.assign(commitments.find((c) => c.id === id), camel(patch)); },
     createTask: async (i) => { const existing = tasks.find((t) => t.type === i.type && t.opportunityId === i.opportunityId && !t.done); if (existing) { Object.assign(existing, i); return { id: existing.id }; } const t = { id: `t${tasks.length}`, ...i }; tasks.push(t); return { id: t.id }; },
@@ -234,6 +238,14 @@ describe("reabertura e dono", () => {
 });
 
 describe("carga e contagem", () => {
+  it("etapa movida e mensagens sem valor em seguida: conta UMA proposta (a primeira depois da etapa)", async () => {
+    const w = world({ seller: [
+      { id: "m1", content: "segue", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "m2", content: "qualquer dúvida me chama", createdAt: brt("2026-11-23T10:05:00") },
+    ], stageEventAt: brt("2026-11-23T09:50:00") });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:15:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["m1"]);
+  });
   it("lê só as mensagens novas desde a última execução (com 10 min de folga); a primeira lê 24 h", async () => {
     const w = world({ seller: [{ content: "bom dia" }] });
     const sinces: string[] = [];
@@ -244,7 +256,7 @@ describe("carga e contagem", () => {
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:05:00")), state);
     expect(sinces).toEqual([brt("2026-11-22T10:00:00"), brt("2026-11-23T09:50:00")]);
   });
-  it("etapa movida e várias mensagens do vendedor em seguida: conta UMA proposta", async () => {
+  it("etapa movida e várias mensagens do vendedor em seguida: conta UMA proposta (a com valor prevalece sobre a da etapa)", async () => {
     const w = world({ seller: [
       { id: "m1", content: "segue", createdAt: brt("2026-11-23T10:00:00") },
       { id: "m2", content: "qualquer dúvida me chama", createdAt: brt("2026-11-23T10:05:00") },
@@ -252,6 +264,74 @@ describe("carga e contagem", () => {
     ], stageEventAt: brt("2026-11-23T09:50:00") });
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:15:00")));
     expect(w.proposals).toHaveLength(1);
-    expect(w.proposals[0].sellerMessageId).toBe("m1");
+    expect(w.proposals[0].sellerMessageId).toBe("m3");
+  });
+});
+
+describe("revisão corretiva: etapa movida DEPOIS não transforma mensagem anterior em proposta", () => {
+  it("'bom dia' antes da mudança de etapa não vira proposta, mesmo relida após reinício; a proposta real depois ganha o lembrete", async () => {
+    const w = world({ seller: [
+      { id: "bomdia", content: "bom dia", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "real", content: "segue a simulação que combinamos", createdAt: brt("2026-11-23T10:32:00") },
+    ], stageEventAt: brt("2026-11-23T10:30:00") });
+    // Reinício do worker: estado novo relê as últimas 24 h (os dois já existem, e a etapa já foi movida).
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:35:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["real"]);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T11:03:00")));
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+    expect(w.proposals[0].reminderTaskId).toBe(w.tasks[0].id);
+  });
+  it("execução normal (5 em 5 min): 'bom dia' lido antes da etapa continua sem proposta na releitura com folga", async () => {
+    const w = world({ seller: [{ id: "bomdia", content: "bom dia", createdAt: brt("2026-11-23T10:00:00") }], stageEventAt: brt("2026-11-23T10:30:00") });
+    const state = createCommitmentsState();
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:02:00")), state);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")), state);
+    expect(w.proposals).toHaveLength(0);
+  });
+  it("proposta enviada e etapa movida logo depois (até 10 min) ainda conta, se nenhuma outra mensagem do vendedor veio entre elas", async () => {
+    const ok = world({ seller: [{ id: "p", content: "segue", createdAt: brt("2026-11-23T10:00:00") }], stageEventAt: brt("2026-11-23T10:05:00") });
+    await runCommitments(ok.deps, new Date(brt("2026-11-23T10:06:00")));
+    expect(ok.proposals.map((p) => p.sellerMessageId)).toEqual(["p"]);
+    const no = world({ seller: [
+      { id: "p", content: "segue", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "q", content: "qualquer coisa me chama", createdAt: brt("2026-11-23T10:03:00") },
+    ], stageEventAt: brt("2026-11-23T10:05:00") });
+    await runCommitments(no.deps, new Date(brt("2026-11-23T10:06:00")));
+    expect(no.proposals.map((p) => p.sellerMessageId)).toEqual(["q"]);
+  });
+  it("etapa movida e 'bom dia' antes da proposta real (com valor): fica só a proposta real, com o lembrete dela", async () => {
+    const w = world({ seller: [
+      { id: "bomdia", content: "bom dia", createdAt: brt("2026-11-23T09:55:00") },
+      { id: "real", content: PROPOSTA, createdAt: brt("2026-11-23T10:00:00") },
+    ], stageEventAt: brt("2026-11-23T09:50:00") });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["real"]);
+    expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+  });
+});
+
+describe("revisão corretiva: nova promessa substitui a antiga sem deixar tarefa vencida", () => {
+  it("a promessa antiga em OUTRA tarefa é encerrada quando o vendedor dá novo prazo", async () => {
+    const w = world({ seller: [
+      { id: "m1", content: "já te falo", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "m2", content: "te retorno às 15h", createdAt: brt("2026-11-23T10:20:00") },
+    ] });
+    // A tarefa da primeira promessa não é a mesma que a criação devolve para a segunda (ex.: negócio criado entre as duas).
+    let n = 0;
+    w.deps.createTask = async (i) => { const t = { id: `t${n++}`, ...i }; w.tasks.push(t); return { id: t.id }; };
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:25:00")));
+    expect(w.commitments.find((c) => c.sellerMessageId === "m1").resolution).toBe("superseded");
+    expect(w.resolved).toEqual([expect.objectContaining({ taskId: "t0", type: "return_customer" })]);
+    expect(w.resolved.some((r) => r.taskId === "t1")).toBe(false);
+  });
+  it("mesma tarefa reaproveitada: nada é encerrado e o prazo/hora vão para o novo", async () => {
+    const w = world({ seller: [
+      { id: "m1", content: "já te falo", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "m2", content: "te retorno às 15h", createdAt: brt("2026-11-23T10:20:00") },
+    ] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:25:00")));
+    expect(w.resolved).toHaveLength(0);
+    expect(w.tasks).toHaveLength(1);
+    expect(w.tasks[0]).toMatchObject({ dueDate: "2026-11-23", dueTime: "15:00" });
   });
 });

@@ -101,3 +101,38 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.adopt_lid_contact(uuid, text, text, text[]) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.adopt_lid_contact(uuid, text, text, text[]) TO service_role;
+
+-- 4) Cliente que escapou (escreveu e ninguém respondeu, nem a IA): encaminhamento + rodízio + atendimento humano numa ÚNICA
+--    transação. A IA só é desligada (is_human_takeover) quando o rodízio entregou a um vendedor. Rodízio devolveu NULL (distribuição
+--    desligada, ativação posterior...): desfaz o encaminhamento e devolve NULL. Erro do rodízio: a chamada inteira falha e nada
+--    fica gravado (a varredura tenta de novo). Exceção (ninguém disponível): o encaminhamento e a exceção ficam para o gestor,
+--    sem desligar a IA.
+CREATE OR REPLACE FUNCTION public.distribute_escaped_lead(p_organization_id uuid, p_conversation_id uuid, p_sla_due_at timestamptz)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  c public.conversations; h_id uuid; v_assignment uuid; v_rep uuid;
+BEGIN
+  SELECT * INTO c FROM public.conversations WHERE id = p_conversation_id AND organization_id = p_organization_id FOR UPDATE;
+  IF c.id IS NULL OR c.assigned_to IS NOT NULL THEN RETURN NULL; END IF;
+  IF EXISTS (SELECT 1 FROM public.lead_assignments WHERE conversation_id = p_conversation_id
+              AND (status IN ('pending', 'accepted') OR (status = 'exception' AND resolved_at IS NULL))) THEN RETURN NULL; END IF;
+  IF EXISTS (SELECT 1 FROM public.handoff_events WHERE conversation_id = p_conversation_id AND organization_id = p_organization_id
+              AND trigger_type IN ('request_human', 'painel_manual', 'fromMe_real', 'sistema_sem_resposta') AND first_human_reply_at IS NULL) THEN RETURN NULL; END IF;
+  BEGIN
+    INSERT INTO public.handoff_events (organization_id, conversation_id, trigger_type, motivo, resumo, urgencia, criado_por)
+    VALUES (p_organization_id, p_conversation_id, 'sistema_sem_resposta', 'ia_sem_resposta',
+            'Cliente escreveu e ninguém respondeu (nem a IA). Entregue ao rodízio pelo sistema.', 'alta', 'sistema')
+    RETURNING id INTO h_id;
+    v_assignment := public.distribute_lead(p_organization_id, p_conversation_id, h_id, p_sla_due_at, '{}'::jsonb);
+    IF v_assignment IS NULL THEN RAISE EXCEPTION USING ERRCODE = 'P0E01', MESSAGE = 'escaped_lead_not_distributed'; END IF;
+  EXCEPTION WHEN SQLSTATE 'P0E01' THEN
+    RETURN NULL; -- desfaz o encaminhamento deste bloco; nada fica pela metade
+  END;
+  SELECT rep_id INTO v_rep FROM public.lead_assignments WHERE id = v_assignment;
+  IF v_rep IS NOT NULL THEN
+    UPDATE public.conversations SET is_human_takeover = true, human_takeover_at = now() WHERE id = p_conversation_id;
+  END IF;
+  RETURN v_assignment;
+END $$;
+REVOKE ALL ON FUNCTION public.distribute_escaped_lead(uuid, uuid, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.distribute_escaped_lead(uuid, uuid, timestamptz) TO service_role;

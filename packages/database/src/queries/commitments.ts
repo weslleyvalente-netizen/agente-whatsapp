@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROPOSAL_STAGES } from "@aula-agente/shared";
 import { fetchAllPages } from "../pagination.js";
-import { createTaskWithDedup, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency } from "./tasks.js";
+import { createTaskWithDedup, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency, updateTask } from "./tasks.js";
 
 // Consultas da rotina "commitments" (apps/worker/src/workers/commitments.ts). Leitura limitada: só mensagens de vendedor da janela
 // e, por conversa acompanhada, as mensagens depois da proposta/promessa (com limite).
@@ -68,14 +68,21 @@ export async function getOpportunityStatuses(db: SupabaseClient, organizationId:
   return out;
 }
 
-export async function getProposalStageEventSince(db: SupabaseClient, organizationId: string, opportunityId: string, sinceIso: string): Promise<{ at: string; stage: string } | null> {
+export async function getProposalStageEventBetween(db: SupabaseClient, organizationId: string, opportunityId: string, fromIso: string, toIso: string): Promise<{ at: string; stage: string } | null> {
   const { data, error } = await db.from("opportunity_events").select("new_value, created_at")
-    .eq("organization_id", organizationId).eq("opportunity_id", opportunityId).eq("event_type", "stage_changed").gte("created_at", sinceIso)
+    .eq("organization_id", organizationId).eq("opportunity_id", opportunityId).eq("event_type", "stage_changed").gte("created_at", fromIso).lte("created_at", toIso)
     .order("created_at", { ascending: false }).limit(10);
   if (error) throw error;
   const hit = ((data ?? []) as Array<{ new_value: { stage?: string } | null; created_at: string }>)
     .find((e) => (PROPOSAL_STAGES as readonly string[]).includes(e.new_value?.stage ?? ""));
   return hit ? { at: hit.created_at, stage: hit.new_value!.stage! } : null;
+}
+
+/** Proposta identificada só pela etapa, sem lembrete ainda: sai quando uma proposta com valor chega no mesmo intervalo. */
+export async function discardStageProposalFollowups(db: SupabaseClient, organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<void> {
+  const { error } = await db.from("proposal_followups").delete().eq("organization_id", organizationId).eq("conversation_id", conversationId)
+    .eq("identified_by", "stage_event").is("reminder_task_id", null).gte("sent_at", fromIso).lte("sent_at", toIso);
+  if (error) throw error;
 }
 
 export async function insertProposalFollowup(db: SupabaseClient, row: {
@@ -130,10 +137,11 @@ export async function insertSellerCommitment(db: SupabaseClient, row: {
   return ((data ?? []) as Array<{ id: string }>)[0]?.id ?? null;
 }
 
-export async function supersedeSellerCommitments(db: SupabaseClient, organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<void> {
-  const { error } = await db.from("seller_commitments").update({ resolved_at: atIso, resolution: "superseded" })
-    .eq("organization_id", organizationId).eq("conversation_id", conversationId).neq("id", keepId).is("resolved_at", null);
+export async function supersedeSellerCommitments(db: SupabaseClient, organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>> {
+  const { data, error } = await db.from("seller_commitments").update({ resolved_at: atIso, resolution: "superseded" })
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).neq("id", keepId).is("resolved_at", null).select("id, task_id");
   if (error) throw error;
+  return ((data ?? []) as Array<{ id: string; task_id: string | null }>).map((r) => ({ id: r.id, taskId: r.task_id }));
 }
 
 export async function listOpenSellerCommitments(db: SupabaseClient, organizationId: string) {
@@ -165,6 +173,16 @@ export async function createCommitmentTask(db: SupabaseClient, i: {
     type: i.type, description: i.description, reason: i.reason, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime,
     created_by_type: "ai", created_by_id: null, assignee_type: "human", assignee_id: i.ownerId, assign_on_merge: true,
   } as Parameters<typeof createTaskWithDedup>[1]);
+  // Tarefa do mesmo tipo já aberta: a atualização genérica troca data e descrição, mas NÃO a hora. Para a promessa (novo prazo do
+  // vendedor) a hora é o prazo: alinha data, hora e prioridade, senão a tarefa continuaria vencida pela hora antiga.
+  const single = (task.consolidated_pendencies ?? []).length <= 1;
+  const currentTime = (task.due_time ?? "").slice(0, 5) || null;
+  if (single && task.type === i.type && (task.due_date !== i.dueDate || currentTime !== (i.dueTime ?? null))) {
+    await updateTask(db, task.id, {
+      due_date: i.dueDate, due_time: i.dueTime, priority: i.priority,
+      consolidated_pendencies: (task.consolidated_pendencies ?? []).map((p) => (p.type === i.type ? { ...p, due_date: i.dueDate, due_time: i.dueTime } : p)),
+    });
+  }
   return { id: task.id };
 }
 
