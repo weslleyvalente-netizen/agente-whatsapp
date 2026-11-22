@@ -42,6 +42,7 @@ export * from './silence-retirement.js';
 export * from './stalled-negotiation.js';
 export * from './throttle.js';
 export * from "./business-calendar.js";
+export * from "./holidays-br.js";
 export * from "./lead-distribution.js";
 
 export * from "./call-log.js";
@@ -68,3 +69,5 @@ export * from "./send-failure-alert.js";
 export * from "./silent-connection.js";
 export * from "./stale-message-guard.js";
 export * from "./stale-message-guard-core.js";
+export * from "./commitments.js";
+export * from "./proposal-metrics.js";

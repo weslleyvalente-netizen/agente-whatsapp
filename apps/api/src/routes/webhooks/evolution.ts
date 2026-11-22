@@ -3,6 +3,7 @@ import {
   evolutionWebhookPayloadSchema,
   identifyLeadOrigin,
   resolveGreetingFilterConfig,
+  lidPairOf,
   isGreetingOrShortConfirmation,
   matchPendingOutboundMessage,
   shouldRunAiAfterHours,
@@ -28,6 +29,8 @@ import {
   stampMessageMetadata,
   applyMessageDeliveryStatus,
   mergeMessageMetadata,
+  adoptLidContact,
+  findPhoneByLid,
 } from "@aula-agente/database";
 import { CHAT_MEDIA_MAX_BYTES, evaluateMessageAge, parseDeclaredFileLength } from "@aula-agente/shared";
 import { samePhoneNumber, shouldRefreshProfilePicture, isEvolutionStatusEvent, parseEvolutionStatusUpdate } from "@aula-agente/shared";
@@ -363,7 +366,18 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
 
       // Contatos @lid: usa o número real de remoteJidAlt; sem alt, o mapa lid -> telefone (cache + Evolution).
       // Nunca lança: na falha segue com o remoteJid (ver resolveEvolutionPhone).
-      const phone = await lidPhoneResolver.resolve(payload.data.key, instance.instance_name, instance.phone_number);
+      let phone = await lidPhoneResolver.resolve(payload.data.key, instance.instance_name, instance.phone_number);
+      // Configurações da organização, lidas no máximo uma vez e só quando o @lid precisa delas.
+      let orgSettingsMemo: Promise<{ lid_auto_merge_enabled?: boolean }> | null = null;
+      const orgSettings = () => (orgSettingsMemo ??= getOrganizationById(getAdminClient(), organizationId).then((o) => o.settings ?? {}));
+      // @lid já juntado que volta sem o número junto: usa o contato que guardou o @lid (não cria outro contato @lid). Nunca lança.
+      if (phone.endsWith("@lid")) {
+        try {
+          if ((await orgSettings()).lid_auto_merge_enabled === true) phone = (await findPhoneByLid(getAdminClient(), organizationId, phone)) ?? phone;
+        } catch (err) {
+          request.log.error({ err, organizationId }, "Failed to look up phone by @lid — processing normally");
+        }
+      }
 
       // Contatos ignorados (Fase 1): a number the organization explicitly
       // told the system to ignore — e.g. a third party's own WhatsApp bot
@@ -388,6 +402,20 @@ export default async function evolutionWebhookRoutes(app: FastifyInstance) {
       }
       if (ignoredContact && ignoredContact.retention_mode === "no_store") {
         return reply.status(200).send({ ok: true, skipped: "ignored_contact" });
+      }
+
+      // Contato @lid antigo que reaparece com o número real (par do próprio WhatsApp): o @lid assume o número (ou é juntado ao
+      // contato real) ANTES de achar a conversa, para o cliente continuar com o mesmo vendedor e histórico. Nunca lança.
+      const lidPair = lidPairOf(payload.data.key, phone, instance.phone_number);
+      if (lidPair) {
+        try {
+          if ((await orgSettings()).lid_auto_merge_enabled === true) {
+            const result = await adoptLidContact(getAdminClient(), organizationId, lidPair.lid, lidPair.phone);
+            if (result !== "none") request.log.info({ event: "lid_contact_adopted", organizationId, result, last4: lidPair.phone.slice(-4) }, "lid contact adopted");
+          }
+        } catch (err) {
+          request.log.error({ err, organizationId }, "Failed to adopt @lid contact — processing normally");
+        }
       }
 
       // Ensure conversation exists

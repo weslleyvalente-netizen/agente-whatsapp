@@ -8,7 +8,7 @@ delete process.env.WEBHOOK_SECRET;
 
 const m = vi.hoisted(() => ({
   getInstanceByInstanceId: vi.fn(), getIgnoredContact: vi.fn(), ensureConversation: vi.fn(), saveMessage: vi.fn(),
-  enqueueProcessMessage: vi.fn(), findMessagesByRemoteJid: vi.fn(),
+  enqueueProcessMessage: vi.fn(), findMessagesByRemoteJid: vi.fn(), adoptLidContact: vi.fn(), findPhoneByLid: vi.fn(), orgSettings: {} as Record<string, unknown>,
 }));
 vi.mock("../../services/evolution.service.js", () => ({ findMessagesByRemoteJid: m.findMessagesByRemoteJid }));
 vi.mock("@aula-agente/database", () => ({
@@ -17,7 +17,9 @@ vi.mock("@aula-agente/database", () => ({
   getInstanceByInstanceId: m.getInstanceByInstanceId,
   getIgnoredContact: m.getIgnoredContact,
   updateConversation: async () => undefined, createHandoffEvent: async () => ({ id: "h" }),
-  getOrganizationById: async () => ({ settings: {} }),
+  getOrganizationById: async () => ({ settings: m.orgSettings }),
+  adoptLidContact: m.adoptLidContact,
+  findPhoneByLid: m.findPhoneByLid,
   getOpenHandoffEvent: async () => null, markFirstHumanReply: async () => undefined,
   findPendingOutboundMessages: async () => [], setMessageEvolutionId: async () => undefined,
   stampMessageMetadata: async () => undefined, upsertContact: async () => undefined,
@@ -43,6 +45,9 @@ async function post(p: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   lidPhoneResolver.reset();
+  m.orgSettings = {};
+  m.adoptLidContact.mockResolvedValue("renamed");
+  m.findPhoneByLid.mockResolvedValue(null);
   m.findMessagesByRemoteJid.mockResolvedValue([]);
   m.getInstanceByInstanceId.mockResolvedValue({ id: "i1", instance_name: "inst-name", organization_id: "org-1", active_agent_id: "agent-1" });
   m.getIgnoredContact.mockResolvedValue(null);
@@ -132,5 +137,63 @@ describe("webhook: contato entregue como @lid", () => {
     expect(m.ensureConversation).not.toHaveBeenCalled();
     expect(m.saveMessage).not.toHaveBeenCalled();
     expect(m.enqueueProcessMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("webhook: junção automática do contato @lid antigo (lid_auto_merge_enabled)", () => {
+  it("flag ligada + par @lid/número do próprio WhatsApp: junta ANTES de achar a conversa", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    const order: string[] = [];
+    m.adoptLidContact.mockImplementation(async () => { order.push("adopt"); return "renamed"; });
+    m.ensureConversation.mockImplementation(async () => { order.push("ensure"); return { conversation: { id: "conv-1", is_human_takeover: false }, contact: { id: "c1", ai_disabled: false }, isNew: false }; });
+    await post(payload(lidKey));
+    expect(m.adoptLidContact).toHaveBeenCalledWith({}, "org-1", "85801266339926@lid", "556296818769");
+    expect(order).toEqual(["adopt", "ensure"]);
+  });
+  it("chat já com o número e o @lid no alt (UAZAPI) também junta", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    await post(payload({ remoteJid: "556296818769@s.whatsapp.net", remoteJidAlt: "85801266339926@lid" }));
+    expect(m.adoptLidContact).toHaveBeenCalledWith({}, "org-1", "85801266339926@lid", "556296818769");
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "556296818769" }));
+  });
+  it("flag desligada: não junta (comportamento de hoje)", async () => {
+    await post(payload(lidKey));
+    expect(m.adoptLidContact).not.toHaveBeenCalled();
+  });
+  it("sem número real (sem alt): não junta", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    await post(payload({ remoteJid: "90000000000001@lid" }));
+    expect(m.adoptLidContact).not.toHaveBeenCalled();
+  });
+  it("falha na junção não perde a mensagem", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    m.adoptLidContact.mockRejectedValue(new Error("rpc down"));
+    const r = await post(payload(lidKey));
+    expect(r.statusCode).toBe(200);
+    expect(m.ensureConversation).toHaveBeenCalled();
+    expect(m.saveMessage).toHaveBeenCalled();
+  });
+});
+
+describe("webhook: @lid já juntado volta a escrever sem o número junto", () => {
+  it("flag ligada: usa o contato que guardou o @lid (não cria outro contato @lid)", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    m.findPhoneByLid.mockResolvedValue("556296818769");
+    await post(payload({ remoteJid: "85801266339926@lid" }));
+    expect(m.findPhoneByLid).toHaveBeenCalledWith({}, "org-1", "85801266339926@lid");
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "556296818769" }));
+  });
+  it("flag desligada: comportamento de hoje (segue com o @lid)", async () => {
+    m.findPhoneByLid.mockResolvedValue("556296818769");
+    await post(payload({ remoteJid: "85801266339926@lid" }));
+    expect(m.findPhoneByLid).not.toHaveBeenCalled();
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "85801266339926@lid" }));
+  });
+  it("busca falhou: segue com o @lid, sem perder a mensagem", async () => {
+    m.orgSettings = { lid_auto_merge_enabled: true };
+    m.findPhoneByLid.mockRejectedValue(new Error("db"));
+    const r = await post(payload({ remoteJid: "85801266339926@lid" }));
+    expect(r.statusCode).toBe(200);
+    expect(m.ensureConversation).toHaveBeenCalledWith(expect.objectContaining({ phone: "85801266339926@lid" }));
   });
 });

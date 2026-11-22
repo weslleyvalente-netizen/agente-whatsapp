@@ -38,6 +38,21 @@ export async function distributeLeadForHandoff(
   return (data as string | null) ?? null;
 }
 
+/**
+ * Cliente que escapou (escreveu e ninguém respondeu, nem a IA): encaminhamento + rodízio + atendimento humano numa ÚNICA transação
+ * (função distribute_escaped_lead, migração 20261122120000). A IA só é desligada quando o rodízio entregou a um vendedor; rodízio
+ * vazio desfaz tudo (devolve null); erro do rodízio lança e nada fica gravado. Só a distribuição real (sem modo sombra).
+ */
+export async function distributeEscapedLead(db: SupabaseClient, organizationId: string, conversationId: string, now: Date = new Date()): Promise<string | null> {
+  const org = await getOrganizationById(db, organizationId);
+  if (org.settings.lead_distribution_enabled !== true) return null;
+  const { data, error } = await db.rpc("distribute_escaped_lead", {
+    p_organization_id: organizationId, p_conversation_id: conversationId, p_sla_due_at: computeSlaDueAt(org.settings, now).toISOString(),
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
 /** Usuário do vendedor da atribuição ativa (pendente/aceita) da conversa, ou null. */
 export async function getActiveAssignmentRepUserId(db: SupabaseClient, organizationId: string, conversationId: string): Promise<string | null> {
   const { data, error } = await db.from("lead_assignments").select("rep_id, sales_reps(user_id)")

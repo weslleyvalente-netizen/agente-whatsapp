@@ -5,9 +5,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { apiFetch } from "@/lib/api";
-import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, originBadge, type SalesQueueGroup } from "@aula-agente/shared";
+import { contactBadgeLabel, FUNNEL_STAGES, FUNNEL_STAGE_LABELS, OPERATION_LABELS, sortNewestSalesCards, sortSalesQueue, classifySalesQueue, SALES_QUEUE_LABELS, originBadge, followupBadge, urgentBadge, type SalesQueueGroup } from "@aula-agente/shared";
 import type { Opportunity, Operation, SalesCardState, ContactState } from "@aula-agente/shared";
-import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3, User } from "lucide-react";
+import { ChevronDown, Pencil, Flame, UserCheck, MessageCircle, ListChecks, CalendarDays, Bike, Snowflake, Clock3, User, AlertTriangle, Hourglass } from "lucide-react";
 import { StageChangeDialog } from "@/components/opportunities/stage-change-dialog";
 import { OpportunityDetailDialog } from "./opportunity-detail-dialog";
 import { OpportunityEditDialog } from "@/components/opportunities/opportunity-edit-dialog";
@@ -44,7 +44,7 @@ const OpportunityCard = memo(function OpportunityCard({
   const a11y = dragEnabled ? attributes : { ...attributes, "aria-disabled": undefined, "aria-roledescription": undefined, role: undefined };
   return (
     <div ref={setNodeRef} {...listeners} {...a11y}
-      className={`${dragEnabled ? "cursor-grab" : "cursor-pointer"} rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
+      className={`${dragEnabled ? "cursor-grab" : "cursor-pointer"} rounded-2xl border bg-card p-4 text-sm shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary ${isDragging ? "opacity-30" : ""} ${opportunity.status === "open" && opportunity.sales_state?.urgent ? "urgent-card" : opportunity.sales_state?.hot ? "border-orange-300" : "border-border"}`}
       onClick={() => !isDragging && onOpen(opportunity)}
       onKeyUp={e => { if (e.key === "Enter" && e.target === e.currentTarget && !isDragging) onOpen(opportunity); }}>
       <OpportunityCardContent opportunity={opportunity} onEdit={onEdit} onChanged={onChanged}/>
@@ -73,6 +73,8 @@ function OpportunityCardContent({ opportunity, onEdit, onChanged }: {
     <>
       {opportunity.lead_assignment && <div onPointerDown={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}><AssignmentBadge assignment={opportunity.lead_assignment} canAccept={!!onChanged} onAccepted={() => onChanged?.()} /></div>}
       {sellerChip && <span title={sellerChip.kind === "none" ? "Negócio sem vendedor responsável" : "Vendedor responsável"} className={`mb-3 mr-1 inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${sellerChip.kind === "none" ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200" : "bg-muted/30 text-muted-foreground"}`}><User className="size-3 shrink-0"/><span className="truncate">{sellerChip.label}</span></span>}
+      {opportunity.status === "open" && opportunity.sales_state?.urgent && <p role="status" title="Cliente esperando a loja. Para de piscar quando o vendedor responde ou a pendência é resolvida." className="mb-3 inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-1 text-xs font-medium text-white"><AlertTriangle className="size-3.5"/>{urgentBadge(opportunity.sales_state.urgent, new Date().toISOString())}</p>}
+      {opportunity.status === "open" && !opportunity.sales_state?.urgent && (() => { const f = followupBadge(opportunity.sales_state?.tasks, new Date().toISOString()); return f ? <span title="Lembrete interno: avalie o próximo contato. Nada foi enviado ao cliente." className="mb-3 mr-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200"><Hourglass className="size-3.5"/>{f.label}</span> : null; })()}
       {opportunity.sales_state?.hot && <span title="Intenção de fechamento ou negociação" className="mb-3 inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-1 text-xs text-orange-700"><Flame className="size-3.5"/>Quente</span>}
       <div className="flex items-start gap-2">
         <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">{initials}</span>
@@ -134,6 +136,7 @@ function StageColumn({
   const visible = sorted.slice(0, visibleCount);
   // Só tem efeito abaixo de md (celular): o grupo é recolhível. No computador a coluna fica sempre visível.
   const [openMobile, setOpenMobile] = useState(defaultOpenMobile);
+  const urgentCount = useMemo(() => opportunities.filter(o => o.status === "open" && !!o.sales_state?.urgent).length, [opportunities]);
   // O chip "Para agir agora" da página dispara `fila-abrir` com o grupo: expande a coluna alvo no celular.
   useEffect(() => {
     const onOpen = (e: Event) => { if (stage === `__queue_${(e as CustomEvent<string>).detail}`) setOpenMobile(true); };
@@ -142,7 +145,7 @@ function StageColumn({
   }, [stage]);
   return (
     <section ref={setNodeRef} id={queueMode && stage.startsWith("__queue_") ? `fila-${stage.slice(8)}` : undefined} aria-label={label} className={`w-full scroll-mt-4 rounded-2xl bg-muted/45 p-3 md:w-[300px] md:shrink-0 ${isOver && !queueMode ? "ring-2 ring-primary/40" : ""}`}>
-      <div className={`flex min-h-9 items-center gap-2 px-1 max-md:min-h-11 max-md:cursor-pointer md:mb-4 ${openMobile ? "max-md:mb-3" : ""}`} onClick={() => setOpenMobile(v => !v)}><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2><span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span><button type="button" aria-expanded={openMobile} aria-label={openMobile ? `Recolher ${label}` : `Expandir ${label}`} className="-mr-1 shrink-0 rounded p-1.5 text-muted-foreground md:hidden"><ChevronDown className={`size-5 transition-transform ${openMobile ? "rotate-180" : ""}`}/></button></div>
+      <div className={`flex min-h-9 items-center gap-2 px-1 max-md:min-h-11 max-md:cursor-pointer md:mb-4 ${openMobile ? "max-md:mb-3" : ""}`} onClick={() => setOpenMobile(v => !v)}><span className={`h-5 w-1 shrink-0 rounded-full ${marker}`}/><h2 className="flex-1 text-sm font-medium">{label}</h2>{urgentCount > 0 && <span title="Clientes esperando a loja" className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium tabular-nums text-white">{urgentCount} urgente{urgentCount === 1 ? "" : "s"}</span>}<span className="rounded-full bg-background px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{opportunities.length}</span><button type="button" aria-expanded={openMobile} aria-label={openMobile ? `Recolher ${label}` : `Expandir ${label}`} className="-mr-1 shrink-0 rounded p-1.5 text-muted-foreground md:hidden"><ChevronDown className={`size-5 transition-transform ${openMobile ? "rotate-180" : ""}`}/></button></div>
       <div className={`max-h-[calc(100dvh-20rem)] min-h-48 space-y-3 overflow-y-auto px-0.5 pb-1 [scrollbar-width:thin] max-md:max-h-none max-md:min-h-0 max-md:overflow-visible ${openMobile ? "" : "max-md:hidden"}`}>
         {visible.map(o => <OpportunityCard key={o.id} opportunity={o} onEdit={onEdit} onOpen={onOpen} onChanged={onChanged} dragEnabled={dragEnabled}/>)}
         {sorted.length > visible.length && <button type="button" className="w-full rounded-xl border border-dashed p-3 text-xs text-muted-foreground hover:bg-background hover:text-foreground" onClick={() => setVisibleCount(c => c + CARDS_PER_PAGE)}>Mostrar mais ({sorted.length - visible.length} restantes)</button>}

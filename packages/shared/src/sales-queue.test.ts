@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {classifySalesQueue,sortSalesQueue,countSalesQueueGroups,SALES_QUEUE_ACT_NOW_GROUPS} from './sales-queue.js';
+import {classifySalesQueue,sortSalesQueue,countSalesQueueGroups,SALES_QUEUE_ACT_NOW_GROUPS,followupBadge,urgentBadge} from './sales-queue.js';
 import {classifySalesCard} from './sales-workspace.js';
 const now='2026-10-02T11:00:00Z';
 const base={id:'a',created_at:'2026-10-01',status:'open',stage:'qualification',waiting_on:null,next_action_due_date:null,frozen_until:null,sales_state:{readyForHuman:false,customerReplied:false,humanPending:false,taskCount:1},tasks:[]};
@@ -116,5 +116,34 @@ describe('countSalesQueueGroups',()=>{
  it('returns zeros for an empty list and exposes the act-now groups',()=>{
   expect(Object.values(countSalesQueueGroups([],now)).every(n=>n===0)).toBe(true);
   expect(SALES_QUEUE_ACT_NOW_GROUPS).toEqual(['ready','customer_replied','due_today','overdue']);
+ });
+});
+describe('urgente x follow-up (desenho 22/11)',()=>{
+ const urgent={reason:'sla' as const,since:'2026-10-02T09:00:00Z'};
+ it('urgente vai para "Cliente respondeu", mesmo pronto para assumir ou congelado',()=>{
+  expect(classifySalesQueue({...base,sales_state:{...base.sales_state,urgent}},now).group).toBe('customer_replied');
+  expect(classifySalesQueue({...base,sales_state:{...base.sales_state,readyForHuman:true,urgent}},now).group).toBe('customer_replied');
+  expect(classifySalesQueue({...base,frozen_until:'2026-10-10',sales_state:{...base.sales_state,urgent:{reason:'promise' as const,since:now}}},now).group).toBe('customer_replied');
+ });
+ it('negócio fechado nunca é urgente na fila',()=>{
+  expect(classifySalesQueue({...base,status:'won',sales_state:{...base.sales_state,urgent}},now).group).toBe('other');
+ });
+ it('dentro de "Cliente respondeu", urgente vem primeiro (o mais antigo antes)',()=>{
+  const replied={...base,id:'replied',last_interaction_at:'2026-10-02T10:59:00Z',sales_state:{...base.sales_state,customerReplied:true}};
+  const u1={...base,id:'u-novo',sales_state:{...base.sales_state,urgent:{reason:'sla' as const,since:'2026-10-02T10:00:00Z'}}};
+  const u2={...base,id:'u-velho',sales_state:{...base.sales_state,urgent:{reason:'exception' as const,since:'2026-10-02T08:00:00Z'}}};
+  expect(sortSalesQueue([replied,u1,u2],now).map(x=>x.id)).toEqual(['u-velho','u-novo','replied']);
+ });
+ it('follow-up de proposta ou cutucar vencido fica em "Compromissos de hoje" e não é urgente',()=>{
+  const row={...base,tasks:[{type:'proposal_followup',due_date:'2026-10-02',priority:'normal'}]};
+  expect(classifySalesQueue(row,now).group).toBe('due_today');
+  expect(followupBadge(row.tasks,now)).toEqual({kind:'proposal',label:'Follow-up · proposta sem resposta'});
+  expect(followupBadge([{type:'x',due_date:'2026-10-01',priority:'normal',consolidated_pendencies:[{type:'customer_nudge',due_date:'2026-10-02',priority:'normal'}]}],now)).toEqual({kind:'nudge',label:'Follow-up · cliente sem responder'});
+  expect(followupBadge([{type:'proposal_followup',due_date:'2026-10-05',priority:'normal'}],now)).toBeNull();
+ });
+ it('rótulo do urgente diz o motivo e há quanto tempo',()=>{
+  expect(urgentBadge({reason:'sla',since:'2026-10-02T09:00:00Z'},now)).toBe('Urgente · cliente esperando há 2 h');
+  expect(urgentBadge({reason:'promise',since:'2026-10-02T10:45:00Z'},now)).toBe('Urgente · retorno prometido vencido há 15 min');
+  expect(urgentBadge({reason:'exception',since:'2026-09-30T11:00:00Z'},now)).toBe('Urgente · ninguém respondeu há 2 dias');
  });
 });

@@ -171,3 +171,13 @@
     font-size: 16px;
   }
 }
+
+/* Card "Urgente" do funil (cliente esperando a loja): anel vermelho pulsando. Sem animação para quem pediu menos movimento. */
+@keyframes urgent-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(220 38 38 / 0.55); }
+  50% { box-shadow: 0 0 0 6px rgb(220 38 38 / 0); }
+}
+.urgent-card { border-color: rgb(220 38 38); }
+@media (prefers-reduced-motion: no-preference) {
+  .urgent-card { animation: urgent-ring 1.6s ease-in-out infinite; }
+}

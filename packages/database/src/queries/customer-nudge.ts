@@ -190,6 +190,13 @@ export async function hasSellerMessageAfter(db: SupabaseClient, organizationId: 
   return (count ?? 0) > 0;
 }
 
+export async function hasCustomerMessageAfter(db: SupabaseClient, organizationId: string, conversationId: string, afterIso: string): Promise<boolean> {
+  const { count, error } = await db.from("messages").select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("role", "contact").gt("created_at", afterIso);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
 /** Conclui uma tarefa customer_nudge com nota (também a retira de tarefa consolidada, preservando as outras pendências). */
 export async function completeNudgeTask(db: SupabaseClient, organizationId: string, taskId: string, note: string): Promise<void> {
   await resolveAwaitingCustomerPendency(db, organizationId, taskId, "customer_nudge", note);

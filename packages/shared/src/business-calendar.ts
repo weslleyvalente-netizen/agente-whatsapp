@@ -1,4 +1,5 @@
 // Calendário comercial para prazos em "minutos úteis". Funções puras: nada de relógio global.
+import { HOLIDAY_SETS, HOLIDAY_YEARS, type HolidaySet } from "./holidays-br.js";
 export type Weekday = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
 export interface BusinessWindow { start: string; end: string } // "HH:MM", fim exclusivo
 export interface BusinessCalendar {
@@ -52,6 +53,19 @@ function zonedToInstant(y: number, mo: number, d: number, h: number, mi: number,
     guess += wanted - Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
   }
   return guess;
+}
+
+/** Instante em que o relógio do fuso marca `isoDate` (YYYY-MM-DD) às h:mi. */
+export function localInstant(isoDate: string, h: number, mi: number, timeZone: string): Date {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return new Date(zonedToInstant(y, mo, d, h, mi, timeZone));
+}
+
+/** É dia com expediente (tem janela e não é data fechada)? */
+export function isBusinessDate(isoDate: string, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): boolean {
+  if ((calendar.closedDates ?? []).includes(isoDate)) return false;
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return (calendar.weekly[WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()]] ?? []).length > 0;
 }
 
 function closedPeriodAt(t: number, cal: BusinessCalendar) {
@@ -203,7 +217,13 @@ export function resolveBusinessCalendar(raw: unknown): BusinessCalendar {
     if (list.length) weekly[day] = list;
   }
   if (!Object.keys(weekly).length) return DEFAULT_BUSINESS_CALENDAR;
-  const closedDates = Array.isArray(r.closedDates) ? r.closedDates.filter((d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
+  const dateList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((d: unknown): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : []);
+  // Feriados: só com `holiday_set` conhecido. `extra_holidays` fecha dias a mais (decreto, recesso); `open_days` reabre um feriado.
+  const holidaySet = typeof r.holiday_set === "string" && Object.prototype.hasOwnProperty.call(HOLIDAY_SETS, r.holiday_set) ? (r.holiday_set as HolidaySet) : null;
+  const openDays = new Set(dateList(r.open_days));
+  const holidays: string[] = [];
+  if (holidaySet) for (let y = HOLIDAY_YEARS.from; y <= HOLIDAY_YEARS.to; y++) for (const h of HOLIDAY_SETS[holidaySet](y)) holidays.push(h.date);
+  const closedDates = [...new Set([...dateList(r.closedDates), ...holidays, ...dateList(r.extra_holidays)])].filter((d) => !openDays.has(d));
   const closedPeriods = Array.isArray(r.closedPeriods)
     ? r.closedPeriods.filter((p: any) => p && Number.isFinite(Date.parse(p.from)) && Number.isFinite(Date.parse(p.to)) && Date.parse(p.from) < Date.parse(p.to))
     : [];

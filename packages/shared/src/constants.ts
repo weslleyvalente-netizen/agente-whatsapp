@@ -147,6 +147,8 @@ export const HANDOFF_TRIGGER_TYPES = [
   "painel_manual",
   "fromMe_real",
   "fromMe_greeting_filtered",
+  // Cliente escreveu e ninguém respondeu (nem a IA): o sistema entrega ao rodízio (migração 20261122120000).
+  "sistema_sem_resposta",
 ] as const;
 
 export const HANDOFF_MOTIVOS = [
@@ -194,6 +196,7 @@ export const QUEUE_NAMES = {
   CHAT_MEDIA_RETENTION: "chat-media-retention",
   UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
   CUSTOMER_NUDGE: "customer-nudge",
+  COMMITMENTS: "commitments",
   FETCH_PROFILE_PICTURE: "fetch-profile-picture",
 } as const;
 
