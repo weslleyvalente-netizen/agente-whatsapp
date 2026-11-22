@@ -77,6 +77,16 @@ export interface OrganizationSettings {
   needs_reply_queue_user_ids?: string[];
   // Lembrete "Cutucar cliente": tarefa ao vendedor dono quando ele falou por último e o cliente sumiu (1, 3 e 7 dias úteis). Desligado por padrão.
   customer_nudge_enabled?: boolean;
+  /** Rotina "commitments" (5 min): lembrete interno de proposta em 30 min e promessas do vendedor com prazo. Desenho 2026-11-22. */
+  commitments_enabled?: boolean;
+  /** Prazo padrão (min úteis) da promessa "vou verificar / te retorno". 15–600; padrão 120. */
+  promise_default_minutes?: number;
+  /** Cliente que escreveu e ninguém respondeu (nem a IA), sem dono: entra no rodízio. */
+  escape_distribution_enabled?: boolean;
+  /** Contato @lid antigo assume o número real quando o próprio WhatsApp manda o par. */
+  lid_auto_merge_enabled?: boolean;
+  /** Cards "Urgente" (cliente esperando a loja) no topo de "Cliente respondeu". */
+  urgent_cards_enabled?: boolean;
   // "Cutucar cliente" com a consolidação de tarefas por negócio ligada: o lembrete vira UMA pendência na tarefa consolidada do negócio.
   // Só === true liga; sem ele, org com consolidação ligada continua sem cutucar (comportamento anterior, sem disparo na implantação).
   customer_nudge_consolidated_enabled?: boolean;

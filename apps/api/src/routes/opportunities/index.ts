@@ -33,6 +33,7 @@ import { canAssignLead, canViewLead } from "../../lib/lead-access.js";
 import { getAdOriginForOpportunity, type AdOrigin } from "../../services/lead-ad-origin.service.js";
 
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
+import { applyUrgent, buildUrgentByContact, loadUrgentSources, urgentCoverage } from "../../services/urgent-cards.service.js";
 
 export default async function opportunityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
@@ -50,9 +51,28 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       const viewer = resolveLeadVisibility({ role: membership.role, userId: request.user.id, leadDistributionEnabled });
       const enriched = await enrichSalesWorkspace(db, organizationId, rows, organization.settings.sales_workspace_enabled === true || organization.settings.sales_action_queue_enabled === true,
         leadDistributionEnabled ? { enabled: true, viewer } : undefined);
-      return attachContactState(db, organizationId, enriched);
+      // Cards "Urgente" (cliente esperando a loja). Atrás de flag; qualquer falha mantém o funil de sempre.
+      let withUrgent = enriched;
+      if (organization.settings.urgent_cards_enabled === true) {
+        try { withUrgent = applyUrgent(enriched as any[], buildUrgentByContact(await loadUrgentSources(db, organizationId), new Date())) as typeof enriched; }
+        catch (err) { request.log.error({ err, organizationId }, "urgent cards failed — funnel without urgency"); }
+      }
+      return attachContactState(db, organizationId, withUrgent);
     }
   );
+
+  // Prova de cobertura antes de tirar o quadro "Atraso no atendimento": casos do quadro sem card no funil. Só gestor.
+  app.get<{ Params: { organizationId: string } }>("/organizations/:organizationId/urgent-coverage", async (request, reply) => {
+    const { organizationId } = request.params;
+    const membership = request.user.memberships.find((m) => m.organization_id === organizationId);
+    if (!membership || !isManager(membership.role)) return reply.status(403).send({ error: "Somente gestores" });
+    const db = getAdminClient();
+    const [sources, open] = await Promise.all([
+      loadUrgentSources(db, organizationId),
+      getOpportunitiesByOrganization(db, organizationId, { status: "open" }),
+    ]);
+    return urgentCoverage(sources, new Set((open as Array<{ contact_id: string }>).map((o) => o.contact_id)));
+  });
 
   app.get<{Params:{organizationId:string}}>("/organizations/:organizationId/opportunities/pending-tasks",async(request,reply)=>{
     const orgId=request.params.organizationId;

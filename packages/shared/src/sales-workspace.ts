@@ -1,3 +1,4 @@
+import type { UrgentState } from "./sales-queue.js";
 export interface SalesCardInput {
  openOpportunityCount: number;
  handoff: { motivo: string | null; resumo: string | null; first_human_reply_at: string | null } | null;
@@ -43,4 +44,4 @@ export function classifySalesCard(input: SalesCardInput, now = new Date().toISOS
 export function sortNewestSalesCards<T extends { created_at: string; id: string }>(rows: T[]): T[] {
  return [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
 }
-export type SalesCardState = ReturnType<typeof classifySalesCard> & { handoffSummary: string | null; handedAt: string | null; tasks?: Array<{id:string;type:string;due_date:string;priority:string;consolidated_pendencies?:Array<{type:string;due_date:string;priority:string}>}> };
+export type SalesCardState = ReturnType<typeof classifySalesCard> & { handoffSummary: string | null; handedAt: string | null; urgent?: UrgentState | null; tasks?: Array<{id:string;type:string;due_date:string;priority:string;consolidated_pendencies?:Array<{type:string;due_date:string;priority:string}>}> };
