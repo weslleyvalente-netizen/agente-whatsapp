@@ -194,6 +194,7 @@ export const QUEUE_NAMES = {
   CHAT_MEDIA_RETENTION: "chat-media-retention",
   UNANSWERED_LEAD_SWEEP: "unanswered-lead-sweep",
   CUSTOMER_NUDGE: "customer-nudge",
+  COMMITMENTS: "commitments",
   FETCH_PROFILE_PICTURE: "fetch-profile-picture",
 } as const;
 

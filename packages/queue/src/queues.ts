@@ -92,6 +92,12 @@ export function getCustomerNudgeQueue() {
   return customerNudgeQueue;
 }
 
+let commitmentsQueue: Queue<{}> | undefined;
+export function getCommitmentsQueue() {
+  if (!commitmentsQueue) commitmentsQueue = new Queue<{}>(QUEUE_NAMES.COMMITMENTS, { connection: getRedisConnection() });
+  return commitmentsQueue;
+}
+
 let pushNotificationsQueue: Queue<{}> | undefined;
 export function getPushNotificationsQueue() {
   if (!pushNotificationsQueue) pushNotificationsQueue = new Queue<{}>(QUEUE_NAMES.PUSH_NOTIFICATIONS, { connection: getRedisConnection() });

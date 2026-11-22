@@ -7,6 +7,7 @@ import { startStaleConversationFollowupWorker } from "./workers/stale-conversati
 import { startLeadSlaWorker } from "./workers/lead-sla.js";
 import { startUnansweredLeadSweepWorker } from "./workers/unanswered-lead-sweep.js";
 import { startCustomerNudgeWorker } from "./workers/customer-nudge.js";
+import { startCommitmentsWorker } from "./workers/commitments.js";
 import { startPushNotificationsWorker } from "./workers/push-notifications.js";
 import { startStoreChatMediaWorker, startChatMediaRetentionWorker } from "./workers/store-chat-media.js";
 import { startStoreCustomerAudioWorker, startCustomerAudioRetentionWorker } from "./workers/store-customer-audio.js";
@@ -27,6 +28,7 @@ async function main() {
     startPushNotificationsWorker(),
     startUnansweredLeadSweepWorker(),
     startCustomerNudgeWorker(),
+    startCommitmentsWorker(),
     startStoreCustomerAudioWorker(),
     startCustomerAudioRetentionWorker(),
     startStoreChatMediaWorker(),

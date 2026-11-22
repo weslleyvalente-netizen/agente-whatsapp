@@ -9,6 +9,7 @@ export {
   getPushNotificationsQueue,
   getUnansweredLeadSweepQueue,
   getCustomerNudgeQueue,
+  getCommitmentsQueue,
   getStoreCustomerAudioQueue,
   getFetchProfilePictureQueue,
   getCustomerAudioRetentionQueue,
