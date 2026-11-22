@@ -66,3 +66,16 @@ export async function setContactProfilePicture(
   const { error } = await client.from("wa_contacts").update(update).eq("id", contactId);
   if (error) throw error;
 }
+
+export type AdoptLidResult = "renamed" | "merged" | "conflict" | "none" | "invalid";
+/**
+ * Contato @lid que reaparece com o número real (par vindo do próprio WhatsApp). Ver adopt_lid_contact (migração 20261122120000):
+ * sem contato real o @lid assume o número; com contato real, junta; qualquer conflito desfaz e devolve "conflict".
+ */
+export async function adoptLidContact(client: SupabaseClient, organizationId: string, lidPhone: string, realPhone: string): Promise<AdoptLidResult> {
+  const { data, error } = await client.rpc("adopt_lid_contact", {
+    p_organization_id: organizationId, p_lid_phone: lidPhone, p_real_phone: realPhone, p_real_variants: brazilPhoneVariants(realPhone),
+  });
+  if (error) throw error;
+  return data as AdoptLidResult;
+}
