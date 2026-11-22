@@ -49,7 +49,8 @@ const NEG = "(?<!nao )(?<!nao eu )";
 const QUICK = new RegExp(`${NEG}\\b(ja te (falo|respondo|retorno|passo|mando|envio|digo)|so um (instante|momento|minuto|minutinho|pouquinho)|um (instante|momento|minutinho)|ja volto|aguarda (um|so um) (pouco|pouquinho|instante|minutinho))\\b`);
 const STANDARD = new RegExp(`${NEG}\\b(vou (verificar|consultar|ver|confirmar|checar|conferir|analisar|levantar|olhar)|te retorno|retorno (em breve|ja|logo)|vou te retornar|te dou um retorno|ja ja te (falo|retorno)|vou te passar)\\b`);
 const PROMISE_VERB = /\b(retorno|retornar|respondo|responder|chamo|ligo|falo|mando|envio|passo|aviso|confirmo|verifico)\b/;
-const TIME = /\b(?:as|ate as|ate|por volta das)\s*(\d{1,2})(?:[:h](\d{2}))?\s*(?:h|hs|horas)?\b/;
+// Horário: "às 15", "às 15h", "por volta das 9:30"; "até" só com unidade ou minutos ("até 16h", "até 16:30") — "até 10 vezes" não.
+const TIME = /\b(?:as|ate as|por volta das)\s*(\d{1,2})(?:[:h](\d{2}))?\s*(?:h|hs|horas)?\b|\bate\s*(\d{1,2})(?:[:h](\d{2})|\s*(?:h|hs|horas)\b)/;
 
 function nextBusinessDateAfter(isoDate: string, calendar: BusinessCalendar): string {
   const [y, mo, d] = isoDate.split("-").map(Number);
@@ -78,8 +79,8 @@ export function detectSellerPromise(content: string | null | undefined, sentAt: 
   const tomorrow = /\bamanha\b/.test(text);
   const time = text.match(TIME);
   if (time && (verb || standard || quick)) {
-    const h = Number(time[1]);
-    const mi = time[2] ? Number(time[2]) : 0;
+    const h = Number(time[1] ?? time[3]);
+    const mi = time[2] ?? time[4] ? Number(time[2] ?? time[4]) : 0;
     if (h <= 23 && mi <= 59) {
       let day = tomorrow ? nextBusinessDateAfter(today, calendar) : today;
       let due = localInstant(day, h, mi, calendar.timeZone);

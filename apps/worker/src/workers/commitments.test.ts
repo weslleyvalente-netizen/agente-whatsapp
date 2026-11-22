@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getCommitmentsQueue: () => ({}) }));
 vi.mock("@aula-agente/database", () => ({}));
-import { runCommitments, type CommitmentsDeps, type SellerMessage, type ConvMessage } from "./commitments.js";
+import { createCommitmentsState, runCommitments, type CommitmentsDeps, type SellerMessage, type ConvMessage } from "./commitments.js";
 
 // 23/11/2026 é segunda. Calendário padrão seg–sex 08:00–18:00 (BRT = UTC-3).
 const brt = (s: string) => `${new Date(`${s}-03:00`).toISOString()}`;
@@ -34,6 +34,7 @@ function world(o: WorldOpts = {}) {
     openOpportunity: async () => (o.oppStatus && o.oppStatus !== "open" ? null : { id: "op1", ownerId: o.oppOwner === undefined ? "marina" : o.oppOwner }),
     opportunityStatuses: async (_org, ids) => new Map(ids.map((i) => [i, o.oppStatus ?? "open"])),
     proposalStageEventSince: async (_org, _opp, since) => (o.stageEventAt && o.stageEventAt >= since ? { at: o.stageEventAt, stage: "proposal_sent" } : null),
+    recentProposalExists: async (_org, conv, fromIso, toIso) => proposals.some((p) => p.conversationId === conv && p.sentAt >= fromIso && p.sentAt <= toIso),
     insertProposal: async (row) => { if (proposals.some((p) => p.sellerMessageId === row.sellerMessageId)) return false; proposals.push({ id: `p${proposals.length}`, reminderTaskId: null, firstSellerFollowupAt: null, firstCustomerReplyAt: null, outcome: null, ...row }); return true; },
     listTrackedProposals: async () => proposals.map((p) => ({ ...p })),
     updateProposal: async (_org, id, patch) => { Object.assign(proposals.find((p) => p.id === id), camel(patch)); },
@@ -229,5 +230,28 @@ describe("reabertura e dono", () => {
     const w = world({ settings: { commitments_enabled: false }, seller: [{ content: PROPOSTA }] });
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")));
     expect(w.proposals).toHaveLength(0);
+  });
+});
+
+describe("carga e contagem", () => {
+  it("lê só as mensagens novas desde a última execução (com 10 min de folga); a primeira lê 24 h", async () => {
+    const w = world({ seller: [{ content: "bom dia" }] });
+    const sinces: string[] = [];
+    const orig = w.deps.listSellerMessages;
+    w.deps.listSellerMessages = async (org, since) => { sinces.push(since); return orig(org, since); };
+    const state = createCommitmentsState();
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:00:00")), state);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:05:00")), state);
+    expect(sinces).toEqual([brt("2026-11-22T10:00:00"), brt("2026-11-23T09:50:00")]);
+  });
+  it("etapa movida e várias mensagens do vendedor em seguida: conta UMA proposta", async () => {
+    const w = world({ seller: [
+      { id: "m1", content: "segue", createdAt: brt("2026-11-23T10:00:00") },
+      { id: "m2", content: "qualquer dúvida me chama", createdAt: brt("2026-11-23T10:05:00") },
+      { id: "m3", content: "R$ 80.000 com parcelas de 1.200", createdAt: brt("2026-11-23T10:10:00") },
+    ], stageEventAt: brt("2026-11-23T09:50:00") });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:15:00")));
+    expect(w.proposals).toHaveLength(1);
+    expect(w.proposals[0].sellerMessageId).toBe("m1");
   });
 });

@@ -14,15 +14,23 @@ import {
 } from "@aula-agente/shared";
 import { getCommitmentsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventSince, insertProposalFollowup,
+  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventSince, insertProposalFollowup, proposalExistsBetween,
   insertSellerCommitment, listCommitmentsOrganizations, listMessagesAfter, listOpenSellerCommitments, listRecentSellerMessages,
   listTrackedProposalFollowups, resolveCommitmentPendency, supersedeSellerCommitments, taskHasOpenPendency, updateProposalFollowup,
   updateSellerCommitment, type SupabaseClient,
 } from "@aula-agente/database";
 
 export const COMMITMENTS_RUN_EVERY_MS = 5 * 60_000;
-/** Janela de leitura das mensagens do vendedor (o histórico mais velho que 24 h é ignorado para criar algo novo). */
-export const SELLER_MESSAGES_LOOKBACK_MS = 3 * 24 * 60 * 60_000;
+/** Primeira leitura: 24 h (o histórico mais velho é ignorado para criar algo novo). Depois, só o que chegou desde a última leitura. */
+export const SELLER_MESSAGES_LOOKBACK_MS = 24 * 60 * 60_000;
+/** Folga do cursor: mensagem gravada com created_at um pouco antes do fim da leitura anterior não se perde (dedupe por chave única). */
+const CURSOR_OVERLAP_MS = 10 * 60_000;
+/** Uma proposta por conversa nesta janela: etapa movida + várias mensagens em seguida (ou proposta em partes) contam uma vez. */
+const PROPOSAL_DEDUPE_WINDOW_MS = 2 * 60 * 60_000;
+
+/** Cursor da leitura por organização (em memória do worker; reinício = relê 24 h, sem duplicar graças às chaves únicas). */
+export interface CommitmentsState { lastScan: Map<string, number> }
+export const createCommitmentsState = (): CommitmentsState => ({ lastScan: new Map() });
 /** Até quando uma proposta é acompanhada para métrica de mensagens (o resultado do negócio segue até 30 dias). */
 const PROPOSAL_MESSAGE_TRACK_MS = 7 * 24 * 60 * 60_000;
 /** Evento de etapa vale como prova da proposta se ocorreu até 2 h antes da mensagem do vendedor (ou depois dela). */
@@ -52,6 +60,8 @@ export interface CommitmentsDeps {
   opportunityStatuses(organizationId: string, ids: string[]): Promise<Map<string, string>>;
   /** Último stage_changed para etapa de proposta do negócio desde sinceIso. */
   proposalStageEventSince(organizationId: string, opportunityId: string, sinceIso: string): Promise<{ at: string; stage: string } | null>;
+  /** Já existe proposta registrada nesta conversa com sent_at entre fromIso e toIso? */
+  recentProposalExists(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean>;
   insertProposal(row: Omit<ProposalRow, "id" | "reminderTaskId" | "firstSellerFollowupAt" | "firstCustomerReplyAt" | "outcome"> & { organizationId: string; identifiedBy: "stage_event" | "content"; evidence: string }): Promise<boolean>;
   listTrackedProposals(organizationId: string, sinceIso: string): Promise<ProposalRow[]>;
   updateProposal(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
@@ -81,7 +91,7 @@ function promiseDefaultMinutes(settings: Record<string, unknown>): number {
   return Number.isInteger(v) && (v as number) >= 15 && (v as number) <= 600 ? (v as number) : PROMISE_DEFAULT_MINUTES;
 }
 
-export async function runCommitments(deps: CommitmentsDeps, now = new Date()): Promise<CommitmentsSummary> {
+export async function runCommitments(deps: CommitmentsDeps, now = new Date(), state: CommitmentsState = createCommitmentsState()): Promise<CommitmentsSummary> {
   const summary: CommitmentsSummary = { organizations: 0, proposals: 0, reminders: 0, promises: 0, resolved: 0, errors: 0 };
   let orgs: Array<{ id: string; settings: Record<string, unknown> | null }>;
   try { orgs = await deps.listOrganizations(); } catch (err) { summary.errors++; deps.log.error(`commitments: listing organizations failed (${errText(err)})`); return summary; }
@@ -90,7 +100,12 @@ export async function runCommitments(deps: CommitmentsDeps, now = new Date()): P
     if (settings.commitments_enabled !== true) continue;
     summary.organizations++;
     const calendar = resolveBusinessCalendar(settings.business_calendar);
-    try { await scanSellerMessages(deps, org.id, calendar, promiseDefaultMinutes(settings), now, summary); }
+    try {
+      const last = state.lastScan.get(org.id);
+      const since = new Date(last !== undefined ? last - CURSOR_OVERLAP_MS : now.getTime() - SELLER_MESSAGES_LOOKBACK_MS);
+      await scanSellerMessages(deps, org.id, calendar, promiseDefaultMinutes(settings), now, since, summary);
+      state.lastScan.set(org.id, now.getTime());
+    }
     catch (err) { summary.errors++; deps.log.error(`commitments: org ${org.id} scan failed (${errText(err)})`); }
     try { await trackProposals(deps, org.id, calendar, now, summary); }
     catch (err) { summary.errors++; deps.log.error(`commitments: org ${org.id} proposals failed (${errText(err)})`); }
@@ -101,8 +116,8 @@ export async function runCommitments(deps: CommitmentsDeps, now = new Date()): P
   return summary;
 }
 
-async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string, calendar: BusinessCalendar, defaultMinutes: number, now: Date, summary: CommitmentsSummary) {
-  const msgs = await deps.listSellerMessages(organizationId, new Date(now.getTime() - SELLER_MESSAGES_LOOKBACK_MS).toISOString());
+async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string, calendar: BusinessCalendar, defaultMinutes: number, now: Date, since: Date, summary: CommitmentsSummary) {
+  const msgs = await deps.listSellerMessages(organizationId, since.toISOString());
   const oppCache = new Map<string, { id: string; ownerId: string | null } | null>();
   for (const m of msgs) {
     try {
@@ -142,7 +157,7 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
           identified = { by: "stage_event", evidence: `Etapa movida para ${FUNNEL_STAGE_LABELS[stage.stage] ?? stage.stage} às ${hhmm(new Date(stage.at), calendar.timeZone)}` };
         }
       }
-      if (identified) {
+      if (identified && !(await deps.recentProposalExists(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString()))) {
         const inserted = await deps.insertProposal({
           organizationId, conversationId: m.conversationId, contactId: m.contactId, opportunityId: opp?.id ?? null, ownerUserId: owner,
           sellerMessageId: m.id, sentAt: sentAt.toISOString(), identifiedBy: identified.by, evidence: identified.evidence,
@@ -234,6 +249,7 @@ export function buildCommitmentsDeps(db: SupabaseClient = getAdminClient()): Com
     openOpportunity: (org, contact) => getOpenOpportunityForContact(db, org, contact),
     opportunityStatuses: (org, ids) => (ids.length ? getOpportunityStatuses(db, org, ids) : Promise.resolve(new Map())),
     proposalStageEventSince: (org, opp, since) => getProposalStageEventSince(db, org, opp, since),
+    recentProposalExists: (org, conv, from, to) => proposalExistsBetween(db, org, conv, from, to),
     insertProposal: (row) => insertProposalFollowup(db, row),
     listTrackedProposals: (org, since) => listTrackedProposalFollowups(db, org, since),
     updateProposal: (org, id, patch) => updateProposalFollowup(db, org, id, patch),
@@ -249,8 +265,9 @@ export function buildCommitmentsDeps(db: SupabaseClient = getAdminClient()): Com
 }
 
 export function startCommitmentsWorker() {
+  const state = createCommitmentsState();
   const worker = new Worker(QUEUE_NAMES.COMMITMENTS, async () => {
-    await runCommitments(buildCommitmentsDeps());
+    await runCommitments(buildCommitmentsDeps(), new Date(), state);
   }, { connection: getRedisConnection(), concurrency: 1 });
   getCommitmentsQueue().upsertJobScheduler("commitments-scheduler", { every: COMMITMENTS_RUN_EVERY_MS }, { name: "run-commitments" });
   worker.on("failed", (job, err) => console.error(`Commitments job ${job?.id} failed:`, err.message));

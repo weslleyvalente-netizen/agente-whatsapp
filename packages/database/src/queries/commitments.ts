@@ -90,6 +90,13 @@ export async function insertProposalFollowup(db: SupabaseClient, row: {
   return (data ?? []).length > 0;
 }
 
+export async function proposalExistsBetween(db: SupabaseClient, organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean> {
+  const { count, error } = await db.from("proposal_followups").select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).gte("sent_at", fromIso).lte("sent_at", toIso);
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
 /** Propostas ainda acompanhadas (sem resultado do negócio) desde sinceIso, com o contato da conversa. */
 export async function listTrackedProposalFollowups(db: SupabaseClient, organizationId: string, sinceIso: string) {
   const rows = await fetchAllPages<any>(async (from, to) => {

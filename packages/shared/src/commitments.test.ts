@@ -72,6 +72,11 @@ describe("detectSellerPromise", () => {
     expect(r.kind).toBe("tomorrow");
     expect(r.dueAt.toISOString()).toBe(brt("2026-11-24T10:00:00").toISOString());
   });
+  it("'até 10 vezes' não é horário (até só vale com h ou :MM)", () => {
+    expect(detectSellerPromise("Te mando a simulação em até 10 vezes", sent, cal)?.kind ?? null).not.toBe("explicit_time");
+    expect(detectSellerPromise("te retorno até 16h", sent, cal)!.dueAt.toISOString()).toBe(brt("2026-11-23T16:00:00").toISOString());
+    expect(detectSellerPromise("te retorno até 16:30", sent, cal)!.dueAt.toISOString()).toBe(brt("2026-11-23T16:30:00").toISOString());
+  });
   it("mensagem genérica ou negada não é promessa", () => {
     expect(detectSellerPromise("Bom dia, tudo bem?", sent, cal)).toBeNull();
     expect(detectSellerPromise("ok", sent, cal)).toBeNull();

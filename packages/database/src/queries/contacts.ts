@@ -79,3 +79,11 @@ export async function adoptLidContact(client: SupabaseClient, organizationId: st
   if (error) throw error;
   return data as AdoptLidResult;
 }
+
+/** Telefone real do contato que já guardou este @lid (após adopt_lid_contact); null se nenhum. */
+export async function findPhoneByLid(client: SupabaseClient, organizationId: string, lidPhone: string): Promise<string | null> {
+  const { data, error } = await client.from("wa_contacts").select("phone").eq("organization_id", organizationId)
+    .eq("metadata->>lid", lidPhone).not("phone", "like", "%#merged").limit(1).maybeSingle();
+  if (error) throw error;
+  return (data as { phone: string } | null)?.phone ?? null;
+}
