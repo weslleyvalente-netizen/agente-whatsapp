@@ -31,6 +31,8 @@ export interface Task {
   created_at: string;
   updated_at: string;
   consolidated_pendencies: TaskPendency[];
+  /** Tarefa da rotina de compromissos (promessa / lembrete de proposta): gravada só na criação; fora da consolidação. */
+  commitment_kind?: "return_customer" | "proposal_followup" | null;
   // Follow-up-from-task (see task-followup-eligibility.ts /
   // task-followup-throttle.ts): the AI-suggested message, kept on the task
   // so opening it again doesn't regenerate for free, and how many times
@@ -57,6 +59,8 @@ export interface TaskPendency {
   conversation_id?: string | null;
   /** Só em "Mensagem não enviada": cada mensagem que falhou (id, conversa, hora). É a referência que permite encerrar só com reenvio DAQUELA mensagem. */
   failed_messages?: FailedMessageRef[];
+  /** Só na tarefa da rotina de compromissos: horário da mensagem do vendedor que deu o prazo (mensagem antiga não troca o prazo de uma mais nova). */
+  source_sent_at?: string;
   type: TaskType;
   description: string;
   reason: string | null;

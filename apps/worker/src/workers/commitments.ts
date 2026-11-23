@@ -14,9 +14,9 @@ import {
 } from "@aula-agente/shared";
 import { getCommitmentsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventBetween, discardStageProposalFollowups, insertProposalFollowup, proposalExistsBetween,
+  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventBetween, discardStageProposalFollowups, insertProposalFollowup, latestProposalFollowupBetween,
   insertSellerCommitment, listCommitmentsOrganizations, listMessagesAfter, listOpenSellerCommitments, listRecentSellerMessages,
-  listTrackedProposalFollowups, resolveCommitmentPendency, supersedeSellerCommitments, taskHasOpenPendency, updateProposalFollowup,
+  listTrackedProposalFollowups, newerSellerCommitmentExists, resolveCommitmentPendency, supersedeSellerCommitments, taskHasOpenPendency, updateProposalFollowup,
   updateSellerCommitment, type SupabaseClient,
 } from "@aula-agente/database";
 
@@ -73,18 +73,23 @@ export interface CommitmentsDeps {
   /** Remove propostas identificadas só pela etapa (sem lembrete criado) desta conversa no intervalo: a proposta com valor prevalece. */
   discardStageProposals(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<void>;
   /** Já existe proposta registrada nesta conversa com sent_at entre fromIso e toIso? */
-  recentProposalExists(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean>;
+  /** Proposta registrada mais recente da conversa no intervalo (para a deduplicação por apresentação). */
+  latestProposalBetween(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<{ sentAt: string; sellerMessageId: string } | null>;
   insertProposal(row: Omit<ProposalRow, "id" | "reminderTaskId" | "firstSellerFollowupAt" | "firstCustomerReplyAt" | "outcome"> & { organizationId: string; identifiedBy: "stage_event" | "content"; evidence: string }): Promise<boolean>;
   listTrackedProposals(organizationId: string, sinceIso: string): Promise<ProposalRow[]>;
   updateProposal(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   insertCommitment(row: Omit<CommitmentRow, "id" | "taskId" | "resolvedAt"> & { organizationId: string; kind: string; phrase: string }): Promise<string | null>;
-  /** Encerra (superseded) as promessas abertas anteriores da conversa e devolve quais eram, com a tarefa de cada uma. */
-  supersedeCommitments(organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>>;
+  /** Encerra (superseded) as promessas abertas da conversa ENVIADAS ANTES de sentAtIso e devolve quais eram, com a tarefa de cada uma. */
+  supersedeCommitments(organizationId: string, conversationId: string, keepId: string, sentAtIso: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>>;
+  /** Já existe promessa da conversa enviada DEPOIS de sentAtIso (aberta ou já resolvida)? Então a desta mensagem está desatualizada. */
+  newerCommitmentExists(organizationId: string, conversationId: string, sentAtIso: string): Promise<boolean>;
   listOpenCommitments(organizationId: string): Promise<Array<CommitmentRow & { kind: string; phrase: string }>>;
   updateCommitment(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
   createTask(input: {
     organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: "proposal_followup" | "return_customer";
-    description: string; reason: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
+    description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
+    /** Horário da mensagem que originou o prazo: a tarefa aberta só troca de prazo por mensagem igual ou mais nova. */
+    sourceSentAt?: string;
   }): Promise<{ id: string }>;
   /** A tarefa ainda tem pendência aberta deste tipo (tarefa aberta do tipo, ou pendência consolidada do tipo)? */
   taskHasOpenPendency(organizationId: string, taskId: string, type: string): Promise<boolean>;
@@ -148,17 +153,21 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
           organizationId, conversationId: m.conversationId, contactId: m.contactId, opportunityId: opp?.id ?? null, ownerUserId: owner,
           sellerMessageId: m.id, sentAt: sentAt.toISOString(), dueAt: promise.dueAt.toISOString(), kind: promise.kind, phrase: promise.phrase,
         });
-        if (id) {
+        // Mensagem antiga processada depois de uma mais nova (reprocessamento, execução simultânea, mensagem atrasada): a promessa
+        // dela já foi corrigida pelo vendedor. Fica registrada como substituída e não mexe na tarefa nem na promessa válida.
+        if (id && await deps.newerCommitmentExists(organizationId, m.conversationId, sentAt.toISOString())) {
+          await deps.updateCommitment(organizationId, id, { resolved_at: now.toISOString(), resolution: "superseded" });
+        } else if (id) {
           const task = await deps.createTask({
             organizationId, contactId: m.contactId, conversationId: m.conversationId, opportunityId: opp?.id ?? null, ownerId: owner, type: "return_customer",
             description: `Retornar ao cliente: você disse "${promise.phrase}" às ${hhmm(sentAt, calendar.timeZone)}. Prazo: ${describeBusinessInstant(promise.dueAt, calendar)}.`,
-            reason: "Promessa de retorno do vendedor ao cliente.", priority: "high",
-            dueDate: toISODateInTimeZone(promise.dueAt, calendar.timeZone), dueTime: hhmm(promise.dueAt, calendar.timeZone),
+            priority: "high",
+            dueDate: toISODateInTimeZone(promise.dueAt, calendar.timeZone), dueTime: hhmm(promise.dueAt, calendar.timeZone), sourceSentAt: sentAt.toISOString(),
           });
           await deps.updateCommitment(organizationId, id, { task_id: task.id });
           // Novo prazo do vendedor: a promessa antiga sai e, se estava em OUTRA tarefa, a pendência dela é encerrada
           // (não pode continuar aparecendo vencida). Na mesma tarefa, o prazo e a hora já foram trocados pela criação acima.
-          const superseded = await deps.supersedeCommitments(organizationId, m.conversationId, id, now.toISOString());
+          const superseded = await deps.supersedeCommitments(organizationId, m.conversationId, id, sentAt.toISOString(), now.toISOString());
           for (const old of superseded) {
             if (old.taskId && old.taskId !== task.id) await deps.resolvePendency(organizationId, old.taskId, "return_customer", "Substituída por nova promessa do vendedor com outro prazo.");
           }
@@ -180,7 +189,7 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       if (identified?.by === "content") {
         await deps.discardStageProposals(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString());
       }
-      if (identified && !(await deps.recentProposalExists(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString()))) {
+      if (identified && !(await isPartOfEarlierPresentation(deps, organizationId, m, sentAt))) {
         const inserted = await deps.insertProposal({
           organizationId, conversationId: m.conversationId, contactId: m.contactId, opportunityId: opp?.id ?? null, ownerUserId: owner,
           sellerMessageId: m.id, sentAt: sentAt.toISOString(), identifiedBy: identified.by, evidence: identified.evidence,
@@ -189,6 +198,22 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       }
     } catch (err) { summary.errors++; deps.log.error(`commitments: message ${m.id} failed (${errText(err)})`); }
   }
+}
+
+/**
+ * Deduplicação da janela de 2 h: a mensagem só é "a mesma proposta" de um registro anterior se ainda faz parte da APRESENTAÇÃO dele
+ * (partes seguidas do vendedor, sem resposta do cliente nem pausa). Depois que o cliente respondeu ou o vendedor fez uma pausa, a
+ * mensagem com evidência é uma proposta NOVA, com o próprio lembrete — um registro anterior (ex.: mensagem informativa com valor, ou
+ * proposta pela etapa que já ganhou lembrete) não a bloqueia.
+ */
+async function isPartOfEarlierPresentation(deps: CommitmentsDeps, organizationId: string, m: SellerMessage, sentAt: Date): Promise<boolean> {
+  const prev = await deps.latestProposalBetween(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString());
+  if (!prev) return false;
+  if (prev.sellerMessageId === m.id) return true;
+  const msgAt = Date.parse(m.createdAt);
+  const between = (await deps.messagesAfter(organizationId, m.conversationId, prev.sentAt))
+    .filter((x) => x.id !== prev.sellerMessageId && Date.parse(x.createdAt) <= msgAt);
+  return Date.parse(splitPresentation(prev.sentAt, between).presentationEnd) >= msgAt;
 }
 
 /** A mensagem é a do vendedor mais próxima do evento: nenhuma outra mensagem do vendedor entre a mensagem e o evento. */
@@ -249,7 +274,7 @@ async function trackProposals(deps: CommitmentsDeps, organizationId: string, cal
           const task = await deps.createTask({
             organizationId, contactId: r.contactId, conversationId: r.conversationId, opportunityId: r.opportunityId, ownerId: r.ownerUserId, type: "proposal_followup",
             description: "Proposta enviada há 30 min — avaliar próximo contato. É só um lembrete interno: nada foi enviado ao cliente.",
-            reason: "Proposta enviada sem resposta do cliente.", priority: "normal", dueDate: toISODateInTimeZone(now, calendar.timeZone), dueTime: null,
+            priority: "normal", dueDate: toISODateInTimeZone(now, calendar.timeZone), dueTime: null,
           });
           patch.reminder_task_id = task.id; patch.reminder_created_at = now.toISOString();
           r.reminderTaskId = task.id;
@@ -291,8 +316,8 @@ async function resolveCommitments(deps: CommitmentsDeps, organizationId: string,
         const task = await deps.createTask({
           organizationId, contactId: c.contactId, conversationId: c.conversationId, opportunityId: c.opportunityId, ownerId: c.ownerUserId, type: "return_customer",
           description: `Retornar ao cliente: você disse "${c.phrase}" às ${hhmm(new Date(c.sentAt), calendar.timeZone)}. Prazo: ${describeBusinessInstant(dueAt, calendar)}.`,
-          reason: "Promessa de retorno do vendedor ao cliente.", priority: "high",
-          dueDate: toISODateInTimeZone(dueAt, calendar.timeZone), dueTime: hhmm(dueAt, calendar.timeZone),
+          priority: "high",
+          dueDate: toISODateInTimeZone(dueAt, calendar.timeZone), dueTime: hhmm(dueAt, calendar.timeZone), sourceSentAt: c.sentAt,
         });
         await deps.updateCommitment(organizationId, c.id, { task_id: task.id });
         c.taskId = task.id;
@@ -332,12 +357,13 @@ export function buildCommitmentsDeps(db: SupabaseClient = getAdminClient()): Com
     opportunityStatuses: (org, ids) => (ids.length ? getOpportunityStatuses(db, org, ids) : Promise.resolve(new Map())),
     proposalStageEventBetween: (org, opp, from, to) => getProposalStageEventBetween(db, org, opp, from, to),
     discardStageProposals: (org, conv, from, to) => discardStageProposalFollowups(db, org, conv, from, to),
-    recentProposalExists: (org, conv, from, to) => proposalExistsBetween(db, org, conv, from, to),
+    latestProposalBetween: (org, conv, from, to) => latestProposalFollowupBetween(db, org, conv, from, to),
     insertProposal: (row) => insertProposalFollowup(db, row),
     listTrackedProposals: (org, since) => listTrackedProposalFollowups(db, org, since),
     updateProposal: (org, id, patch) => updateProposalFollowup(db, org, id, patch),
     insertCommitment: (row) => insertSellerCommitment(db, row),
-    supersedeCommitments: (org, conv, keep, at) => supersedeSellerCommitments(db, org, conv, keep, at),
+    supersedeCommitments: (org, conv, keep, sentAt, at) => supersedeSellerCommitments(db, org, conv, keep, sentAt, at),
+    newerCommitmentExists: (org, conv, sentAt) => newerSellerCommitmentExists(db, org, conv, sentAt),
     listOpenCommitments: (org) => listOpenSellerCommitments(db, org),
     updateCommitment: (org, id, patch) => updateSellerCommitment(db, org, id, patch),
     createTask: (i) => createCommitmentTask(db, i),

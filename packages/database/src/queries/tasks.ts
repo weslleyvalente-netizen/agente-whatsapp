@@ -20,6 +20,7 @@ import {
   earliestDueDate,
   buildConsolidatedDescription,
   mergeSendFailures,
+  isCommitmentTask,
 } from "@aula-agente/shared";
 import { getQualificationByConversationId } from "./conversation-qualification.js";
 import { getOrganizationById } from "./organizations.js";
@@ -29,6 +30,13 @@ import { getOpenOpportunitiesByContact } from "./opportunities.js";
 // outside a query (e.g. apps/worker/src/workers/stale-conversation-followup.ts)
 // can import the real list instead of keeping their own copy in sync by hand.
 export const OPEN_TASK_STATUSES = ["pending", "in_progress", "rescheduled"];
+
+// Tarefas da rotina de compromissos (promessa de retorno / lembrete de proposta) são INDEPENDENTES: nenhuma busca de "tarefa aberta
+// para agrupar/atualizar" as devolve. Assim outro fluxo nunca põe pendência nelas, nem troca o prazo, o tipo ou o responsável delas.
+const OPEN_LOOKUP_LIMIT = 20;
+function newestOpenTaskOutsideCommitments(rows: Task[] | null): Task | null {
+  return [...(rows ?? [])].filter((t) => !isCommitmentTask(t)).sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))[0] ?? null;
+}
 
 export async function createTask(
   client: SupabaseClient,
@@ -148,10 +156,9 @@ export async function getOpenTaskByContactAndType(
     .is("opportunity_id", null)
     .in("status", OPEN_TASK_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(OPEN_LOOKUP_LIMIT);
   if (error) throw error;
-  return data as Task | null;
+  return newestOpenTaskOutsideCommitments(data as Task[] | null);
 }
 
 export async function getOpenTaskByOpportunityAndType(
@@ -168,10 +175,9 @@ export async function getOpenTaskByOpportunityAndType(
     .eq("type", type)
     .in("status", OPEN_TASK_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(OPEN_LOOKUP_LIMIT);
   if (error) throw error;
-  return data as Task | null;
+  return newestOpenTaskOutsideCommitments(data as Task[] | null);
 }
 
 // Fase 2, item 2 (consolidation): looks up the open task for an opportunity
@@ -186,10 +192,9 @@ export async function getOpenTaskByOpportunity(client: SupabaseClient, organizat
     .eq("opportunity_id", opportunityId)
     .in("status", OPEN_TASK_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(OPEN_LOOKUP_LIMIT);
   if (error) throw error;
-  return data as Task | null;
+  return newestOpenTaskOutsideCommitments(data as Task[] | null);
 }
 
 // Every open task for a contact, any type/opportunity — used by

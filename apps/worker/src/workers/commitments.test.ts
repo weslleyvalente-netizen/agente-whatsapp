@@ -38,15 +38,20 @@ function world(o: WorldOpts = {}) {
     opportunityStatuses: async (_org, ids) => new Map(ids.map((i) => [i, o.oppStatus ?? "open"])),
     proposalStageEventBetween: async (_org, _opp, fromIso, toIso) => (o.stageEventAt && o.stageEventAt >= fromIso && o.stageEventAt <= toIso ? { at: o.stageEventAt, stage: "proposal_sent" } : null),
     discardStageProposals: async (_org, conv, fromIso, toIso) => { for (let i = proposals.length - 1; i >= 0; i--) { const p = proposals[i]; if (p.conversationId === conv && p.identifiedBy === "stage_event" && !p.reminderTaskId && p.sentAt >= fromIso && p.sentAt <= toIso) proposals.splice(i, 1); } },
-    recentProposalExists: async (_org, conv, fromIso, toIso) => proposals.some((p) => p.conversationId === conv && p.sentAt >= fromIso && p.sentAt <= toIso),
+    latestProposalBetween: async (_org, conv, fromIso, toIso) => {
+      const p = proposals.filter((x) => x.conversationId === conv && x.sentAt >= fromIso && x.sentAt <= toIso).sort((a, b) => b.sentAt.localeCompare(a.sentAt))[0];
+      return p ? { sentAt: p.sentAt, sellerMessageId: p.sellerMessageId } : null;
+    },
     insertProposal: async (row) => { if (proposals.some((p) => p.sellerMessageId === row.sellerMessageId)) return false; proposals.push({ id: `p${proposals.length}`, reminderTaskId: null, firstSellerFollowupAt: null, firstCustomerReplyAt: null, outcome: null, ...row }); return true; },
     listTrackedProposals: async () => proposals.map((p) => ({ ...p })),
     updateProposal: async (_org, id, patch) => { Object.assign(proposals.find((p) => p.id === id), camel(patch)); },
     insertCommitment: async (row) => { if (commitments.some((c) => c.sellerMessageId === row.sellerMessageId)) return null; const id = `k${commitments.length}`; commitments.push({ id, taskId: null, resolvedAt: null, resolution: null, ...row }); return id; },
-    supersedeCommitments: async (_org, conv, keep, at) => { const out: Array<{ id: string; taskId: string | null }> = []; for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt) { Object.assign(c, { resolvedAt: at, resolution: "superseded" }); out.push({ id: c.id, taskId: c.taskId }); } return out; },
+    // Como no banco: só encerra as promessas abertas enviadas ANTES da que fica; e "existe mais nova" olha qualquer promessa da conversa.
+    supersedeCommitments: async (_org, conv, keep, sentAt, at) => { const out: Array<{ id: string; taskId: string | null }> = []; for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt && c.sentAt < sentAt) { Object.assign(c, { resolvedAt: at, resolution: "superseded" }); out.push({ id: c.id, taskId: c.taskId }); } return out; },
+    newerCommitmentExists: async (_org, conv, sentAt) => commitments.some((c) => c.conversationId === conv && c.sentAt > sentAt),
     listOpenCommitments: async () => commitments.filter((c) => !c.resolvedAt).map((c) => ({ ...c })),
     updateCommitment: async (_org, id, patch) => { Object.assign(commitments.find((c) => c.id === id), camel(patch)); },
-    createTask: async (i) => { const existing = tasks.find((t) => t.type === i.type && t.opportunityId === i.opportunityId && !t.done); if (existing) { Object.assign(existing, i); return { id: existing.id }; } const t = { id: `t${tasks.length}`, ...i }; tasks.push(t); return { id: t.id }; },
+    createTask: async (i) => { const existing = tasks.find((t) => t.type === i.type && t.opportunityId === i.opportunityId && !t.done); if (existing) { if (!(existing.sourceSentAt && i.sourceSentAt && existing.sourceSentAt > i.sourceSentAt)) Object.assign(existing, i); return { id: existing.id }; } const t = { id: `t${tasks.length}`, ...i }; tasks.push(t); return { id: t.id }; },
     taskHasOpenPendency: async (_org, taskId) => !(o.pendencyGone ?? []).includes(taskId) && !tasks.find((t) => t.id === taskId)?.done,
     resolvePendency: async (_org, taskId, type, note) => { resolved.push({ taskId, type, note }); const t = tasks.find((x) => x.id === taskId); if (t) t.done = true; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
@@ -422,5 +427,99 @@ describe("cenário 3: erro temporário ao consultar a tarefa", () => {
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:41:00")));
     expect(w.resolved).toHaveLength(0);
     expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+  });
+});
+
+describe("revisão #122: mensagem informativa registrada como proposta não bloqueia a proposta real seguinte (janela de 2 h)", () => {
+  // Informativa que ainda passa pela regra de conteúdo (valor + termo, sem pergunta nem retomada).
+  const INFORMATIVA = "Sua parcela de R$ 512,00 do grupo 1234 foi paga, obrigado";
+  const pfTasks = (w: ReturnType<typeof world>) => w.tasks.filter((t) => t.type === "proposal_followup");
+
+  it("informativa → cliente responde → proposta real 40 min depois: a real é registrada e ganha o próprio lembrete", async () => {
+    const w = world({
+      seller: [{ id: "inf", content: INFORMATIVA, createdAt: brt("2026-11-23T10:00:00") }, { id: "real", content: PROPOSTA, createdAt: brt("2026-11-23T10:40:00") }],
+      after: { c1: [{ role: "contact", createdAt: brt("2026-11-23T10:05:00"), content: "obrigado" }] },
+    });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:45:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["inf", "real"]);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T11:11:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBe(pfTasks(w)[0].id);
+    expect(w.proposals.find((p) => p.sellerMessageId === "inf").reminderTaskId).toBeNull();
+  });
+
+  it("informativa sem resposta e, depois de uma pausa, a proposta real: a real é registrada e lembrada 30 min depois dela", async () => {
+    const w = world({ seller: [{ id: "inf", content: INFORMATIVA, createdAt: brt("2026-11-23T10:00:00") }, { id: "real", content: PROPOSTA, createdAt: brt("2026-11-23T10:20:00") }] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:49:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["inf", "real"]);
+    expect(pfTasks(w)).toHaveLength(0); // 29 min depois da real: ainda não
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:51:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBe(pfTasks(w)[0].id);
+  });
+
+  it("proposta pela etapa que JÁ ganhou lembrete não bloqueia a proposta real com valor enviada depois", async () => {
+    const w = world({ seller: [{ id: "segue", content: "segue", createdAt: brt("2026-11-23T10:00:00") }], stageEventAt: brt("2026-11-23T09:58:00") });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    w.seller.push({ id: "real", conversationId: "c1", contactId: "ct1", assignedTo: null, createdAt: brt("2026-11-23T10:45:00"), waOriginalAt: null, content: PROPOSTA, mediaType: "text", fileName: null, sendFailed: false });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T11:16:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["segue", "real"]);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBeTruthy();
+  });
+
+  it("continua deduplicando as partes da MESMA apresentação (seguidas, sem resposta): uma proposta e um lembrete", async () => {
+    const w = world({ seller: [
+      { id: "p1", content: PROPOSTA, createdAt: brt("2026-11-23T10:00:00") },
+      { id: "p2", content: "Entrada de 10 mil e saldo em 48 parcelas", createdAt: brt("2026-11-23T10:02:00") },
+    ] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:33:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["p1"]);
+    expect(pfTasks(w)).toHaveLength(1);
+  });
+});
+
+// Revisão #122 (23/11/2026): promessa corrigida pelo vendedor. 10:00 "retorno às 12h"; 10:05 corrige para 15h. Por concorrência ou
+// reprocessamento a mensagem das 10:05 é processada ANTES da das 10:00. A válida continua sendo a das 10:05 (prazo 15:00): a mensagem
+// antiga não pode reabrir a promessa, trocar o prazo da tarefa nem encerrar a promessa mais nova.
+describe("revisão #122: mensagem antiga processada depois não substitui a promessa mais recente", () => {
+  const M10 = { id: "m10", content: "Vou te retornar às 12h", createdAt: brt("2026-11-23T10:00:00") };
+  const M1005 = { id: "m1005", content: "Corrigindo: te retorno às 15h", createdAt: brt("2026-11-23T10:05:00") };
+  const check = (w: ReturnType<typeof world>) => {
+    const open = w.commitments.filter((c) => !c.resolvedAt);
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ sellerMessageId: "m1005", dueAt: brt("2026-11-23T15:00:00") });
+    expect(w.commitments.find((c) => c.sellerMessageId === "m10")).toMatchObject({ resolution: "superseded" });
+    const live = w.tasks.filter((t) => t.type === "return_customer" && !t.done);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ dueDate: "2026-11-23", dueTime: "15:00" });
+    expect(open[0].taskId).toBe(live[0].id);
+    expect(w.resolved).toHaveLength(0); // a tarefa da promessa válida não é encerrada
+  };
+  it("reprocessamento: 10:05 numa execução, 10:00 na seguinte", async () => {
+    const w = world({ seller: [M10, M1005] });
+    const [m10, m1005] = w.seller;
+    w.deps.listSellerMessages = async () => [m1005];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:06:00")));
+    w.deps.listSellerMessages = async () => [m10];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:11:00")));
+    check(w);
+    // e a rotina seguinte (recuperação + listagem completa) mantém o resultado
+    w.deps.listSellerMessages = async () => [m10, m1005];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:16:00")));
+    check(w);
+  });
+  it("execuções simultâneas: uma pega a das 10:05 e a outra a das 10:00", async () => {
+    const w = world({ seller: [M10, M1005] });
+    const [m10, m1005] = w.seller;
+    const a = { ...w.deps, listSellerMessages: async () => [m1005] };
+    const b = { ...w.deps, listSellerMessages: async () => [m10] };
+    await Promise.all([runCommitments(a, new Date(brt("2026-11-23T10:06:00"))), runCommitments(b, new Date(brt("2026-11-23T10:06:00")))]);
+    check(w);
+  });
+  it("ordem normal (10:00 e depois 10:05) continua trocando o prazo para 15:00", async () => {
+    const w = world({ seller: [M10, M1005] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:06:00")));
+    check(w);
   });
 });
