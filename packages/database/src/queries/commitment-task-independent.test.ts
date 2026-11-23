@@ -40,7 +40,8 @@ function makeFakeClient(seed: { tasks?: Row[]; task_events?: Row[]; organization
         if (name === "tasks") ops.push(mode);
         if (mode === "insert" && violatesCommitmentIndex(name, payload!)) return { data: null, error: { message: "duplicate key value violates unique constraint \"tasks_commitment_open_per_conversation\"", code: "23505" } };
         if (mode === "insert") { const row = { id: `${name}-${nextId++}`, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), completed_at: null, ...payload }; rows.push(row); return { data: row, error: null }; }
-        if (mode === "update") { const i = rows.findIndex((r) => filters.every((f) => f(r))); if (i < 0) return { data: null, error: { message: "nf", code: "PGRST116" } }; rows[i] = { ...rows[i], ...payload }; return { data: rows[i], error: null }; }
+        // Como o trigger do banco: toda gravação troca updated_at (é o que faz o bloqueio otimista de updateTask detectar a corrida).
+        if (mode === "update") { const i = rows.findIndex((r) => filters.every((f) => f(r))); if (i < 0) return { data: null, error: { message: "nf", code: "PGRST116" } }; rows[i] = { ...rows[i], ...payload, ...(name === "tasks" ? { updated_at: `rev-${nextId++}` } : {}) }; return { data: rows[i], error: null }; }
         const m = matches(); return m.length ? { data: m[0], error: null } : { data: null, error: { message: "nf", code: "PGRST116" } };
       },
       then(resolve: (v: any) => void) {
@@ -209,5 +210,42 @@ describe("revisão #122: execuções simultâneas e edição do motivo", () => {
     const other = await createTaskWithDedup(client, { organization_id: ORG, contact_id: "ct1", conversation_id: "conv1", opportunity_id: "op1", type: "customer_nudge",
       description: "Cliente parou de responder.", reason: "Sem resposta.", priority: "normal", due_date: "2026-11-23", created_by_type: "ai", created_by_id: null });
     expect(other.task.id).toBe("vend-1");
+  });
+});
+
+// Revisão #122 (23/11/2026): 10:00 "retorno às 12h", 10:05 corrige para 15h; a das 10:05 é processada primeiro. A tarefa fica em 15:00.
+describe("revisão #122: mensagem antiga não volta o prazo da tarefa da promessa", () => {
+  const p12 = promise({ dueTime: "12:00", description: 'Retornar ao cliente: você disse "às 12h" às 10:00.', sourceSentAt: "2026-11-23T13:00:00.000Z" });
+  const p15 = promise({ dueTime: "15:00", description: 'Retornar ao cliente: você disse "às 15h" às 10:05.', sourceSentAt: "2026-11-23T13:05:00.000Z" });
+  const live = (tables: Record<string, Row[]>) => { const o = openTasks(tables); expect(o).toHaveLength(1); return o[0]; };
+
+  it("reprocessamento: a das 10:05 grava 15:00; a das 10:00, processada depois, não troca o prazo", async () => {
+    const { client, tables } = makeFakeClient({ tasks: [], organizations: [consolidatedOrg] });
+    const a = await createCommitmentTask(client, p15);
+    const before = { ...live(tables) };
+    const b = await createCommitmentTask(client, p12);
+    expect(b.id).toBe(a.id);
+    expect(live(tables)).toEqual(before);
+    expect(live(tables)).toMatchObject({ due_time: "15:00" });
+  });
+
+  it("simultâneas a partir de nenhuma tarefa, nas duas ordens: fica uma tarefa com 15:00", async () => {
+    for (const order of [[p12, p15], [p15, p12]]) {
+      const { client, tables, ops } = makeFakeClient({ tasks: [], organizations: [consolidatedOrg] });
+      await Promise.all(order.map((x) => createCommitmentTask(client, x)));
+      expect(ops.slice(0, 2)).toEqual(["select", "select"]);
+      expect(live(tables)).toMatchObject({ due_time: "15:00", consolidated_pendencies: [expect.objectContaining({ source_sent_at: "2026-11-23T13:05:00.000Z" })] });
+    }
+  });
+
+  it("simultâneas sobre uma tarefa já aberta (promessa das 09:00): as duas leem antes de gravar; a corrida é detectada e fica 15:00, nas duas ordens", async () => {
+    for (const order of [[p12, p15], [p15, p12]]) {
+      const { client, tables, ops } = makeFakeClient({ tasks: [], organizations: [consolidatedOrg] });
+      await createCommitmentTask(client, promise({ dueTime: "11:00", sourceSentAt: "2026-11-23T12:00:00.000Z" }));
+      ops.length = 0;
+      await Promise.all(order.map((x) => createCommitmentTask(client, x)));
+      expect(ops.slice(0, 2)).toEqual(["select", "select"]); // as duas viram a tarefa das 09:00
+      expect(live(tables)).toMatchObject({ due_time: "15:00" });
+    }
   });
 });

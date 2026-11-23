@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { COMMITMENT_TASK_REASON, PROPOSAL_STAGES, TASK_TYPE_LABELS, type CommitmentTaskType, type Task, type TaskPendency } from "@aula-agente/shared";
 import { fetchAllPages } from "../pagination.js";
-import { addTaskEvent, createTask, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency, updateTask } from "./tasks.js";
+import { addTaskEvent, createTask, getTaskById, OPEN_TASK_STATUSES, resolveAwaitingCustomerPendency, TaskWriteConflict, updateTask } from "./tasks.js";
 
 // Consultas da rotina "commitments" (apps/worker/src/workers/commitments.ts). Leitura limitada: só mensagens de vendedor da janela
 // e, por conversa acompanhada, as mensagens depois da proposta/promessa (com limite).
@@ -140,11 +140,19 @@ export async function insertSellerCommitment(db: SupabaseClient, row: {
   return ((data ?? []) as Array<{ id: string }>)[0]?.id ?? null;
 }
 
-export async function supersedeSellerCommitments(db: SupabaseClient, organizationId: string, conversationId: string, keepId: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>> {
+/** Encerra só as promessas abertas ENVIADAS ANTES da que fica (sentAtIso): uma mensagem antiga processada depois nunca encerra a mais nova. */
+export async function supersedeSellerCommitments(db: SupabaseClient, organizationId: string, conversationId: string, keepId: string, sentAtIso: string, atIso: string): Promise<Array<{ id: string; taskId: string | null }>> {
   const { data, error } = await db.from("seller_commitments").update({ resolved_at: atIso, resolution: "superseded" })
-    .eq("organization_id", organizationId).eq("conversation_id", conversationId).neq("id", keepId).is("resolved_at", null).select("id, task_id");
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).neq("id", keepId).lt("sent_at", sentAtIso).is("resolved_at", null).select("id, task_id");
   if (error) throw error;
   return ((data ?? []) as Array<{ id: string; task_id: string | null }>).map((r) => ({ id: r.id, taskId: r.task_id }));
+}
+
+export async function newerSellerCommitmentExists(db: SupabaseClient, organizationId: string, conversationId: string, sentAtIso: string): Promise<boolean> {
+  const { data, error } = await db.from("seller_commitments").select("id")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).gt("sent_at", sentAtIso).limit(1);
+  if (error) throw error;
+  return ((data ?? []) as unknown[]).length > 0;
 }
 
 export async function listOpenSellerCommitments(db: SupabaseClient, organizationId: string) {
@@ -176,15 +184,15 @@ export async function updateSellerCommitment(db: SupabaseClient, organizationId:
  */
 export async function createCommitmentTask(db: SupabaseClient, i: {
   organizationId: string; contactId: string; conversationId: string; opportunityId: string | null; ownerId: string; type: CommitmentTaskType;
-  description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null;
+  description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null; sourceSentAt?: string;
 }): Promise<{ id: string }> {
   const reason = COMMITMENT_TASK_REASON[i.type];
   const pendency: TaskPendency = {
     type: i.type, description: i.description, reason, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime,
-    added_at: new Date().toISOString(), added_by_type: "ai", added_by_id: null,
+    added_at: new Date().toISOString(), added_by_type: "ai", added_by_id: null, ...(i.sourceSentAt ? { source_sent_at: i.sourceSentAt } : {}),
   };
   const existing = await openCommitmentTask(db, i.organizationId, i.conversationId, i.type);
-  if (existing) return refreshCommitmentTask(db, existing, i, pendency);
+  if (existing) return refreshLatest(db, existing, i, pendency);
   let task: Task;
   try {
     task = await createTask(db, {
@@ -200,7 +208,7 @@ export async function createCommitmentTask(db: SupabaseClient, i: {
     if ((err as { code?: string } | null)?.code !== "23505") throw err;
     const winner = await openCommitmentTask(db, i.organizationId, i.conversationId, i.type);
     if (!winner) throw err;
-    return refreshCommitmentTask(db, winner, i, pendency);
+    return refreshLatest(db, winner, i, pendency);
   }
   await addTaskEvent(db, { task_id: task.id, organization_id: i.organizationId, event_type: "created",
     note: "Tarefa independente da rotina de compromissos: não é agrupada com outras tarefas do negócio.", created_by_type: "ai", created_by_id: null });
@@ -215,8 +223,26 @@ async function openCommitmentTask(db: SupabaseClient, organizationId: string, co
   return ((data ?? []) as Task[])[0] ?? null;
 }
 
+// Outra execução gravou a tarefa entre a leitura e a gravação (bloqueio otimista): relê e decide de novo pelo horário da mensagem.
+async function refreshLatest(db: SupabaseClient, task: Task, i: Parameters<typeof refreshCommitmentTask>[2] & { conversationId: string; type: CommitmentTaskType },
+  pendency: TaskPendency): Promise<{ id: string }> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await refreshCommitmentTask(db, task, i, pendency); }
+    catch (err) {
+      if (!(err instanceof TaskWriteConflict) || attempt >= 3) throw err;
+      const again = await openCommitmentTask(db, i.organizationId, i.conversationId, i.type);
+      if (!again) throw err;
+      task = again;
+    }
+  }
+}
+
 async function refreshCommitmentTask(db: SupabaseClient, existing: Task, i: { organizationId: string; description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null },
   pendency: TaskPendency): Promise<{ id: string }> {
+  // A tarefa já tem o prazo de uma mensagem MAIS NOVA: a mensagem antiga (processada depois) não volta o prazo. A gravação abaixo usa
+  // o updated_at lido (bloqueio otimista): se outra execução trocou o prazo entre a leitura e a gravação, esta falha e não sobrescreve.
+  const current = existing.consolidated_pendencies?.[0]?.source_sent_at;
+  if (current && pendency.source_sent_at && Date.parse(current) > Date.parse(pendency.source_sent_at)) return { id: existing.id };
   const currentTime = (existing.due_time ?? "").slice(0, 5) || null;
   if (existing.due_date !== i.dueDate || currentTime !== i.dueTime || existing.description !== i.description || existing.priority !== i.priority) {
     await updateTask(db, existing.id, { description: i.description, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime, consolidated_pendencies: [pendency] }, existing.updated_at);

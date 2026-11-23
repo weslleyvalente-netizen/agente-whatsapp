@@ -59,6 +59,8 @@ export interface TaskPendency {
   conversation_id?: string | null;
   /** Só em "Mensagem não enviada": cada mensagem que falhou (id, conversa, hora). É a referência que permite encerrar só com reenvio DAQUELA mensagem. */
   failed_messages?: FailedMessageRef[];
+  /** Só na tarefa da rotina de compromissos: horário da mensagem do vendedor que deu o prazo (mensagem antiga não troca o prazo de uma mais nova). */
+  source_sent_at?: string;
   type: TaskType;
   description: string;
   reason: string | null;

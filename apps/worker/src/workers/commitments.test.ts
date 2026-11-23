@@ -46,10 +46,12 @@ function world(o: WorldOpts = {}) {
     listTrackedProposals: async () => proposals.map((p) => ({ ...p })),
     updateProposal: async (_org, id, patch) => { Object.assign(proposals.find((p) => p.id === id), camel(patch)); },
     insertCommitment: async (row) => { if (commitments.some((c) => c.sellerMessageId === row.sellerMessageId)) return null; const id = `k${commitments.length}`; commitments.push({ id, taskId: null, resolvedAt: null, resolution: null, ...row }); return id; },
-    supersedeCommitments: async (_org, conv, keep, at) => { const out: Array<{ id: string; taskId: string | null }> = []; for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt) { Object.assign(c, { resolvedAt: at, resolution: "superseded" }); out.push({ id: c.id, taskId: c.taskId }); } return out; },
+    // Como no banco: só encerra as promessas abertas enviadas ANTES da que fica; e "existe mais nova" olha qualquer promessa da conversa.
+    supersedeCommitments: async (_org, conv, keep, sentAt, at) => { const out: Array<{ id: string; taskId: string | null }> = []; for (const c of commitments) if (c.conversationId === conv && c.id !== keep && !c.resolvedAt && c.sentAt < sentAt) { Object.assign(c, { resolvedAt: at, resolution: "superseded" }); out.push({ id: c.id, taskId: c.taskId }); } return out; },
+    newerCommitmentExists: async (_org, conv, sentAt) => commitments.some((c) => c.conversationId === conv && c.sentAt > sentAt),
     listOpenCommitments: async () => commitments.filter((c) => !c.resolvedAt).map((c) => ({ ...c })),
     updateCommitment: async (_org, id, patch) => { Object.assign(commitments.find((c) => c.id === id), camel(patch)); },
-    createTask: async (i) => { const existing = tasks.find((t) => t.type === i.type && t.opportunityId === i.opportunityId && !t.done); if (existing) { Object.assign(existing, i); return { id: existing.id }; } const t = { id: `t${tasks.length}`, ...i }; tasks.push(t); return { id: t.id }; },
+    createTask: async (i) => { const existing = tasks.find((t) => t.type === i.type && t.opportunityId === i.opportunityId && !t.done); if (existing) { if (!(existing.sourceSentAt && i.sourceSentAt && existing.sourceSentAt > i.sourceSentAt)) Object.assign(existing, i); return { id: existing.id }; } const t = { id: `t${tasks.length}`, ...i }; tasks.push(t); return { id: t.id }; },
     taskHasOpenPendency: async (_org, taskId) => !(o.pendencyGone ?? []).includes(taskId) && !tasks.find((t) => t.id === taskId)?.done,
     resolvePendency: async (_org, taskId, type, note) => { resolved.push({ taskId, type, note }); const t = tasks.find((x) => x.id === taskId); if (t) t.done = true; },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(`ERR ${m}`) },
@@ -474,5 +476,50 @@ describe("revisão #122: mensagem informativa registrada como proposta não bloq
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:33:00")));
     expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["p1"]);
     expect(pfTasks(w)).toHaveLength(1);
+  });
+});
+
+// Revisão #122 (23/11/2026): promessa corrigida pelo vendedor. 10:00 "retorno às 12h"; 10:05 corrige para 15h. Por concorrência ou
+// reprocessamento a mensagem das 10:05 é processada ANTES da das 10:00. A válida continua sendo a das 10:05 (prazo 15:00): a mensagem
+// antiga não pode reabrir a promessa, trocar o prazo da tarefa nem encerrar a promessa mais nova.
+describe("revisão #122: mensagem antiga processada depois não substitui a promessa mais recente", () => {
+  const M10 = { id: "m10", content: "Vou te retornar às 12h", createdAt: brt("2026-11-23T10:00:00") };
+  const M1005 = { id: "m1005", content: "Corrigindo: te retorno às 15h", createdAt: brt("2026-11-23T10:05:00") };
+  const check = (w: ReturnType<typeof world>) => {
+    const open = w.commitments.filter((c) => !c.resolvedAt);
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ sellerMessageId: "m1005", dueAt: brt("2026-11-23T15:00:00") });
+    expect(w.commitments.find((c) => c.sellerMessageId === "m10")).toMatchObject({ resolution: "superseded" });
+    const live = w.tasks.filter((t) => t.type === "return_customer" && !t.done);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ dueDate: "2026-11-23", dueTime: "15:00" });
+    expect(open[0].taskId).toBe(live[0].id);
+    expect(w.resolved).toHaveLength(0); // a tarefa da promessa válida não é encerrada
+  };
+  it("reprocessamento: 10:05 numa execução, 10:00 na seguinte", async () => {
+    const w = world({ seller: [M10, M1005] });
+    const [m10, m1005] = w.seller;
+    w.deps.listSellerMessages = async () => [m1005];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:06:00")));
+    w.deps.listSellerMessages = async () => [m10];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:11:00")));
+    check(w);
+    // e a rotina seguinte (recuperação + listagem completa) mantém o resultado
+    w.deps.listSellerMessages = async () => [m10, m1005];
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:16:00")));
+    check(w);
+  });
+  it("execuções simultâneas: uma pega a das 10:05 e a outra a das 10:00", async () => {
+    const w = world({ seller: [M10, M1005] });
+    const [m10, m1005] = w.seller;
+    const a = { ...w.deps, listSellerMessages: async () => [m1005] };
+    const b = { ...w.deps, listSellerMessages: async () => [m10] };
+    await Promise.all([runCommitments(a, new Date(brt("2026-11-23T10:06:00"))), runCommitments(b, new Date(brt("2026-11-23T10:06:00")))]);
+    check(w);
+  });
+  it("ordem normal (10:00 e depois 10:05) continua trocando o prazo para 15:00", async () => {
+    const w = world({ seller: [M10, M1005] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:06:00")));
+    check(w);
   });
 });
