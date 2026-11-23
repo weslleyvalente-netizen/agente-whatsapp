@@ -80,3 +80,28 @@ Preparado em 22/11/2026, depois do merge `15853d2`. **Nada foi alterado. Cada pa
   - falso positivo em 2 de 5 amostras;
   - pedido de qualquer vendedor.
 - Desligar não apaga nada. As tarefas criadas ficam para revisão (consulta B do script 5); cancelar é decisão separada.
+
+## 7. Revisão de 23/11 (depois do #122)
+
+Situação em 23/11:
+- Em produção: o #122, merge `d4ef479`, com a migração `20261122150000`.
+- As tarefas da rotina passaram a ser **independentes**. Cada uma é marcada por `tasks.commitment_kind` e fica no máximo uma aberta por conversa e marca. Por isso a seção 3 ficou desatualizada no ponto em que diz que a pendência pode ser juntada a uma tarefa aberta do mesmo negócio: isso não acontece mais.
+
+Mudanças no `6-monitorar-commitments.sql`:
+
+| Linha | Mudança |
+|---|---|
+| 1 | Também para se o push do gestor estiver ligado ou se `holiday_set` existir. |
+| 9 | Conta só as tarefas comuns criadas desde a ativação. As da rotina são independentes por regra. |
+| 11 | Uma tarefa antiga usada pela rotina agora é `DESLIGAR`, porque deve ser 0. |
+| 16 a 19 (novas) | Linha 16: tarefa da rotina sem marca. Linha 17: duas tarefas da rotina abertas na mesma conversa e marca. Linha 18: tarefa de outro fluxo que recebeu pendência da rotina. Linha 19: status das tarefas da rotina. |
+
+As linhas 16, 17 e 18 levam a `DESLIGAR`.
+
+Prévia das últimas 24 h, feita em 23/11 às 15:53 (Brasília): somente leitura, com o código do main `d4ef479` rodando sobre os dados reais e sem gravar nada.
+
+- **Primeira rodada:**
+  - 6 propostas, 1 lembrete e 1 promessa;
+  - essa promessa já tinha sido entregue, então a tarefa dela nasce e é encerrada na mesma rodada, com a nota "Retorno prometido entregue ao cliente";
+  - nenhuma tarefa existente é alterada e não há erros.
+- **24 h em rodadas de 5 min:** 6 propostas, 1 lembrete, 2 promessas (ambas entregues), no máximo 1 tarefa por hora e 0 erros.
