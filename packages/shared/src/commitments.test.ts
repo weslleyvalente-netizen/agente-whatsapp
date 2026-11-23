@@ -145,11 +145,15 @@ describe("detectProposalEvidence: retomada de conversa e pergunta de qualificaç
 });
 
 describe("tarefa da rotina de compromissos é identificável (independente da consolidação)", () => {
-  it("reconhece só pelo tipo + motivo fixo da rotina", () => {
-    expect(isCommitmentTask({ type: "return_customer", reason: COMMITMENT_TASK_REASON.return_customer })).toBe(true);
-    expect(isCommitmentTask({ type: "proposal_followup", reason: COMMITMENT_TASK_REASON.proposal_followup })).toBe(true);
-    expect(isCommitmentTask({ type: "return_customer", reason: "handoff" })).toBe(false);
-    expect(isCommitmentTask({ type: "run_quote", reason: COMMITMENT_TASK_REASON.return_customer })).toBe(false);
-    expect(isCommitmentTask({ type: "return_customer", reason: null })).toBe(false);
+  it("reconhece pela marca gravada na criação (commitment_kind), que a edição da tarefa não altera", () => {
+    expect(isCommitmentTask({ commitment_kind: "return_customer" })).toBe(true);
+    expect(isCommitmentTask({ commitment_kind: "proposal_followup" })).toBe(true);
+    expect(isCommitmentTask({ commitment_kind: null })).toBe(false);
+    expect(isCommitmentTask({})).toBe(false); // banco ainda sem a coluna: nenhuma tarefa existente muda de comportamento
+  });
+  it("revisão #122: editar o motivo (ou o tipo) NÃO tira a proteção; copiar o texto do motivo numa tarefa comum NÃO a torna independente", () => {
+    expect(isCommitmentTask({ commitment_kind: "return_customer", type: "return_customer", reason: "Cliente pediu para ligar depois" })).toBe(true);
+    expect(isCommitmentTask({ commitment_kind: "return_customer", type: "run_quote", reason: null })).toBe(true);
+    expect(isCommitmentTask({ commitment_kind: null, type: "return_customer", reason: COMMITMENT_TASK_REASON.return_customer })).toBe(false);
   });
 });

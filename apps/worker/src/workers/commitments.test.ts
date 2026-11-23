@@ -38,7 +38,10 @@ function world(o: WorldOpts = {}) {
     opportunityStatuses: async (_org, ids) => new Map(ids.map((i) => [i, o.oppStatus ?? "open"])),
     proposalStageEventBetween: async (_org, _opp, fromIso, toIso) => (o.stageEventAt && o.stageEventAt >= fromIso && o.stageEventAt <= toIso ? { at: o.stageEventAt, stage: "proposal_sent" } : null),
     discardStageProposals: async (_org, conv, fromIso, toIso) => { for (let i = proposals.length - 1; i >= 0; i--) { const p = proposals[i]; if (p.conversationId === conv && p.identifiedBy === "stage_event" && !p.reminderTaskId && p.sentAt >= fromIso && p.sentAt <= toIso) proposals.splice(i, 1); } },
-    recentProposalExists: async (_org, conv, fromIso, toIso) => proposals.some((p) => p.conversationId === conv && p.sentAt >= fromIso && p.sentAt <= toIso),
+    latestProposalBetween: async (_org, conv, fromIso, toIso) => {
+      const p = proposals.filter((x) => x.conversationId === conv && x.sentAt >= fromIso && x.sentAt <= toIso).sort((a, b) => b.sentAt.localeCompare(a.sentAt))[0];
+      return p ? { sentAt: p.sentAt, sellerMessageId: p.sellerMessageId } : null;
+    },
     insertProposal: async (row) => { if (proposals.some((p) => p.sellerMessageId === row.sellerMessageId)) return false; proposals.push({ id: `p${proposals.length}`, reminderTaskId: null, firstSellerFollowupAt: null, firstCustomerReplyAt: null, outcome: null, ...row }); return true; },
     listTrackedProposals: async () => proposals.map((p) => ({ ...p })),
     updateProposal: async (_org, id, patch) => { Object.assign(proposals.find((p) => p.id === id), camel(patch)); },
@@ -422,5 +425,54 @@ describe("cenário 3: erro temporário ao consultar a tarefa", () => {
     await runCommitments(w.deps, new Date(brt("2026-11-23T10:41:00")));
     expect(w.resolved).toHaveLength(0);
     expect(w.tasks.filter((t) => t.type === "proposal_followup")).toHaveLength(1);
+  });
+});
+
+describe("revisão #122: mensagem informativa registrada como proposta não bloqueia a proposta real seguinte (janela de 2 h)", () => {
+  // Informativa que ainda passa pela regra de conteúdo (valor + termo, sem pergunta nem retomada).
+  const INFORMATIVA = "Sua parcela de R$ 512,00 do grupo 1234 foi paga, obrigado";
+  const pfTasks = (w: ReturnType<typeof world>) => w.tasks.filter((t) => t.type === "proposal_followup");
+
+  it("informativa → cliente responde → proposta real 40 min depois: a real é registrada e ganha o próprio lembrete", async () => {
+    const w = world({
+      seller: [{ id: "inf", content: INFORMATIVA, createdAt: brt("2026-11-23T10:00:00") }, { id: "real", content: PROPOSTA, createdAt: brt("2026-11-23T10:40:00") }],
+      after: { c1: [{ role: "contact", createdAt: brt("2026-11-23T10:05:00"), content: "obrigado" }] },
+    });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:45:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["inf", "real"]);
+    await runCommitments(w.deps, new Date(brt("2026-11-23T11:11:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBe(pfTasks(w)[0].id);
+    expect(w.proposals.find((p) => p.sellerMessageId === "inf").reminderTaskId).toBeNull();
+  });
+
+  it("informativa sem resposta e, depois de uma pausa, a proposta real: a real é registrada e lembrada 30 min depois dela", async () => {
+    const w = world({ seller: [{ id: "inf", content: INFORMATIVA, createdAt: brt("2026-11-23T10:00:00") }, { id: "real", content: PROPOSTA, createdAt: brt("2026-11-23T10:20:00") }] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:49:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["inf", "real"]);
+    expect(pfTasks(w)).toHaveLength(0); // 29 min depois da real: ainda não
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:51:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBe(pfTasks(w)[0].id);
+  });
+
+  it("proposta pela etapa que JÁ ganhou lembrete não bloqueia a proposta real com valor enviada depois", async () => {
+    const w = world({ seller: [{ id: "segue", content: "segue", createdAt: brt("2026-11-23T10:00:00") }], stageEventAt: brt("2026-11-23T09:58:00") });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:31:00")));
+    expect(pfTasks(w)).toHaveLength(1);
+    w.seller.push({ id: "real", conversationId: "c1", contactId: "ct1", assignedTo: null, createdAt: brt("2026-11-23T10:45:00"), waOriginalAt: null, content: PROPOSTA, mediaType: "text", fileName: null, sendFailed: false });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T11:16:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["segue", "real"]);
+    expect(w.proposals.find((p) => p.sellerMessageId === "real").reminderTaskId).toBeTruthy();
+  });
+
+  it("continua deduplicando as partes da MESMA apresentação (seguidas, sem resposta): uma proposta e um lembrete", async () => {
+    const w = world({ seller: [
+      { id: "p1", content: PROPOSTA, createdAt: brt("2026-11-23T10:00:00") },
+      { id: "p2", content: "Entrada de 10 mil e saldo em 48 parcelas", createdAt: brt("2026-11-23T10:02:00") },
+    ] });
+    await runCommitments(w.deps, new Date(brt("2026-11-23T10:33:00")));
+    expect(w.proposals.map((p) => p.sellerMessageId)).toEqual(["p1"]);
+    expect(pfTasks(w)).toHaveLength(1);
   });
 });

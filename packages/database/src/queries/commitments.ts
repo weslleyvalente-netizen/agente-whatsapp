@@ -97,11 +97,14 @@ export async function insertProposalFollowup(db: SupabaseClient, row: {
   return (data ?? []).length > 0;
 }
 
-export async function proposalExistsBetween(db: SupabaseClient, organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean> {
-  const { count, error } = await db.from("proposal_followups").select("id", { count: "exact", head: true })
-    .eq("organization_id", organizationId).eq("conversation_id", conversationId).gte("sent_at", fromIso).lte("sent_at", toIso);
+/** Proposta registrada mais recente da conversa no intervalo (inclusive), ou null. */
+export async function latestProposalFollowupBetween(db: SupabaseClient, organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<{ sentAt: string; sellerMessageId: string } | null> {
+  const { data, error } = await db.from("proposal_followups").select("sent_at, seller_message_id")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).gte("sent_at", fromIso).lte("sent_at", toIso)
+    .order("sent_at", { ascending: false }).limit(1);
   if (error) throw error;
-  return (count ?? 0) > 0;
+  const row = (data ?? [])[0] as { sent_at: string; seller_message_id: string } | undefined;
+  return row ? { sentAt: row.sent_at, sellerMessageId: row.seller_message_id } : null;
 }
 
 /** Propostas ainda acompanhadas (sem resultado do negócio) desde sinceIso, com o contato da conversa. */
@@ -166,7 +169,7 @@ export async function updateSellerCommitment(db: SupabaseClient, organizationId:
 /**
  * Tarefa interna do compromisso, INDEPENDENTE da consolidação por negócio (decisão do dono em 22/11/2026, após a simulação):
  *  - não entra na tarefa aberta de outro fluxo (não troca título, hora, tipo nem responsável dela) e outro fluxo não põe pendência
- *    nela (as buscas de agrupamento ignoram tarefas com o motivo fixo da rotina — ver isCommitmentTask);
+ *    nela (as buscas de agrupamento ignoram tarefas com commitment_kind — ver isCommitmentTask; a edição da tarefa não muda a marca);
  *  - o prazo da promessa é o prazo da própria tarefa (data e hora visíveis ao vendedor);
  *  - uma por conversa e tipo: nova promessa (ou nova proposta) na mesma conversa reaproveita a tarefa aberta e troca o prazo.
  * Criada como sistema ("ai"), atribuída ao vendedor dono do compromisso.
@@ -180,30 +183,47 @@ export async function createCommitmentTask(db: SupabaseClient, i: {
     type: i.type, description: i.description, reason, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime,
     added_at: new Date().toISOString(), added_by_type: "ai", added_by_id: null,
   };
-  const { data, error } = await db.from("tasks").select("*")
-    .eq("organization_id", i.organizationId).eq("conversation_id", i.conversationId).eq("type", i.type).eq("reason", reason)
-    .in("status", OPEN_TASK_STATUSES).order("created_at", { ascending: false }).limit(1);
-  if (error) throw error;
-  const existing = ((data ?? []) as Task[])[0];
-  if (existing) {
-    const currentTime = (existing.due_time ?? "").slice(0, 5) || null;
-    if (existing.due_date !== i.dueDate || currentTime !== i.dueTime || existing.description !== i.description || existing.priority !== i.priority) {
-      await updateTask(db, existing.id, { description: i.description, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime, consolidated_pendencies: [pendency] }, existing.updated_at);
-      await addTaskEvent(db, { task_id: existing.id, organization_id: i.organizationId, event_type: "updated",
-        note: `Novo prazo do compromisso: ${i.dueDate}${i.dueTime ? ` às ${i.dueTime}` : ""}.`, created_by_type: "ai", created_by_id: null });
-    }
-    return { id: existing.id };
+  const existing = await openCommitmentTask(db, i.organizationId, i.conversationId, i.type);
+  if (existing) return refreshCommitmentTask(db, existing, i, pendency);
+  let task: Task;
+  try {
+    task = await createTask(db, {
+      organization_id: i.organizationId, contact_id: i.contactId, conversation_id: i.conversationId, opportunity_id: i.opportunityId,
+      assignee_type: "human", assignee_id: i.ownerId, type: i.type, title: TASK_TYPE_LABELS[i.type], description: i.description, ai_summary: null,
+      reason, priority: i.priority, status: "pending", due_date: i.dueDate, due_time: i.dueTime, created_by_type: "ai", created_by_id: null,
+      consolidated_pendencies: [pendency], followup_suggested_message: null, followup_suggestion_generated_at: null, followup_regeneration_count: 0,
+      followup_pending_message_id: null, commitment_kind: i.type,
+    } as Parameters<typeof createTask>[1]);
+  } catch (err) {
+    // Execução simultânea criou a mesma tarefa entre a leitura e a gravação: o índice único (uma aberta por conversa e marca) barrou
+    // esta; reaproveita a que ganhou, com o prazo desta.
+    if ((err as { code?: string } | null)?.code !== "23505") throw err;
+    const winner = await openCommitmentTask(db, i.organizationId, i.conversationId, i.type);
+    if (!winner) throw err;
+    return refreshCommitmentTask(db, winner, i, pendency);
   }
-  const task = await createTask(db, {
-    organization_id: i.organizationId, contact_id: i.contactId, conversation_id: i.conversationId, opportunity_id: i.opportunityId,
-    assignee_type: "human", assignee_id: i.ownerId, type: i.type, title: TASK_TYPE_LABELS[i.type], description: i.description, ai_summary: null,
-    reason, priority: i.priority, status: "pending", due_date: i.dueDate, due_time: i.dueTime, created_by_type: "ai", created_by_id: null,
-    consolidated_pendencies: [pendency], followup_suggested_message: null, followup_suggestion_generated_at: null, followup_regeneration_count: 0,
-    followup_pending_message_id: null,
-  } as Parameters<typeof createTask>[1]);
   await addTaskEvent(db, { task_id: task.id, organization_id: i.organizationId, event_type: "created",
     note: "Tarefa independente da rotina de compromissos: não é agrupada com outras tarefas do negócio.", created_by_type: "ai", created_by_id: null });
   return { id: task.id };
+}
+
+async function openCommitmentTask(db: SupabaseClient, organizationId: string, conversationId: string, kind: CommitmentTaskType): Promise<Task | null> {
+  const { data, error } = await db.from("tasks").select("*")
+    .eq("organization_id", organizationId).eq("conversation_id", conversationId).eq("commitment_kind", kind)
+    .in("status", OPEN_TASK_STATUSES).order("created_at", { ascending: false }).limit(1);
+  if (error) throw error;
+  return ((data ?? []) as Task[])[0] ?? null;
+}
+
+async function refreshCommitmentTask(db: SupabaseClient, existing: Task, i: { organizationId: string; description: string; priority: "normal" | "high"; dueDate: string; dueTime: string | null },
+  pendency: TaskPendency): Promise<{ id: string }> {
+  const currentTime = (existing.due_time ?? "").slice(0, 5) || null;
+  if (existing.due_date !== i.dueDate || currentTime !== i.dueTime || existing.description !== i.description || existing.priority !== i.priority) {
+    await updateTask(db, existing.id, { description: i.description, priority: i.priority, due_date: i.dueDate, due_time: i.dueTime, consolidated_pendencies: [pendency] }, existing.updated_at);
+    await addTaskEvent(db, { task_id: existing.id, organization_id: i.organizationId, event_type: "updated",
+      note: `Novo prazo do compromisso: ${i.dueDate}${i.dueTime ? ` às ${i.dueTime}` : ""}.`, created_by_type: "ai", created_by_id: null });
+  }
+  return { id: existing.id };
 }
 
 export async function taskHasOpenPendency(db: SupabaseClient, organizationId: string, taskId: string, type: string): Promise<boolean> {

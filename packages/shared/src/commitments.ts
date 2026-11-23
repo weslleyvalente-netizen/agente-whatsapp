@@ -66,7 +66,7 @@ export function detectProposalEvidence(input: { content?: string | null; mediaTy
   return { strong: true, evidence: `valor + termo "${term}"` };
 }
 
-/** Motivo fixo gravado nas tarefas criadas pela rotina de compromissos: marca a tarefa como INDEPENDENTE (fora da consolidação). */
+/** Motivo (texto exibido) das tarefas criadas pela rotina de compromissos. Só informativo: a marca é tasks.commitment_kind. */
 export const COMMITMENT_TASK_REASON = {
   return_customer: "Promessa de retorno do vendedor ao cliente.",
   proposal_followup: "Proposta enviada sem resposta do cliente.",
@@ -76,10 +76,10 @@ export type CommitmentTaskType = keyof typeof COMMITMENT_TASK_REASON;
 /**
  * A tarefa é da rotina de compromissos? Essas tarefas nunca recebem pendência de outro fluxo nem entram numa tarefa de outro
  * fluxo: cada promessa mantém o próprio prazo e só é encerrada pela conclusão dela mesma, entrega comprovada ou negócio fechado.
+ * A marca é a coluna commitment_kind, gravada só na criação pela rotina: a edição da tarefa (motivo, tipo, descrição) não a altera.
  */
-export function isCommitmentTask(task: { type?: string | null; reason?: string | null }): boolean {
-  const type = task.type as CommitmentTaskType;
-  return Object.prototype.hasOwnProperty.call(COMMITMENT_TASK_REASON, type) && task.reason === COMMITMENT_TASK_REASON[type];
+export function isCommitmentTask(task: { commitment_kind?: string | null; type?: string | null; reason?: string | null }): boolean {
+  return !!task.commitment_kind;
 }
 
 export type PromiseKind = "quick" | "standard" | "explicit_time" | "tomorrow";

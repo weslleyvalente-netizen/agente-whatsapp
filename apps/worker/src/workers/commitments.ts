@@ -14,7 +14,7 @@ import {
 } from "@aula-agente/shared";
 import { getCommitmentsQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventBetween, discardStageProposalFollowups, insertProposalFollowup, proposalExistsBetween,
+  createCommitmentTask, getAdminClient, getOpenOpportunityForContact, getOpportunityStatuses, getProposalStageEventBetween, discardStageProposalFollowups, insertProposalFollowup, latestProposalFollowupBetween,
   insertSellerCommitment, listCommitmentsOrganizations, listMessagesAfter, listOpenSellerCommitments, listRecentSellerMessages,
   listTrackedProposalFollowups, resolveCommitmentPendency, supersedeSellerCommitments, taskHasOpenPendency, updateProposalFollowup,
   updateSellerCommitment, type SupabaseClient,
@@ -73,7 +73,8 @@ export interface CommitmentsDeps {
   /** Remove propostas identificadas só pela etapa (sem lembrete criado) desta conversa no intervalo: a proposta com valor prevalece. */
   discardStageProposals(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<void>;
   /** Já existe proposta registrada nesta conversa com sent_at entre fromIso e toIso? */
-  recentProposalExists(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<boolean>;
+  /** Proposta registrada mais recente da conversa no intervalo (para a deduplicação por apresentação). */
+  latestProposalBetween(organizationId: string, conversationId: string, fromIso: string, toIso: string): Promise<{ sentAt: string; sellerMessageId: string } | null>;
   insertProposal(row: Omit<ProposalRow, "id" | "reminderTaskId" | "firstSellerFollowupAt" | "firstCustomerReplyAt" | "outcome"> & { organizationId: string; identifiedBy: "stage_event" | "content"; evidence: string }): Promise<boolean>;
   listTrackedProposals(organizationId: string, sinceIso: string): Promise<ProposalRow[]>;
   updateProposal(organizationId: string, id: string, patch: Record<string, unknown>): Promise<void>;
@@ -180,7 +181,7 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       if (identified?.by === "content") {
         await deps.discardStageProposals(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString());
       }
-      if (identified && !(await deps.recentProposalExists(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString()))) {
+      if (identified && !(await isPartOfEarlierPresentation(deps, organizationId, m, sentAt))) {
         const inserted = await deps.insertProposal({
           organizationId, conversationId: m.conversationId, contactId: m.contactId, opportunityId: opp?.id ?? null, ownerUserId: owner,
           sellerMessageId: m.id, sentAt: sentAt.toISOString(), identifiedBy: identified.by, evidence: identified.evidence,
@@ -189,6 +190,22 @@ async function scanSellerMessages(deps: CommitmentsDeps, organizationId: string,
       }
     } catch (err) { summary.errors++; deps.log.error(`commitments: message ${m.id} failed (${errText(err)})`); }
   }
+}
+
+/**
+ * Deduplicação da janela de 2 h: a mensagem só é "a mesma proposta" de um registro anterior se ainda faz parte da APRESENTAÇÃO dele
+ * (partes seguidas do vendedor, sem resposta do cliente nem pausa). Depois que o cliente respondeu ou o vendedor fez uma pausa, a
+ * mensagem com evidência é uma proposta NOVA, com o próprio lembrete — um registro anterior (ex.: mensagem informativa com valor, ou
+ * proposta pela etapa que já ganhou lembrete) não a bloqueia.
+ */
+async function isPartOfEarlierPresentation(deps: CommitmentsDeps, organizationId: string, m: SellerMessage, sentAt: Date): Promise<boolean> {
+  const prev = await deps.latestProposalBetween(organizationId, m.conversationId, new Date(sentAt.getTime() - PROPOSAL_DEDUPE_WINDOW_MS).toISOString(), sentAt.toISOString());
+  if (!prev) return false;
+  if (prev.sellerMessageId === m.id) return true;
+  const msgAt = Date.parse(m.createdAt);
+  const between = (await deps.messagesAfter(organizationId, m.conversationId, prev.sentAt))
+    .filter((x) => x.id !== prev.sellerMessageId && Date.parse(x.createdAt) <= msgAt);
+  return Date.parse(splitPresentation(prev.sentAt, between).presentationEnd) >= msgAt;
 }
 
 /** A mensagem é a do vendedor mais próxima do evento: nenhuma outra mensagem do vendedor entre a mensagem e o evento. */
@@ -332,7 +349,7 @@ export function buildCommitmentsDeps(db: SupabaseClient = getAdminClient()): Com
     opportunityStatuses: (org, ids) => (ids.length ? getOpportunityStatuses(db, org, ids) : Promise.resolve(new Map())),
     proposalStageEventBetween: (org, opp, from, to) => getProposalStageEventBetween(db, org, opp, from, to),
     discardStageProposals: (org, conv, from, to) => discardStageProposalFollowups(db, org, conv, from, to),
-    recentProposalExists: (org, conv, from, to) => proposalExistsBetween(db, org, conv, from, to),
+    latestProposalBetween: (org, conv, from, to) => latestProposalFollowupBetween(db, org, conv, from, to),
     insertProposal: (row) => insertProposalFollowup(db, row),
     listTrackedProposals: (org, since) => listTrackedProposalFollowups(db, org, since),
     updateProposal: (org, id, patch) => updateProposalFollowup(db, org, id, patch),
