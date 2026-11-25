@@ -213,11 +213,19 @@ export function resolveOpportunityAutoLink(openOpportunityIds: string[]): string
 // conversation until the AI speaks in it again.
 // A última mensagem da IA que FALHOU ao enviar (metadata.send_failed_at) nunca chegou ao cliente: não há "silêncio do cliente" a cobrar
 // e o follow-up seria a primeira coisa que ele recebe. Mensagem não entregue não conta como resposta entregue.
+/** Despedida de uma rotina automática (encerramento sem resposta, cadência de baixa intenção, lote de anúncios). */
+export function isFarewellMetadata(metadata?: object | null): boolean {
+  const m = metadata as { no_reply_closure?: unknown; scheduled_ad_closure?: unknown; low_intent_followup?: { stage?: unknown } } | null | undefined;
+  return !!m && (m.no_reply_closure != null || m.scheduled_ad_closure != null || Number(m.low_intent_followup?.stage) === 3);
+}
+
 export function shouldConsiderAutomaticFollowup(
   latestMessageRole: string | null,
   latestMessageMetadata?: object | null,
 ): boolean {
   if ((latestMessageMetadata as { send_failed_at?: unknown } | null | undefined)?.send_failed_at) return false;
+  // Depois de uma despedida, nenhuma rotina volta a cobrar o cliente enquanto ele não responder.
+  if (isFarewellMetadata(latestMessageMetadata)) return false;
   return latestMessageRole === "agent";
 }
 

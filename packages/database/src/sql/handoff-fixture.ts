@@ -36,6 +36,10 @@ ALTER TABLE public.opportunity_events ADD COLUMN changed_by_id uuid;
 CREATE TABLE public.sales_call_logs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, opportunity_id uuid NOT NULL REFERENCES public.opportunities(id) ON DELETE CASCADE, contact_id uuid, called_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.conversation_notes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid NOT NULL, organization_id uuid, user_id uuid, content text, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.organization_ignored_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, phone text NOT NULL);
+ALTER TABLE public.wa_contacts ADD COLUMN IF NOT EXISTS metadata jsonb, ADD COLUMN IF NOT EXISTS ai_disabled boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS name text;
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS evolution_instance_id uuid;
+ALTER TABLE public.opportunities ADD COLUMN IF NOT EXISTS lost_reason text, ADD COLUMN IF NOT EXISTS resume_date date;
+CREATE TABLE IF NOT EXISTS public.proposal_followups (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, conversation_id uuid, sent_at timestamptz);
 `;
 
 export type Db = Awaited<ReturnType<typeof createTestDb>>;
@@ -50,6 +54,7 @@ export const NEW_MIGRATIONS = [
   "20261119140000_message_author_in_sla_rules.sql",
   "20261119150000_new_request_wait_ignores_prior_service.sql",
   "20261120120000_sla_sweeps_bounded.sql",
+  "20261125120000_returning_customer_and_no_reply_closure.sql",
 ];
 
 export async function setupHandoffDb(opts: { apply?: string[] } = {}) {
