@@ -18,6 +18,7 @@ import {
 } from "@aula-agente/database";
 import { buildHandoffTaskRefresh } from "../handoff-task-refresh.js";
 import { safeDistribute } from "../handoff-distribution.js";
+import { classifyHandoffOperation } from "../handoff-operation.js";
 import { getSendMessageQueue } from "@aula-agente/queue";
 import {
   HANDOFF_MOTIVOS,
@@ -120,6 +121,35 @@ async function createFallbackTaskIfUnrouted(
   }
 }
 
+// Atendimento exclusivamente administrativo/pós-venda (sem card): tarefa de atendimento para o responsável do encaminhamento.
+async function createAdministrativeTask(
+  db: ReturnType<typeof getAdminClient>,
+  context: RequestHumanToolContext,
+  motivo: (typeof HANDOFF_MOTIVOS)[number],
+  resumo: string,
+  urgencia: (typeof HANDOFF_URGENCIAS)[number]
+): Promise<boolean> {
+  try {
+    await createTaskWithDedup(db, {
+      organization_id: context.organizationId,
+      contact_id: context.contactId,
+      conversation_id: context.conversationId,
+      opportunity_id: null,
+      type: "other",
+      description: `Atendimento administrativo/pós-venda (sem card no funil): ${resumo}`,
+      reason: `Motivo do handoff: ${HANDOFF_MOTIVO_LABELS[motivo]} (urgência ${urgencia})`,
+      priority: urgencia === "alta" ? "urgent" : "normal",
+      due_date: toISODateInTimeZone(new Date()),
+      created_by_type: "ai",
+      created_by_id: null,
+    });
+    return true;
+  } catch (err) {
+    console.error("requestHuman tool: failed to create administrative task; card será criado como hoje:", err);
+    return false;
+  }
+}
+
 type DistributionMode = "off" | "shadow" | "real";
 
 /**
@@ -167,10 +197,31 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
             console.error("requestHuman tool: failed to reassign open tasks:", err);
           }
         };
+        // Produto do card: intenção do cliente > contexto > resumo (anúncio só complementa). Sem evidência => card "a confirmar".
+        // Só entra na operação do card/atribuição; rodízio, duplicidade e origem do anúncio não dependem dela.
+        // Duas flags independentes (desligadas por padrão), sem rollback de código:
+        //  - handoff_operation_classification_enabled (#125): o produto classificado vai para o card;
+        //  - handoff_admin_no_card_enabled (#126): encaminhamento exclusivamente administrativo não abre card.
+        // A classificação roda se qualquer uma estiver ligada; cada efeito só acontece com a sua flag.
+        const operationClassification = org.settings.handoff_operation_classification_enabled === true;
+        const adminNoCard = org.settings.handoff_admin_no_card_enabled === true;
+        const cls = mode === "off" || !(operationClassification || adminNoCard) ? null
+          : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
+        const classified = cls && cls.confidence !== "none" ? cls.operation : null;
+        const operation = operationClassification ? classified : null;
+        // Exclusivamente administrativo/pós-venda => sem card (flag). Misto ou dúvida => 'commercial'/'unclear' (card como antes).
+        let commercialIntent: "administrative" | "commercial" | "unclear" = cls?.administrative && !cls.mixedAdministrative ? "administrative" : classified ? "commercial" : "unclear";
+        // Sem card só se a tarefa de atendimento existir: ela nasce ANTES do encaminhamento (o repasse abaixo a entrega ao responsável).
+        // Se falhar, vira 'dúvida' e o card é criado como hoje — o atendimento nunca fica invisível nem sem responsável.
+        if (adminNoCard && commercialIntent === "administrative") {
+          const ok = await createAdministrativeTask(db, context, motivo, resumo, urgencia);
+          if (!ok) commercialIntent = "unclear";
+        }
         const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
           organizationId: context.organizationId,
           conversationId: context.conversationId,
           handoffEventId,
+          ...(operation ? { context: { operation } } : {}),
         }, mode === "off" ? undefined : recordDistributionError);
 
         // Com a distribuição (real ou sombra) ligada, o responsável padrão NÃO pode ser gravado antes dela:
@@ -189,6 +240,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           resumo,
           urgencia,
           criado_por: "ia",
+          // Só com a flag: a coluna commercial_intent vem da migração 20261126130000 e pode ainda não existir.
+          ...(adminNoCard ? { commercial_intent: commercialIntent } : {}),
         });
 
         if (mode === "off") {
@@ -206,6 +259,7 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           // Com atribuição ativa, _lead_apply_effects já gravou conversations.assigned_to.
           if (routed.assigneeId && !routed.alreadyAssigned) await updateConversation(db, context.conversationId, { assigned_to: routed.assigneeId });
           await reassign(routed.assigneeId);
+
         }
 
         const notifyPhone = org.settings.handoff_notification_phone ?? null;
