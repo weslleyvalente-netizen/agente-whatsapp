@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { TO_CONFIRM, countsByTab, tabOf, type FunnelTab } from "@/lib/to-confirm";
+import { ToConfirmList } from "@/components/opportunities/to-confirm-list";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useOrganization } from "@/providers/organization-provider";
 import { useRealtime } from "@/lib/realtime";
@@ -34,7 +36,7 @@ export default function OpportunitiesPage() {
   const [freezeFilter,setFreezeFilter]=useState("active");
   const [contactFilter,setContactFilter]=useState("all");
   const [status, setStatus] = useState("open");
-  const [operation, setOperation] = useState<Operation>("vehicle_sale");
+  const [operation, setOperation] = useState<FunnelTab>("vehicle_sale");
   const [opportunities, setOpportunities] = useState<OpportunityWithContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -62,16 +64,11 @@ export default function OpportunitiesPage() {
     }
   }, [currentOrg, status, searching]);
 
-  const countsByOperation = useMemo(() => {
-    const counts = new Map<Operation, number>();
-    for (const o of opportunities) {
-      counts.set(o.operation, (counts.get(o.operation) ?? 0) + 1);
-    }
-    return counts;
-  }, [opportunities]);
+  // "A confirmar" (operation_is_default) tem aba própria e não conta em Venda de veículos; a soma das abas é o total geral.
+  const countsByOperation = useMemo(() => countsByTab(opportunities), [opportunities]);
 
   const opportunitiesForTab = useMemo(
-    () => opportunities.filter((o) => (currentOrg?.settings.sales_action_queue_enabled === true && queueView || o.operation === operation) && (contactFilter==="all" || !o.contact_state?.contactedSinceAssigned) && (freezeFilter==="all" || (freezeFilter==="frozen" ? !!o.frozen_until && o.frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) : !o.frozen_until || o.frozen_until<=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"})))),
+    () => opportunities.filter((o) => (currentOrg?.settings.sales_action_queue_enabled === true && queueView || tabOf(o) === operation) && (contactFilter==="all" || !o.contact_state?.contactedSinceAssigned) && (freezeFilter==="all" || (freezeFilter==="frozen" ? !!o.frozen_until && o.frozen_until>new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}) : !o.frozen_until || o.frozen_until<=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"})))),
     [opportunities, operation, freezeFilter, contactFilter, currentOrg, queueView]
   );
 
@@ -135,7 +132,7 @@ export default function OpportunitiesPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between max-md:flex-wrap max-md:gap-2">
         <div><h1 className="text-2xl font-semibold tracking-tight">Funil de vendas</h1><p className="mt-1 text-sm text-muted-foreground">Clientes, conversas e próximas ações em um só lugar.</p></div>
-        <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />
+        {operation !== TO_CONFIRM && <OpportunityForm key={operation} operation={operation} onSaved={fetchOpportunities} />}
       </div>
       {orphanSelected && currentOrg && <TaskDetailPanel task={{...orphanSelected,conversations:null}} taskId={orphanSelected.id} organizationId={currentOrg.id} onClose={()=>setOrphanSelected(null)} onTaskChanged={()=>fetchOpportunities()} onTaskClosed={id=>setOrphanTasks(prev=>prev.filter(t=>t.id!==id))}/>}
       {unidentifiedSelected&&<Dialog open onOpenChange={open=>{if(!open){setUnidentifiedSelected(null);clearConversaParam()}}}><DialogContent className="sm:max-w-4xl"><DialogHeader><DialogTitle>Atendimento — operação a identificar</DialogTitle></DialogHeader><div className="h-[65vh] max-md:h-[70dvh]"><ChatPanel compact key={unidentifiedSelected} conversationId={unidentifiedSelected} onClose={()=>{setUnidentifiedSelected(null);clearConversaParam()}} onConversationChanged={()=>fetchOpportunities()}/></div></DialogContent></Dialog>}
@@ -146,8 +143,12 @@ export default function OpportunitiesPage() {
       {searching && <p className="text-sm text-muted-foreground">Busca em todos os funis e situações, incluindo ganhos e perdidos.</p>}
       {currentOrg?.settings.sales_action_queue_enabled===true && !searching && status==="open" && <div className="flex flex-wrap gap-2"><Button className="max-md:h-11 max-md:w-full" variant={queueView?"default":"outline"} onClick={()=>setQueueView(true)}>Fila de atendimento · todos os funis</Button><Button className="max-md:h-11 max-md:w-full" variant={!queueView?"default":"outline"} onClick={()=>setQueueView(false)}>Etapas comerciais</Button></div>}
       {!searching && <><label className="flex items-center gap-2 text-sm max-md:w-full">Fila<select value={freezeFilter} onChange={e=>setFreezeFilter(e.target.value)} className="rounded border bg-background p-2 max-md:h-11 max-md:flex-1"><option value="active">Para agir</option><option value="frozen">Congelados</option><option value="all">Todos</option></select></label><label className="flex items-center gap-2 text-sm max-md:w-full">Contato<select aria-label="Filtro de contato" value={contactFilter} onChange={e=>setContactFilter(e.target.value)} className="rounded border bg-background p-2 max-md:h-11 max-md:flex-1"><option value="all">Todos</option><option value="none">Sem contato</option></select></label><div className="flex w-fit flex-wrap gap-1 rounded-full bg-muted p-1 max-md:w-full" aria-label="Situação do negócio">{[{value:"open",label:"Em andamento"},{value:"won",label:"Ganhos"},{value:"lost",label:"Perdidos"}].map(item => <Button key={item.value} className="rounded-full max-md:h-11 max-md:flex-1" variant={status===item.value ? "outline" : "ghost"} aria-pressed={status===item.value} onClick={()=>setStatus(item.value)}>{item.label}</Button>)}</div>
-      {!(currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open") && <Tabs value={operation} onValueChange={(v) => setOperation(v as Operation)}>
+      {!(currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open") && <Tabs value={operation} onValueChange={(v) => setOperation(v as FunnelTab)}>
         <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value={TO_CONFIRM} className="gap-1.5 max-md:min-h-11">
+            A confirmar
+            <Badge variant={operation === TO_CONFIRM ? "default" : "secondary"}>{countsByOperation.get(TO_CONFIRM) ?? 0}</Badge>
+          </TabsTrigger>
           {OPERATIONS.map((op) => (
             <TabsTrigger key={op} value={op} className="gap-1.5 max-md:min-h-11">
               {OPERATION_LABELS[op]}
@@ -167,10 +168,13 @@ export default function OpportunitiesPage() {
           </Button>
         </div>
       )}
-      {!loading && !error && searching && <section className="space-y-3" aria-label="Resultados da busca"><p className="text-sm text-muted-foreground">{searchResults.length} negócio(s) encontrado(s)</p>{searchResults.map(o => <button key={o.id} type="button" className="block w-full rounded-lg border p-4 text-left hover:bg-muted/50" onClick={() => setSearchSelected(o)}><strong>{o.wa_contacts?.name || "Sem nome"}</strong><p className="text-sm text-muted-foreground">{o.wa_contacts?.phone} · {OPERATION_LABELS[o.operation]} · {o.status === "won" ? "Ganho" : o.status === "lost" ? "Perdido" : "Em andamento"} · {FUNNEL_STAGE_LABELS[o.stage] ?? o.stage}</p><p className="mt-1 text-sm">{o.product_model ?? o.product ?? o.next_action ?? "Abrir detalhes"}</p></button>)}{!searchResults.length && <p>Nenhum negócio encontrado. Confira também se o contato já possui uma oportunidade registrada.</p>}</section>}
+      {!loading && !error && searching && <section className="space-y-3" aria-label="Resultados da busca"><p className="text-sm text-muted-foreground">{searchResults.length} negócio(s) encontrado(s)</p>{searchResults.map(o => <button key={o.id} type="button" className="block w-full rounded-lg border p-4 text-left hover:bg-muted/50" onClick={() => setSearchSelected(o)}><strong>{o.wa_contacts?.name || "Sem nome"}</strong><p className="text-sm text-muted-foreground">{o.wa_contacts?.phone} · {o.operation_is_default ? "Produto a confirmar" : OPERATION_LABELS[o.operation]} · {o.status === "won" ? "Ganho" : o.status === "lost" ? "Perdido" : "Em andamento"} · {FUNNEL_STAGE_LABELS[o.stage] ?? o.stage}</p><p className="mt-1 text-sm">{o.product_model ?? o.product ?? o.next_action ?? "Abrir detalhes"}</p></button>)}{!searchResults.length && <p>Nenhum negócio encontrado. Confira também se o contato já possui uma oportunidade registrada.</p>}</section>}
       {searchSelected && <OpportunityDetailDialog opportunity={opportunities.find(o => o.id === searchSelected.id) ?? searchSelected} onClose={() => { setSearchSelected(null); clearConversaParam(); }} onChanged={fetchOpportunities}/>}
-      {!loading && !error && !searching && (
-        <OpportunityKanban queueMode={currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open"} workspaceEnabled={(currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true) && status === "open"} operation={operation} opportunities={opportunitiesForTab} onChanged={fetchOpportunities} />
+      {!loading && !error && !searching && operation === TO_CONFIRM && !(currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open") && (
+        <ToConfirmList opportunities={opportunitiesForTab} onOpen={setSearchSelected} onChanged={fetchOpportunities} />
+      )}
+      {!loading && !error && !searching && (operation !== TO_CONFIRM || (currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open")) && (
+        <OpportunityKanban queueMode={currentOrg?.settings.sales_action_queue_enabled===true && queueView && status==="open"} workspaceEnabled={(currentOrg?.settings.sales_workspace_enabled === true || currentOrg?.settings.sales_action_queue_enabled === true) && status === "open"} operation={operation === TO_CONFIRM ? "vehicle_sale" : operation} opportunities={opportunitiesForTab} onChanged={fetchOpportunities} />
       )}
       <section aria-label="Outros atendimentos" className="space-y-3">
       {currentOrg?.settings.sales_action_queue_enabled===true && <details id="pendencias-sem-negocio" open={orphanOpen} onToggle={e=>setOrphanOpen(e.currentTarget.open)} className="scroll-mt-4 rounded-xl border bg-muted/20 p-4"><summary className="cursor-pointer font-medium">Pendências antigas sem negócio aberto ({orphanActionable})</summary><p className="mt-2 text-sm text-muted-foreground">Tarefas preservadas. Revise aqui para vincular ao negócio correto; nenhuma foi excluída ou marcada como perdida.</p><div className="mt-3 flex flex-wrap gap-2">{orphanTasksForSearch.filter(t=>t.queue_group!=="no_response").map(t=><Button key={t.id} variant="outline" onClick={()=>setOrphanSelected(t)}>{t.wa_contacts?.name||t.wa_contacts?.phone} · {t.due_date}{t.type==="customer_unresponsive"?" · Sem resposta":""}</Button>)}</div></details>}
