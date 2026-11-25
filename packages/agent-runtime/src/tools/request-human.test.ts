@@ -529,3 +529,78 @@ describe("createRequestHumanTool — produto do card de encaminhamento", () => {
     expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
   });
 });
+
+// Atendimento exclusivamente administrativo (decisão do dono 25/11): sem card, mas com encaminhamento, responsável e tarefa.
+describe("createRequestHumanTool — atendimento administrativo sem card", () => {
+  const now = new Date().toISOString();
+  const boleto = { motivo: "fora_do_escopo" as const, urgencia: "normal" as const, resumo: "Cliente pediu a segunda via do boleto do consórcio." };
+  const withFlag = (on: boolean) => getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_admin_no_card_enabled: on } });
+  beforeEach(() => { getActiveAssignmentRepUserId.mockResolvedValue("rep-user-1"); });
+
+  it("flag ligada + só administrativo: marca o encaminhamento, distribui e cria tarefa de atendimento para o responsável", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "administrative" }));
+    expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
+    expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ type: "other", description: expect.stringMatching(/administrativo/i) }));
+    // a tarefa nasce ANTES do encaminhamento e o repasse a entrega ao responsável escolhido pelo rodízio
+    expect(createTaskWithDedup.mock.invocationCallOrder[0]).toBeLessThan(createHandoffEvent.mock.invocationCallOrder[0]);
+  });
+
+  it("tarefa criada é repassada ao responsável da distribuição", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    getOpenTasksByConversation.mockResolvedValue([{ id: "task-adm", organization_id: "org-1", status: "pending", updated_at: now, description: "Atendimento administrativo", due_date: "2026-11-25", opportunity_id: null }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(updateTask).toHaveBeenCalledWith({}, "task-adm", expect.objectContaining({ assignee_type: "human", assignee_id: "rep-user-1" }), now);
+  });
+
+  it("falha ao criar a tarefa: o encaminhamento vira 'dúvida' (o card é criado como hoje) — nunca fica invisível nem sem responsável", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    createTaskWithDedup.mockRejectedValue(new Error("insert failed"));
+    const r = await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "unclear" }));
+    expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
+    // responsável: gravado na conversa pela própria distribuição (distribute_lead; coberto no teste SQL); o repasse roda para ele
+    expect(getActiveAssignmentRepUserId).toHaveBeenCalled();
+    expect(getOpenTasksByConversation).toHaveBeenCalled();
+    expect(JSON.stringify(r)).not.toMatch(/erro|error/i);
+  });
+
+  it("misto (boleto + nova compra) e dúvida: marca comercial/unclear e não cria a tarefa administrativa", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "paguei o boleto do consórcio", created_at: now }, { role: "contact", content: "e queria ver uma moto à vista", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente pagou boleto e quer ver moto à vista." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenLastCalledWith({}, expect.objectContaining({ commercial_intent: "commercial" }));
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "oi", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente quer atendimento." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenLastCalledWith({}, expect.objectContaining({ commercial_intent: "unclear" }));
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+
+  it("flags independentes: só a administrativa ligada => marca administrativa funciona e o card não recebe produto", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "quero consórcio", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente quer consórcio." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "commercial" }));
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
+  });
+
+  it("flags independentes: só a de produto ligada => produto vai para o card e nada administrativo é gravado", async () => {
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_operation_classification_enabled: true } });
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent.mock.calls[0][1]).not.toHaveProperty("commercial_intent");
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+
+  it("flag desligada: não grava a marca (coluna pode ainda não existir) nem cria tarefa administrativa", async () => {
+    withFlag(false);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent.mock.calls[0][1]).not.toHaveProperty("commercial_intent");
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+});

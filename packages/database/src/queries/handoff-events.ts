@@ -11,6 +11,8 @@ export async function createHandoffEvent(
     resumo?: string | null;
     urgencia?: HandoffUrgencia | null;
     criado_por: HandoffActorType;
+    /** Só com handoff_admin_no_card_enabled (coluna da migração 20261126130000). */
+    commercial_intent?: "commercial" | "administrative" | "unclear";
   }
 ) {
   const { data, error } = await client
