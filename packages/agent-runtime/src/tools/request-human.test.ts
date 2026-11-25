@@ -480,7 +480,7 @@ describe("requestHuman: ordem das escritas por modo de distribuição", () => {
 
 // Produto do card (decisão do dono 25/11): o encaminhamento leva a operação quando há evidência; sem evidência, nada (card "a confirmar").
 describe("createRequestHumanTool — produto do card de encaminhamento", () => {
-  beforeEach(() => { getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true } }); });
+  beforeEach(() => { getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_operation_classification_enabled: true } }); });
   const AD = "Seu próximo carro — O seu próximo carro pode vir por consórcio ou por carta contemplada.";
   const now = new Date().toISOString();
   const ruben = { motivo: "fora_do_escopo" as const, urgencia: "normal" as const,
@@ -513,6 +513,14 @@ describe("createRequestHumanTool — produto do card de encaminhamento", () => {
     getOrganizationById.mockResolvedValue(orgNoDefaults);
     await createRequestHumanTool(context).execute!(ruben, {} as never);
     expect(getRecentMessages).not.toHaveBeenCalled();
+  });
+
+  it("flag handoff_operation_classification_enabled desligada: não classifica nem passa operação (card a confirmar, como antes)", async () => {
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true } });
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "Quais cartas contempladas vocês têm hoje?", created_at: now }]);
+    await createRequestHumanTool(context).execute!(ruben, {} as never);
+    expect(getRecentMessages).not.toHaveBeenCalled();
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
   });
 
   it("mensagens antigas (mais de 14 dias) não contam como intenção atual", async () => {
@@ -569,6 +577,22 @@ describe("createRequestHumanTool — atendimento administrativo sem card", () =>
     getRecentMessages.mockResolvedValue([{ role: "contact", content: "oi", created_at: now }]);
     await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente quer atendimento." }, {} as never);
     expect(createHandoffEvent).toHaveBeenLastCalledWith({}, expect.objectContaining({ commercial_intent: "unclear" }));
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+
+  it("flags independentes: só a administrativa ligada => marca administrativa funciona e o card não recebe produto", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "quero consórcio", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente quer consórcio." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "commercial" }));
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
+  });
+
+  it("flags independentes: só a de produto ligada => produto vai para o card e nada administrativo é gravado", async () => {
+    getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_operation_classification_enabled: true } });
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent.mock.calls[0][1]).not.toHaveProperty("commercial_intent");
     expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
   });
 

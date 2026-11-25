@@ -199,11 +199,18 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         };
         // Produto do card: intenção do cliente > contexto > resumo (anúncio só complementa). Sem evidência => card "a confirmar".
         // Só entra na operação do card/atribuição; rodízio, duplicidade e origem do anúncio não dependem dela.
-        const cls = mode === "off" ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
-        const operation = cls && cls.confidence !== "none" ? cls.operation : null;
-        // Exclusivamente administrativo/pós-venda => sem card (flag). Misto ou dúvida => 'commercial'/'unclear' (card como antes).
+        // Duas flags independentes (desligadas por padrão), sem rollback de código:
+        //  - handoff_operation_classification_enabled (#125): o produto classificado vai para o card;
+        //  - handoff_admin_no_card_enabled (#126): encaminhamento exclusivamente administrativo não abre card.
+        // A classificação roda se qualquer uma estiver ligada; cada efeito só acontece com a sua flag.
+        const operationClassification = org.settings.handoff_operation_classification_enabled === true;
         const adminNoCard = org.settings.handoff_admin_no_card_enabled === true;
-        let commercialIntent: "administrative" | "commercial" | "unclear" = cls?.administrative && !cls.mixedAdministrative ? "administrative" : operation ? "commercial" : "unclear";
+        const cls = mode === "off" || !(operationClassification || adminNoCard) ? null
+          : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
+        const classified = cls && cls.confidence !== "none" ? cls.operation : null;
+        const operation = operationClassification ? classified : null;
+        // Exclusivamente administrativo/pós-venda => sem card (flag). Misto ou dúvida => 'commercial'/'unclear' (card como antes).
+        let commercialIntent: "administrative" | "commercial" | "unclear" = cls?.administrative && !cls.mixedAdministrative ? "administrative" : classified ? "commercial" : "unclear";
         // Sem card só se a tarefa de atendimento existir: ela nasce ANTES do encaminhamento (o repasse abaixo a entrega ao responsável).
         // Se falhar, vira 'dúvida' e o card é criado como hoje — o atendimento nunca fica invisível nem sem responsável.
         if (adminNoCard && commercialIntent === "administrative") {
