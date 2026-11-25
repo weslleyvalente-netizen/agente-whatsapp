@@ -535,8 +535,30 @@ describe("createRequestHumanTool — atendimento administrativo sem card", () =>
     await createRequestHumanTool(context).execute!(boleto, {} as never);
     expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "administrative" }));
     expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
-    expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ type: "other", assignee_type: "human", assignee_id: "rep-user-1",
-      description: expect.stringMatching(/administrativo/i) }));
+    expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ type: "other", description: expect.stringMatching(/administrativo/i) }));
+    // a tarefa nasce ANTES do encaminhamento e o repasse a entrega ao responsável escolhido pelo rodízio
+    expect(createTaskWithDedup.mock.invocationCallOrder[0]).toBeLessThan(createHandoffEvent.mock.invocationCallOrder[0]);
+  });
+
+  it("tarefa criada é repassada ao responsável da distribuição", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    getOpenTasksByConversation.mockResolvedValue([{ id: "task-adm", organization_id: "org-1", status: "pending", updated_at: now, description: "Atendimento administrativo", due_date: "2026-11-25", opportunity_id: null }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(updateTask).toHaveBeenCalledWith({}, "task-adm", expect.objectContaining({ assignee_type: "human", assignee_id: "rep-user-1" }), now);
+  });
+
+  it("falha ao criar a tarefa: o encaminhamento vira 'dúvida' (o card é criado como hoje) — nunca fica invisível nem sem responsável", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    createTaskWithDedup.mockRejectedValue(new Error("insert failed"));
+    const r = await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "unclear" }));
+    expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
+    // responsável: gravado na conversa pela própria distribuição (distribute_lead; coberto no teste SQL); o repasse roda para ele
+    expect(getActiveAssignmentRepUserId).toHaveBeenCalled();
+    expect(getOpenTasksByConversation).toHaveBeenCalled();
+    expect(JSON.stringify(r)).not.toMatch(/erro|error/i);
   });
 
   it("misto (boleto + nova compra) e dúvida: marca comercial/unclear e não cria a tarefa administrativa", async () => {

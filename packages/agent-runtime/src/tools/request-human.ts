@@ -125,11 +125,10 @@ async function createFallbackTaskIfUnrouted(
 async function createAdministrativeTask(
   db: ReturnType<typeof getAdminClient>,
   context: RequestHumanToolContext,
-  assigneeId: string | null,
   motivo: (typeof HANDOFF_MOTIVOS)[number],
   resumo: string,
   urgencia: (typeof HANDOFF_URGENCIAS)[number]
-) {
+): Promise<boolean> {
   try {
     await createTaskWithDedup(db, {
       organization_id: context.organizationId,
@@ -143,10 +142,11 @@ async function createAdministrativeTask(
       due_date: toISODateInTimeZone(new Date()),
       created_by_type: "ai",
       created_by_id: null,
-      ...(assigneeId ? { assignee_type: "human" as const, assignee_id: assigneeId } : {}),
     });
+    return true;
   } catch (err) {
-    console.error("requestHuman tool: failed to create administrative task:", err);
+    console.error("requestHuman tool: failed to create administrative task; card será criado como hoje:", err);
+    return false;
   }
 }
 
@@ -203,7 +203,13 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         const operation = cls && cls.confidence !== "none" ? cls.operation : null;
         // Exclusivamente administrativo/pós-venda => sem card (flag). Misto ou dúvida => 'commercial'/'unclear' (card como antes).
         const adminNoCard = org.settings.handoff_admin_no_card_enabled === true;
-        const commercialIntent = cls?.administrative && !cls.mixedAdministrative ? "administrative" : operation ? "commercial" : "unclear";
+        let commercialIntent: "administrative" | "commercial" | "unclear" = cls?.administrative && !cls.mixedAdministrative ? "administrative" : operation ? "commercial" : "unclear";
+        // Sem card só se a tarefa de atendimento existir: ela nasce ANTES do encaminhamento (o repasse abaixo a entrega ao responsável).
+        // Se falhar, vira 'dúvida' e o card é criado como hoje — o atendimento nunca fica invisível nem sem responsável.
+        if (adminNoCard && commercialIntent === "administrative") {
+          const ok = await createAdministrativeTask(db, context, motivo, resumo, urgencia);
+          if (!ok) commercialIntent = "unclear";
+        }
         const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
           organizationId: context.organizationId,
           conversationId: context.conversationId,
@@ -246,8 +252,7 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           // Com atribuição ativa, _lead_apply_effects já gravou conversations.assigned_to.
           if (routed.assigneeId && !routed.alreadyAssigned) await updateConversation(db, context.conversationId, { assigned_to: routed.assigneeId });
           await reassign(routed.assigneeId);
-          // Sem card no funil: o atendimento nunca fica sem tarefa nem sem responsável.
-          if (adminNoCard && commercialIntent === "administrative") await createAdministrativeTask(db, context, routed.assigneeId, motivo, resumo, urgencia);
+
         }
 
         const notifyPhone = org.settings.handoff_notification_phone ?? null;
