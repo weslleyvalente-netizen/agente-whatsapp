@@ -74,4 +74,48 @@ describe("inferHandoffOperation", () => {
   it("sem nada => a confirmar (null), nunca venda de veículo por padrão", () => {
     expect(inferHandoffOperation(base({ messages: [msg("contact", "bom dia"), msg("contact", "aonde fica a loja")] }))).toMatchObject({ operation: null, confidence: "none" });
   });
+
+  // Revisão do dono (25/11) no GitHub: casos adicionais.
+  it("negação: 'não quero financiamento' não vira financiamento; com alternativa, vale a alternativa", () => {
+    const one = (t: string) => inferHandoffOperation(base({ messages: [msg("contact", t)] }));
+    expect(one("não quero financiamento").operation).toBeNull();
+    expect(one("nao quero financiar, quero consórcio").operation).toBe("consortium");
+    expect(one("não tenho interesse em carta contemplada, quero comprar a moto à vista").operation).toBe("vehicle_sale");
+  });
+
+  it("cliente que JÁ tem carta de crédito não está comprando carta: quer usar no veículo (ou fica a confirmar)", () => {
+    const one = (t: string) => inferHandoffOperation(base({ messages: [msg("contact", t)] })).operation;
+    expect(one("já tenho uma carta de crédito contemplada, quero usar pra comprar uma moto seminova")).toBe("vehicle_sale");
+    expect(one("minha carta foi contemplada, como faço pra usar?")).not.toBe("contemplated_letter");
+  });
+
+  it("mudança de intenção: a fala mais recente vence, mesmo depois de vários dias falando de outro produto", () => {
+    const r = inferHandoffOperation(base({ messages: [
+      msg("contact", "quero uma carta contemplada de 60 mil"), msg("human_agent", "tenho essa carta contemplada aqui"),
+      msg("contact", "achei caro a entrada"), msg("contact", "na verdade prefiro financiar a moto")] }));
+    expect(r).toMatchObject({ operation: "financing", source: "customer" });
+  });
+
+  it("atendimento misto: assunto administrativo + nova compra => vale a compra (não descarta a venda)", () => {
+    const r = inferHandoffOperation(base({ messages: [msg("contact", "paguei o boleto do consórcio ontem"), msg("contact", "e queria ver uma moto nova pra comprar à vista")] }));
+    expect(r).toMatchObject({ operation: "vehicle_sale", administrative: false });
+    expect(r.mixedAdministrative).toBe(true);
+  });
+
+  it("consórcio convencional × carta contemplada", () => {
+    const one = (t: string) => inferHandoffOperation(base({ messages: [msg("contact", t)] })).operation;
+    expect(one("quero entrar num grupo de consórcio de moto")).toBe("consortium");
+    expect(one("quero uma carta já contemplada, sem esperar sorteio")).toBe("contemplated_letter");
+    expect(one("qual o valor da carta de crédito do consórcio pra moto?")).toBe("consortium");
+    expect(one("quero consórcio, não carta contemplada")).toBe("consortium");
+  });
+
+  it("mensagens antigas que não representam mais a intenção atual: só as recentes contam quando há fala nova", () => {
+    const r = inferHandoffOperation(base({ messages: [msg("contact", "quero consórcio"), ...Array.from({ length: 12 }, () => msg("contact", "ok")), msg("contact", "e aí, tem novidade?")] }));
+    expect(r.operation).toBeNull(); // a menção a consórcio ficou para trás (fora das 10 últimas falas do cliente)
+  });
+
+  it("resumo com valor de uma moto específica => venda de veículo (divergência do levantamento, card dee90168)", () => {
+    expect(inferHandoffOperation(base({ resumo: "Cliente mandou um vídeo perguntando o valor de uma moto específica mostrada nele." })).operation).toBe("vehicle_sale");
+  });
 });
