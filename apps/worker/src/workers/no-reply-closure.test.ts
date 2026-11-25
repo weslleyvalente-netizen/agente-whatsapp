@@ -9,7 +9,7 @@ const NOON = new Date("2026-11-25T15:00:00Z"); // 12:00 BRT
 const NIGHT = new Date("2026-11-25T23:30:00Z"); // 20:30 BRT
 const CLOSING = "Vou encerrar por aqui por enquanto 😊 Quando quiser retomar, é só me mandar uma mensagem.";
 const org = (over: object = {}) => ({ id: "org", settings: { no_reply_closure_enabled: true, no_reply_closure_started_at: "2026-11-25T00:00:00Z", sales_low_intent_closing_message: CLOSING, ...over } });
-const cand = (id: string, instance = "inst1") => ({ conversation_id: id, contact_id: "c-" + id, instance_id: instance, phone: "5562999990000", followup_days: 4, anchor: "2026-11-20T12:00:00Z" });
+const cand = (id: string, instance = "inst1") => ({ conversation_id: id, contact_id: "c-" + id, instance_id: instance, phone: "5562999990000", followup_days: 4, anchor: "2026-11-20T12:00:00Z", opportunity_id: "opp-" + id });
 
 function fakeDb(candidates: any[], confirmed: any[] = []) {
   const rpc = vi.fn(async (name: string, args: any) => {
@@ -40,6 +40,11 @@ describe("encerramento sem resposta (worker)", () => {
     expect(r.queued).toBe(2);
     expect(m.createMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ role: "agent", content: CLOSING, metadata: { no_reply_closure: expect.objectContaining({ followup_days: 4 }) } }));
     expect((d.enqueue as any).mock.calls.map((c: any) => c[0].conversationId)).toEqual(["a", "c"]);
+  });
+
+  it("revisão 25/11: a despedida grava o negócio correspondente (o único aberto do grupo) para o encerramento não atingir outro", async () => {
+    await runNoReplyClosureCheck(fakeDb([cand("a")]), org() as any, NOON, undefined, deps());
+    expect(m.createMessage.mock.calls[0][1].metadata.no_reply_closure).toMatchObject({ opportunity_id: "opp-a", followup_days: 4 });
   });
 
   it("fora do horário comercial: só aplica as confirmadas, não envia", async () => {

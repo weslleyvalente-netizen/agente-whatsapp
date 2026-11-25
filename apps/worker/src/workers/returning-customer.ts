@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Organization } from "@aula-agente/shared";
 import { createTaskWithDedup } from "@aula-agente/database";
+import { ATTRIBUTION_WINDOW_MS } from "@aula-agente/shared";
 import { classifyReturningIntent, decideStage, type ContextMessage, type Generate, type IntentClassification } from "../lib/returning-customer-intent.js";
 
 export const COMMERCIAL_TASK_TYPES = ["vehicle_followup", "financing_followup", "consortium_followup", "libera_cred_resumption", "return_customer", "proposal_followup", "run_quote"];
@@ -26,25 +27,12 @@ interface Context { identity_ids: string[]; identity_status: "resolved" | "unres
 
 export interface ReturningCustomerResult { evaluated: number; created: number; review: number }
 
+// Gatilhos ainda sem decisão: a exclusão dos já decididos acontece no banco ANTES do limite (revisão 25/11: antes, 30 gatilhos já
+// decididos no começo da janela de 48 h escondiam os novos).
 async function listTriggers(db: SupabaseClient, orgId: string, since: string): Promise<Trigger[]> {
-  const [h, t] = await Promise.all([
-    db.from("handoff_events").select("id,conversation_id,handed_at,resumo,conversations!inner(contact_id)")
-      .eq("organization_id", orgId).eq("trigger_type", "request_human").gte("handed_at", since).order("handed_at").limit(MAX_TRIGGERS_PER_CYCLE),
-    db.from("tasks").select("id,contact_id,conversation_id,created_at,title,description")
-      .eq("organization_id", orgId).eq("created_by_type", "ai").is("opportunity_id", null).in("type", COMMERCIAL_TASK_TYPES)
-      .in("status", ["pending", "in_progress", "rescheduled"]).gte("created_at", since).order("created_at").limit(MAX_TRIGGERS_PER_CYCLE),
-  ]);
-  if (h.error) throw h.error;
-  if (t.error) throw t.error;
-  const triggers: Trigger[] = [
-    ...(h.data ?? []).map((r: any) => ({ kind: "handoff" as const, id: r.id, contactId: r.conversations.contact_id, conversationId: r.conversation_id, at: r.handed_at, summary: r.resumo ?? null })),
-    ...(t.data ?? []).map((r: any) => ({ kind: "task" as const, id: r.id, contactId: r.contact_id, conversationId: r.conversation_id, at: r.created_at, summary: [r.title, r.description].filter(Boolean).join(" — ") || null })),
-  ];
-  if (!triggers.length) return [];
-  const done = await db.from("returning_customer_decisions").select("trigger_kind,trigger_id").eq("organization_id", orgId).in("trigger_id", triggers.map((x) => x.id));
-  if (done.error) throw done.error;
-  const seen = new Set((done.data ?? []).map((d: any) => `${d.trigger_kind}:${d.trigger_id}`));
-  return triggers.filter((x) => !seen.has(`${x.kind}:${x.id}`)).sort((a, b) => a.at.localeCompare(b.at)).slice(0, MAX_TRIGGERS_PER_CYCLE);
+  const { data, error } = await db.rpc("returning_customer_triggers", { p_org: orgId, p_since: since, p_task_types: COMMERCIAL_TASK_TYPES, p_limit: MAX_TRIGGERS_PER_CYCLE });
+  if (error) throw error;
+  return ((data ?? []) as any[]).map((r) => ({ kind: r.kind, id: r.id, contactId: r.contact_id, conversationId: r.conversation_id, at: r.at, summary: r.summary ?? null }));
 }
 
 async function loadContext(db: SupabaseClient, conversationId: string, at: string): Promise<ContextMessage[]> {
@@ -55,10 +43,11 @@ async function loadContext(db: SupabaseClient, conversationId: string, at: strin
   return (data ?? []).reverse() as ContextMessage[];
 }
 
-async function latestAdTouch(db: SupabaseClient, orgId: string, contactId: string): Promise<unknown> {
+// Toque de anúncio da NOVA negociação: só dentro da janela de atribuição (14 dias). A origem do cadastro vai como histórica (SQL).
+async function latestAdTouch(db: SupabaseClient, orgId: string, contactId: string, now: Date): Promise<unknown> {
   try {
-    const { data } = await db.from("lead_ad_touches").select("touched_at,platform,ad_id,ad_title,source_type").eq("organization_id", orgId).eq("contact_id", contactId)
-      .order("touched_at", { ascending: false }).limit(1);
+    const { data } = await db.from("lead_ad_touches").select("touched_at,platform,ad_id,ad_title,source_type,conversation_id").eq("organization_id", orgId).eq("contact_id", contactId)
+      .gte("touched_at", new Date(now.getTime() - ATTRIBUTION_WINDOW_MS).toISOString()).order("touched_at", { ascending: false }).limit(1);
     return data?.[0] ?? null;
   } catch { return null; }
 }
@@ -96,28 +85,59 @@ export async function evaluateTrigger(db: SupabaseClient, org: Pick<Organization
   console.log("[returning-customer]", JSON.stringify({ org: org.id, decision: decisionId, trigger: `${trig.kind}:${trig.id}`, mode, intent: c.intent, operation: c.operation, stage, outcome, identity: ctx.identity_status }));
 
   if (mode !== "write") return "recorded";
-  if (outcome === "would_create") {
-    const r = await db.rpc("open_returning_customer_opportunity", { p_decision: decisionId, p_origin: await latestAdTouch(db, org.id, trig.contactId) });
-    if (r.error) throw r.error;
-    return r.data ? "created" : "recorded";
+  return completeDecision(db, org, { id: decisionId, outcome, contact_id: trig.contactId, conversation_id: trig.conversationId, reason: c.reason }, now);
+}
+
+interface PendingDecision { id: string; outcome: string; contact_id: string; conversation_id: string | null; reason: string }
+
+// Conclusão da decisão em modo escrita (card ou tarefa de revisão). Falha => a tentativa fica registrada na decisão e o ciclo
+// seguinte tenta de novo (returning_customer_pending_decisions), até 5 vezes. Idempotente: o card é criado sob trava e a decisão
+// guarda o card; a revisão usa createTaskWithDedup (mesma tarefa aberta do contato) e só sai da fila com review_task_id gravado.
+async function completeDecision(db: SupabaseClient, org: Pick<Organization, "id" | "settings">, d: PendingDecision, now: Date): Promise<"created" | "review" | "recorded"> {
+  try {
+    if (d.outcome === "would_create") {
+      const r = await db.rpc("open_returning_customer_opportunity", { p_decision: d.id, p_origin: await latestAdTouch(db, org.id, d.contact_id, now) });
+      if (r.error) throw new Error(r.error.message ?? String(r.error));
+      return r.data ? "created" : "recorded";
+    }
+    if (d.outcome === "needs_review") {
+      const o = await db.rpc("returning_customer_owner", { p_decision: d.id });
+      if (o.error) throw new Error(o.error.message ?? String(o.error));
+      const owner = (o.data as { user_id: string | null } | null)?.user_id ?? null;
+      if (!owner) throw new Error("no_available_rep"); // nunca cria revisão sem responsável
+      const due = now.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const { task } = await createTaskWithDedup(db, {
+        organization_id: org.id, contact_id: d.contact_id, conversation_id: d.conversation_id, type: "other", priority: "normal", due_date: due,
+        description: `Cliente voltou depois de negócio fechado: confirmar se é nova negociação. ${d.reason}`,
+        reason: `returning_customer_review:${d.id}`, created_by_type: "ai", created_by_id: null, assignee_type: "human", assignee_id: owner,
+      });
+      const u = await db.from("returning_customer_decisions").update({ review_task_id: task.id }).eq("id", d.id);
+      if (u?.error) throw new Error(u.error.message ?? String(u.error));
+      return "review";
+    }
+    return "recorded";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[returning-customer] conclusão falhou; nova tentativa no próximo ciclo", d.id, message);
+    await db.rpc("returning_customer_mark_attempt", { p_decision: d.id, p_error: message });
+    return "recorded";
   }
-  if (outcome === "needs_review") {
-    const owner = ctx.previous.owner_active ? ctx.previous.owner_id : null;
-    const due = now.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-    const { task } = await createTaskWithDedup(db, {
-      organization_id: org.id, contact_id: trig.contactId, conversation_id: trig.conversationId, type: "other", priority: "normal", due_date: due,
-      description: `Cliente voltou depois de negócio ${ctx.previous.status === "won" ? "ganho" : "perdido"}: confirmar se é nova negociação. ${c.reason}`,
-      reason: `returning_customer_review:${decisionId}`, created_by_type: "ai", created_by_id: null, assignee_type: owner ? "human" : null, assignee_id: owner,
-    });
-    await db.from("returning_customer_decisions").update({ review_task_id: task.id }).eq("id", decisionId);
-    return "review";
-  }
-  return "recorded";
 }
 
 export async function runReturningCustomerCheck(db: SupabaseClient, org: Pick<Organization, "id" | "settings">, generate: Generate, now = new Date()): Promise<ReturningCustomerResult> {
   const result: ReturningCustomerResult = { evaluated: 0, created: 0, review: 0 };
   if (org.settings.returning_customer_card_enabled !== true || !org.settings.returning_customer_card_started_at) return result;
+  // 1) decisões de ciclos anteriores que não concluíram (card não criado / revisão sem tarefa): só em modo escrita
+  if (org.settings.returning_customer_card_mode === "write") {
+    const p = await db.rpc("returning_customer_pending_decisions", { p_org: org.id, p_limit: MAX_TRIGGERS_PER_CYCLE });
+    if (p.error) throw p.error;
+    for (const d of (p.data ?? []) as PendingDecision[]) {
+      const r = await completeDecision(db, org, d, now);
+      if (r === "created") result.created++;
+      if (r === "review") result.review++;
+    }
+  }
+  // 2) gatilhos novos
   const since = new Date(Math.max(now.getTime() - LOOKBACK_MS, Date.parse(org.settings.returning_customer_card_started_at))).toISOString();
   for (const trig of await listTriggers(db, org.id, since)) {
     try {

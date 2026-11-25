@@ -131,6 +131,59 @@ Não existe hoje mecanismo de invalidação: status só `open/won/lost`, eventos
 Proposta (PR separado, com autorização): status `void` ("anulado") + `void_reason` + evento `voided` (auditoria preservada,
 reversível), excluído do funil e de todos os indicadores de ganho/perda/conversão; só gestor anula. Depois aplicar aos dois.
 
+## Revisão independente do PR #123 (25/11) — o que mudou
+
+Bloqueadores corrigidos (cada um com teste de regressão visto falhando no commit af744f5 antes da correção):
+
+1. **Gatilhos sem starvation**: `returning_customer_triggers` exclui os gatilhos já decididos no banco ANTES do limite de 30.
+2. **Decisão gravada sem card/revisão**: colunas `attempts`/`last_error`; `returning_customer_pending_decisions` devolve as
+   decisões em modo escrita não concluídas (card não criado ou revisão sem tarefa) e o worker as conclui no ciclo seguinte, até
+   5 tentativas em 7 dias, sem reclassificar. Criação idempotente (trava + decisão guarda o card); revisão via
+   `createTaskWithDedup` e só sai da fila com `review_task_id` gravado.
+3. **Encerramento só da oportunidade correspondente**: a despedida grava `no_reply_closure.opportunity_id` (o único negócio aberto
+   do grupo; com 2+ abertos a conversa não entra). `apply_no_reply_closure` reconfere no momento da aplicação: resposta do cliente
+   em qualquer conversa/cadastro do grupo, promessa do vendedor aberta (`seller_commitments`), retorno marcado, proposta, negócio
+   criado depois da despedida, mudança feita pelo vendedor depois do envio (evento humano), etapa/valor/congelamento. O motivo de
+   não aplicar fica em `metadata.closure_skipped`.
+
+Complementares:
+- **Identidade transitiva**: o grupo é calculado por fecho (até 6 saltos), igual partindo de qualquer cadastro; cada vínculo é uma
+  busca indexada (índices parciais em `metadata.lid` e `merged_into`).
+- **Sempre um responsável**: `returning_customer_owner` (anterior ativo > atribuição do rodízio > dono da conversa > rodízio
+  com o mesmo ponteiro/trava da distribuição > vendedor em pausa). Ninguém disponível => não cria e a decisão fica pendente.
+  Vale para o card e para a tarefa de revisão; o dono fica gravado na decisão (o rodízio anda uma vez só).
+- **Origem**: `lead_origin_historico` (cadastro) separado de `ad_touch` + `origin_basis` da nova negociação, só com toque de
+  anúncio dentro da janela de atribuição de 14 dias.
+- **Tarefas**: só as criadas depois do fechamento anterior são vinculadas ao card novo.
+- **Follow-up contado** só com envio confirmado (`evolution_message_id`) e sem falha.
+- **Filtros PostgREST** das despedidas confirmadas validados no PostgREST real (somente leitura, chave pública): 200 com a
+  consulta do worker, 400 num filtro inválido de controle; `stage` é número e `->>stage.eq.3` casa. 17 despedidas confirmadas da
+  cadência desde 20/10 casariam com o filtro — o início configurado (`no_reply_closure_started_at`) as exclui.
+
+### Impacto da correção de identidade (ativa no deploy, sem flag) — simulação somente leitura, 60 dias
+
+- 461 cards automáticos; 18 contatos com grupo de identidade > 1 (9 por unificação, 1 por telefone).
+- Com os vínculos de hoje, 13 seriam bloqueados: 3 cards manuais de 25/11 (não passam pela regra), 1 contato de teste e
+  **9 cards de encaminhamento de cadastros @lid unificados em 23/11** — Cleber e Rosival (pós-venda, bloqueio correto), 2 duplicados
+  da mesma operação (correto) e 5 de outra operação que passariam a depender da avaliação por intenção (cliente que volta).
+  Limite: os vínculos foram gravados em 23/11, depois da criação desses cards; é um teto, não o que teria acontecido.
+- Risco: sem a flag de cliente que volta ligada, um cliente com histórico (inclusive via cadastro @lid ligado) não ganha card
+  automático, como já acontece hoje para o mesmo cadastro. Recomendação: ligar o modo sombra logo após o deploy.
+
+### Desempenho (PGlite com 2.000 contatos, 1.200 conversas e os índices que existem em produção)
+
+- `_contact_identity_ids`: 0,24 ms por contato; `returning_customer_triggers`: 2 ms.
+- `no_reply_closure_candidates` no pior caso (todas as 1.200 conversas passam no pré-filtro): 0,48 s por ciclo de 15 min.
+  Pré-filtro só pela própria conversa antes de calcular o grupo (a âncora do grupo nunca é anterior à da conversa).
+  Produção hoje: 2.021 contatos, 1.135 conversas na janela.
+
+### Leads totalmente novos (investigação, nada alterado)
+
+127 cards de encaminhamento em 60 dias: 6 ganhos, 16 perdidos (1 bot, 1 duplicado @lid, 5 sem interesse, 9 sem resposta),
+105 abertos (74 ainda em "interesse recebido", 9 deles há mais de 14 dias). Proposta para outro PR: classificar a intenção também
+no encaminhamento de lead novo **só em sombra** (sem deixar de criar o card), medir quantos seriam administrativos e só depois
+decidir se viram revisão em vez de card — a captação atual não muda.
+
 ## Implantação
 
 PR com testes → aprovação → merge/deploy com autorização → aplicar a migração (correção de identidade vale já no deploy) →

@@ -31,3 +31,9 @@
 - Ligar `no_reply_closure_enabled` sem `no_reply_closure_started_at` não faz nada (proteção contra aplicação em massa).
 - Custo do `_contact_identity_ids` dentro das funções chamadas por gatilho (índice por chave de telefone).
 - Tarefa de revisão `other` não dispara criação de negócio (tipo sem mapeamento).
+
+## Revisão 25/11 (fix pass)
+Regressões escritas primeiro e vistas falhando no af744f5 (12 SQL + 3 worker + 1 worker de encerramento), depois corrigidas:
+`returning_customer_triggers`, `returning_customer_pending_decisions`, `returning_customer_mark_attempt`, `returning_customer_owner`,
+identidade transitiva indexada, captura/reconferência do negócio no encerramento, origem histórica × nova, vínculo de tarefas
+posteriores ao fechamento, contagem só de envios confirmados. Ver a seção "Revisão independente" do spec.

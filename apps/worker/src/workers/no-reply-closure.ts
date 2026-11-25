@@ -73,13 +73,14 @@ export async function runNoReplyClosureCheck(db: SupabaseClient, org: Pick<Organ
       // Reconfere sob a trava (o cliente pode ter respondido entre a lista e agora).
       const again = await db.rpc("no_reply_closure_candidates", { p_org: org.id, p_now: now.toISOString(), p_wait_hours: wait, p_limit: 1, p_conversation: c.conversation_id });
       if (again.error) throw again.error;
-      const cur = (again.data ?? [])[0] as { conversation_id: string; instance_id: string; phone: string; followup_days: number; anchor: string } | undefined;
+      const cur = (again.data ?? [])[0] as { conversation_id: string; instance_id: string; phone: string; followup_days: number; anchor: string; opportunity_id: string | null } | undefined;
       if (!cur) continue;
       if (!(await deps.reserve(cur.instance_id, now, dailyLimit))) { usedInstances.add(cur.instance_id); continue; }
       usedInstances.add(cur.instance_id);
       const message = await createMessage(db, {
         conversation_id: cur.conversation_id, organization_id: org.id, evolution_message_id: null, role: "agent", content: closing.message, media_url: null, media_type: null,
-        metadata: { no_reply_closure: { anchor: cur.anchor, followup_days: cur.followup_days, queued_at: now.toISOString() } },
+        // opportunity_id: o negócio que esta despedida encerra (o único aberto do grupo no envio, ou nenhum). O apply só mexe nele.
+        metadata: { no_reply_closure: { anchor: cur.anchor, followup_days: cur.followup_days, opportunity_id: cur.opportunity_id ?? null, queued_at: now.toISOString() } },
       } as any);
       await deps.enqueue({ conversationId: cur.conversation_id, messageId: message.id, instanceId: cur.instance_id, phone: cur.phone, content: closing.message, organizationId: org.id });
       await updateConversation(db, cur.conversation_id, { last_message_at: now.toISOString() } as any);

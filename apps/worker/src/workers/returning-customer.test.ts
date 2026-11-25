@@ -15,6 +15,7 @@ function fakeDb(opts: { context: unknown; messages?: unknown[]; upsertId?: strin
       calls.rpc.push([name, args]);
       if (name === "returning_customer_context") return { data: opts.context, error: null };
       if (name === "open_returning_customer_opportunity") return { data: opts.openResult ?? "opp-new", error: null };
+      if (name === "returning_customer_owner") return { data: { user_id: "marina", rule: "previous_owner" }, error: null };
       return { data: null, error: null };
     }),
     from: (table: string) => ({
@@ -55,7 +56,7 @@ describe("cliente que volta", () => {
     const { db, calls } = fakeDb({ context: ctx(), messages: msgs });
     expect(await evaluateTrigger(db, org("write") as any, trig, unclear)).toBe("review");
     expect(calls.upserts[0].outcome).toBe("needs_review");
-    expect(m.createTaskWithDedup).toHaveBeenCalledWith(db, expect.objectContaining({ type: "other", assignee_id: "marina", reason: "returning_customer_review:dec-1" }));
+    expect(m.createTaskWithDedup).toHaveBeenCalledWith(db, expect.objectContaining({ type: "other", assignee_type: "human", assignee_id: "marina", reason: "returning_customer_review:dec-1" }));
     expect(calls.updates[0]).toEqual({ review_task_id: "task-review" });
   });
 

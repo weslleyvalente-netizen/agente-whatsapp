@@ -40,6 +40,8 @@ ALTER TABLE public.wa_contacts ADD COLUMN IF NOT EXISTS metadata jsonb, ADD COLU
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS evolution_instance_id uuid;
 ALTER TABLE public.opportunities ADD COLUMN IF NOT EXISTS lost_reason text, ADD COLUMN IF NOT EXISTS resume_date date;
 CREATE TABLE IF NOT EXISTS public.proposal_followups (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, conversation_id uuid, sent_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.seller_commitments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, conversation_id uuid NOT NULL, contact_id uuid NOT NULL,
+  opportunity_id uuid, due_at timestamptz NOT NULL, resolved_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
 `;
 
 export type Db = Awaited<ReturnType<typeof createTestDb>>;
