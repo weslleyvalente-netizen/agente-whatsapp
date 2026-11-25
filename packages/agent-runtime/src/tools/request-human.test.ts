@@ -521,3 +521,40 @@ describe("createRequestHumanTool — produto do card de encaminhamento", () => {
     expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
   });
 });
+
+// Atendimento exclusivamente administrativo (decisão do dono 25/11): sem card, mas com encaminhamento, responsável e tarefa.
+describe("createRequestHumanTool — atendimento administrativo sem card", () => {
+  const now = new Date().toISOString();
+  const boleto = { motivo: "fora_do_escopo" as const, urgencia: "normal" as const, resumo: "Cliente pediu a segunda via do boleto do consórcio." };
+  const withFlag = (on: boolean) => getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true, handoff_admin_no_card_enabled: on } });
+  beforeEach(() => { getActiveAssignmentRepUserId.mockResolvedValue("rep-user-1"); });
+
+  it("flag ligada + só administrativo: marca o encaminhamento, distribui e cria tarefa de atendimento para o responsável", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalledWith({}, expect.objectContaining({ commercial_intent: "administrative" }));
+    expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
+    expect(createTaskWithDedup).toHaveBeenCalledWith({}, expect.objectContaining({ type: "other", assignee_type: "human", assignee_id: "rep-user-1",
+      description: expect.stringMatching(/administrativo/i) }));
+  });
+
+  it("misto (boleto + nova compra) e dúvida: marca comercial/unclear e não cria a tarefa administrativa", async () => {
+    withFlag(true);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "paguei o boleto do consórcio", created_at: now }, { role: "contact", content: "e queria ver uma moto à vista", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente pagou boleto e quer ver moto à vista." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenLastCalledWith({}, expect.objectContaining({ commercial_intent: "commercial" }));
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "oi", created_at: now }]);
+    await createRequestHumanTool(context).execute!({ ...boleto, resumo: "Cliente quer atendimento." }, {} as never);
+    expect(createHandoffEvent).toHaveBeenLastCalledWith({}, expect.objectContaining({ commercial_intent: "unclear" }));
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+
+  it("flag desligada: não grava a marca (coluna pode ainda não existir) nem cria tarefa administrativa", async () => {
+    withFlag(false);
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "preciso da segunda via do boleto", created_at: now }]);
+    await createRequestHumanTool(context).execute!(boleto, {} as never);
+    expect(createHandoffEvent.mock.calls[0][1]).not.toHaveProperty("commercial_intent");
+    expect(createTaskWithDedup.mock.calls.filter((c) => /administrativo/i.test(c[1].description ?? ""))).toHaveLength(0);
+  });
+});

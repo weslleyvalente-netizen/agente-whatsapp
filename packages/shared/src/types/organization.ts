@@ -29,6 +29,8 @@ export interface OrganizationSettings {
   sales_auto_pipeline_enabled?: boolean;
   sales_opportunity_freeze_enabled?: boolean;
   sales_low_intent_cadence_enabled?: boolean;
+  /** Encaminhamento exclusivamente administrativo/pós-venda não abre card (migração 20261126130000). Padrão: desligado. */
+  handoff_admin_no_card_enabled?: boolean;
   sales_low_intent_cadence_started_at?: string;
   sales_low_intent_final_delay_hours?: number;
   sales_low_intent_closing_message?: string;

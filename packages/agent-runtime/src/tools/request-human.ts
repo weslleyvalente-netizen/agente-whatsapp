@@ -121,6 +121,35 @@ async function createFallbackTaskIfUnrouted(
   }
 }
 
+// Atendimento exclusivamente administrativo/pós-venda (sem card): tarefa de atendimento para o responsável do encaminhamento.
+async function createAdministrativeTask(
+  db: ReturnType<typeof getAdminClient>,
+  context: RequestHumanToolContext,
+  assigneeId: string | null,
+  motivo: (typeof HANDOFF_MOTIVOS)[number],
+  resumo: string,
+  urgencia: (typeof HANDOFF_URGENCIAS)[number]
+) {
+  try {
+    await createTaskWithDedup(db, {
+      organization_id: context.organizationId,
+      contact_id: context.contactId,
+      conversation_id: context.conversationId,
+      opportunity_id: null,
+      type: "other",
+      description: `Atendimento administrativo/pós-venda (sem card no funil): ${resumo}`,
+      reason: `Motivo do handoff: ${HANDOFF_MOTIVO_LABELS[motivo]} (urgência ${urgencia})`,
+      priority: urgencia === "alta" ? "urgent" : "normal",
+      due_date: toISODateInTimeZone(new Date()),
+      created_by_type: "ai",
+      created_by_id: null,
+      ...(assigneeId ? { assignee_type: "human" as const, assignee_id: assigneeId } : {}),
+    });
+  } catch (err) {
+    console.error("requestHuman tool: failed to create administrative task:", err);
+  }
+}
+
 type DistributionMode = "off" | "shadow" | "real";
 
 /**
@@ -170,7 +199,11 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         };
         // Produto do card: intenção do cliente > contexto > resumo (anúncio só complementa). Sem evidência => card "a confirmar".
         // Só entra na operação do card/atribuição; rodízio, duplicidade e origem do anúncio não dependem dela.
-        const operation = mode === "off" ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
+        const cls = mode === "off" ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
+        const operation = cls && cls.confidence !== "none" ? cls.operation : null;
+        // Exclusivamente administrativo/pós-venda => sem card (flag). Misto ou dúvida => 'commercial'/'unclear' (card como antes).
+        const adminNoCard = org.settings.handoff_admin_no_card_enabled === true;
+        const commercialIntent = cls?.administrative && !cls.mixedAdministrative ? "administrative" : operation ? "commercial" : "unclear";
         const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
           organizationId: context.organizationId,
           conversationId: context.conversationId,
@@ -194,6 +227,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           resumo,
           urgencia,
           criado_por: "ia",
+          // Só com a flag: a coluna commercial_intent vem da migração 20261126130000 e pode ainda não existir.
+          ...(adminNoCard ? { commercial_intent: commercialIntent } : {}),
         });
 
         if (mode === "off") {
@@ -211,6 +246,8 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
           // Com atribuição ativa, _lead_apply_effects já gravou conversations.assigned_to.
           if (routed.assigneeId && !routed.alreadyAssigned) await updateConversation(db, context.conversationId, { assigned_to: routed.assigneeId });
           await reassign(routed.assigneeId);
+          // Sem card no funil: o atendimento nunca fica sem tarefa nem sem responsável.
+          if (adminNoCard && commercialIntent === "administrative") await createAdministrativeTask(db, context, routed.assigneeId, motivo, resumo, urgencia);
         }
 
         const notifyPhone = org.settings.handoff_notification_phone ?? null;

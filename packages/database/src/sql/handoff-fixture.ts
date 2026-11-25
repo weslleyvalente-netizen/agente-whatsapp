@@ -50,6 +50,7 @@ export const NEW_MIGRATIONS = [
   "20261119140000_message_author_in_sla_rules.sql",
   "20261119150000_new_request_wait_ignores_prior_service.sql",
   "20261120120000_sla_sweeps_bounded.sql",
+  "20261126130000_handoff_admin_no_card.sql",
 ];
 
 export async function setupHandoffDb(opts: { apply?: string[] } = {}) {
