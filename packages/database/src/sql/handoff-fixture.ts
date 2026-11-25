@@ -40,6 +40,8 @@ ALTER TABLE public.wa_contacts ADD COLUMN IF NOT EXISTS metadata jsonb, ADD COLU
 ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS evolution_instance_id uuid;
 ALTER TABLE public.opportunities ADD COLUMN IF NOT EXISTS lost_reason text, ADD COLUMN IF NOT EXISTS resume_date date;
 CREATE TABLE IF NOT EXISTS public.proposal_followups (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, conversation_id uuid, sent_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.lead_ad_touches (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid, contact_id uuid, conversation_id uuid,
+  touched_at timestamptz, platform text, source_type text, ad_id text, ad_title text, ad_body text, ad_url text, campaign_id text, campaign_name text);
 CREATE TABLE IF NOT EXISTS public.seller_commitments (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL, conversation_id uuid NOT NULL, contact_id uuid NOT NULL,
   opportunity_id uuid, due_at timestamptz NOT NULL, resolved_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
 `;
@@ -57,6 +59,7 @@ export const NEW_MIGRATIONS = [
   "20261119150000_new_request_wait_ignores_prior_service.sql",
   "20261120120000_sla_sweeps_bounded.sql",
   "20261125120000_returning_customer_and_no_reply_closure.sql",
+  "20261126120000_opportunity_void.sql",
 ];
 
 export async function setupHandoffDb(opts: { apply?: string[] } = {}) {
