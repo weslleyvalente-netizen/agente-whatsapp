@@ -356,6 +356,13 @@ describe("shouldConsiderAutomaticFollowup", () => {
     expect(shouldConsiderAutomaticFollowup("contact")).toBe(false);
   });
 
+  it("never follows up after an automatic farewell (no-reply closure, low-intent stage 3, ad batch closure)", () => {
+    expect(shouldConsiderAutomaticFollowup("agent", { no_reply_closure: { followup_days: 4 } })).toBe(false);
+    expect(shouldConsiderAutomaticFollowup("agent", { low_intent_followup: { anchor: "x", stage: 3 } })).toBe(false);
+    expect(shouldConsiderAutomaticFollowup("agent", { scheduled_ad_closure: { batch_id: "b" } })).toBe(false);
+    expect(shouldConsiderAutomaticFollowup("agent", { low_intent_followup: { anchor: "x", stage: 2 } })).toBe(true);
+  });
+
   it("does not consider it when there is no message yet", () => {
     expect(shouldConsiderAutomaticFollowup(null)).toBe(false);
   });
