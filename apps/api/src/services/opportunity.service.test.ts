@@ -143,6 +143,27 @@ describe("changeOperation", () => {
   });
 });
 
+describe("changeOperation — confirmar o produto de card 'a confirmar' (aba A confirmar, 25/11)", () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it("mesmo produto em card a confirmar: só tira a marca, mantém etapa e data de progresso, registra a confirmação", async () => {
+    const db = makeDb({ ...baseOpportunity, operation: "vehicle_sale", stage: "qualification", operation_is_default: true } as any);
+    updateOpportunity.mockResolvedValue({ ...baseOpportunity, operation_is_default: false });
+    await changeOperation(db, "opp-1", "vehicle_sale", "Produto confirmado com o cliente", actor);
+    expect(updateOpportunity).toHaveBeenCalledWith(db, "opp-1", { operation_is_default: false });
+    expect(addOpportunityEvent).toHaveBeenCalledWith(db, expect.objectContaining({ event_type: "operation_changed",
+      previous_value: { operation: "vehicle_sale", stage: "qualification", operation_is_default: true },
+      new_value: { operation: "vehicle_sale", stage: "qualification", operation_is_default: false, confirmed: true } }));
+  });
+
+  it("mesmo produto em card já confirmado: segue a regra de sempre (volta à primeira etapa)", async () => {
+    const db = makeDb({ ...baseOpportunity, operation: "vehicle_sale", stage: "negotiation", operation_is_default: false } as any);
+    updateOpportunity.mockResolvedValue({ ...baseOpportunity });
+    await changeOperation(db, "opp-1", "vehicle_sale", "x", actor);
+    expect(updateOpportunity).toHaveBeenCalledWith(db, "opp-1", expect.objectContaining({ operation: "vehicle_sale", stage: "interest_received" }));
+  });
+});
+
 describe("markWon", () => {
   beforeEach(() => {
     vi.resetAllMocks();

@@ -61,6 +61,23 @@ export async function changeOperation(
   if (current.error) throw current.error;
   const opportunity = current.data as Opportunity;
 
+  // Card "a confirmar" (nasceu com a operação padrão) confirmado no MESMO produto: só tira a marca. Etapa, responsável e datas ficam;
+  // a confirmação entra no histórico. (A marca não sai sozinha: o gatilho do banco só a limpa quando a operação muda.)
+  if (newOperation === opportunity.operation && (opportunity as { operation_is_default?: boolean }).operation_is_default === true) {
+    const confirmed = await updateOpportunity(db, opportunityId, { operation_is_default: false } as never);
+    await addOpportunityEvent(db, {
+      organization_id: opportunity.organization_id,
+      opportunity_id: opportunityId,
+      event_type: "operation_changed",
+      previous_value: { operation: opportunity.operation, stage: opportunity.stage, operation_is_default: true },
+      new_value: { operation: newOperation, stage: opportunity.stage, operation_is_default: false, confirmed: true },
+      evidence,
+      changed_by_type: actor.type,
+      changed_by_id: actor.id,
+    } as never);
+    return confirmed;
+  }
+
   // Trocar de funil torna o estágio antigo inválido no funil novo — sempre
   // reinicia no primeiro estágio do funil de destino, nunca mantém o valor
   // antigo por engano.

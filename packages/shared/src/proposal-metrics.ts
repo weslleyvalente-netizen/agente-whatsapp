@@ -4,7 +4,7 @@
 import { addBusinessMinutes, businessDayMinutes, type BusinessCalendar } from "./business-calendar.js";
 import { PROPOSAL_FOLLOWUP_MINUTES } from "./commitments.js";
 
-export interface ProposalMetricRow { ownerUserId: string | null; sentAt: string; firstSellerFollowupAt: string | null; firstCustomerReplyAt: string | null; outcome: string | null }
+export interface ProposalMetricRow { ownerUserId: string | null; sentAt: string; firstSellerFollowupAt: string | null; firstCustomerReplyAt: string | null; outcome: string | null; opportunityStatus?: string | null }
 export interface ProposalMetricLine {
   ownerUserId: string | null; name: string; proposals: number; customerRepliedFirst: number; needingFollowup: number;
   within30m: number; within1d: number; within3d: number; pct30m: number; pct1d: number; pct3d: number; won: number; lost: number; conversion: number;
@@ -35,7 +35,9 @@ function line(ownerUserId: string | null, name: string, rows: ProposalMetricRow[
   };
 }
 
-export function aggregateProposalMetrics(rows: ProposalMetricRow[], calendar: BusinessCalendar, names: Record<string, string>) {
+export function aggregateProposalMetrics(allRows: ProposalMetricRow[], calendar: BusinessCalendar, names: Record<string, string>) {
+  // Proposta de negócio anulado não entra no total nem na conversão.
+  const rows = allRows.filter((r) => r.opportunityStatus !== "void");
   const byOwner = new Map<string | null, ProposalMetricRow[]>();
   for (const r of rows) { const k = r.ownerUserId ?? null; byOwner.set(k, [...(byOwner.get(k) ?? []), r]); }
   const sellers = [...byOwner.entries()]

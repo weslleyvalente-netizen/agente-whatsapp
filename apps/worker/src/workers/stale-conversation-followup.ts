@@ -10,6 +10,7 @@ import {
   shouldAlertStalledNegotiation,
   isWithinBusinessHours,
   toISODateInTimeZone,
+  isFarewellMetadata,
 } from "@aula-agente/shared";
 import type { StaleConversationFollowupJobData } from "@aula-agente/queue";
 import { getRedisConnection, getStaleConversationFollowupQueue, getSendMessageQueue } from "@aula-agente/queue";
@@ -44,6 +45,10 @@ import { runLiberaCredResumptionCheck } from "./libera-cred-resumption.js";
 
 import {runScheduledAdClosureCheck} from "./scheduled-ad-closure.js";
 import {runSilenceRetirementCheck} from "./silence-retirement.js";
+import { runNoReplyClosureCheck } from "./no-reply-closure.js";
+import { runReturningCustomerCheck } from "./returning-customer.js";
+import { modelGenerate } from "../lib/returning-customer-intent.js";
+import { createModel } from "@aula-agente/agent-runtime";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -159,6 +164,9 @@ async function runBaselineTaskCheck(
 
       const hasSignal = await hasOpportunitySignalTask(db, org.id, conversation.contact_id);
       if (!hasSignal) continue;
+      // Conversa encerrada por despedida automática: o silêncio é esperado, não vira tarefa de "parou de responder".
+      const [lastMessage] = await getRecentMessages(db, conversation.id, 1);
+      if (isFarewellMetadata(lastMessage?.metadata)) continue;
 
       // createTaskWithDedup keys off (contact_id, type), not conversation_id
       // — if this same contact has an older open customer_unresponsive task
@@ -216,6 +224,20 @@ export function startStaleConversationFollowupWorker() {
         stalledFlagged += await runStalledNegotiationCheck(db, org);
 
         const agents = await getAgentsByOrganization(db, org.id);
+
+        // Flags próprias (desligadas por padrão): cada rotina retorna na hora quando a sua está desligada.
+        try {
+          const nr = await runNoReplyClosureCheck(db, org);
+          if (nr.queued || nr.applied) console.log(`Stale-conversation-followup: no-reply closure org ${org.id}:`, nr);
+        } catch (err) { console.error(`Stale-conversation-followup: no-reply closure failed for org ${org.id}:`, err); }
+        try {
+          const agent = agents.find((a) => a.is_active);
+          if (agent && org.settings.returning_customer_card_enabled === true) {
+            const model = createModel(agent.provider, agent.model, await resolveApiKey(org.id, agent.provider));
+            const rc = await runReturningCustomerCheck(db, org, modelGenerate(model));
+            if (rc.evaluated) console.log(`Stale-conversation-followup: returning customer org ${org.id}:`, rc);
+          }
+        } catch (err) { console.error(`Stale-conversation-followup: returning customer failed for org ${org.id}:`, err); }
 
         for (const agent of agents) {
           if (!agent.is_active) continue;

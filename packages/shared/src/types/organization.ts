@@ -29,9 +29,23 @@ export interface OrganizationSettings {
   sales_auto_pipeline_enabled?: boolean;
   sales_opportunity_freeze_enabled?: boolean;
   sales_low_intent_cadence_enabled?: boolean;
+  /** Encaminhamento exclusivamente administrativo/pós-venda não abre card (migração 20261126130000). Padrão: desligado. */
+  handoff_admin_no_card_enabled?: boolean;
+  /** Produto do card de encaminhamento pela intenção do cliente (PR #125). Padrão: desligado (card nasce "a confirmar"). */
+  handoff_operation_classification_enabled?: boolean;
   sales_low_intent_cadence_started_at?: string;
   sales_low_intent_final_delay_hours?: number;
   sales_low_intent_closing_message?: string;
+  // Cliente que volta depois de negócio fechado: card novo só com intenção comercial. Desligada por padrão;
+  // modo 'shadow' (padrão) só grava a decisão em returning_customer_decisions; 'write' cria o card.
+  returning_customer_card_enabled?: boolean;
+  returning_customer_card_mode?: "shadow" | "write";
+  // Gatilhos anteriores a este instante nunca são avaliados (sem varredura retroativa ao ligar).
+  returning_customer_card_started_at?: string;
+  // Encerramento automático depois de 3 follow-ups sem resposta. Desligado por padrão.
+  no_reply_closure_enabled?: boolean;
+  no_reply_closure_started_at?: string;
+  no_reply_closure_wait_hours?: number;
   scheduled_ad_closure_enabled?: boolean;
   // Cancela, uma vez por dia, tarefas automáticas de silêncio que não precisam de atendimento humano. Desligada por padrão.
   silence_task_auto_retire_enabled?: boolean;
