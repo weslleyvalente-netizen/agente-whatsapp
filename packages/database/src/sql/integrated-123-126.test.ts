@@ -58,3 +58,12 @@ describe("todas as flags novas desligadas", () => {
     expect((await q("select count(*)::int n from public.opportunities where status='void'"))[0].n).toBe(0);
   });
 });
+
+describe("flag de classificação do #125 desligada (padrão)", () => {
+  it("distribute_lead sem operação no contexto => card 'a confirmar' como hoje", async () => {
+    const { org } = await seedWorld(db, ALL_ON);
+    const h = await seedLead(db, org);
+    await distribute(org, h);
+    expect((await q("select operation, operation_is_default from public.opportunities where contact_id=$1", [h.contactId]))[0]).toEqual({ operation: "vehicle_sale", operation_is_default: true });
+  });
+});
