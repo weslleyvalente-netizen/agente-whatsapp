@@ -170,7 +170,9 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
         };
         // Produto do card: intenção do cliente > contexto > resumo (anúncio só complementa). Sem evidência => card "a confirmar".
         // Só entra na operação do card/atribuição; rodízio, duplicidade e origem do anúncio não dependem dela.
-        const operation = mode === "off" ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
+        // Flag própria (desligada por padrão): desativa a classificação sem rollback de código; sem ela o card nasce "a confirmar".
+        const operationClassification = org.settings.handoff_operation_classification_enabled === true;
+        const operation = mode === "off" || !operationClassification ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
         const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
           organizationId: context.organizationId,
           conversationId: context.conversationId,
