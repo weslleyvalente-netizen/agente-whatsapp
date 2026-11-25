@@ -259,13 +259,18 @@ export const FUNNEL_STAGE_LABELS: Record<string, string> = {
   analysis_transfer: "Análise/transferência",
 };
 
-export const OPPORTUNITY_STATUSES = ["open", "won", "lost"] as const;
+// "void" = anulado pelo gestor: card que nunca foi oportunidade comercial válida. Fica fora de todos os indicadores.
+export const OPPORTUNITY_STATUSES = ["open", "won", "lost", "void"] as const;
 
 export const OPPORTUNITY_STATUS_LABELS: Record<(typeof OPPORTUNITY_STATUSES)[number], string> = {
   open: "Aberto",
   won: "Ganho",
   lost: "Perdido",
+  void: "Anulado",
 };
+
+/** Negócio que entra em indicador comercial (funil, ganhos, perdas, conversão, metas). Anulado nunca entra. */
+export const isCountableOpportunity = (status: string | null | undefined): boolean => status === "open" || status === "won" || status === "lost";
 
 export const WAITING_ON_OPTIONS = ["customer", "team", "bank_or_admin", "scheduled_date"] as const;
 

@@ -36,6 +36,8 @@ import { getAdOriginForOpportunity, type AdOrigin } from "../../services/lead-ad
 import { attachContactState, enrichSalesWorkspace, getSalesTasksWithoutOpenBusiness } from "../../services/sales-workspace.service.js";
 import { applyUrgent, buildUrgentByContact, loadUrgentSources, urgentCoverage } from "../../services/urgent-cards.service.js";
 
+const VOID_LOCKED = "Negócio anulado: o gestor precisa desfazer a anulação antes de alterar.";
+
 export default async function opportunityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authMiddleware);
 
@@ -71,13 +73,13 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const db = getAdminClient();
     const org = await getOrganizationById(db, organizationId);
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const { data, error } = await db.from("proposal_followups").select("owner_user_id, sent_at, first_seller_followup_at, first_customer_reply_at, outcome")
+    const { data, error } = await db.from("proposal_followups").select("owner_user_id, sent_at, first_seller_followup_at, first_customer_reply_at, outcome, opportunities(status)")
       .eq("organization_id", organizationId).gte("sent_at", since).order("sent_at").limit(5000);
     // Migração ainda não aplicada: a tela mostra que não há dados, sem erro.
     if (error) return { available: false, days };
     const reps = await listSalesReps(db, organizationId);
     const names = Object.fromEntries(reps.map((r) => [r.user_id, r.display_name ?? "Vendedor"]));
-    const rows = (data ?? []).map((r: any) => ({ ownerUserId: r.owner_user_id, sentAt: r.sent_at, firstSellerFollowupAt: r.first_seller_followup_at, firstCustomerReplyAt: r.first_customer_reply_at, outcome: r.outcome }));
+    const rows = (data ?? []).map((r: any) => ({ ownerUserId: r.owner_user_id, sentAt: r.sent_at, firstSellerFollowupAt: r.first_seller_followup_at, firstCustomerReplyAt: r.first_customer_reply_at, outcome: r.outcome, opportunityStatus: r.opportunities?.status ?? null })); // anulado fica fora
     return { available: true, days, ...aggregateProposalMetrics(rows, resolveBusinessCalendar(org.settings.business_calendar), names) };
   });
 
@@ -324,6 +326,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const existing = await getOpportunityById(db, request.params.opportunityId);
     const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+    if (existing.status === "void") return reply.status(409).send({ error: VOID_LOCKED });
 
     return updateOpportunityFields(db, request.params.opportunityId, parseResult.data);
   });
@@ -340,6 +343,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       const existing = await getOpportunityById(db, request.params.opportunityId);
       const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
       if (!membership) return reply.status(403).send({ error: "Access denied" });
+      if (existing.status === "void") return reply.status(409).send({ error: VOID_LOCKED });
 
       try {
         const opportunity = await changeStage(
@@ -368,6 +372,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       const existing = await getOpportunityById(db, request.params.opportunityId);
       const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
       if (!membership) return reply.status(403).send({ error: "Access denied" });
+      if (existing.status === "void") return reply.status(409).send({ error: VOID_LOCKED });
 
       return changeOperation(db, request.params.opportunityId, parseResult.data.operation, parseResult.data.evidence, {
         type: "human",
@@ -375,6 +380,22 @@ export default async function opportunityRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  // Anular / desfazer anulação (negócio que nunca foi oportunidade comercial válida). Só gestor, motivo obrigatório; o banco confere
+  // o papel de novo, grava a auditoria e bloqueia qualquer outra mudança de status do anulado.
+  for (const action of ["void", "unvoid"] as const) {
+    app.post<{ Params: { opportunityId: string } }>(`/opportunities/:opportunityId/${action}`, async (request, reply) => {
+      const reason = typeof (request.body as any)?.reason === "string" ? (request.body as any).reason.trim() : "";
+      if (reason.length < 10 || reason.length > 500) return reply.status(400).send({ error: "Informe o motivo (10 a 500 caracteres)" });
+      const db = getAdminClient();
+      const existing = await getOpportunityById(db, request.params.opportunityId);
+      const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
+      if (!membership || !isManager(membership.role)) return reply.status(403).send({ error: "Somente gestores" });
+      const { data, error } = await db.rpc(`${action}_opportunity`, { p_opportunity: request.params.opportunityId, p_actor: request.user.id, p_reason: reason });
+      if (error) return reply.status(error.code === "42501" ? 403 : error.code === "23514" ? 409 : 500).send({ error: error.message });
+      return data;
+    });
+  }
 
   app.post<{ Params: { opportunityId: string } }>("/opportunities/:opportunityId/won", async (request, reply) => {
     const parseResult = markOpportunityWonSchema.safeParse(request.body);
@@ -386,6 +407,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const existing = await getOpportunityById(db, request.params.opportunityId);
     const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+    if (existing.status === "void") return reply.status(409).send({ error: VOID_LOCKED });
 
     return markWon(db, request.params.opportunityId, parseResult.data.evidence, { type: "human", id: request.user.id });
   });
@@ -400,6 +422,7 @@ export default async function opportunityRoutes(app: FastifyInstance) {
     const existing = await getOpportunityById(db, request.params.opportunityId);
     const membership = request.user.memberships.find((m) => m.organization_id === existing.organization_id);
     if (!membership) return reply.status(403).send({ error: "Access denied" });
+    if (existing.status === "void") return reply.status(409).send({ error: VOID_LOCKED });
 
     return markLost(
       db,

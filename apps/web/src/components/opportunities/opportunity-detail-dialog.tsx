@@ -22,6 +22,9 @@ import { CallLogDialog, type CallLogEntry } from "./call-log-dialog";
 import { FinancingHistory } from './financing-history';
 import { AssignmentHistory } from "../lead-distribution/assignment-history";
 import { MessageSuggestionPanel } from "./message-suggestion-panel";
+import { OpportunityVoidPanel } from "./opportunity-void-panel";
+import { useMyRole } from "@/components/lead-distribution/use-my-role";
+import { isManagerRole } from "@/lib/route-access";
 import { AdOriginList } from "@/components/ad-origin/ad-origin-list";
 import type { AdOrigin } from "@aula-agente/shared";
 import { canSuggestMessage, initialSuggestionMode } from "@/lib/message-suggestion";
@@ -59,6 +62,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
  const [editing, setEditing] = useState(false);
  const [stage, setStage] = useState<string | null>(null);
  const [closing, setClosing] = useState<"won" | "lost" | null>(null);
+ const { role } = useMyRole({ always: true });
  const [evidence, setEvidence] = useState(""); const [reason, setReason] = useState("sem_resposta"); const [saving, setSaving] = useState(false);
  const load = useCallback(async (reveal = false) => { try { setError(null); setDetails(await apiFetch(`/opportunities/${opportunity.id}/details${reveal ? "?revealCpf=true" : ""}`)); } catch (err) { setError((err as Error).message); } }, [opportunity.id]);
  const loadCalls = useCallback(async () => { try { const r = await apiFetch(`/opportunities/${opportunity.id}/call-logs`); setCallLogs(r.logs ?? []); } catch { setCallLogs([]); } }, [opportunity.id]);
@@ -114,6 +118,7 @@ export function OpportunityDetailDialog({ opportunity, onClose, onChanged }: { o
        <Button size="sm" className="max-md:h-11" variant="ghost" onClick={() => setEditing(true)}>Editar dados</Button>
        <Button size="sm" className="max-md:h-11" variant="ghost" disabled={saving} onClick={() => { setTargetOperation(o.operation); setMoveReason(""); setMoving(!moving); }}>Mover para outro funil</Button>
       </div>
+      <OpportunityVoidPanel opportunityId={o.id} status={o.status} voidReason={(o as { void_reason?: string | null }).void_reason} isManager={isManagerRole(role)} onDone={() => { load(); onChanged(); }} />
      </div>
     </div>
     {suggesting && details?.conversation && <MessageSuggestionPanel opportunityId={o.id} initialMode={initialSuggestionMode({ contact_state: opportunity.contact_state, owner_assigned_at: (o as { owner_assigned_at?: string | null }).owner_assigned_at, sales_state: opportunity.sales_state })} onClose={() => setSuggesting(false)} onUseInChat={workspaceEnabled ? text => { setChatOpen(true); setDraft(d => ({ id: (d?.id ?? 0) + 1, text })); } : undefined} />}
