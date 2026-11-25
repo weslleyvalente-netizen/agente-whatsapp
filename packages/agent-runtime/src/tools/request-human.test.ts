@@ -14,6 +14,8 @@ const distributeLeadForHandoff = vi.fn();
 const getActiveAssignmentRepUserId = vi.fn();
 const hasOpenDistributionException = vi.fn();
 const recordDistributionError = vi.fn();
+const getRecentMessages = vi.fn();
+const getLatestAdTouchText = vi.fn();
 
 vi.mock("@aula-agente/database", () => ({
   getAdminClient: () => ({}),
@@ -30,6 +32,8 @@ vi.mock("@aula-agente/database", () => ({
   getActiveAssignmentRepUserId: (...args: unknown[]) => getActiveAssignmentRepUserId(...args),
   hasOpenDistributionException: (...args: unknown[]) => hasOpenDistributionException(...args),
   recordDistributionError: (...args: unknown[]) => recordDistributionError(...args),
+  getRecentMessages: (...args: unknown[]) => getRecentMessages(...args),
+  getLatestAdTouchText: (...args: unknown[]) => getLatestAdTouchText(...args),
 }));
 
 const addToSendQueue = vi.fn();
@@ -67,6 +71,8 @@ beforeEach(() => {
   getActiveAssignmentRepUserId.mockResolvedValue(null);
   hasOpenDistributionException.mockResolvedValue(false);
   recordDistributionError.mockResolvedValue(null);
+  getRecentMessages.mockResolvedValue([]);
+  getLatestAdTouchText.mockResolvedValue(null);
 });
 
 describe("createRequestHumanTool lead distribution", () => {
@@ -469,5 +475,49 @@ describe("requestHuman: ordem das escritas por modo de distribuição", () => {
     await run();
     expect(addToSendQueue).toHaveBeenCalledWith("send-message", expect.objectContaining({ phone: "5511888880000" }));
     expect(createTaskWithDedup).not.toHaveBeenCalled();
+  });
+});
+
+// Produto do card (decisão do dono 25/11): o encaminhamento leva a operação quando há evidência; sem evidência, nada (card "a confirmar").
+describe("createRequestHumanTool — produto do card de encaminhamento", () => {
+  beforeEach(() => { getOrganizationById.mockResolvedValue({ id: "org-1", settings: { lead_distribution_enabled: true } }); });
+  const AD = "Seu próximo carro — O seu próximo carro pode vir por consórcio ou por carta contemplada.";
+  const now = new Date().toISOString();
+  const ruben = { motivo: "fora_do_escopo" as const, urgencia: "normal" as const,
+    resumo: "Cliente veio de anúncio de carro (consórcio/carta contemplada) e quer saber quais cartas contempladas estão disponíveis hoje." };
+
+  it("caso Ruben: pede as cartas contempladas => distribui com operação carta contemplada", async () => {
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: `[Cliente veio de um anúncio: ${AD}]\nQuais cartas contempladas vocês têm hoje?`, created_at: now }]);
+    getLatestAdTouchText.mockResolvedValue(AD);
+    await createRequestHumanTool(context).execute!(ruben, {} as never);
+    expect(distributeLeadForHandoff).toHaveBeenCalledWith({}, expect.objectContaining({ handoffEventId: "handoff-1", context: { operation: "contemplated_letter" } }));
+  });
+
+  it("sem evidência suficiente (só o anúncio) => distribui sem operação (card fica a confirmar)", async () => {
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "oi, bom dia", created_at: now }]);
+    getLatestAdTouchText.mockResolvedValue("Simule seu consórcio de automóvel");
+    await createRequestHumanTool(context).execute!({ ...ruben, resumo: "Cliente quer atendimento." }, {} as never);
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
+  });
+
+  it("falha ao ler a conversa nunca impede o encaminhamento: distribui sem operação", async () => {
+    getRecentMessages.mockRejectedValue(new Error("timeout"));
+    const r = await createRequestHumanTool(context).execute!(ruben, {} as never);
+    expect(createHandoffEvent).toHaveBeenCalled();
+    expect(distributeLeadForHandoff).toHaveBeenCalledTimes(1);
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
+    expect(JSON.stringify(r)).not.toMatch(/erro|error/i);
+  });
+
+  it("distribuição desligada: não lê a conversa (a distribuição é um no-op)", async () => {
+    getOrganizationById.mockResolvedValue(orgNoDefaults);
+    await createRequestHumanTool(context).execute!(ruben, {} as never);
+    expect(getRecentMessages).not.toHaveBeenCalled();
+  });
+
+  it("mensagens antigas (mais de 14 dias) não contam como intenção atual", async () => {
+    getRecentMessages.mockResolvedValue([{ role: "contact", content: "quero consórcio", created_at: new Date(Date.now() - 20 * 86400_000).toISOString() }]);
+    await createRequestHumanTool(context).execute!({ ...ruben, resumo: "Cliente voltou a falar." }, {} as never);
+    expect(distributeLeadForHandoff.mock.calls[0][1]).not.toHaveProperty("context");
   });
 });

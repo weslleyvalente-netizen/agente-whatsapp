@@ -416,3 +416,12 @@ export async function applyMessageDeliveryStatus(
   await fill("delivered_at");
   return true;
 }
+
+/** Título + texto do anúncio de origem mais recente do contato dentro da janela (evidência complementar do produto do card). */
+export async function getLatestAdTouchText(client: SupabaseClient, organizationId: string, contactId: string, sinceIso: string): Promise<string | null> {
+  const { data, error } = await client.from("lead_ad_touches").select("ad_title,ad_body").eq("organization_id", organizationId).eq("contact_id", contactId)
+    .gte("touched_at", sinceIso).order("touched_at", { ascending: false }).limit(1);
+  if (error) throw error;
+  const t = (data ?? [])[0] as { ad_title: string | null; ad_body: string | null } | undefined;
+  return t ? [t.ad_title, t.ad_body].filter(Boolean).join(" — ") || null : null;
+}

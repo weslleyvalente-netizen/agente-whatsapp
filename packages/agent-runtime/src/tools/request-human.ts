@@ -18,6 +18,7 @@ import {
 } from "@aula-agente/database";
 import { buildHandoffTaskRefresh } from "../handoff-task-refresh.js";
 import { safeDistribute } from "../handoff-distribution.js";
+import { classifyHandoffOperation } from "../handoff-operation.js";
 import { getSendMessageQueue } from "@aula-agente/queue";
 import {
   HANDOFF_MOTIVOS,
@@ -167,10 +168,14 @@ export function createRequestHumanTool(context: RequestHumanToolContext): Tool {
             console.error("requestHuman tool: failed to reassign open tasks:", err);
           }
         };
+        // Produto do card: intenção do cliente > contexto > resumo (anúncio só complementa). Sem evidência => card "a confirmar".
+        // Só entra na operação do card/atribuição; rodízio, duplicidade e origem do anúncio não dependem dela.
+        const operation = mode === "off" ? null : await classifyHandoffOperation(db, { organizationId: context.organizationId, conversationId: context.conversationId, contactId: context.contactId, resumo });
         const distribute = (handoffEventId: string) => safeDistribute(distributeLeadForHandoff, db, {
           organizationId: context.organizationId,
           conversationId: context.conversationId,
           handoffEventId,
+          ...(operation ? { context: { operation } } : {}),
         }, mode === "off" ? undefined : recordDistributionError);
 
         // Com a distribuição (real ou sombra) ligada, o responsável padrão NÃO pode ser gravado antes dela:
