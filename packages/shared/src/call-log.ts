@@ -42,7 +42,9 @@ export interface CallReport {
   byRep: { repUserId: string; total: CallGroupStats; byStrategy: Record<CallStrategy, CallGroupStats> }[];
 }
 
-function stats(rows: CallLogRow[], opps: Record<string, CallReportOpportunity>): CallGroupStats {
+function stats(allRows: CallLogRow[], opps: Record<string, CallReportOpportunity>): CallGroupStats {
+  // Negócio anulado (status 'void') não entra em nenhum número do relatório.
+  const rows = allRows.filter((r) => opps[r.opportunityId]?.status !== "void");
   const leadIds = new Set(rows.map(r => r.opportunityId));
   const calls = rows.length;
   const answered = rows.filter(r => r.outcome === "answered").length;
