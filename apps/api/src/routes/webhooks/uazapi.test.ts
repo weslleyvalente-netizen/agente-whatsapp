@@ -32,6 +32,7 @@ import evolutionWebhookRoutes from "./evolution.js";
 import uazapiWebhookRoutes from "./uazapi.js";
 import { encryptInstanceToken } from "@aula-agente/agent-runtime";
 import { lidPhoneResolver } from "../../services/lid-phone-map.js";
+import { getWebhookPulse, resetWebhookPulses } from "../../services/webhook-pulse.js";
 
 let logs: string[];
 async function post(body: unknown) {
@@ -58,6 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("UAZAPI_ADMIN_TOKEN", "admin-1");
   lidPhoneResolver.reset();
+  resetWebhookPulses();
   instance = { id: "i1", instance_id: "weslley", instance_name: "weslley", organization_id: "org-1", active_agent_id: "agent-1",
     provider: "uazapi", provider_token_encrypted: encryptInstanceToken("tok-1") };
   m.getInstanceByInstanceName.mockImplementation(async () => instance);
@@ -100,6 +102,17 @@ describe("POST /webhooks/uazapi", () => {
   it("instância desconhecida: 200 unknown_instance", async () => {
     m.getInstanceByInstanceName.mockResolvedValue(null);
     expect((await post(textEvent())).json()).toMatchObject({ skipped: "unknown_instance" });
+  });
+
+  it("pulso do webhook (monitor do provedor): evento autenticado registra; token errado ou instância desconhecida não", async () => {
+    await post(textEvent("outro"));
+    expect(getWebhookPulse("i1")).toBeNull();
+    m.getInstanceByInstanceName.mockResolvedValueOnce(null);
+    await post(textEvent());
+    expect(getWebhookPulse("i1")).toBeNull();
+    await post({ EventType: "messages_update", token: "tok-1", instanceName: "weslley", type: "ReadReceipt", state: "Read", event: { MessageIDs: ["A1"] } });
+    expect(getWebhookPulse("i1")).toMatchObject({ lastEventType: "messages_update" });
+    expect(getWebhookPulse("i1")!.lastEventAt.getTime()).toBeGreaterThan(Date.now() - 5000);
   });
 
   it("recibo de leitura com dois ids grava o status dos dois", async () => {

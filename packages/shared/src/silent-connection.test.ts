@@ -21,11 +21,17 @@ describe("evaluateSilentConnection", () => {
     const e = evaluateSilentConnection(base({ lastInboundAt: ago(600), baselinePerHour: 1 })); expect(e.status).toBe("not_applicable");
   });
   it("sem histórico de volume ou sem mensagem conhecida: não aplicável (não inventa alerta)", () => {
-    expect(evaluateSilentConnection(base({ baselinePerHour: null })).status).toBe("not_applicable");
+    expect(evaluateSilentConnection(base({ baselinePerHour: null, lastInboundAt: ago(120) })).status).toBe("not_applicable");
     expect(evaluateSilentConnection(base({ lastInboundAt: null })).status).toBe("not_applicable");
   });
   it("Evolution fora de 'open' (close/connecting/null): não é conexão muda, é conexão caída (outro alerta)", () => {
     for (const s of ["close", "connecting", null]) expect(evaluateSilentConnection(base({ evolutionState: s, lastInboundAt: ago(300) })).status).toBe("not_applicable");
+  });
+  it("26/11 17:53: mensagem recente fecha o alerta mesmo em hora de pouco movimento (antes ficava 'não aplicável' e o alerta não fechava)", () => {
+    expect(evaluateSilentConnection(base({ lastInboundAt: ago(3), baselinePerHour: 2 })).status).toBe("ok");
+    expect(evaluateSilentConnection(base({ lastInboundAt: ago(3), baselinePerHour: null })).status).toBe("ok");
+    // silêncio longo com pouco movimento continua sem alertar
+    expect(evaluateSilentConnection(base({ lastInboundAt: ago(180), baselinePerHour: 2 })).status).toBe("not_applicable");
   });
   it("silêncio abaixo do mínimo configurado nunca alerta", () => expect(evaluateSilentConnection(base({ lastInboundAt: ago(10), baselinePerHour: 500 })).status).toBe("ok"));
   it("quanto maior o volume habitual, mais cedo detecta (500/h: 15 min já é anormal se o mínimo permitir)", () => {

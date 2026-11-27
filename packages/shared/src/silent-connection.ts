@@ -52,9 +52,11 @@ export function evaluateSilentConnection(input: SilenceInput, t: SilenceThreshol
   if (input.evolutionState !== "open") return na("A Evolution não está 'open' (outro alerta cobre este caso).");
   if (!input.lastInboundAt) return na("Sem mensagem recebida conhecida para comparar.");
   const silentMinutes = Math.max(0, (input.now.getTime() - input.lastInboundAt.getTime()) / 60_000);
+  // Mensagem recente é prova de que a conexão recebe, em qualquer hora: vem antes do filtro de volume habitual. Senão, um alerta
+  // aberto à tarde nunca fechava à noite (hora de pouco movimento = "não aplicável", que não resolve). Caso de 26/11 17:53.
+  if (silentMinutes < t.minSilentMinutes) return { status: "ok", silentMinutes, expectedInSilence: null, probabilityOfSilence: null, reason: "Silêncio abaixo do mínimo." };
   if (input.baselinePerHour === null || !Number.isFinite(input.baselinePerHour)) return na("Sem volume habitual para esta hora.", silentMinutes);
   if (input.baselinePerHour < t.minExpectedPerHour) return na("Volume habitual baixo para esta hora (silêncio é normal).", silentMinutes);
-  if (silentMinutes < t.minSilentMinutes) return { status: "ok", silentMinutes, expectedInSilence: null, probabilityOfSilence: null, reason: "Silêncio abaixo do mínimo." };
   const expected = (input.baselinePerHour / 60) * silentMinutes;
   const p = Math.exp(-expected);
   if (p < t.silentProbability) return { status: "silent", silentMinutes, expectedInSilence: expected, probabilityOfSilence: p, reason: "Nenhuma mensagem recebida por tempo muito acima do habitual para esta hora." };

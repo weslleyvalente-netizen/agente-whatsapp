@@ -35,6 +35,7 @@ import { startHealthMonitor } from "./services/health-monitor.js";
 import { startAutoRecover } from "./services/auto-recover.js";
 import { startEvolutionMonitor } from "./services/evolution-monitor.js";
 import { getSilentMonitorStatus, startSilentConnectionAlert } from "./services/silent-connection-alert.js";
+import { getProviderMonitorStatus, startProviderHealthMonitor } from "./services/provider-health-monitor.js";
 
 import financingRoutes from './routes/financing/index.js';
 import manualFinancingRoutes from './routes/manual-financing/index.js';
@@ -60,7 +61,7 @@ server.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "
 // Health check
 server.get("/health", async () => {
   // monitors: só estados em memória (sem dados de cliente); permite conferir, sem acesso ao painel, que o monitor "conexão muda" está no ar e ciclando.
-  return { status: "ok", timestamp: new Date().toISOString(), monitors: { silentConnection: getSilentMonitorStatus() } };
+  return { status: "ok", timestamp: new Date().toISOString(), monitors: { silentConnection: getSilentMonitorStatus(), providerHealth: getProviderMonitorStatus() } };
 });
 
 // Routes
@@ -107,6 +108,7 @@ const start = async () => {
   // Registro periódico do estado da conexão do Evolution (chave settings.evolution_monitor_enabled, desligada por padrão).
   startEvolutionMonitor(server.log);
   startSilentConnectionAlert(server.log); // desligado por padrão (settings.silent_connection_alert_mode: off | shadow | on); em off não toca a tabela de alertas
+  startProviderHealthMonitor(server.log); // desligado por padrão (settings.provider_health_monitor_mode: off | shadow | on); em off não consulta a UAZAPI
 };
 
 start().catch((err) => {
