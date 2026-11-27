@@ -332,3 +332,37 @@ describe("ordem de deploy, paridade com o caminho de criação, histórico e cha
     expect((await q("select public._contact_has_deal_history($1,$2) as b", [w2.org, g.contactId]))[0].b).toBe(true);
   });
 });
+
+// Produto do card vindo do encaminhamento (PR produto-no-card, 25/11): a operação classificada só muda o produto do card.
+// Proteções que NÃO podem depender dela: rodízio, duplicidade/histórico e (fora do SQL) origem do anúncio.
+describe("operação classificada no encaminhamento não interfere em rodízio nem duplicidade", () => {
+  it("rodízio: o mesmo encaminhamento escolhe o mesmo vendedor com ou sem operação", async () => {
+    const picks: string[] = [];
+    for (const ctx of [{}, { operation: "contemplated_letter" }]) {
+      ({ db, q } = await setupHandoffDb());
+      const { org } = await seedWorld(db);
+      const h = await seedLead(db, org);
+      const id = await distribute(org, h, ctx);
+      picks.push((await q("select r.rotation_order || ':' || a.reason as k from public.lead_assignments a join public.sales_reps r on r.id = a.rep_id where a.id=$1", [id]))[0].k);
+    }
+    expect(picks[0]).toBe(picks[1]);
+  });
+
+  it("duplicidade: contato com negócio aberto (outro produto) não ganha segundo card por causa da operação", async () => {
+    const { org } = await seedWorld(db);
+    const h = await seedLead(db, org);
+    await q("insert into public.opportunities(organization_id,contact_id,operation,initial_operation,stage) values ($1,$2,'financing','financing','qualification')", [org, h.contactId]);
+    await distribute(org, h, { operation: "contemplated_letter" });
+    const opps = await oppsOf(h.contactId);
+    expect(opps).toHaveLength(1);
+    expect(opps[0].operation).toBe("financing");
+  });
+
+  it("histórico: cliente com negócio fechado não ganha card mesmo com operação classificada", async () => {
+    const { org } = await seedWorld(db);
+    const h = await seedLead(db, org);
+    await q("insert into public.opportunities(organization_id,contact_id,operation,initial_operation,stage,status) values ($1,$2,'vehicle_sale','vehicle_sale','qualification','won')", [org, h.contactId]);
+    await distribute(org, h, { operation: "contemplated_letter" });
+    expect((await oppsOf(h.contactId)).filter((o: any) => o.status === "open")).toHaveLength(0);
+  });
+});

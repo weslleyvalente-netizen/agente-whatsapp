@@ -72,3 +72,4 @@ export * from "./stale-message-guard.js";
 export * from "./stale-message-guard-core.js";
 export * from "./commitments.js";
 export * from "./proposal-metrics.js";
+export * from "./handoff-operation.js";
