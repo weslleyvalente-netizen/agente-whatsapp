@@ -11,6 +11,7 @@ import { decryptInstanceToken } from "@aula-agente/agent-runtime";
 import { webhookVerifyMiddleware } from "../../middleware/webhook-verify.js";
 import { REPLAY_TOKEN } from "../../lib/replay-token.js";
 import { PROVIDER_RELAY_HEADER } from "./evolution.js";
+import { recordWebhookEvent } from "../../services/webhook-pulse.js";
 
 const digest = (v: string) => createHash("sha256").update(v).digest();
 
@@ -40,6 +41,8 @@ export default async function uazapiWebhookRoutes(app: FastifyInstance) {
         request.log.warn({ event: "uazapi_bad_token", instance: instanceName }, "UAZAPI webhook with invalid instance token");
         return reply.status(401).send({ error: "Invalid instance token" });
       }
+      // Pulso do webhook (monitor de saúde do provedor): qualquer evento autenticado prova que a entrega está viva.
+      recordWebhookEvent(instance.id, body.EventType);
 
       const translation = translateUazapiEvent(body, instance.instance_id);
       if (body.EventType === "messages" || body.EventType === "messages_update") {

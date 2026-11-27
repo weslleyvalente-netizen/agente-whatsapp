@@ -67,6 +67,7 @@ export * from "./waiting-on-sync.js";
 export * from "./evolution-instances.js";
 export * from "./send-failure-alert.js";
 export * from "./silent-connection.js";
+export * from "./provider-health.js";
 export * from "./stale-message-guard.js";
 export * from "./stale-message-guard-core.js";
 export * from "./commitments.js";
