@@ -59,6 +59,13 @@ export interface OrganizationSettings {
   sla_alert_escalation_enabled?: boolean;
   /** Push aos gestores (owner/admin) quando uma conversa ENTRA em exceção de distribuição (uma vez por entrada). Opt-in: só com `true` (e com push ligado). */
   exception_manager_push_enabled?: boolean;
+  // P0a (exceção de SLA): TUDO desligado por padrão. `exception_alerts_mode` off|shadow|on (só "on" envia; "shadow" só registra o que enviaria).
+  // `exception_alerts_activated_at` (ISO) é obrigatório para qualquer aviso: exceções criadas ANTES dele nunca geram aviso (sem retroativo).
+  // Os DESTINATÁRIOS não ficam aqui (qualquer membro lê settings): ver tabela exception_alert_recipients (só service role).
+  exception_alerts_mode?: "off" | "shadow" | "on";
+  exception_alerts_activated_at?: string;
+  // Painel de triagem (urgentes / respondidas / obsoletas). Ausente/false = painel antigo, sem mudança visual.
+  exception_triage_panel_enabled?: boolean;
   // ISO: quando a chave acima foi ligada. A escalada só considera estouros posteriores a isto (e de no máximo 24 h).
   sla_alert_escalation_activated_at?: string;
   owner_lookback_days?: number;

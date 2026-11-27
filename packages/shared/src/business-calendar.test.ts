@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addBusinessMinutes, DEFAULT_BUSINESS_CALENDAR, isBusinessOpen, resolveBusinessCalendar, nextBusinessOpening, lastBusinessClosing, describeBusinessInstant,
+  addBusinessMinutes, businessMinutesBetween, DEFAULT_BUSINESS_CALENDAR, isBusinessOpen, resolveBusinessCalendar, nextBusinessOpening, lastBusinessClosing, describeBusinessInstant,
   type BusinessCalendar,
 } from "./business-calendar.js";
 
@@ -115,5 +115,27 @@ describe("nextBusinessOpening / lastBusinessClosing / describeBusinessInstant", 
   });
   it("describeBusinessInstant", () => {
     expect(describeBusinessInstant(at("2026-10-12T11:00:00Z"))).toBe("segunda, 12/10, às 08:00");
+  });
+});
+
+describe("businessMinutesBetween", () => {
+  it("conta só o expediente aberto (sex 17:00 -> seg 09:00 = 60 + 60)", () => {
+    expect(businessMinutesBetween(at("2026-10-09T20:00:00Z"), at("2026-10-12T12:00:00Z"))).toBe(120);
+  });
+  it("dentro da mesma janela é a diferença corrida", () => {
+    expect(businessMinutesBetween(at("2026-10-09T13:00:00Z"), at("2026-10-09T13:45:00Z"))).toBe(45);
+  });
+  it("fim de semana inteiro vale zero e intervalo invertido também", () => {
+    expect(businessMinutesBetween(at("2026-10-10T12:00:00Z"), at("2026-10-11T20:00:00Z"))).toBe(0);
+    expect(businessMinutesBetween(at("2026-10-09T13:45:00Z"), at("2026-10-09T13:00:00Z"))).toBe(0);
+  });
+  it("é o inverso de addBusinessMinutes", () => {
+    const start = at("2026-10-09T20:30:00Z");
+    const end = addBusinessMinutes(start, 95);
+    expect(businessMinutesBetween(start, end)).toBeCloseTo(95, 5);
+  });
+  it("respeita datas fechadas do calendário", () => {
+    const cal: BusinessCalendar = { ...DEFAULT_BUSINESS_CALENDAR, closedDates: ["2026-10-12"] };
+    expect(businessMinutesBetween(at("2026-10-09T20:00:00Z"), at("2026-10-13T12:00:00Z"), cal)).toBe(60 + 60);
   });
 });

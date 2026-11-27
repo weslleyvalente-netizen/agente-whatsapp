@@ -2,9 +2,33 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 
 export interface PushPayload { title: string; body: string; url: string; tag?: string }
-export interface PushSendResult { sent: number; removed: number; failed: number; skipped?: boolean }
+/**
+ * `failed` = endpoints que não receberam (inclui os ambíguos, como antes). `ambiguous` é o SUBCONJUNTO de `failed` em que não dá para
+ * descartar que o provedor tenha aceitado o push (timeout, conexão derrubada, 5xx): quem decide reenviar NÃO pode tratá-los como "não enviado".
+ */
+export interface PushSendResult { sent: number; removed: number; failed: number; ambiguous?: number; skipped?: boolean }
+
+export type PushErrorClass = "gone" | "not_sent" | "ambiguous";
+/** Erros de rede que ocorrem ANTES de qualquer byte chegar ao provedor (conexão nunca estabelecida): evidência de que nada foi enviado. */
+const PRE_CONNECT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH"]);
+
+/**
+ * Classifica o erro do web-push (v3.6, https nativo):
+ *  - WebPushError com statusCode 404/410: assinatura expirada ("gone");
+ *  - statusCode 4xx (exceto 408): o provedor RESPONDEU rejeitando a requisição ("not_sent");
+ *  - erro de rede pré-conexão (DNS, recusa, rede inalcançável): nada saiu ("not_sent");
+ *  - TUDO o mais (timeout/"Socket timeout", ECONNRESET, EPIPE, 408, 5xx, erro sem código): "ambiguous" — o provedor pode ter aceitado.
+ */
+export function classifyPushError(err: unknown): PushErrorClass {
+  const e = err as { statusCode?: number; code?: string } | null;
+  const status = e?.statusCode;
+  if (status === 404 || status === 410) return "gone";
+  if (typeof status === "number") return status >= 400 && status < 500 && status !== 408 ? "not_sent" : "ambiguous";
+  if (e?.code && PRE_CONNECT_CODES.has(e.code)) return "not_sent";
+  return "ambiguous";
+}
 type Env = Partial<Record<"VAPID_PUBLIC_KEY" | "VAPID_PRIVATE_KEY" | "VAPID_SUBJECT", string | undefined>>;
-export type PushSender = (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, body: string, options: { vapidDetails: { subject: string; publicKey: string; privateKey: string }; TTL: number }) => Promise<unknown>;
+export type PushSender = (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, body: string, options: { vapidDetails: { subject: string; publicKey: string; privateKey: string }; TTL: number; timeout?: number }) => Promise<unknown>;
 
 export function isPushConfigured(env: Env = process.env): boolean {
   return Boolean(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT);
@@ -40,20 +64,22 @@ export async function sendPushToUser(
   const vapidDetails = { subject: env.VAPID_SUBJECT!, publicKey: env.VAPID_PUBLIC_KEY!, privateKey: env.VAPID_PRIVATE_KEY! };
   const body = JSON.stringify(payload);
   const gone: string[] = [];
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, ambiguous = 0;
   for (const s of (data ?? []) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>) {
     try {
-      await send({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, { vapidDetails, TTL: 3600 });
+      // timeout: sem ele uma resposta perdida deixaria o ciclo pendurado; com ele vira "Socket timeout" (ambíguo, tratado como tal).
+      await send({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, { vapidDetails, TTL: 3600, timeout: 15_000 });
       sent++;
     } catch (err) {
       const status = (err as { statusCode?: number }).statusCode;
-      if (status === 404 || status === 410) gone.push(s.id);
-      else { failed++; console.error("Push send failed", { subscriptionId: s.id, status }); }
+      const cls = classifyPushError(err);
+      if (cls === "gone") gone.push(s.id);
+      else { failed++; if (cls === "ambiguous") ambiguous++; console.error("Push send failed", { subscriptionId: s.id, status, outcome: cls }); }
     }
   }
   if (gone.length) {
     const { error: delError } = await db.from("push_subscriptions").delete().in("id", gone);
     if (delError) console.error("Push: removing expired subscriptions failed", delError.message);
   }
-  return { sent, removed: gone.length, failed };
+  return { sent, removed: gone.length, failed, ambiguous };
 }
