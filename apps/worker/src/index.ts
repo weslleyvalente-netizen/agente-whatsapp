@@ -5,6 +5,7 @@ import { startProcessDocumentWorker } from "./workers/process-document.js";
 import { startTakeoverTimeoutWorker } from "./workers/takeover-timeout.js";
 import { startStaleConversationFollowupWorker } from "./workers/stale-conversation-followup.js";
 import { startLeadSlaWorker } from "./workers/lead-sla.js";
+import { startExceptionAlertsWorker } from "./workers/exception-alerts.js";
 import { startUnansweredLeadSweepWorker } from "./workers/unanswered-lead-sweep.js";
 import { startCustomerNudgeWorker } from "./workers/customer-nudge.js";
 import { startCommitmentsWorker } from "./workers/commitments.js";
@@ -38,11 +39,15 @@ async function main() {
 
   if (process.env.FINANCING_MODE === 'mock') workers.push(await startFinancingWorker());
 
+  // P0a: alertas de exceção de SLA. Inerte sem settings.exception_alerts_mode (shadow/on); EXCEPTION_ALERTS_DISABLED=1 nem cria o timer.
+  const exceptionAlertsTimer = startExceptionAlertsWorker();
+
   console.log(`${workers.length} workers started successfully`);
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("Shutting down workers...");
+    if (exceptionAlertsTimer) clearInterval(exceptionAlertsTimer);
     await Promise.all(workers.map((w) => w.close()));
     process.exit(0);
   };

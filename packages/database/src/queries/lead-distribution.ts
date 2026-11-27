@@ -116,6 +116,14 @@ export async function escalateAlertAssignment(db: SupabaseClient, id: string, es
   return (data as string | null) ?? null;
 }
 
+/** Fase C: fecha exceções já atendidas (resposta humana confirmada após o pedido, sem mensagem nova do cliente). Só age nas organizações
+ *  com settings.exception_auto_resolve_enabled; devolve quantas fechou. */
+export async function resolveAnsweredExceptions(db: SupabaseClient): Promise<number> {
+  const { data, error } = await db.rpc("resolve_answered_exceptions");
+  if (error) throw error;
+  return typeof data === "number" ? data : 0;
+}
+
 export async function flagSlaAlerts(db: SupabaseClient): Promise<number> {
   const { data, error } = await db.rpc("flag_sla_alerts");
   if (error) throw error;

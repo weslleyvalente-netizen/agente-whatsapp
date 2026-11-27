@@ -4,10 +4,12 @@ import { apiFetch } from "@/lib/api";
 import { useOrganization } from "@/providers/organization-provider";
 import type { SalesRep, SlaAlert } from "@aula-agente/shared";
 import { DelayBoard } from "./delay-board";
+import { ExceptionTriagePanel } from "./exception-triage-panel";
 import { nudgedAtLabel, nudgeNotDeliveredMessage, summarizeNudgeAll, type NudgeAllResult } from "@/lib/sla-alert-view";
 
 /** "Atraso no atendimento" no funil. Só aviso (sem escolher vendedor): clientes que ninguém respondeu e atrasos da carteira. Só gestores (403 some o painel). */
-export function ExceptionsPanel() {
+/** Painel atual (comportamento sem mudança quando a triagem está desligada). */
+function LegacyExceptionsPanel() {
   const { currentOrg } = useOrganization();
   const [items, setItems] = useState<SlaAlert[] | null>(null);
   const [alerts, setAlerts] = useState<SlaAlert[]>([]);
@@ -61,4 +63,14 @@ export function ExceptionsPanel() {
     finally { setNudgingAll(false); }
   };
   return <DelayBoard exceptions={items} alerts={alerts} reps={reps} nudged={nudged} busy={nudgeBusy} nudgingAll={nudgingAll} notice={notice} onNudge={nudge} onNudgeAll={nudgeAll} />;
+}
+
+/**
+ * Só para gestores (a rota devolve 403 para vendedores e o painel some). Com settings.exception_triage_panel_enabled = true mostra a
+ * triagem (urgentes / respondidas / obsoletas) do PR #102; sem a chave (padrão) o painel atual segue exatamente como está.
+ */
+export function ExceptionsPanel() {
+  const { currentOrg } = useOrganization();
+  if (currentOrg?.settings.exception_triage_panel_enabled === true) return <ExceptionTriagePanel />;
+  return <LegacyExceptionsPanel />;
 }

@@ -186,6 +186,29 @@ export function addBusinessMinutes(start: Date, minutes: number, calendar: Busin
   throw new Error("Calendário comercial sem janelas abertas.");
 }
 
+/** Minutos de expediente aberto entre dois instantes (inverso de addBusinessMinutes; respeita datas e períodos fechados). Nunca lança. */
+export function businessMinutesBetween(from: Date, to: Date, calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): number {
+  let t = from.getTime();
+  const end = to.getTime();
+  if (!(end > t)) return 0;
+  let total = 0;
+  for (let guard = 0; guard < 20_000 && t < end; guard++) {
+    const period = closedPeriodAt(t, calendar);
+    if (period) { t = period.to; continue; }
+    const open = openUntil(t, calendar);
+    if (open === null) {
+      const next = nextOpening(t, calendar);
+      if (next === null || next >= end) break;
+      t = next;
+      continue;
+    }
+    const segmentEnd = Math.min(open, nextClosedPeriodStart(t, calendar), end);
+    total += (segmentEnd - t) / 60_000;
+    t = segmentEnd;
+  }
+  return total;
+}
+
 /** Duração (min) do dia útil mais longo do calendário: a régua de "1 dia útil" da escada do cutucar (seg–sex 07:30–18:00 = 630, não 600). */
 export function businessDayMinutes(calendar: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR): number {
   let best = 0;

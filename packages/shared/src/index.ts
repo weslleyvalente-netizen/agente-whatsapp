@@ -43,6 +43,7 @@ export * from './stalled-negotiation.js';
 export * from './throttle.js';
 export * from "./business-calendar.js";
 export * from "./holidays-br.js";
+export * from "./exception-triage.js";
 export * from "./lead-distribution.js";
 
 export * from "./call-log.js";

@@ -3,7 +3,7 @@ const m = vi.hoisted(() => ({
   listExpiredAssignments: vi.fn(), redistributeAssignment: vi.fn(), getOrganizationById: vi.fn(), flagSlaAlerts: vi.fn(),
   computeSlaDueAt: vi.fn((_s: unknown, from: Date) => new Date(from.getTime() + 15 * 60_000)),
   computeEscalationDueAt: vi.fn((_s: unknown, from: Date) => new Date(from.getTime() + 30 * 60_000)),
-  listEscalationCandidates: vi.fn(), escalateAlertAssignment: vi.fn(), ensureHandoffCards: vi.fn(),
+  listEscalationCandidates: vi.fn(), escalateAlertAssignment: vi.fn(), ensureHandoffCards: vi.fn(), resolveAnsweredExceptions: vi.fn(),
 }));
 vi.mock("@aula-agente/database", () => m);
 vi.mock("@aula-agente/queue", () => ({ getRedisConnection: () => ({}), getLeadSlaQueue: () => ({ upsertJobScheduler: vi.fn() }) }));
@@ -18,13 +18,22 @@ beforeEach(() => {
   m.listEscalationCandidates.mockResolvedValue([]);
   m.escalateAlertAssignment.mockResolvedValue("escalated-id");
   m.ensureHandoffCards.mockResolvedValue(0);
+  m.resolveAnsweredExceptions.mockResolvedValue(0);
 });
 
 describe("runLeadSlaSweep", () => {
   it("não faz nada quando não há atribuições vencidas", async () => {
     m.listExpiredAssignments.mockResolvedValue([]);
-    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 0, escalated: 0, cardsRepaired: 0 });
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 0, escalated: 0, cardsRepaired: 0, exceptionsResolved: 0 });
     expect(m.redistributeAssignment).not.toHaveBeenCalled();
+  });
+
+  it("fase C: fecha exceções já atendidas (a função só age com a chave ligada) e falha nisso não derruba a varredura", async () => {
+    m.listExpiredAssignments.mockResolvedValue([]);
+    m.resolveAnsweredExceptions.mockResolvedValue(3);
+    expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ exceptionsResolved: 3 });
+    m.resolveAnsweredExceptions.mockRejectedValue(new Error("db"));
+    expect(await runLeadSlaSweep({} as any, now)).toMatchObject({ exceptionsResolved: 0, cardsRepaired: 0 });
   });
 
   it("redistribui cada vencida com um novo prazo calculado a partir de agora", async () => {
@@ -51,7 +60,7 @@ describe("runLeadSlaSweep", () => {
   it("sinaliza os alertas de dono existente sem redistribuir ninguém", async () => {
     m.listExpiredAssignments.mockResolvedValue([]);
     m.flagSlaAlerts.mockResolvedValue(2);
-    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 2, escalated: 0, cardsRepaired: 0 });
+    expect(await runLeadSlaSweep({} as any, now)).toEqual({ checked: 0, redistributed: 0, alerted: 2, escalated: 0, cardsRepaired: 0, exceptionsResolved: 0 });
     expect(m.redistributeAssignment).not.toHaveBeenCalled();
   });
 

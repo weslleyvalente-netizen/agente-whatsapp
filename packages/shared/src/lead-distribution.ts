@@ -66,6 +66,10 @@ export interface LeadAssignment {
   resolved_at: string | null;
   resolved_by: string | null;
   resolution: string | null;
+  /** Fase C: vendedor que fica responsável quando a atribuição é uma exceção (rodízio esgotado). Ausente antes da migração 20261127140000. */
+  responsible_rep_id?: string | null;
+  /** Fase C: cliente voltou a escrever num atendimento ativo (encaminhamento repetido absorvido, sem reiniciar o rodízio). */
+  last_customer_followup_at?: string | null;
   origin_source: string | null;
   operation: string | null;
   product_model: string | null;
