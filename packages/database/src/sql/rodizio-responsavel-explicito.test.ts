@@ -120,3 +120,86 @@ describe("encaminhamento repetido durante atendimento ativo (repeat_handoff_keep
     expect(await distribute(w.org, { conversationId: h.conversationId, handoffId: h2 }, inMinutes(30))).not.toBe(id);
   });
 });
+
+describe("encaminhamento repetido ANTES da primeira resposta humana (cliente ainda aguardando)", () => {
+  const KEEP = { ...ALL_ON, repeat_handoff_keeps_assignment_enabled: true };
+  const handoff = async (org: string, conv: string, at = "now()") =>
+    (await q(`insert into public.handoff_events(organization_id,conversation_id,handed_at) values ($1,$2,${at}) returning id`, [org, conv]))[0].id as string;
+  const pointer = async (org: string) => (await q("select last_rotation_order from public.lead_distribution_state where organization_id=$1", [org]))[0]?.last_rotation_order;
+  const count = async (conv: string) => (await q("select count(*)::int n from public.lead_assignments where conversation_id=$1", [conv]))[0].n as number;
+
+  for (const [nome, settings] of [["chave ligada", KEEP], ["chave desligada", ALL_ON]] as const) {
+    it(`${nome}: pendente dentro do prazo — novo encaminhamento devolve a MESMA atribuição; prazo, ponteiro do rodízio e linhas não mudam`, async () => {
+      const w = await seedWorld(db, settings, TWO);
+      const h = await seedLead(db, w.org, { handedAt: inMinutes(-5) });
+      const id = await distribute(w.org, h, inMinutes(30));
+      const before = { ...(await row(id)) }; const ptr = await pointer(w.org); const n = await count(h.conversationId);
+      const h2 = await handoff(w.org, h.conversationId);
+      expect(await distribute(w.org, { conversationId: h.conversationId, handoffId: h2 }, inMinutes(90))).toBe(id);
+      const after = await row(id);
+      expect(after).toMatchObject({ status: "pending", rep_id: before.rep_id, sla_due_at: before.sla_due_at, assigned_at: before.assigned_at });
+      expect(await pointer(w.org)).toBe(ptr);
+      expect(await count(h.conversationId)).toBe(n);
+      if (nome === "chave ligada") expect(after.last_customer_followup_at).not.toBeNull();
+    });
+  }
+
+  it("mensagens simultâneas: vários encaminhamentos no mesmo instante e o mesmo encaminhamento reprocessado geram UMA atribuição", async () => {
+    const w = await seedWorld(db, KEEP, TWO);
+    const h = await seedLead(db, w.org, { handedAt: inMinutes(-1) });
+    const at = `'${new Date().toISOString()}'::timestamptz`;
+    const hs = [h.handoffId, await handoff(w.org, h.conversationId, at), await handoff(w.org, h.conversationId, at), await handoff(w.org, h.conversationId, at)];
+    const ids = new Set<string>();
+    for (const hid of [...hs, hs[0], hs[2]]) ids.add(await distribute(w.org, { conversationId: h.conversationId, handoffId: hid }, inMinutes(30)));
+    expect(ids.size).toBe(1);
+    expect(await count(h.conversationId)).toBe(1);
+  });
+
+  it("rodízio esgotado (exceção aberta, ninguém respondeu): nova mensagem NÃO recomeça o rodízio; a exceção continua com o responsável e marca o retorno do cliente", async () => {
+    const { w, h, exc } = await esgotado(KEEP);
+    const n = await count(h.conversationId);
+    const h2 = await handoff(w.org, h.conversationId);
+    expect(await distribute(w.org, { conversationId: h.conversationId, handoffId: h2 }, inMinutes(30))).toBe(exc);
+    expect(await count(h.conversationId)).toBe(n);
+    expect(await row(exc)).toMatchObject({ status: "exception", resolved_at: null, responsible_rep_id: w.reps["Márcio"].repId });
+    expect((await row(exc)).last_customer_followup_at).not.toBeNull();
+  });
+
+  it("rodízio esgotado com a chave desligada: comportamento de hoje (exceção substituída e nova cadeia)", async () => {
+    const { w, h, exc } = await esgotado(ALL_ON);
+    const h2 = await handoff(w.org, h.conversationId);
+    expect(await distribute(w.org, { conversationId: h.conversationId, handoffId: h2 }, inMinutes(30))).not.toBe(exc);
+    expect(await row(exc)).toMatchObject({ resolution: "superseded_by_new_handoff" });
+  });
+
+  describe("regras preservadas com a chave ligada", () => {
+    it("vencimento do prazo: a redistribuição continua acontecendo", async () => {
+      const w = await seedWorld(db, KEEP, TWO);
+      const h = await seedLead(db, w.org, { handedAt: inMinutes(-200) });
+      const id = await distribute(w.org, h);
+      const next = await redistribute(id);
+      expect(next).toBeTruthy();
+      expect(await row(id)).toMatchObject({ status: "expired" });
+      expect(await row(next!)).toMatchObject({ status: "pending", reason: "sla_redistribution" });
+    });
+    it("indisponibilidade: vendedor que saiu da distribuição não recebe a redistribuição", async () => {
+      const w = await seedWorld(db, KEEP, [["Marina", 1], ["Márcio", 2], ["Paulo", 3]]);
+      const h = await seedLead(db, w.org, { handedAt: inMinutes(-200) });
+      const id = await distribute(w.org, h);
+      expect((await row(id)).rep_id).toBe(w.reps["Marina"].repId);
+      await q("update public.sales_reps set availability='out' where id=$1", [w.reps["Márcio"].repId]);
+      const next = await redistribute(id);
+      expect((await row(next!)).rep_id).toBe(w.reps["Paulo"].repId);
+    });
+    it("transferência manual pelo gestor continua funcionando com o lead pendente", async () => {
+      const w = await seedWorld(db, KEEP, TWO);
+      const h = await seedLead(db, w.org, { handedAt: inMinutes(-5) });
+      const id = await distribute(w.org, h, inMinutes(30));
+      const other = (await row(id)).rep_id === w.reps["Marina"].repId ? w.reps["Márcio"] : w.reps["Marina"];
+      const nid = (await q("select public.manual_assign($1,$2,$3,$4,$5) as id", [w.org, h.conversationId, other.repId, w.def, inMinutes(30)]))[0].id as string;
+      expect(await row(nid)).toMatchObject({ status: "pending", reason: "manual", rep_id: other.repId });
+      expect(await row(id)).toMatchObject({ status: "redistributed", redistribution_reason: "manual" });
+    });
+  });
+});
+

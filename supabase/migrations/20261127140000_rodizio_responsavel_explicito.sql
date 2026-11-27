@@ -4,8 +4,10 @@
 --     Só dado: gravado sempre (não muda quem atende; hoje a conversa e o card já ficam com esse vendedor).
 --   * lead_assignments.last_customer_followup_at: horário em que o cliente voltou a escrever num atendimento ativo (encaminhamento absorvido).
 --   * settings.exception_auto_resolve_enabled (padrão desligado): record_human_message fecha a exceção como 'answered_by_seller'.
---   * settings.repeat_handoff_keeps_assignment_enabled (padrão desligado): distribute_lead não reinicia o rodízio quando a atribuição está
---     aceita e o vendedor escreveu nas últimas 24 h.
+--   * settings.repeat_handoff_keeps_assignment_enabled (padrão desligado): novo encaminhamento não reinicia SLA nem rodízio quando
+--     (a) a atribuição está pendente (cliente aguardando a primeira resposta; isto já era assim, agora também marca o retorno do cliente),
+--     (b) está aceita e o vendedor escreveu nas últimas 24 h, ou (c) o rodízio se esgotou (exceção aberta) e ninguém respondeu depois.
+--     Vencimento do prazo (redistribute_assignment), indisponibilidade e transferência manual (manual_assign) não mudam.
 -- Corpos copiados das versões vigentes (distribute_lead 20261027120000; redistribute_assignment e record_human_message 20261119130000),
 -- com as alterações marcadas por comentário.
 --
@@ -38,8 +40,14 @@ BEGIN
   IF existing IS NOT NULL THEN RETURN existing; END IF;
 
   SELECT * INTO act FROM public.lead_assignments WHERE conversation_id = p_conversation_id AND status IN ('pending','accepted') FOR UPDATE;
-  -- Pendente de outro handoff: o prazo em curso continua valendo; nada muda.
-  IF act.status = 'pending' THEN RETURN act.id; END IF;
+  -- Pendente de outro handoff: o prazo em curso continua valendo; nada muda (não reinicia SLA nem rodízio). Com a chave da fase C,
+  -- registra que o cliente voltou a escrever enquanto aguarda a primeira resposta.
+  IF act.status = 'pending' THEN
+    IF s->'repeat_handoff_keeps_assignment_enabled' = 'true'::jsonb THEN
+      UPDATE public.lead_assignments SET last_customer_followup_at = GREATEST(COALESCE(last_customer_followup_at, h.handed_at), h.handed_at) WHERE id = act.id;
+    END IF;
+    RETURN act.id;
+  END IF;
   -- Encaminhamento repetido com atendimento humano ATIVO (atribuição aceita e mensagem do vendedor nas últimas 24 h): não reinicia o
   -- rodízio nem o prazo; só registra que o cliente voltou a escrever. Atrás de repeat_handoff_keeps_assignment_enabled (padrão: desligado).
   IF act.status = 'accepted' AND s->'repeat_handoff_keeps_assignment_enabled' = 'true'::jsonb
@@ -47,6 +55,19 @@ BEGIN
                   AND m.created_at >= act.assigned_at AND m.created_at > now() - interval '24 hours') THEN
     UPDATE public.lead_assignments SET last_customer_followup_at = GREATEST(COALESCE(last_customer_followup_at, h.handed_at), h.handed_at) WHERE id = act.id;
     RETURN act.id;
+  END IF;
+
+  -- Rodízio esgotado (exceção aberta) e ninguém respondeu depois dela: nova mensagem do cliente NÃO recomeça o rodízio do zero;
+  -- a exceção continua com o responsável explícito e na fila do gestor, marcando o retorno do cliente. Chave da fase C.
+  IF act.id IS NULL AND s->'repeat_handoff_keeps_assignment_enabled' = 'true'::jsonb THEN
+    SELECT * INTO act FROM public.lead_assignments x
+     WHERE x.organization_id = p_organization_id AND x.conversation_id = p_conversation_id AND x.status = 'exception' AND x.resolved_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM public.messages m WHERE m.conversation_id = p_conversation_id AND m.role = 'human_agent' AND m.created_at >= x.assigned_at)
+     ORDER BY x.assigned_at DESC LIMIT 1 FOR UPDATE;
+    IF act.id IS NOT NULL THEN
+      UPDATE public.lead_assignments SET last_customer_followup_at = GREATEST(COALESCE(last_customer_followup_at, h.handed_at), h.handed_at) WHERE id = act.id;
+      RETURN act.id;
+    END IF;
   END IF;
 
   -- Nova distribuição: exceções antigas desta conversa deixam a fila do gestor.

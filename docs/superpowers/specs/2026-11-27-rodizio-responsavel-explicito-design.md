@@ -16,7 +16,12 @@ Data: 27/11/2026. Plano de estabilização aprovado pelo dono em 26/11: reaprove
    - **`lead_assignments.responsible_rep_id`:** na exceção por rodízio esgotado, recebe o último vendedor da cadeia. Na exceção direta (sem vendedor disponível, dono inválido, conflito), recebe o vendedor que já está com a conversa. É só dado: quem fica com a conversa e o card não muda (hoje já é esse vendedor); passa a ficar explícito.
    - **`lead_assignments.last_customer_followup_at`:** registra quando o cliente voltou a escrever num atendimento ativo.
    - **`record_human_message`:** com `exception_auto_resolve_enabled`, a resposta do vendedor fecha a exceção aberta da conversa como `answered_by_seller`, com autor e horário. Uma resposta anterior à exceção não fecha.
-   - **`distribute_lead`:** com `repeat_handoff_keeps_assignment_enabled`, se a atribuição está aceita e o vendedor escreveu nas últimas 24 h, o novo encaminhamento não reinicia o rodízio nem o prazo; só grava `last_customer_followup_at`.
+   - **`distribute_lead`:** com `repeat_handoff_keeps_assignment_enabled`, o novo encaminhamento **não reinicia o prazo nem o rodízio** em três casos. Em todos, só grava `last_customer_followup_at`.
+     - **Atribuição pendente** (o cliente ainda aguarda a primeira resposta humana): já não reiniciava hoje, e o `sla_due_at` é protegido pelo gatilho de imutabilidade. Agora também registra o retorno do cliente.
+     - **Atribuição aceita** com mensagem do vendedor nas últimas 24 h.
+     - **Rodízio esgotado** (exceção aberta) sem resposta humana depois: a exceção continua com o responsável explícito e na fila do gestor, em vez de recomeçar o rodízio do zero com prazo novo.
+   - **Regras preservadas, com testes:** redistribuição por vencimento (`redistribute_assignment`), vendedor indisponível que não recebe, transferência manual pelo gestor (`manual_assign`).
+   - **Mensagens simultâneas:** vários encaminhamentos no mesmo instante, ou o mesmo reprocessado, geram uma única atribuição. A idempotência é por encaminhamento e a trava `FOR UPDATE` em `lead_distribution_state` serializa as chamadas.
    - Os corpos das funções foram copiados das versões vigentes (`distribute_lead` de 20261027120000; `redistribute_assignment` e `record_human_message` de 20261119130000), com as mudanças comentadas.
 3. **Alertas do #102:** com `responsible_rep_id`, avisam o responsável e os gestores, e não todos os vendedores. Se o responsável não for mais vendedor ativo, voltam a avisar todos, para nunca ficar sem destinatário.
 4. **Painel "Atraso no atendimento":** a linha da exceção mostra "responsável: Nome".
