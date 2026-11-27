@@ -3,15 +3,17 @@
 --   * lead_assignments.responsible_rep_id: na exceção, o vendedor que fica com a conversa/card (último da cadeia ou o atual da conversa).
 --     Só dado: gravado sempre (não muda quem atende; hoje a conversa e o card já ficam com esse vendedor).
 --   * lead_assignments.last_customer_followup_at: horário em que o cliente voltou a escrever num atendimento ativo (encaminhamento absorvido).
---   * settings.exception_auto_resolve_enabled (padrão desligado): record_human_message fecha a exceção como 'answered_by_seller'.
+--   * settings.exception_auto_resolve_enabled (padrão desligado): resolve_answered_exceptions() (varredura do worker) fecha a exceção
+--     quando há resposta humana confirmada depois do pedido e o cliente não escreveu de novo. record_human_message NÃO muda.
 --   * settings.repeat_handoff_keeps_assignment_enabled (padrão desligado): novo encaminhamento não reinicia SLA nem rodízio quando
 --     (a) a atribuição está pendente (cliente aguardando a primeira resposta; isto já era assim, agora também marca o retorno do cliente),
 --     (b) está aceita e o vendedor escreveu nas últimas 24 h, ou (c) o rodízio se esgotou (exceção aberta) e ninguém respondeu depois.
 --     Vencimento do prazo (redistribute_assignment), indisponibilidade e transferência manual (manual_assign) não mudam.
--- Corpos copiados das versões vigentes (distribute_lead 20261027120000; redistribute_assignment e record_human_message 20261119130000),
+-- Corpos copiados das versões vigentes (distribute_lead 20261027120000; redistribute_assignment 20261119130000),
 -- com as alterações marcadas por comentário.
 --
--- Reverter: reaplicar distribute_lead de 20261027120000 e redistribute_assignment/record_human_message de 20261119130000;
+-- Reverter: reaplicar distribute_lead de 20261027120000 e redistribute_assignment de 20261119130000;
+--   DROP FUNCTION IF EXISTS public.resolve_answered_exceptions();
 --   ALTER TABLE public.lead_assignments DROP COLUMN IF EXISTS responsible_rep_id, DROP COLUMN IF EXISTS last_customer_followup_at;
 
 ALTER TABLE public.lead_assignments
@@ -164,40 +166,38 @@ BEGIN
   RETURN new_id;
 END $$;
 
-CREATE OR REPLACE FUNCTION public.record_human_message(p_organization_id uuid, p_conversation_id uuid, p_at timestamptz, p_author uuid, p_via text)
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE a public.lead_assignments; rep public.sales_reps; conv_user uuid; may_accept boolean := false;
+-- Fecha exceções já atendidas (chamada pela varredura de SLA do worker a cada minuto). Só age nas organizações com
+-- settings.exception_auto_resolve_enabled. NÃO fica em record_human_message de propósito: aquela função é chamada ANTES do envio ao
+-- WhatsApp (o envio pode falhar). Regras para fechar uma exceção aberta:
+--   * existe mensagem humana CONFIRMADA (id do WhatsApp e sem send_failed_at) enviada depois do pedido do cliente (handoff_at);
+--   * nenhuma mensagem do cliente depois dessa resposta (mensagem humana atrasada não fecha pedido mais novo);
+--   * a régua é o pedido do cliente, não a criação da exceção: resposta dada durante a corrida com a redistribuição por SLA conta;
+--   * resposta sem autoria individual (celular da loja / registro antigo) fecha como 'answered_unattributed', sem autor.
+-- Linhas travadas por outra transação (reatribuição manual em curso) são puladas e reavaliadas no próximo ciclo.
+CREATE OR REPLACE FUNCTION public.resolve_answered_exceptions()
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE e record; v_reply record; v_n integer := 0;
 BEGIN
-  IF p_via IS NULL OR p_via NOT IN ('panel','phone_echo') THEN RAISE EXCEPTION 'Origem inválida'; END IF;
-  -- Resposta do vendedor fecha a exceção aberta da conversa (criada antes desta resposta). Atrás de exception_auto_resolve_enabled.
-  IF EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = p_organization_id AND o.settings->'exception_auto_resolve_enabled' = 'true'::jsonb) THEN
-    UPDATE public.lead_assignments SET resolved_at = p_at, resolved_by = p_author, resolution = 'answered_by_seller'
-     WHERE organization_id = p_organization_id AND conversation_id = p_conversation_id AND status = 'exception' AND resolved_at IS NULL AND assigned_at <= p_at;
-  END IF;
-  SELECT * INTO a FROM public.lead_assignments
-   WHERE organization_id = p_organization_id AND conversation_id = p_conversation_id AND status IN ('pending','accepted') FOR UPDATE;
-  IF a.id IS NULL THEN RETURN NULL; END IF;
-  SELECT * INTO rep FROM public.sales_reps WHERE id = a.rep_id;
-  IF p_at < a.assigned_at THEN
-    UPDATE public.opportunities SET last_commercial_activity_at = GREATEST(COALESCE(last_commercial_activity_at, p_at), p_at)
-     WHERE organization_id = p_organization_id AND contact_id = a.contact_id AND status = 'open';
-    RETURN a.id;
-  END IF;
-  IF a.first_human_message_at IS NULL THEN
-    UPDATE public.lead_assignments SET first_human_message_at = p_at, first_human_message_by = p_author WHERE id = a.id;
-  END IF;
-  UPDATE public.opportunities SET last_commercial_activity_at = GREATEST(COALESCE(last_commercial_activity_at, p_at), p_at)
-   WHERE organization_id = p_organization_id AND contact_id = a.contact_id AND status = 'open';
-  IF a.status = 'pending' THEN
-    IF p_via = 'panel' THEN may_accept := p_author IS NOT DISTINCT FROM rep.user_id;
-    ELSE
-      SELECT assigned_to INTO conv_user FROM public.conversations WHERE id = p_conversation_id;
-      may_accept := p_author IS NULL AND conv_user IS NOT DISTINCT FROM rep.user_id;
-    END IF;
-    IF may_accept THEN
-      UPDATE public.lead_assignments SET status = 'accepted', accepted_at = p_at, awaiting_first_response = (p_via = 'panel'),
-             accepted_via = CASE WHEN p_via = 'panel' THEN 'first_message' ELSE 'phone_echo' END WHERE id = a.id;
-    END IF;
-  END IF;
-  RETURN a.id;
+  FOR e IN
+    SELECT la.id, la.organization_id, la.conversation_id, la.handoff_at
+      FROM public.lead_assignments la JOIN public.organizations o ON o.id = la.organization_id
+     WHERE la.status = 'exception' AND la.resolved_at IS NULL AND o.settings->'exception_auto_resolve_enabled' = 'true'::jsonb
+     FOR UPDATE OF la SKIP LOCKED
+  LOOP
+    SELECT m.created_at, public._msg_author(m.metadata) AS author INTO v_reply
+      FROM public.messages m
+     WHERE m.conversation_id = e.conversation_id AND m.organization_id = e.organization_id AND m.role = 'human_agent'
+       AND m.evolution_message_id IS NOT NULL AND (m.metadata->>'send_failed_at') IS NULL AND m.created_at >= e.handoff_at
+     ORDER BY m.created_at DESC LIMIT 1;
+    CONTINUE WHEN v_reply.created_at IS NULL;
+    CONTINUE WHEN EXISTS (SELECT 1 FROM public.messages c WHERE c.conversation_id = e.conversation_id AND c.role = 'contact' AND c.created_at > v_reply.created_at);
+    UPDATE public.lead_assignments
+       SET resolved_at = now(), resolved_by = v_reply.author,
+           resolution = CASE WHEN v_reply.author IS NULL THEN 'answered_unattributed' ELSE 'answered_by_seller' END
+     WHERE id = e.id AND resolved_at IS NULL;
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN v_n;
 END $$;
+REVOKE ALL ON FUNCTION public.resolve_answered_exceptions() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_answered_exceptions() TO service_role;

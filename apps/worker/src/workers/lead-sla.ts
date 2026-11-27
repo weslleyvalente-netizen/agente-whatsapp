@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { QUEUE_NAMES, type OrganizationSettings } from "@aula-agente/shared";
 import { getLeadSlaQueue, getRedisConnection } from "@aula-agente/queue";
 import {
-  computeEscalationDueAt, computeSlaDueAt, ensureHandoffCards, escalateAlertAssignment, flagSlaAlerts, getAdminClient, getOrganizationById, listEscalationCandidates, listExpiredAssignments, redistributeAssignment,
+  computeEscalationDueAt, computeSlaDueAt, ensureHandoffCards, escalateAlertAssignment, flagSlaAlerts, getAdminClient, getOrganizationById, listEscalationCandidates, listExpiredAssignments, redistributeAssignment, resolveAnsweredExceptions,
 } from "@aula-agente/database";
 
 const SWEEP_EVERY_MS = 60_000;
@@ -55,7 +55,10 @@ export async function runLeadSlaSweep(db: SupabaseClient, now = new Date()) {
   // Reparo: card do encaminhamento pulado por contato travado (SKIP LOCKED) é criado na varredura seguinte.
   let cardsRepaired = 0;
   try { cardsRepaired = await ensureHandoffCards(db); } catch (err) { console.error("Lead SLA sweep: repairing handoff cards failed", err); }
-  return { checked: expired.length, redistributed, alerted, escalated, cardsRepaired };
+  // Fase C: fecha exceções já atendidas (resolve_answered_exceptions só age com settings.exception_auto_resolve_enabled).
+  let exceptionsResolved = 0;
+  try { exceptionsResolved = await resolveAnsweredExceptions(db); } catch (err) { console.error("Lead SLA sweep: resolving answered exceptions failed", err); }
+  return { checked: expired.length, redistributed, alerted, escalated, cardsRepaired, exceptionsResolved };
 }
 
 export function startLeadSlaWorker() {

@@ -49,25 +49,76 @@ describe("responsável explícito quando o rodízio se esgota", () => {
   });
 });
 
-describe("exceção fecha quando o vendedor responde (exception_auto_resolve_enabled)", () => {
-  it("chave ligada: resposta registrada fecha a exceção como 'answered_by_seller', com autor e horário", async () => {
-    const { w, h, exc } = await esgotado({ ...ALL_ON, exception_auto_resolve_enabled: true });
-    await humanMsg(w.org, h.conversationId);
-    await record(w.org, h.conversationId, w.reps["Márcio"].userId);
+describe("exceção fecha quando há resposta humana CONFIRMADA e o cliente não está aguardando (exception_auto_resolve_enabled)", () => {
+  const AUTO = { ...ALL_ON, exception_auto_resolve_enabled: true };
+  const sweep = async () => (await q("select public.resolve_answered_exceptions() as n"))[0].n as number;
+  const msg = (org: string, conv: string, o: { role?: string; at?: string; waId?: string | null; failed?: boolean; author?: string } = {}) =>
+    q("insert into public.messages(organization_id,conversation_id,role,content,evolution_message_id,metadata,created_at) values ($1,$2,$3,'texto',$4,$5::jsonb,$6)",
+      [org, conv, o.role ?? "human_agent", o.waId === undefined ? "wa-" + Math.random().toString(36).slice(2) : o.waId,
+       JSON.stringify({ ...(o.failed ? { send_failed_at: new Date().toISOString() } : {}), ...(o.author ? { sent_by_user_id: o.author } : {}) }), o.at ?? new Date().toISOString()]);
+
+  it("resposta confirmada do vendedor depois do pedido, sem mensagem nova do cliente: fecha como 'answered_by_seller' com o autor", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId });
+    expect(await sweep()).toBe(1);
     expect(await row(exc)).toMatchObject({ resolution: "answered_by_seller", resolved_by: w.reps["Márcio"].userId });
-    expect((await row(exc)).resolved_at).not.toBeNull();
   });
 
-  it("chave desligada (padrão): exceção continua aberta (comportamento de hoje)", async () => {
-    const { w, h, exc } = await esgotado();
-    await humanMsg(w.org, h.conversationId);
+  it("mensagem humana ATRASADA: o cliente escreveu depois da resposta → continua aberta (há pedido aguardando)", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId, at: inMinutes(-10) });
+    await msg(w.org, h.conversationId, { role: "contact", at: inMinutes(-2) });
+    expect(await sweep()).toBe(0);
+    expect((await row(exc)).resolved_at).toBeNull();
+  });
+
+  it("resposta anterior ao pedido do cliente (handoff) não conta", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId, at: inMinutes(-400) });
+    expect(await sweep()).toBe(0);
+    expect((await row(exc)).resolved_at).toBeNull();
+  });
+
+  it("envio que FALHOU ou ainda não confirmado pelo WhatsApp (sem id) não fecha", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId, failed: true });
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId, waId: null });
+    expect(await sweep()).toBe(0);
+    expect((await row(exc)).resolved_at).toBeNull();
+  });
+
+  it("mensagem pelo celular da loja (sem autoria individual): fecha, mas registra 'answered_unattributed' sem autor", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
+    await msg(w.org, h.conversationId);
+    expect(await sweep()).toBe(1);
+    expect(await row(exc)).toMatchObject({ resolution: "answered_unattributed", resolved_by: null });
+  });
+
+  it("concorrência com a redistribuição por SLA: exceção criada DEPOIS da resposta (corrida) ainda fecha, porque a régua é o pedido do cliente", async () => {
+    const w = await seedWorld(db, AUTO, TWO);
+    const h = await seedLead(db, w.org, { handedAt: inMinutes(-200) });
+    const first = await distribute(w.org, h);
+    const second = (await redistribute(first))!;
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId, at: inMinutes(-1) }); // respondeu antes de a exceção nascer
+    await q("alter table public.lead_assignments disable trigger lead_assignments_guard_update");
+    await q("update public.lead_assignments set first_human_message_at = null where id=$1", [second]); // corrida: varredura não viu a resposta
+    await q("alter table public.lead_assignments enable trigger lead_assignments_guard_update");
+    const exc = (await redistribute(second))!;
+    expect(await row(exc)).toMatchObject({ status: "exception" });
+    expect(await sweep()).toBe(1);
+    expect(await row(exc)).toMatchObject({ resolution: "answered_by_seller" });
+  });
+
+  it("chave desligada (padrão): nada fecha (comportamento de hoje)", async () => {
+    const { w, h, exc } = await esgotado(ALL_ON);
+    await msg(w.org, h.conversationId, { author: w.reps["Márcio"].userId });
+    expect(await sweep()).toBe(0);
+    expect((await row(exc)).resolved_at).toBeNull();
+  });
+
+  it("record_human_message não fecha exceção por conta própria (é chamado antes do envio ao WhatsApp)", async () => {
+    const { w, h, exc } = await esgotado(AUTO);
     await record(w.org, h.conversationId, w.reps["Márcio"].userId);
-    expect(await row(exc)).toMatchObject({ resolved_at: null, resolution: null });
-  });
-
-  it("resposta com horário ANTERIOR à exceção não fecha", async () => {
-    const { w, h, exc } = await esgotado({ ...ALL_ON, exception_auto_resolve_enabled: true });
-    await record(w.org, h.conversationId, w.reps["Márcio"].userId, "panel", inMinutes(-300));
     expect((await row(exc)).resolved_at).toBeNull();
   });
 });

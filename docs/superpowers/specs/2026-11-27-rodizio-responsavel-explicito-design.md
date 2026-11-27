@@ -15,7 +15,11 @@ Data: 27/11/2026. Plano de estabilização aprovado pelo dono em 26/11: reaprove
 2. **Migração `20261127140000_rodizio_responsavel_explicito.sql`:**
    - **`lead_assignments.responsible_rep_id`:** na exceção por rodízio esgotado, recebe o último vendedor da cadeia. Na exceção direta (sem vendedor disponível, dono inválido, conflito), recebe o vendedor que já está com a conversa. É só dado: quem fica com a conversa e o card não muda (hoje já é esse vendedor); passa a ficar explícito.
    - **`lead_assignments.last_customer_followup_at`:** registra quando o cliente voltou a escrever num atendimento ativo.
-   - **`record_human_message`:** com `exception_auto_resolve_enabled`, a resposta do vendedor fecha a exceção aberta da conversa como `answered_by_seller`, com autor e horário. Uma resposta anterior à exceção não fecha.
+   - **`resolve_answered_exceptions()`:** chamada pela varredura de SLA do worker a cada minuto; com `exception_auto_resolve_enabled`, fecha a exceção. `record_human_message` **não muda**, porque é chamada antes do envio ao WhatsApp e o envio pode falhar.
+     - **Só fecha** quando há resposta humana **confirmada** (id do WhatsApp e sem `send_failed_at`) depois do pedido do cliente (`handoff_at`), **sem mensagem do cliente depois dela**.
+     - **Resposta atrasada**, anterior à última mensagem do cliente: não fecha.
+     - **Corrida com a redistribuição por SLA:** a régua é o pedido do cliente, então a resposta conta mesmo se a exceção nasceu depois. Linhas travadas são puladas.
+     - **Celular da loja**, sem autoria individual: fecha como `answered_unattributed`, sem autor.
    - **`distribute_lead`:** com `repeat_handoff_keeps_assignment_enabled`, o novo encaminhamento **não reinicia o prazo nem o rodízio** em três casos. Em todos, só grava `last_customer_followup_at`.
      - **Atribuição pendente** (o cliente ainda aguarda a primeira resposta humana): já não reiniciava hoje, e o `sla_due_at` é protegido pelo gatilho de imutabilidade. Agora também registra o retorno do cliente.
      - **Atribuição aceita** com mensagem do vendedor nas últimas 24 h.
