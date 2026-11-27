@@ -106,6 +106,22 @@ describe("exception-alerts: modo on", () => {
     expect(s2.sent).toBe(0);
     expect(w.pushes).toHaveLength(3);
   });
+  it("exceção com responsável explícito (fase C): avisa só o responsável e o gestor, não todos os vendedores", async () => {
+    const a = item("a");
+    (a.assignment as unknown as Record<string, unknown>).responsible_rep_id = "rep-marcio";
+    const w = world({ items: [a] });
+    const d = { ...makeDeps(w), repUserIdForRep: async (_o: string, repId: string) => (repId === "rep-marcio" ? "marcio" : null) };
+    await runExceptionAlertsOnce(d);
+    expect(w.pushes.map(p => p.user).sort()).toEqual(["gestor", "marcio"]);
+  });
+  it("responsável que não é mais vendedor ativo: volta a avisar todos os vendedores (nunca fica sem ninguém)", async () => {
+    const a = item("a");
+    (a.assignment as unknown as Record<string, unknown>).responsible_rep_id = "rep-saiu";
+    const w = world({ items: [a] });
+    const d = { ...makeDeps(w), repUserIdForRep: async () => "ex-vendedor" };
+    await runExceptionAlertsOnce(d);
+    expect(w.pushes.map(p => p.user).sort()).toEqual(["gestor", "marcio", "marina"]);
+  });
   it("sobe a escada em minutos úteis: 15, 30 e 60 (60 só ao gestor)", async () => {
     const w = world();
     const d = makeDeps(w);

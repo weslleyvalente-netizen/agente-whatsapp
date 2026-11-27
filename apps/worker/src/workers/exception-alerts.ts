@@ -39,6 +39,8 @@ export interface ExceptionAlertDeps {
   recordedSlots(assignmentIds: string[]): Promise<Map<string, RecordedAlertSlot[]>>;
   managerIds(organizationId: string): Promise<string[]>;
   repUserIds(organizationId: string): Promise<string[]>;
+  /** Fase C: usuário do vendedor responsável explícito da exceção (lead_assignments.responsible_rep_id). Opcional. */
+  repUserIdForRep?(organizationId: string, repId: string): Promise<string | null>;
   /** Fatos para a prontidão (destinatários, papel, aparelhos, push configurado). */
   readinessFacts(organizationId: string): Promise<AlertReadinessFacts>;
   claim(c: AlertLedgerClaim): Promise<{ id: number } | null>;
@@ -107,9 +109,16 @@ export async function runExceptionAlertsOnce(deps: ExceptionAlertDeps): Promise<
       for (const item of items) {
         summary.evaluated++;
         const a = item.assignment;
+        // Responsável explícito (fase C): avisa só ele (+ gestores). Se não for mais vendedor ativo, volta a avisar todos (nunca fica sem ninguém).
+        let itemCandidates = candidates;
+        const responsibleRepId = (a as unknown as { responsible_rep_id?: string | null }).responsible_rep_id;
+        if (responsibleRepId && deps.repUserIdForRep) {
+          const owner = await deps.repUserIdForRep(org.id, responsibleRepId).catch(() => null);
+          if (owner && reps.includes(owner)) itemCandidates = [...new Set([...managers, owner])];
+        }
         const mode = await deps.currentMode(org.id);
         if (mode === "off") { deps.log.info("exception-alerts: modo desligado durante o ciclo, interrompendo", org.id); break; }
-        if (!candidates.length) { summary.noRecipients++; deps.log.info("exception-alerts: sem destinatário configurado (nada consumido)", org.id); continue; }
+        if (!itemCandidates.length) { summary.noRecipients++; deps.log.info("exception-alerts: sem destinatário configurado (nada consumido)", org.id); continue; }
         const runMode: "shadow" | "on" = mode === "on" ? "on" : "shadow";
         const slots = recorded.get(a.id) ?? [];
         const messages = new Map<ExceptionAlertStage, ExceptionAlertMessage>();
@@ -125,7 +134,7 @@ export async function runExceptionAlertsOnce(deps: ExceptionAlertDeps): Promise<
           return m;
         };
 
-        for (const userId of candidates) {
+        for (const userId of itemCandidates) {
           // Plano INDIVIDUAL: só conta o que já foi registrado para ESTE destinatário neste modo.
           const mine = slots.filter(s => s.recipientUserId === userId && countsForMode(runMode, s)).map(s => s.stage);
           const plan = planExceptionAlerts({
@@ -223,6 +232,7 @@ export function defaultExceptionAlertDeps(overrides: Partial<ExceptionAlertDeps>
       const reps = (await listSalesReps(db, orgId)).filter(r => r.availability !== "out");
       return [...(await listCurrentMemberIds(db, orgId, reps.map(r => r.user_id)))];
     },
+    repUserIdForRep: async (orgId, repId) => (await listSalesReps(db, orgId)).find(r => r.id === repId)?.user_id ?? null,
     readinessFacts: async orgId => ({ pushConfigured: isPushConfigured(), recipients: await loadAlertReadinessRecipients(db, orgId) }),
     claim: c => claimAlertSlot(db, c),
     markSending: id => markAlertSending(db, id),

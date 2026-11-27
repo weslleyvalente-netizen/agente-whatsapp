@@ -47,11 +47,15 @@ const EXCEPTION_REASONS: Record<string, string> = {
   distribution_error: "Erro na distribuição", manual_review: "Conflito: revisão manual",
 };
 
-export interface ExceptionRow { id: string; client: string; reason: string; waiting: string; href: string }
+export interface ExceptionRow { id: string; client: string; reason: string; waiting: string; href: string; responsible?: string }
 
 /** Linha de "Atraso no atendimento" para cliente que o rodízio não conseguiu entregar a ninguém: só aviso, sem escolher vendedor. */
-export function exceptionRow(e: SlaAlert, now: Date = new Date()): ExceptionRow {
+export function exceptionRow(e: SlaAlert, now: Date = new Date(), reps: Array<{ id: string; display_name: string }> = []): ExceptionRow {
+  // Fase C: vendedor que ficou responsável quando o rodízio se esgotou (lead_assignments.responsible_rep_id).
+  const responsibleId = (e as unknown as { responsible_rep_id?: string | null }).responsible_rep_id;
+  const responsible = responsibleId ? reps.find((r) => r.id === responsibleId)?.display_name : undefined;
   return {
+    ...(responsible ? { responsible } : {}),
     id: e.id,
     client: contactDisplayName(e.contact_name, e.contact_phone),
     reason: EXCEPTION_REASONS[e.exception_reason ?? ""] ?? e.exception_reason ?? "Sem vendedor",

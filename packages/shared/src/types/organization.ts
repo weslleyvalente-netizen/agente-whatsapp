@@ -66,6 +66,10 @@ export interface OrganizationSettings {
   exception_alerts_activated_at?: string;
   // Painel de triagem (urgentes / respondidas / obsoletas). Ausente/false = painel antigo, sem mudança visual.
   exception_triage_panel_enabled?: boolean;
+  /** Fase C: resposta do vendedor (record_human_message) fecha a exceção aberta da conversa como "answered_by_seller". Ausente/false = como hoje. */
+  exception_auto_resolve_enabled?: boolean;
+  /** Fase C: encaminhamento repetido com atendimento humano ativo (aceito + mensagem do vendedor nas últimas 24 h) não reinicia o rodízio. Ausente/false = como hoje. */
+  repeat_handoff_keeps_assignment_enabled?: boolean;
   // ISO: quando a chave acima foi ligada. A escalada só considera estouros posteriores a isto (e de no máximo 24 h).
   sla_alert_escalation_activated_at?: string;
   owner_lookback_days?: number;

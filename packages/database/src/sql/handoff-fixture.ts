@@ -60,6 +60,7 @@ export const NEW_MIGRATIONS = [
   "20261120120000_sla_sweeps_bounded.sql",
   "20261125120000_returning_customer_and_no_reply_closure.sql",
   "20261126120000_opportunity_void.sql",
+  "20261127140000_rodizio_responsavel_explicito.sql",
 ];
 
 export async function setupHandoffDb(opts: { apply?: string[] } = {}) {

@@ -21,11 +21,11 @@ export function DelayBoard({ exceptions, alerts, ...rest }: DelayBoardProps) {
           <h3 className="font-medium">Ninguém respondeu <span className="ml-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs dark:bg-amber-900">{exceptions.length}</span></h3>
           <p className="text-xs text-muted-foreground">O sistema não troca de vendedor sozinho. Abra a conversa: o gestor pode passar o cliente a outro vendedor em "Atribuir a…", no topo da conversa.</p>
           {exceptions.map((e) => {
-            const row = exceptionRow(e, rest.now);
+            const row = exceptionRow(e, rest.now, rest.reps);
             return (
               <div key={e.id} className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                 <a href={row.href} className="font-medium underline-offset-2 hover:underline">{row.client}</a>
-                <span className="text-muted-foreground">· {row.reason} · aguardando {row.waiting}</span>
+                <span className="text-muted-foreground">· {row.reason} · aguardando {row.waiting}{row.responsible ? ` · responsável: ${row.responsible}` : ""}</span>
               </div>
             );
           })}

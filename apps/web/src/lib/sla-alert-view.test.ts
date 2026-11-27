@@ -43,6 +43,12 @@ describe("exceptionRow", () => {
     const e = { id: "e1", conversation_id: "conv 1", assigned_at: "2026-11-09T09:00:00Z", exception_reason: "all_reps_sla_breached", contact_name: "David", contact_phone: "5562" } as unknown as SlaAlert;
     expect(exceptionRow(e, now)).toEqual({ id: "e1", client: "David", reason: "Nenhum vendedor respondeu no prazo", waiting: "há 3 h", href: "/opportunities?conversa=conv%201" });
   });
+  it("fase C: mostra o vendedor responsável explícito; sem responsável (ou antes da migração) não aparece", () => {
+    const base = { id: "e1", conversation_id: "c", assigned_at: "2026-11-09T09:00:00Z", exception_reason: "all_reps_sla_breached", contact_name: "David", contact_phone: "5562" };
+    expect(exceptionRow({ ...base, responsible_rep_id: "r1" } as unknown as SlaAlert, now, reps)).toMatchObject({ responsible: "Marina" });
+    expect(exceptionRow(base as unknown as SlaAlert, now, reps).responsible).toBeUndefined();
+    expect(exceptionRow({ ...base, responsible_rep_id: "r9" } as unknown as SlaAlert, now, reps).responsible).toBeUndefined();
+  });
   it("motivo desconhecido não quebra", () => {
     expect(exceptionRow({ id: "e2", conversation_id: "c", assigned_at: "2026-11-09T11:59:30Z", exception_reason: "x", contact_name: null, contact_phone: "5562" } as unknown as SlaAlert, now))
       .toMatchObject({ client: "5562", reason: "x", waiting: "há menos de 1 min" });
