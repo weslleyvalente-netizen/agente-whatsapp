@@ -115,7 +115,7 @@ type AssignmentRow = {
   id: string; organization_id: string; conversation_id: string; created_at?: string; sla_due_at?: string | null;
   sales_reps: One<{ user_id?: string | null }>; wa_contacts: One<ContactRef>;
 };
-const ASSIGNMENT_SELECT = "id, organization_id, conversation_id, created_at, sla_due_at, sales_reps(user_id), wa_contacts(name, phone)";
+const ASSIGNMENT_SELECT = "id, organization_id, conversation_id, created_at, sla_due_at, sales_reps!lead_assignments_rep_id_fkey(user_id), wa_contacts(name, phone)";
 const truncation = (rows: Array<{ created_at?: string }>, limit: number): Date | null =>
   rows.length >= limit && rows[rows.length - 1]?.created_at ? new Date(rows[rows.length - 1].created_at!) : null;
 
@@ -264,7 +264,7 @@ export async function listExceptionCandidates(db: SupabaseClient, now: Date, org
   const previousIds = [...new Set(rows.map((r) => r.previous_assignment_id).filter((x): x is string => Boolean(x)))];
   const repByPrevious = new Map<string, string>();
   if (previousIds.length) {
-    const { data: prev, error: prevError } = await db.from("lead_assignments").select("id, sales_reps(display_name)").in("id", previousIds);
+    const { data: prev, error: prevError } = await db.from("lead_assignments").select("id, sales_reps!lead_assignments_rep_id_fkey(display_name)").in("id", previousIds);
     if (prevError) throw prevError;
     for (const p of (prev ?? []) as unknown as Array<{ id: string; sales_reps: One<{ display_name?: string | null }> }>) {
       const name = first(p.sales_reps)?.display_name?.trim();
