@@ -55,7 +55,7 @@ export async function distributeEscapedLead(db: SupabaseClient, organizationId: 
 
 /** Usuário do vendedor da atribuição ativa (pendente/aceita) da conversa, ou null. */
 export async function getActiveAssignmentRepUserId(db: SupabaseClient, organizationId: string, conversationId: string): Promise<string | null> {
-  const { data, error } = await db.from("lead_assignments").select("rep_id, sales_reps(user_id)")
+  const { data, error } = await db.from("lead_assignments").select("rep_id, sales_reps!lead_assignments_rep_id_fkey(user_id)")
     .eq("organization_id", organizationId).eq("conversation_id", conversationId).in("status", ["pending", "accepted"]).maybeSingle();
   if (error) throw error;
   const rep = (data as { sales_reps?: { user_id?: string } | Array<{ user_id?: string }> | null } | null)?.sales_reps;
